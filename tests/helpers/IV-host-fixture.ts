@@ -34,9 +34,9 @@ import {
 } from './AG2b-collaboration-fixture.js';
 import { s6aCardsWorkspace } from './S6A-cards-fixture.js';
 import type { S6AHostWorld, S6AHostWorldOptions } from './S6A-host-fixture.js';
-import { S6A_SCOPE, S6A_WORK_ROLE, type S6ASession } from './S6A-request-fixture.js';
+import { S6A_SCOPE, S6A_WORK_ROLE, type S6AExtraBinding, type S6ASession } from './S6A-request-fixture.js';
 import { createS6BLine, governS6B } from './S6B1-fixture.js';
-import { committed, ready, sessionOf } from './S7A-fixture.js';
+import { bindingOf, committed, ready, sessionOf } from './S7A-fixture.js';
 import { sendS7A2PersonMessage } from './S7A2-fixture.js';
 import { listed, readS7BMessage } from './S7B-fixture.js';
 import { openConsumeHostWorld } from './S7B2-consumable-sessions.js';
@@ -51,13 +51,20 @@ const realCreateLocalWorkbenchHost = hostModule.createLocalWorkbenchHost;
  * and restores that one, never a previous row's wrapper.
  */
 export async function openConsumeWorld(options: {
-  backend?: S6AHostWorldOptions['backend']; label?: string;
+  backend?: S6AHostWorldOptions['backend']; label?: string; tools?: readonly string[];
+  secretaryTools?: readonly string[];
 } = {}): Promise<S6AHostWorld> {
   const label = options.label ?? 'iv';
   Object.defineProperty(hostModule, 'createLocalWorkbenchHost',
     { value: realCreateLocalWorkbenchHost, configurable: true, writable: true });
+  const extraBindings: S6AExtraBinding[] = options.tools === undefined ? [] : [
+    { binding: bindingOf('s6a-work-binding', S6A_WORK_ROLE, 'S6A trusted work guidance', ['read']),
+      mergeTools: options.tools },
+  ];
   return await openConsumeHostWorld({
     backend: options.backend ?? 'memory',
+    ...(extraBindings.length === 0 ? {} : { extraBindings }),
+    ...(options.secretaryTools === undefined ? {} : { secretaryTools: options.secretaryTools }),
     extraHostOptions: { inputConsumers: [{ scope: S6A_SCOPE,
       sessionRef: { projectId: S6A_SCOPE.projectId, sessionId: `${label}-consumer` },
       goalRef: { aggregateType: 'Goal' as const, projectId: S6A_SCOPE.projectId, goalId: `${label}-consumer` },
@@ -210,7 +217,7 @@ export async function readBody(world: S6AHostWorld, ref: SessionMessageRef,
 export async function notices(world: S6AHostWorld, line: S6ASession, text: string): Promise<SessionMessage[]> {
   const found: SessionMessage[] = [];
   for (const message of await listed(world, 'inbox', line)) {
-    if (message.sender.kind !== 'host' || message.intent !== 'notify') continue;
+    if (message.sender.kind !== 'host' || message.needsReply === true) continue;
     if (await readBody(world, message.ref, 'message') === text) found.push(message);
   }
   return found;

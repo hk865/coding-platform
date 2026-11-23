@@ -3,6 +3,7 @@ import { expect, it } from 'vitest';
 import { toolSchema as z, type ToolDefinition } from '../../vendor/coding-agent/dist/public-api.js';
 import { PLATFORM_PROMPT_PACK_V1 } from '../../src/contracts/prompts/platform-pack.generated.js';
 import { createSessionMailboxTools } from '../../src/core/agent-runtime/communication-tools.js';
+import { RUNTIME_TOOL_NAMES } from '../../src/core/agent-runtime/tool-group-assembly.js';
 
 type Texts = Readonly<Record<string, { description: string; parameters: Readonly<Record<string, string>> }>>;
 type ToolSpecification = { name: string; description: string; inputSchema: unknown };
@@ -14,15 +15,14 @@ const definitions = (texts?: Texts): ToolDefinition[] =>
 const specification = (tools: ToolDefinition[]) => tools.map(tool => ({ name: tool.name, description: tool.description, inputSchema: z.toJSONSchema(tool.inputSchema) }));
 
 /**
- * The hand-written pc1-final tool specification, mechanically updated for
- * 6B-1 SR7 / L-02: decision sources carry the goal/project subject union.
- * Unchanged schemas and tool texts retain the pc1-final expectations copied
- * from communication-tools.ts and platform-pack.generated.ts at that tag.
+ * The tool specification: schemas and key order are the pc1-final literal,
+ * mechanically updated for the decision-source union (decision sources carry the
+ * goal/project subject union); tool texts come from the current platform pack.
  */
 const DEFAULT_SPECIFICATION: readonly ToolSpecification[] = [
   {
     "name": "send_session_message",
-    "description": "Session mailbox: send_session_message. An action_request about a Goal needs expected: copy the Goal card's dispatchBasis from look_graph unchanged; a refusal names the current values in dispatchCurrent.",
+    "description": PLATFORM_PROMPT_PACK_V1.tools['send_session_message']!.description,
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
@@ -49,60 +49,14 @@ const DEFAULT_SPECIFICATION: readonly ToolSpecification[] = [
           "type": "string",
           "minLength": 1
         },
-        "intent": {
-          "type": "string",
-          "enum": [
-            "notify",
-            "inquiry",
-            "action_request"
-          ]
-        },
         "needsReply": {
           "type": "boolean"
         },
         "waitAfterSend": {
           "type": "boolean"
         },
-        "expected": {
-          "type": "object",
-          "properties": {
-            "planRevision": {
-              "anyOf": [
-                {
-                  "type": "integer",
-                  "minimum": 0,
-                  "maximum": 9007199254740991
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "pointerRevision": {
-              "anyOf": [
-                {
-                  "type": "integer",
-                  "minimum": 0,
-                  "maximum": 9007199254740991
-                },
-                {
-                  "type": "string",
-                  "const": "none"
-                }
-              ]
-            },
-            "dispatchSequence": {
-              "type": "integer",
-              "minimum": 0,
-              "maximum": 9007199254740991
-            }
-          },
-          "required": [
-            "planRevision",
-            "pointerRevision",
-            "dispatchSequence"
-          ],
-          "additionalProperties": false
+        "wake": {
+          "type": "boolean"
         },
         "taskRef": {
           "type": "object",
@@ -169,7 +123,7 @@ const DEFAULT_SPECIFICATION: readonly ToolSpecification[] = [
   },
   {
     "name": "read_session_inbox",
-    "description": "Session mailbox: read_session_inbox",
+    "description": PLATFORM_PROMPT_PACK_V1.tools['read_session_inbox']!.description,
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
@@ -213,7 +167,7 @@ const DEFAULT_SPECIFICATION: readonly ToolSpecification[] = [
   },
   {
     "name": "read_session_message",
-    "description": "Session mailbox: read_session_message",
+    "description": PLATFORM_PROMPT_PACK_V1.tools['read_session_message']!.description,
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
@@ -255,7 +209,7 @@ const DEFAULT_SPECIFICATION: readonly ToolSpecification[] = [
   },
   {
     "name": "read_session_message_body",
-    "description": "Session mailbox: read_session_message_body",
+    "description": PLATFORM_PROMPT_PACK_V1.tools['read_session_message_body']!.description,
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
@@ -304,56 +258,8 @@ const DEFAULT_SPECIFICATION: readonly ToolSpecification[] = [
     }
   },
   {
-    "name": "ack_session_message",
-    "description": "Session mailbox: ack_session_message",
-    "inputSchema": {
-      "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "type": "object",
-      "properties": {
-        "messageRef": {
-          "type": "object",
-          "properties": {
-            "aggregateType": {
-              "type": "string",
-              "const": "SessionMessage"
-            },
-            "projectId": {
-              "type": "string",
-              "minLength": 1
-            },
-            "workspaceId": {
-              "type": "string",
-              "minLength": 1
-            },
-            "messageId": {
-              "type": "string",
-              "minLength": 1
-            }
-          },
-          "required": [
-            "aggregateType",
-            "projectId",
-            "workspaceId",
-            "messageId"
-          ],
-          "additionalProperties": false
-        },
-        "expectedRevision": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 9007199254740991
-        }
-      },
-      "required": [
-        "messageRef",
-        "expectedRevision"
-      ],
-      "additionalProperties": false
-    }
-  },
-  {
     "name": "respond_session_message",
-    "description": "Session mailbox: respond_session_message",
+    "description": PLATFORM_PROMPT_PACK_V1.tools['respond_session_message']!.description,
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "anyOf": [
@@ -463,7 +369,7 @@ const DEFAULT_SPECIFICATION: readonly ToolSpecification[] = [
   },
   {
     "name": "withdraw_session_message",
-    "description": "Withdraw a Session message you sent, before its recipient acts on it. A Work Run may withdraw only a message of its own Session, and only where send_session_message is granted; a secretary may withdraw a message of its own resolved request round. Give the message's full ref; do not send a revision, because the owner checks the sender and the current state itself and a message already answered is refused rather than withdrawn. A refusal is returned as the tool's result and does not mean the message was withdrawn.",
+    "description": PLATFORM_PROMPT_PACK_V1.tools['withdraw_session_message']!.description,
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
@@ -504,439 +410,8 @@ const DEFAULT_SPECIFICATION: readonly ToolSpecification[] = [
     }
   },
   {
-    "name": "send_user_message",
-    "description": "User decision: send_user_message",
-    "inputSchema": {
-      "$schema": "https://json-schema.org/draft/2020-12/schema",
-      "type": "object",
-      "properties": {
-        "goalRef": {
-          "type": "object",
-          "properties": {
-            "aggregateType": {
-              "type": "string",
-              "const": "Goal"
-            },
-            "projectId": {
-              "type": "string",
-              "minLength": 1
-            },
-            "goalId": {
-              "type": "string",
-              "minLength": 1
-            }
-          },
-          "required": [
-            "aggregateType",
-            "projectId",
-            "goalId"
-          ],
-          "additionalProperties": false
-        },
-        "intent": {
-          "type": "string",
-          "enum": [
-            "notify",
-            "decision_request"
-          ]
-        },
-        "text": {
-          "type": "string"
-        },
-        "needsReply": {
-          "type": "boolean"
-        },
-        "waitAfterSend": {
-          "type": "boolean"
-        },
-        "options": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "properties": {
-              "id": {
-                "type": "string",
-                "minLength": 1
-              },
-              "label": {
-                "type": "string"
-              },
-              "effect": {
-                "type": "string",
-                "enum": [
-                  "apply",
-                  "reject",
-                  "defer"
-                ]
-              }
-            },
-            "required": [
-              "id",
-              "label",
-              "effect"
-            ],
-            "additionalProperties": false
-          }
-        },
-        "objects": {
-          "type": "array",
-          "items": {
-            "oneOf": [
-              {
-                "type": "object",
-                "properties": {
-                  "kind": {
-                    "type": "string",
-                    "const": "aggregate"
-                  },
-                  "pin": {
-                    "type": "object",
-                    "properties": {
-                      "ref": {
-                        "oneOf": [
-                          {
-                            "type": "object",
-                            "properties": {
-                              "aggregateType": {
-                                "type": "string",
-                                "const": "Goal"
-                              },
-                              "projectId": {
-                                "type": "string",
-                                "minLength": 1
-                              },
-                              "goalId": {
-                                "type": "string",
-                                "minLength": 1
-                              }
-                            },
-                            "required": [
-                              "aggregateType",
-                              "projectId",
-                              "goalId"
-                            ],
-                            "additionalProperties": false
-                          },
-                          {
-                            "type": "object",
-                            "properties": {
-                              "aggregateType": {
-                                "type": "string",
-                                "const": "Workspace"
-                              },
-                              "projectId": {
-                                "type": "string",
-                                "minLength": 1
-                              },
-                              "workspaceId": {
-                                "type": "string",
-                                "minLength": 1
-                              }
-                            },
-                            "required": [
-                              "aggregateType",
-                              "projectId",
-                              "workspaceId"
-                            ],
-                            "additionalProperties": false
-                          },
-                          {
-                            "type": "object",
-                            "properties": {
-                              "aggregateType": {
-                                "type": "string",
-                                "const": "SessionMessage"
-                              },
-                              "projectId": {
-                                "type": "string",
-                                "minLength": 1
-                              },
-                              "workspaceId": {
-                                "type": "string",
-                                "minLength": 1
-                              },
-                              "messageId": {
-                                "type": "string",
-                                "minLength": 1
-                              }
-                            },
-                            "required": [
-                              "aggregateType",
-                              "projectId",
-                              "workspaceId",
-                              "messageId"
-                            ],
-                            "additionalProperties": false
-                          },
-                          {
-                            "type": "object",
-                            "properties": {
-                              "aggregateType": {
-                                "type": "string",
-                                "const": "PlanRevision"
-                              },
-                              "projectId": {
-                                "type": "string",
-                                "minLength": 1
-                              },
-                              "planId": {
-                                "type": "string",
-                                "minLength": 1
-                              }
-                            },
-                            "required": [
-                              "aggregateType",
-                              "projectId",
-                              "planId"
-                            ],
-                            "additionalProperties": false
-                          },
-                          {
-                            "type": "object",
-                            "properties": {
-                              "aggregateType": {
-                                "type": "string",
-                                "const": "PlanProposal"
-                              },
-                              "projectId": {
-                                "type": "string",
-                                "minLength": 1
-                              },
-                              "workspaceId": {
-                                "type": "string",
-                                "minLength": 1
-                              },
-                              "proposalId": {
-                                "type": "string",
-                                "minLength": 1
-                              }
-                            },
-                            "required": [
-                              "aggregateType",
-                              "projectId",
-                              "workspaceId",
-                              "proposalId"
-                            ],
-                            "additionalProperties": false
-                          },
-                          {
-                            "type": "object",
-                            "properties": {
-                              "aggregateType": {
-                                "type": "string",
-                                "const": "QueryJob"
-                              },
-                              "projectId": {
-                                "type": "string",
-                                "minLength": 1
-                              },
-                              "workspaceId": {
-                                "type": "string",
-                                "minLength": 1
-                              },
-                              "queryJobId": {
-                                "type": "string",
-                                "minLength": 1
-                              }
-                            },
-                            "required": [
-                              "aggregateType",
-                              "projectId",
-                              "workspaceId",
-                              "queryJobId"
-                            ],
-                            "additionalProperties": false
-                          },
-                          {
-                            "type": "object",
-                            "properties": {
-                              "aggregateType": {
-                                "type": "string",
-                                "const": "QueryRun"
-                              },
-                              "projectId": {
-                                "type": "string",
-                                "minLength": 1
-                              },
-                              "workspaceId": {
-                                "type": "string",
-                                "minLength": 1
-                              },
-                              "queryJobId": {
-                                "type": "string",
-                                "minLength": 1
-                              },
-                              "runId": {
-                                "type": "string",
-                                "minLength": 1
-                              }
-                            },
-                            "required": [
-                              "aggregateType",
-                              "projectId",
-                              "workspaceId",
-                              "queryJobId",
-                              "runId"
-                            ],
-                            "additionalProperties": false
-                          },
-                          {
-                            "type": "object",
-                            "properties": {
-                              "aggregateType": {
-                                "type": "string",
-                                "const": "QueryJobAnswer"
-                              },
-                              "projectId": {
-                                "type": "string",
-                                "minLength": 1
-                              },
-                              "workspaceId": {
-                                "type": "string",
-                                "minLength": 1
-                              },
-                              "queryJobId": {
-                                "type": "string",
-                                "minLength": 1
-                              },
-                              "answerId": {
-                                "type": "string",
-                                "minLength": 1
-                              }
-                            },
-                            "required": [
-                              "aggregateType",
-                              "projectId",
-                              "workspaceId",
-                              "queryJobId",
-                              "answerId"
-                            ],
-                            "additionalProperties": false
-                          }
-                        ]
-                      },
-                      "revision": {
-                        "type": "integer",
-                        "minimum": 0,
-                        "maximum": 9007199254740991
-                      }
-                    },
-                    "required": [
-                      "ref",
-                      "revision"
-                    ],
-                    "additionalProperties": false
-                  },
-                  "label": {
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "kind",
-                  "pin",
-                  "label"
-                ],
-                "additionalProperties": false
-              },
-              {
-                "type": "object",
-                "properties": {
-                  "kind": {
-                    "type": "string",
-                    "const": "file"
-                  },
-                  "workspace": {
-                    "type": "object",
-                    "properties": {
-                      "projectId": {
-                        "type": "string",
-                        "minLength": 1
-                      },
-                      "workspaceId": {
-                        "type": "string",
-                        "minLength": 1
-                      }
-                    },
-                    "required": [
-                      "projectId",
-                      "workspaceId"
-                    ],
-                    "additionalProperties": false
-                  },
-                  "path": {
-                    "type": "string",
-                    "minLength": 1
-                  },
-                  "digest": {
-                    "anyOf": [
-                      {
-                        "type": "string"
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ]
-                  },
-                  "label": {
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "kind",
-                  "workspace",
-                  "path",
-                  "digest",
-                  "label"
-                ],
-                "additionalProperties": false
-              }
-            ]
-          }
-        },
-        "forwardedFrom": {
-          "type": "object",
-          "properties": {
-            "aggregateType": {
-              "type": "string",
-              "const": "SessionMessage"
-            },
-            "projectId": {
-              "type": "string",
-              "minLength": 1
-            },
-            "workspaceId": {
-              "type": "string",
-              "minLength": 1
-            },
-            "messageId": {
-              "type": "string",
-              "minLength": 1
-            }
-          },
-          "required": [
-            "aggregateType",
-            "projectId",
-            "workspaceId",
-            "messageId"
-          ],
-          "additionalProperties": false
-        }
-      },
-      "required": [
-        "goalRef",
-        "intent",
-        "text",
-        "needsReply",
-        "waitAfterSend",
-        "options",
-        "objects"
-      ],
-      "additionalProperties": false
-    }
-  },
-  {
     "name": "read_user_decision",
-    "description": "User decision: read_user_decision",
+    "description": PLATFORM_PROMPT_PACK_V1.tools['read_user_decision']!.description,
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
@@ -953,7 +428,7 @@ const DEFAULT_SPECIFICATION: readonly ToolSpecification[] = [
                 "note_review",
                 "planning_question",
                 "goal_conflict",
-                "message_release"
+                "action_release"
               ]
             },
             "key": {
@@ -1538,7 +1013,7 @@ const DEFAULT_SPECIFICATION: readonly ToolSpecification[] = [
   },
   {
     "name": "record_decision_application",
-    "description": "User decision: record_decision_application",
+    "description": PLATFORM_PROMPT_PACK_V1.tools['record_decision_application']!.description,
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
@@ -1609,10 +1084,8 @@ const changedDescriptions = {
   read_session_inbox: 'PC2-W changed read_session_inbox description',
   read_session_message: 'PC2-W changed read_session_message description',
   read_session_message_body: 'PC2-W changed read_session_message_body description',
-  ack_session_message: 'PC2-W changed ack_session_message description',
   respond_session_message: 'PC2-W changed respond_session_message description',
   withdraw_session_message: 'PC2-W changed withdraw_session_message description',
-  send_user_message: 'PC2-W changed send_user_message description',
   read_user_decision: 'PC2-W changed read_user_decision description',
   record_decision_application: 'PC2-W changed record_decision_application description',
 } as const;
@@ -1620,9 +1093,18 @@ const changed: Texts = Object.fromEntries(
   Object.entries(changedDescriptions).map(([name, description]) => [name, { description, parameters: {} }]),
 );
 
-it('PC2-W-communication-tools carries all nine changed descriptions', () => {
-  const tools = definitions(changed);
+it('PC2-W-communication-tools carries the eight changed descriptions', () => {
+  const tools = definitions(changed).filter(tool => tool.name in changedDescriptions);
   expect(Object.fromEntries(tools.map(tool => [tool.name, tool.description]))).toEqual(changedDescriptions);
+});
+
+it('PC2-W-communication-tools carries the P2 action and person-message tool names', () => {
+  for (const name of ['dispatch_task', 'hold_claim', 'release_hold', 'request_stop', 'ask_copy', 'notify_person', 'ask_person']) {
+    expect(RUNTIME_TOOL_NAMES.has(name), name).toBe(true);
+  }
+  for (const retired of ['ack_session_message', 'send_user_message', 'find_related_sessions', 'read_session_card']) {
+    expect(RUNTIME_TOOL_NAMES.has(retired), retired).toBe(false);
+  }
 });
 
 it('PC2-W-communication-tools falls back per tool to the hand-written platform specification', () => {

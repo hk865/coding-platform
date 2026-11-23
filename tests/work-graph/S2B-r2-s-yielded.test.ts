@@ -1,8 +1,9 @@
 /**
  * Round-2 R11 Group S: the yielded Run and its successor reached through the
  * REAL public flows — the Host's Workflow drives a Run that genuinely yields on
- * a `send_session_message` wait (RD-3), the recipient answers through the public
- * `workflow/consultation`, and the Workflow claims the continuation Run whose
+ * a `send_session_message` wait (RD-3), the recipient line answers it in its own
+ * woken round (P2: a line question, design-frozen.md:775; cp2f7 ruling P-A 3; never a
+ * copy), and the Workflow claims the continuation Run whose
  * `consumedWait` names the yielded Run. The task-state timeline is then read
  * through the public `readTaskStateTimeline` on the same files.
  *
@@ -21,12 +22,12 @@ import type { TaskStateTimelinePageV1 } from '../../src/core/work-graph/views/ta
 import {
   cleanupScenarios, hostCtx, openHostScenario, performs, type HostScenario,
 } from '../scenarios/harness.js';
-import { NO_REDRIVE, selectedRun, taskRefOf } from '../scenarios/support/common.js';
+import { NO_REDRIVE, readMessage, selectedRun, taskRefOf } from '../scenarios/support/common.js';
+import { wakeLineRound } from '../scenarios/support/brief.js';
 import {
-  AG2B_CONSUMER_ID, AG2B_GOAL_REF, AG2B_QUERY_BUDGET, AG2B_QUERY_ROLE, AG2B_QUERY_ROLE_BINDING,
-  AG2B_RUNTIME_BUDGET, AG2B_SCOPE, AG2B_WORK_TASK_ID, createAG2bSession, plain,
+  AG2B_GOAL_REF, AG2B_QUERY_ROLE, AG2B_WORK_TASK_ID, createAG2bSession,
 } from '../helpers/AG2b-collaboration-fixture.js';
-import { post, readExecution } from '../helpers/A2-restart-fixture.js';
+import { readExecution } from '../helpers/A2-restart-fixture.js';
 
 afterEach(async () => { await cleanupScenarios(); });
 
@@ -35,10 +36,9 @@ describe('S2B-r2 Group S yielded Run and successor', () => {
     let h: HostScenario | undefined;
     let recipient: SessionRef | undefined;
     const send = { callId: 'r2s-wait-send', name: 'send_session_message',
-      args: { recipient: {}, text: 'r2s question', intent: 'inquiry', needsReply: true, waitAfterSend: true } as Record<string, unknown> };
+      args: { recipient: {}, text: 'r2s question', needsReply: true, waitAfterSend: true } as Record<string, unknown> };
     const scenario = await openHostScenario({ check: 'pass', automation: NO_REDRIVE, script: {
       replies: [{ kind: 'calls', calls: [send] }, { kind: 'text', text: 'r2s continuation done' }],
-      queryReplies: [{ kind: 'text', text: 'r2s reply' }],
       duringReply: async (index) => {
         if (index !== 0 || h === undefined || recipient === undefined) return;
         send.args['recipient'] = { projectId: recipient.projectId, sessionId: recipient.sessionId };
@@ -55,11 +55,12 @@ describe('S2B-r2 Group S yielded Run and successor', () => {
     expect(yielded.run).toMatchObject({ status: 'ended', outcome: 'yielded', continuation: { kind: 'wait_reply' } });
     const messageRef = yielded.run.continuation?.messageRef;
 
-    // 2. The recipient answers the wait through the formal consultation.
-    const consulted = await post<{ status: string; value: { state: string } }>(scenario.host, 'workflow/consultation',
-      plain(AG2B_SCOPE, { schemaVersion: 1, messageRef, goalRef: AG2B_GOAL_REF, roleBinding: AG2B_QUERY_ROLE_BINDING,
-        runtimeBudget: AG2B_RUNTIME_BUDGET, budget: AG2B_QUERY_BUDGET, consumerId: AG2B_CONSUMER_ID }));
-    expect(consulted).toMatchObject({ status: 'ready', value: { state: 'responded' } });
+    // 2. P2 (design-frozen.md:775; p2-frozen.md:133; cp2f7 ruling P-A 3): the recipient line answers the wait question in its own
+    //    woken round (never a copy), and that round's closing responds to the wait message.
+    if (messageRef === undefined) throw new Error('the yielded Run must wait on its message');
+    expect(await wakeLineRound(scenario, messageRef, 'r2s reply')).toEqual({ status: 'answer_ready', modelCalls: 1 });
+    expect(await readMessage(scenario, messageRef)).toMatchObject({ status: 'responded',
+      response: { sender: { kind: 'query_run', sessionRef: { sessionId: recipient.sessionId } } } });
 
     // 3. The Workflow claims the continuation in the same Session; stop before it starts.
     const claimed = await scenario.advance(scenario.select('r2s-wait-2', AG2B_WORK_TASK_ID),

@@ -44,6 +44,8 @@ import {
   readCanonicalTaskFacts, readGoalPlanWindow, readTaskClosure,
 } from '../../src/core/work-graph/tasks/plan-readers.js';
 import { createTaskClaimService } from '../../src/core/work-graph/tasks/claim-service.js';
+import { createQueryJobService } from '../../src/core/work-graph/queries/query-job-service.js';
+import { planSourceRootOf } from './task-claim-fixture.js';
 import { plainSessionRefToAggregate } from '../../src/core/work-graph/sessions/session-record-codecs.js';
 import { createUnknownCallReviewService } from '../../src/core/work-graph/tasks/unknown-call-review-service.js';
 import { createExecutionEntryService } from '../../src/core/work-graph/tasks/execution-entry-service.js';
@@ -202,7 +204,9 @@ async function claimBlockedRun(
   if (goal.status !== 'ready') throw new Error(`K3 blocked fixture: the Goal is not readable: ${JSON.stringify(goal)}`);
   const card = await fixture.b2.base.sessionsPort.readSession(ctx, options.sessionRef);
   if (card.status !== 'ready') throw new Error(`K3 blocked fixture: the Session is not readable: ${JSON.stringify(card)}`);
-  const claims = createTaskClaimService({ records: fixture.records, roles, now, newId: options.newId });
+  const claims = createTaskClaimService({ records: fixture.records, roles, now, newId: options.newId,
+    planSourceRoot: planSourceRootOf({ messages: world.mailbox, plans: fixture.b2.base.plans,
+      queries: createQueryJobService({ records: fixture.records, now, eventId: options.newId }) }) });
   const claimed = await claims.claimTask(ctx, {
     input: {
       goalRef: GOAL_B, planRef: PLAN_B2, taskId: options.taskId, sessionRef: options.sessionRef,

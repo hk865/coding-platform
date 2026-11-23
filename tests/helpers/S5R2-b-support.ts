@@ -35,6 +35,8 @@ import { createQueryJobService } from '../../src/core/work-graph/queries/query-j
 import { createPlanningQuestionReader } from '../../src/core/work-graph/tasks/planning-question-reader.js';
 import { createTaskRequeueService } from '../../src/core/work-graph/tasks/requeue-service.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
+import { createQueryRoundResolver } from '../../src/core/work-graph/tasks/query-round.js';
+import { planSourceRootOf } from './task-claim-fixture.js';
 import { createGoalService } from '../../src/core/work-graph/tasks/task-service.js';
 import { createAutomaticReworkNoticeSource } from '../../src/core/work-graph/views/automatic-rework-notices.js';
 import { createDecisionReadModel, createGoalCauseCardSource, createPlanningQuestionCardSource } from '../../src/core/work-graph/views/decision-read-model.js';
@@ -67,6 +69,7 @@ export async function assembleB(f: S5DecisionFixture) {
   const mailboxDeps: SessionMailboxDependencies = {
     defaultInquiryDeadlineMs: 86_400_000,
     records, sessions, executions, roles, materials, systemActor: f.operatorActor,
+    queryRounds: createQueryRoundResolver({ records, duties: unknownSessionDuty, bodies: f.bodies }),
     now: f.now, newId: f.newId,
     duties: ({
       async readMessageDutiesFacts(_ctx, input) {
@@ -118,7 +121,9 @@ export async function assembleB(f: S5DecisionFixture) {
   const source = new VerificationWorkspaceReader();
   const requeue = createTaskRequeueService({ records, reads: executions, workspaceHost, source,
     materials, messages: mailbox, goalSettings: settings, now: f.now, eventId: f.newId });
-  const claims = { ...createTaskClaimService({ records, roles, bodies: f.bodies, now: f.now, newId: f.newId }),
+  const claims = { ...createTaskClaimService({ records, roles, bodies: f.bodies, now: f.now, newId: f.newId,
+    planSourceRoot: planSourceRootOf({ messages: mailbox, plans,
+      queries: createQueryJobService({ records, now: f.now, eventId: f.newId }) }) }),
     ...requeue };
   const checkConfiguration: TrustedCheckConfiguration = { configurationRevision: 's5r2-b-checks@1', workspace: WORKSPACE,
     executor: f.operatorActor, permissionRevision: 's5r2-b-source@1', sourceAccess: 'verification_workspace',

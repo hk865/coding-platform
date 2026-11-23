@@ -70,7 +70,7 @@ const CURSOR_B = 'wp2-cursor-b' as CommitCursor;
 const REQUEST: ContextReadRequestV1 = { goalRef: GOAL_REF, focusTaskIds: [] };
 
 const CARD_KINDS = [
-  'message', 'goal_cause', 'candidate', 'note_review', 'planning_question', 'goal_conflict', 'message_release',
+  'message', 'goal_cause', 'candidate', 'note_review', 'planning_question', 'goal_conflict', 'action_release',
 ] as const;
 const ALL_CARD_CAPABILITIES: DecisionQueueReadV1['capabilities'] = CARD_KINDS.map(
   (kind) => ({ source: kind, availability: 'available' as const }),
@@ -435,8 +435,8 @@ describe('WP2 context extensions provider (module side; E2 evidence in WP2-wirin
       text: '待决来源尚未接入：note_review', sources: [],
     });
     expect(rows).toContainEqual({
-      key: 'decision:not_available:message_release', node: { kind: 'goal', ref: GOAL_B },
-      text: '待决来源尚未接入：message_release', sources: [],
+      key: 'decision:not_available:action_release', node: { kind: 'goal', ref: GOAL_B },
+      text: '待决来源尚未接入：action_release', sources: [],
     });
   });
 
@@ -530,7 +530,7 @@ describe('WP2 context extensions provider (module side; E2 evidence in WP2-wirin
     // so they follow the sorted proposal ids.
     // 3 original unwired sources + the two new card kinds: 6 cards + 5 hints = 11, 5 cards + 5 hints = 10.
     const hintRowKeys = [
-      'decision:not_available:message_release',
+      'decision:not_available:action_release',
       'decision:not_available:note_review',
       'decision:not_available:planning_question',
       'decision:not_available:repair_approval',
@@ -638,7 +638,7 @@ describe('WP2 context extensions provider (module side; E2 evidence in WP2-wirin
       'decision:not_available:goal_cause',
       'decision:not_available:note_review',
       'decision:not_available:planning_question',
-      'decision:not_available:message_release',
+      'decision:not_available:action_release',
       'decision:not_available:repair_approval',
       'decision:not_available:structural_proposal',
     ];

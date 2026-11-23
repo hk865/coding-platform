@@ -3,6 +3,7 @@ import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { VersionPin, WorkspaceScope } from '../../../contracts/core/identity.js';
 import type { CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
 import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
+import type { TaskTriple } from '../../../contracts/dispatch.js';
 import type { JsonValue } from '../../../contracts/fingerprint.js';
 import type { ToolCommitLookupInput, ToolCommitLookupResult } from '../../../contracts/unknown-call-review.js';
 import type { PreparedCommit, RecordGuard } from '../../record-store/ports.js';
@@ -18,7 +19,7 @@ import { canonicalJson, canonicalOf, sha256Hex } from '../../../contracts/finger
 import { isNonNeg as isNonNegativeInt, isRecord as isObject, nonEmpty } from '../../../contracts/validation/common.js';
 import { checkShape } from '../../../contracts/validation/data-format.js';
 import { normalizeRespondMessageInput, normalizeSendMessageInput } from '../model/message-payload.js';
-import { ackSessionMessageRequest, respondSessionMessageRequest, sendSessionMessageRequest, sendUserMessageRequest, toolCommitLookupResult, toolCommitLookupUnknownTool, toolCommitRequestId, withdrawSessionMessageRequest } from '../model/tool-commit-arguments.js';
+import { askCopySendRequest, personMessageRequest, respondSessionMessageRequest, sendSessionMessageRequest, sendUserMessageFingerprintPayload, toolCommitLookupResult, toolCommitLookupUnknownTool, toolCommitRequestId, withdrawSessionMessageRequest } from '../model/tool-commit-arguments.js';
 import { commandKeys } from '../persistence/command-executor.js';
 import { sessionStoreFailureToRejection } from '../persistence/read-result-failures.js';
 import { lookupCommittedReceiptByIdentity } from '../persistence/receipt-lookup.js';
@@ -233,8 +234,8 @@ function workRunSenderIdentityOf(mailbox: MailboxContext, origin: ToolCommitLook
 }
 
 /**
- * K3 L4: the read-only committed-receipt lookup for the four row-4 mailbox
- * tools. It reuses the SAME pure "arguments -> owner request" functions and
+ * K3 L4: the read-only committed-receipt lookup for the row-4 mailbox tools.
+ * It reuses the SAME pure "arguments -> owner request" functions and
  * the SAME module-level identity/fingerprint helpers as the real owner
  * methods, then asks `lookupCommit`; it never writes and never opens a body.
  */
@@ -267,14 +268,6 @@ export const lookupToolCommit: (
         payload = normalized.value;
         break;
       }
-      case 'ack_session_message': {
-        const input2 = args as unknown as { messageRef: SessionMessageRef; expectedRevision: number };
-        const request = ackSessionMessageRequest(input2, requestId);
-        operation = 'ack';
-        expected = request.meta.expected;
-        payload = { messageRef: request.input.messageRef };
-        break;
-      }
       case 'respond_session_message': {
         const normalized = normalizeRespondMessageInput(args);
         if (normalized.status !== 'ready') throw new Error('invalid_arguments');
@@ -284,17 +277,41 @@ export const lookupToolCommit: (
         payload = request.input;
         break;
       }
-      case 'send_user_message': {
-        const request = sendUserMessageRequest(args as unknown as SendUserMessageInput, requestId);
+      case 'notify_person':
+      case 'ask_person': {
+        // The tool handlers and this lookup build the same request through
+        // `personMessageRequest`; the shared payload below is exactly what the
+        // owner fingerprints, so `wake` and a present `taskRef` are included.
+        const ask = input.toolName === 'ask_person';
+        const raw = args as { text: string; options?: SendUserMessageInput['options'];
+          objects?: SendUserMessageInput['objects']; taskRef?: TaskTriple };
+        const request = personMessageRequest({
+          goalRef: { aggregateType: 'Goal' as const, projectId: origin.runRef.projectId, goalId: origin.runRef.goalId },
+          intent: ask ? 'decision_request' : 'notify',
+          text: raw.text,
+          ...(raw.options === undefined ? {} : { options: raw.options }),
+          ...(raw.objects === undefined ? {} : { objects: raw.objects }),
+          ...(raw.taskRef === undefined ? {} : { taskRef: raw.taskRef }),
+        }, requestId);
         operation = 'user-send';
         expected = request.meta.expected;
-        const wire = request.input;
-        payload = {
-          goalRef: wire.goalRef, intent: wire.intent, text: wire.text,
-          needsReply: wire.needsReply, waitAfterSend: wire.waitAfterSend,
-          options: wire.options, objects: wire.objects,
-          ...(wire.forwardedFrom === undefined ? {} : { forwardedFrom: wire.forwardedFrom }),
-        };
+        payload = sendUserMessageFingerprintPayload(request.input);
+        break;
+      }
+      case 'ask_copy': {
+        // `ask_copy` stores the question through `sendMessage` as
+        // `answeredBy:'copy'`; the tool and this lookup share the request.
+        const ask = args as { line: SessionMessageSendInput['recipient']; question: string;
+          taskRef?: TaskTriple };
+        const request = askCopySendRequest({
+          line: ask.line, question: ask.question,
+          ...(ask.taskRef === undefined ? {} : { taskRef: ask.taskRef }),
+        }, requestId);
+        const normalized = normalizeSendMessageInput(request.input);
+        if (normalized.status !== 'ready') throw new Error('invalid_arguments');
+        operation = 'send';
+        expected = request.meta.expected;
+        payload = normalized.value;
         break;
       }
       case 'withdraw_session_message': {

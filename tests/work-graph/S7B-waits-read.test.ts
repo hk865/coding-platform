@@ -30,7 +30,7 @@ describe('S7B S-waits-read (memory)', () => {
     const { wait, run } = await openS7BInterventionWorld(world, { label: 's-waits-read' });
     const inbox = ready<{ items: SessionMessage[] }>(await world.post('messages/inbox',
       plain(S6A_SCOPE, { recipient: wait.waitingSession, page: { limit: 20 } })), 'the intervention inbox');
-    const sent = inbox.items.find(message => message.intent === 'action_request')!;
+    const sent = inbox.items.find(message => message.entry === 'person_intervention')!;
     const interventionRun = ready<TaskExecutionRecord>(await world.post('executions/read',
       plain(S6A_SCOPE, run)), 'the intervention execution');
     const consumedWait = interventionRun.run.consumedWait;

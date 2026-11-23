@@ -1,4 +1,4 @@
 {
-  "description": "Re-check up to 20 semantic links (`link` notes) by `noteId` and `version`, and get each one's verification back (`null` for a note that is not a link). The platform re-checks doubtful links (`unchecked` with `refs_pending`) by itself when the Host is idle, so you normally do not call this. Call it only when you are about to act on a doubtful link right now and need the result first. It is much slower than a read, usually a few seconds; the first call after the Host starts may reach the time limit, and then this call answers `unchecked` (`budget`) and the platform finishes the check later. It writes nothing.",
+  "description": "Re-check up to 20 `link` notes by `noteId` and `version`; each returns its verification, `null` for a non-link. The platform re-checks doubtful links (`unchecked`, `refs_pending`) itself when the Host is idle, so call only when you must act on one now. Much slower than a read; the first call after a Host start may time out and answer `unchecked` (`budget`). Writes nothing.",
   "parameters": {}
 }

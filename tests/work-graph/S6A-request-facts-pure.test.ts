@@ -155,7 +155,6 @@ function derive(
     answers: [],
     candidate: null,
     reply: false,
-    release: false,
     ...overrides,
   }, bindings);
 }

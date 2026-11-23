@@ -1,11 +1,11 @@
 {
   "description": "The only way to give this round's answer when it is a planning segment or questions for the person. Fill the fields and call it; the platform builds and stores the answer from them. Do not write the answer as text.",
   "parameters": {
-    "answerKind": "\"plan\" when this round writes the requested plan segment, \"questions\" when it needs a real product or authorization decision. Exactly one of plan and questions follows.",
-    "summary": "One line summarizing the plan or the decision the person must make; non-empty and at most 16 KiB of UTF-8.",
-    "plan": "When answerKind is \"plan\": the plan. Its fields are described once, in this round's answer guide. Omit it when answerKind is \"questions\".",
-    "plan.inputRequirements": "Optional: array of {requirementId, consumerTaskId, kind:\"artifact\", artifactRef}. This is a precise input, separate from the dependency graph; it does not gate dispatch.",
-    "questions": "When answerKind is \"questions\": a non-empty array of strings; ask only the real product or authorization decisions the request leaves open. Do not invent authorization. Omit it when answerKind is \"plan\".",
-    "reason": "Optional {text, affectedTaskIds?, objective?}: why this segment is proposed, which traced tasks it changes, and the candidate's new Goal objective. A person's adoption writes the objective with the plan; automatic adoption rejects it. When omitted the platform uses the summary."
+    "answerKind": "\"plan\"|\"questions\"; one only.",
+    "summary": "One line; non-empty, 16 KiB max.",
+    "plan": "For \"plan\": the plan this guide describes.",
+    "plan.inputRequirements": "Optional [{requirementId, consumerTaskId, kind:\"artifact\", artifactRef}].",
+    "questions": "For \"questions\": non-empty strings, real product/auth decisions.",
+    "reason": "Optional {text, affectedTaskIds?, objective?}: why this segment, its tasks, the candidate's Goal objective."
   }
 }

@@ -44,6 +44,7 @@ import { createSessionAnomalyService, type SessionAnomalyPort } from '../../src/
 import { SESSION_ANOMALY_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/session-anomaly-codecs.js';
 import { createSessionFactsService } from '../../src/core/work-graph/tasks/session-facts.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
+import { createQueryRoundResolver } from '../../src/core/work-graph/tasks/query-round.js';
 import { createMaterialService } from '../../src/core/work-graph/materials/material-service.js';
 import { createMaterialRecordReaders } from '../../src/core/work-graph/materials/record-readers.js';
 import { createSessionMailbox } from '../../src/core/work-graph/communication/mailbox-service.js';
@@ -232,6 +233,7 @@ async function open(kind: 'memory' | 'sqlite'): Promise<Opened> {
     executions: createRunStateReader({ records }),
     roles: createRoleConfigurationService({ records, now, eventId }),
     materials: createMaterialService({ bodies: b2.bodies, authority: materialReads.authority, now }),
+    queryRounds: createQueryRoundResolver({ records, duties: unknownSessionDuty, bodies: b2.bodies }),
     systemActor: { kind: 'system', id: 's1-maintenance-system' },
     now, newId: () => `s1-maintenance-id-${++eventSeq}`,
   });

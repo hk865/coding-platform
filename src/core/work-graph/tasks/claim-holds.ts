@@ -12,17 +12,19 @@
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import { principalIdentity } from '../../../contracts/core/call-context.js';
 import type { SessionRef } from '../../../contracts/core/identity.js';
-import { rejected } from '../../../contracts/core/rejections.js';
+import { rejected, rejectedWithNonEmptyCurrent } from '../../../contracts/core/rejections.js';
 import type { CoreError, CoreRejection, ReadResult } from '../../../contracts/core/results.js';
 import type { SessionWorkLink } from '../../../contracts/core/session.js';
+import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
 import { checkShape } from '../../../contracts/validation/data-format.js';
 import { RunRefShape, SessionMessageRefShape, TaskTripleShape } from '../../../contracts/data-format-refs.js';
 import type { RuntimeTask } from '../../../contracts/plan.js';
 import { canonicalKey, type JsonValue } from '../../../contracts/fingerprint.js';
 import type { GoalRef, GoalSnapshot } from '../../../contracts/ledger.js';
+import type { QueryJobRef } from '../../../contracts/query-job.js';
 import { isAutomationActor, type QueryRoundActorV1 } from '../../../contracts/task-requeue.js';
 import { isRecord, nonEmpty } from '../../../contracts/validation/common.js';
-import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
+import type { RecordLookupPort, RecordOrderedLookupPort } from '../../record-store/lookup-ports.js';
 import type { GoalRecordTransactionPort, RecordGuard } from '../../record-store/ports.js';
 import type {
   ClaimHoldPort, ClaimHoldResultV1, ClaimHoldWriteV1, ScribeStopInputV1,
@@ -32,12 +34,18 @@ import type { GraphWrite } from '../model/task-contracts.js';
 import type { SessionDutyReadPort } from '../model/work-line-contracts.js';
 import { commandKeys, executeWriteCommand, type Keys } from '../persistence/command-executor.js';
 import { goalRefFor } from '../persistence/commit-compiler.js';
-import { readOwnerRecord } from '../persistence/owner-record-read.js';
+import { lookupAll } from '../persistence/lookup-all.js';
+import { readOwnerRecord, type OwnerRecordRead } from '../persistence/owner-record-read.js';
+import { storeFailureToRejection } from '../persistence/read-result-failures.js';
+import { readRequestRounds } from '../queries/request-rounds-read.js';
+import { decodeSessionMessageRecord } from '../sessions/message-record-codecs.js';
 import {
   holdAwaitsCursor, nextTaskClaimHold, placeHoldReason, releaseAllHoldReasons, releaseHoldReason, taskClaimHoldRefOf,
   type HoldReleasedByV1, type NewHoldReasonV1, type PendingTaskClaimHoldV1, type TaskClaimHoldV1,
 } from '../state/task-claim-hold.js';
-import { taskClaimHoldChangedCodec, taskClaimHoldCodec, type TaskClaimHoldChanged } from './claim-record-codecs.js';
+import {
+  TASK_CLAIM_HOLD_BY_PROJECT_LOOKUP, taskClaimHoldChangedCodec, taskClaimHoldCodec, type TaskClaimHoldChanged,
+} from './claim-record-codecs.js';
 import { operatorProblem } from './execution-entry-service.js';
 import { readGoalPlanWindow, readOpenResponsibilityLines } from './plan-readers.js';
 import type { ResponsibilityRecipientPort } from './responsibility-recipient.js';
@@ -50,7 +58,8 @@ import type { ActionRequestRequesterV1 } from '../state/action-request.js';
 type HostActor = { kind: 'human' | 'system'; id: string };
 
 export type ClaimHoldDependencies = {
-  records: GoalRecordTransactionPort & RecordLookupPort;
+  /** 请求轮的动作准入要读请求的当前归属（`readRequestRounds` 的有序窗口）。 */
+  records: GoalRecordTransactionPort & RecordLookupPort & RecordOrderedLookupPort;
   queryRounds: QueryRoundPort;
   duty: SessionDutyReadPort;
   /** 书记原因点名撤：负责这块的参谋（`technical` 读法，同书记审查认的那位）。 */
@@ -68,23 +77,24 @@ export type ClaimHoldDependencies = {
 export type ActionRoundAdmissionV1 = {
   round: QueryRoundV1;
   duty: 'secretary' | 'adviser';
-  /** 这一轮的版本 + 收下它的那条负责链接的版本。 */
+  /** 这一轮的版本 + 收下它的那条负责链接的版本（请求轮是请求事实的守卫，另见 `readRequestOwner`）。 */
   guards: RecordGuard[];
+  /** 秘书请求轮自己的请求根；别的轮 `null`。动作请求和暂缓的原因据此认来源（转手仍按请求根）。 */
+  requestRoot: QueryJobRef | null;
 };
 
-/** 调用方是问答轮、不是只读副本、不是秘书请求轮：派活、叫停、暂缓、点名撤共同的前三条。 */
+/** 调用方是问答轮、不是只读副本：派活、叫停、暂缓、点名撤共同的前两条。`resolveQueryRound` 自己先拒一切非
+ *  `query_run`（做事轮在那里就是 `forbidden`），这里不再单列做事轮那一支。给了工具名就核这一轮冻结的授予
+ * （Q1a）：没授予就是 `forbidden`，理由照冻结原文。 */
 async function resolveActionRound(
-  ctx: CoreCallContext, deps: Pick<ClaimHoldDependencies, 'queryRounds'>, action: string,
+  ctx: CoreCallContext, deps: Pick<ClaimHoldDependencies, 'queryRounds'>, action: string, grantTool?: string,
 ): Promise<{ status: 'ready'; value: QueryRoundV1 } | CoreRejection> {
-  if (ctx.principal.kind === 'work_run') {
-    return rejected('forbidden', `a work run may not ${action}; ask the Goal's adviser or secretary`);
-  }
   const resolved = await deps.queryRounds.resolveQueryRound(ctx);
   if (resolved.status !== 'ready') return resolved;
   const round = resolved.value;
   if (round.readOnlyCopy) return rejected('forbidden', `a read-only copy may not ${action}`);
-  if (round.requestRound) {
-    return rejected('forbidden', `the action admission of a secretary request round is not wired yet; ${action} from another round`);
+  if (grantTool !== undefined && !round.grantedToolNames.includes(grantTool)) {
+    return rejected('forbidden', '这一轮没有授予这个动作');
   }
   return resolved;
 }
@@ -106,30 +116,111 @@ async function responsibleLinkOf(
   return { status: 'ready', value: ownLink(onProject.value) };
 }
 
-/** 准入：前三条，加职责是秘书或参谋、负责这个目标。 */
+/** 准入：前两条，加职责是秘书或参谋、负责这个目标；给了工具名再核这一轮冻结的授予。 */
 export async function admitActionRound(
   ctx: CoreCallContext, deps: Pick<ClaimHoldDependencies, 'records' | 'queryRounds' | 'duty'>, goalRef: GoalRef,
-  action: string,
+  action: string, grantTool?: string,
 ): Promise<{ status: 'ready'; value: ActionRoundAdmissionV1 } | CoreRejection> {
-  const resolved = await resolveActionRound(ctx, deps, action);
+  const resolved = await resolveActionRound(ctx, deps, action, grantTool);
   return resolved.status !== 'ready' ? resolved : admitResolvedRound(ctx, deps, goalRef, resolved.value, action);
 }
 
-/** 已解析的这一轮的后两条：职责是秘书或参谋、负责这个目标（已解析过的调用方不再解析第二遍）。 */
+/** 秘书请求轮的当前归属：请求根、请求生效的目标、现在的主人、最后一轮的版本，和这次读到的全部请求事实守卫。 */
+async function readRequestOwner(
+  ctx: CoreCallContext, deps: Pick<ClaimHoldDependencies, 'records'>, round: QueryRoundV1,
+): Promise<{ status: 'ready'; requestRoot: QueryJobRef; goalId: string | null; owner: SessionRef | null;
+  tail: { ref: QueryJobRef; revision: number }; guards: RecordGuard[] } | CoreRejection> {
+  // 请求根是 `resolveQueryRound` 已经读到的同一条 QueryJob 上的事实，这里不再按同一个键重读一遍。
+  const requestRoot = round.requestRoot;
+  if (requestRoot === null) return rejected('unavailable', 'the request round QueryJob names no request root');
+  const facts = await readRequestRounds(deps.records, ctx, { requestRoot });
+  if (facts.status !== 'ready') return notReadyRejection(facts, 'the request facts');
+  const tail = facts.value.tail;
+  return { status: 'ready', requestRoot: { ...requestRoot }, goalId: facts.value.effectiveGoalId,
+    owner: facts.value.owner, tail: { ref: { ...tail.ref }, revision: tail.revision }, guards: [...facts.value.guards] };
+}
+
+/**
+ * 放下暂缓和叫停受理共用的来源解析（设计 3.3）：优先请求根（请求轮自己的，或来源消息自带的请求根），
+ * 否则记这一轮的来源消息。读不到来源消息是 `unavailable`，不当成没有来源。
+ */
+export type HoldSourceV1 = {
+  requestRoot: QueryJobRef | null;
+  sourceMessage: QueryRoundV1['sourceMessageRef'];
+};
+
+export async function holdSourceOf(
+  ctx: CoreCallContext, records: Pick<ClaimHoldDependencies, 'records'>,
+  round: Pick<QueryRoundV1, 'sourceMessageRef'>, requestRoot: QueryJobRef | null,
+): Promise<{ status: 'ready'; value: HoldSourceV1 } | CoreRejection> {
+  const requestRootOf = (value: QueryJobRef | null) => value === null ? null : { ...value };
+  if (requestRoot !== null) {
+    return { status: 'ready', value: { requestRoot: requestRootOf(requestRoot),
+      sourceMessage: round.sourceMessageRef === null ? null : { ...round.sourceMessageRef } } };
+  }
+  const source = round.sourceMessageRef;
+  if (source === null) return { status: 'ready', value: { requestRoot: null, sourceMessage: null } };
+  const read = await storedMessageRequestRoot(records.records, source);
+  if (!read.ok) return 'rejection' in read ? read.rejection
+    : rejected('unavailable', 'the round source message is not stored');
+  return { status: 'ready', value: { requestRoot: requestRootOf(read.value), sourceMessage: { ...source } } };
+}
+
+/**
+ * 一条已存消息带的请求根（设计 3.3：转手的信带着同一个请求根）：读这条消息，取它的 `requestRoot`（没有是 `null`）。
+ * 放暂缓、叫停受理、领取推暂缓失效和原请求反馈共用这一份读；读不到、没存下由调用方各自处理：放暂缓按原拒绝
+ * （`unavailable`），领取侧不证明失效。
+ */
+export async function storedMessageRequestRoot(
+  store: Pick<GoalRecordTransactionPort, 'readMany'>, message: SessionMessageRef,
+): Promise<OwnerRecordRead<QueryJobRef | null>> {
+  const read = await readOwnerRecord({ store, refKey: canonicalKey(message), decode: decodeSessionMessageRecord,
+    readError: (reason) => rejected('unavailable', `the source message cannot be read: ${reason}`) });
+  return read.ok ? { ok: true, value: read.value.requestRoot } : read;
+}
+
+/**
+ * 请求轮的准入：这一轮必须是请求当前的秘书（按请求事实的当前归属版本守）；别的轮照旧认负责链接。
+ * `placingSession` 只给点名撤用：放的线就是这一轮时，请求归属本身已经是撤权依据，任务在另一个目标也不再另要目标职责。
+ */
 async function admitResolvedRound(
   ctx: CoreCallContext, deps: Pick<ClaimHoldDependencies, 'records' | 'duty'>, goalRef: GoalRef, round: QueryRoundV1,
-  action: string,
+  action: string, placingSession?: SessionRef | null,
 ): Promise<{ status: 'ready'; value: ActionRoundAdmissionV1 } | CoreRejection> {
   const duty = round.duty;
   if (duty !== 'secretary' && duty !== 'adviser') return rejected('forbidden', `only a secretary or adviser line may ${action}`);
   if (goalRef.projectId !== round.scope.projectId) return rejected('forbidden', 'the Task belongs to another project');
+  if (round.requestRound) {
+    if (duty !== 'secretary') return rejected('forbidden', `only the request's secretary may ${action}`);
+    const current = await readRequestOwner(ctx, deps, round);
+    if (current.status !== 'ready') return current;
+    const owner = current.owner;
+    if (owner === null || canonicalKey(owner) !== canonicalKey(round.session)) {
+      return rejectedWithNonEmptyCurrent('revision_conflict', 'the request owner changed since that revision',
+        [{ ref: current.tail.ref, revision: current.tail.revision }]);
+    }
+    const guards = [...round.guards, ...current.guards];
+    // 请求轮管的是这条请求的目标；任务在另一个目标上时，项目范围的负责链接是唯一的跨目标依据，守它。
+    // 点名撤自己放下的原因时例外：请求当前归属已经核过，放置线的撤权不要求再去证明目标职责。
+    const placedHere = placingSession !== undefined && placingSession !== null
+      && canonicalKey(placingSession) === canonicalKey(round.session);
+    if (current.goalId !== goalRef.goalId && !placedHere) {
+      const link = await responsibleLinkOf(ctx, deps, goalRef, round.session, duty);
+      if (link.status !== 'ready') return notReadyRejection(link, 'the responsibility links');
+      if (link.value === null) {
+        return rejected('forbidden', `the caller line is not responsible for this Goal; it may not ${action}`);
+      }
+      guards.push({ refKey: canonicalKey(link.value.ref), expectedRevision: link.value.revision });
+    }
+    return { status: 'ready', value: { round, duty, guards, requestRoot: current.requestRoot } };
+  }
   const link = await responsibleLinkOf(ctx, deps, goalRef, round.session, duty);
   if (link.status !== 'ready') return notReadyRejection(link, 'the responsibility links');
   if (link.value === null) {
     return rejected('forbidden', `the caller line is not responsible for this Goal; it may not ${action}`);
   }
-  return { status: 'ready', value: { round, duty,
-    guards: [...round.guards, { refKey: canonicalKey(link.value.ref), expectedRevision: link.value.revision }] } };
+  return { status: 'ready', value: { round, duty, guards: [...round.guards,
+    { refKey: canonicalKey(link.value.ref), expectedRevision: link.value.revision }], requestRoot: null } };
 }
 
 /**
@@ -184,6 +275,31 @@ export async function readTaskClaimHold(
   if ('rejection' in read) return read.rejection;
   const hold = 'notFound' in read ? null : read.value;
   return { status: 'ready', hold, guard: { refKey, expectedRevision: hold?.revision ?? null } };
+}
+
+/**
+ * §2.8/T37、S-2：一个项目的全部暂缓记录，按项目索引分页读到底（暂缓记录的工作区是任务所属 Goal 的，项目秘书可以
+ * 给另一工作区的任务放）。请求反馈再按各原因的完整请求根筛，不另扫计划里的任务。解不开的记录是 `unavailable`，
+ * 不当成没有。
+ */
+export async function readTaskClaimHoldsInProject(
+  records: Pick<GoalRecordTransactionPort, 'readMany'> & Pick<RecordLookupPort, 'lookup'>, projectId: string,
+): Promise<{ status: 'ready'; holds: TaskClaimHoldV1[] } | CoreRejection> {
+  let batch;
+  try {
+    batch = await lookupAll(records, TASK_CLAIM_HOLD_BY_PROJECT_LOOKUP, [projectId]);
+  } catch (failure) {
+    return storeFailureToRejection(failure);
+  }
+  const holds: TaskClaimHoldV1[] = [];
+  for (const record of batch.items) {
+    const decoded = taskClaimHoldCodec.decode(record);
+    if (decoded.status !== 'decoded') {
+      return rejected('unavailable', `the claim hold ${record.refKey} cannot be read: ${decoded.reason}`);
+    }
+    holds.push(decoded.value);
+  }
+  return { status: 'ready', holds };
 }
 
 /** 目标和它已采用计划里的这个任务；暂缓只放在计划里、启用的任务上（1.3 `hold_claim` 一行“→ 图”）。 */
@@ -301,13 +417,15 @@ export function createClaimHoldService(deps: ClaimHoldDependencies): ClaimHoldPo
     return writeHold(ctx, {
       operation: 'claim_hold.place', commandId: owned.requestId, fingerprintInput: { taskRef: task, reason: input.reason },
       read: async () => {
-        const admission = await admitActionRound(ctx, deps, goalRef, 'hold a Task claim');
+        const admission = await admitActionRound(ctx, deps, goalRef, 'hold a Task claim', 'hold_claim');
         if (admission.status !== 'ready') return admission;
         const planned = await readPlannedTask(records, task);
         if (planned.status !== 'ready') return planned;
         const hold = await readTaskClaimHold(records, task);
         if (hold.status !== 'ready') return hold;
-        return { status: 'ready', facts: { admission: admission.value, goal: planned.goal, hold } };
+        const source = await holdSourceOf(ctx, deps, admission.value.round, admission.value.requestRoot);
+        if (source.status !== 'ready') return source;
+        return { status: 'ready', facts: { admission: admission.value, goal: planned.goal, hold, source: source.value } };
       },
       change: (facts, keys) => {
         const round = facts.admission.round;
@@ -315,7 +433,8 @@ export function createClaimHoldService(deps: ClaimHoldDependencies): ClaimHoldPo
         return placed(facts, task, {
           kind: 'agent',
           placedBy: { kind: 'agent', session: { ...round.session }, queryRun: { ...round.run }, duty: facts.admission.duty },
-          basis: { kind: 'round', requestRoot: null, sourceMessage: round.sourceMessageRef, round: { ...round.round } },
+          basis: { kind: 'round', requestRoot: facts.source.requestRoot, sourceMessage: facts.source.sourceMessage,
+            round: { ...round.round } },
           reason: input.reason, placedAt: deps.now(),
         }, [...facts.admission.guards, { refKey: canonicalKey(facts.goal.ref), expectedRevision: facts.goal.revision }], keys);
       },
@@ -365,11 +484,30 @@ export function createClaimHoldService(deps: ClaimHoldDependencies): ClaimHoldPo
     ctx: CoreCallContext, task: TaskTriple, reason: TaskClaimHoldV1['reasons'][number],
   ): Promise<{ status: 'ready'; session: SessionRef; guards: RecordGuard[] } | CoreRejection> {
     const goalRef: GoalRef = goalRefFor(task.projectId, task.goalId);
-    const resolved = await resolveActionRound(ctx, deps, 'release a claim hold');
+    const resolved = await resolveActionRound(ctx, deps, 'release a claim hold', 'release_hold');
     if (resolved.status !== 'ready') return resolved;
     const round = resolved.value;
     const isCaller = (session: SessionRef) => session.projectId === round.session.projectId
       && session.sessionId === round.session.sessionId;
+    // 普通原因的放置线：叫停原因看请求方那条线。书记原因不按放置线撤。
+    let placer: SessionRef | null = reason.kind === 'scribe_stop' ? null
+      : reason.placedBy.kind === 'agent' ? reason.placedBy.session : null;
+    if (reason.kind !== 'scribe_stop' && reason.placedBy.kind === 'action') {
+      const request = await readActionRequestRecord(records, reason.placedBy.actionRef);
+      if (request.status !== 'ready') return request;
+      placer = request.record?.requester.session ?? null;
+    }
+    // 秘书请求轮按请求的当前归属准入（Q7c）；普通原因由当前秘书点名撤，书记原因仍只认负责参谋。
+    if (round.requestRound && reason.kind !== 'scribe_stop') {
+      const admitted = await admitResolvedRound(ctx, deps, goalRef, round, 'release a claim hold', placer);
+      if (admitted.status !== 'ready') {
+        return admitted.code === 'forbidden'
+          ? rejected('forbidden', 'this line may not release a claim hold reason it did not place; only the placing line or '
+            + 'this Goal\'s secretary or adviser may')
+          : admitted;
+      }
+      return { status: 'ready', session: round.session, guards: [...admitted.value.guards] };
+    }
     if (reason.kind === 'scribe_stop') {
       // 负责这块的参谋：任务的模块范围先找最窄的区域参谋，否则目标的参谋（`command-review.ts` 的同一读法）。
       const window = await readGoalPlanWindow(records, goalRef);
@@ -382,13 +520,12 @@ export function createClaimHoldService(deps: ClaimHoldDependencies): ClaimHoldPo
       if (adviser.value.kind !== 'session' || !isCaller(adviser.value.session)) {
         return rejected('forbidden', 'only the responsible adviser of this part may release a scribe stop; ask that adviser or the person');
       }
-      return { status: 'ready', session: round.session, guards: [...round.guards] };
-    }
-    let placer: SessionRef | null = reason.placedBy.kind === 'agent' ? reason.placedBy.session : null;
-    if (reason.placedBy.kind === 'action') {
-      const request = await readActionRequestRecord(records, reason.placedBy.actionRef);
-      if (request.status !== 'ready') return request;
-      placer = request.record?.requester.session ?? null;
+      // 不变量：asker:null 时 session 臂必带参与选择的那条链接（区域参谋给它的模块链接，目标参谋给目标链接；
+      // 创建者臂因 asker:null 不会出现），所以这里不需要再判一次 null。
+      const link = adviser.value.link!;
+      // 点名撤的提交守选中那条负责链接的版本：读和提交之间它关闭或换手，这条撤就不成立。
+      return { status: 'ready', session: round.session, guards: [...round.guards,
+        { refKey: canonicalKey(link.ref), expectedRevision: link.revision }] };
     }
     if (placer !== null && isCaller(placer)) return { status: 'ready', session: round.session, guards: [...round.guards] };
     const admission = await admitResolvedRound(ctx, deps, goalRef, round, 'release a claim hold');

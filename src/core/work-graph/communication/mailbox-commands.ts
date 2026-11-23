@@ -1,20 +1,20 @@
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { SessionRef } from '../../../contracts/core/identity.js';
-import type { CoreRejection, WriteResult } from '../../../contracts/core/results.js';
+import type { CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
 import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
 import type { ConsumedWaitV1, RunRef } from '../../../contracts/dispatch.js';
 import type { JsonValue } from '../../../contracts/fingerprint.js';
-import type { QueryJobAnswerRef, QueryRunRef } from '../../../contracts/query-job.js';
+import { interventionPlanningQueryRefs, type QueryJobAnswerRef, type QueryRunRef } from '../../../contracts/query-job.js';
 import type { RecordGuard } from '../../record-store/ports.js';
 import type {
   MessageQueryRoundSender, MessageSender, MessageWorkRunSender, SessionMessage, SessionMessageRespondInputV1,
 } from '../model/communication-contracts.js';
 import type { SessionMessageCommitCompanions, SessionMessageWriteCommandV1 } from '../model/decision-contracts.js';
 import type { GraphWrite } from '../model/task-contracts.js';
-import type { TaskExecutionRecord } from '../model/execution-read-contracts.js';
 import type { WriteCommand } from '../persistence/command-executor.js';
-import type { MessageGuardContext } from '../state/message-machine.js';
-import type { AuthOutcome, MailboxContext, Unknown, WithdrawFacts, WithdrawDecision, ReleaseFacts, ReleaseDecision, Owned, QueryAnswerFacts } from './mailbox-types.js';
+import type { MessageGuardContext, MessageResponseSlotV1 } from '../state/message-machine.js';
+import type { QueryRoundV1 } from '../model/query-round-contracts.js';
+import type { AuthOutcome, MailboxContext, Unknown, WithdrawFacts, WithdrawDecision, Owned, QueryAnswerFacts } from './mailbox-types.js';
 import { sameActorIdentity as sameActor } from '../../../contracts/actor-equality.js';
 import { principalIdentity } from '../../../contracts/core/call-context.js';
 import { rejectedWithCurrent as reject } from '../../../contracts/core/rejections.js';
@@ -24,70 +24,14 @@ import { deriveSessionInputId, waitConsumedClaimKey } from '../model/communicati
 import { normalizeRespondMessageInput } from '../model/message-payload.js';
 import { executeWriteCommand } from '../persistence/command-executor.js';
 import { sessionStoreFailureToRejection } from '../persistence/read-result-failures.js';
-import { SESSION_MESSAGE_MAX_TEXT_BYTES } from '../sessions/message-record-codecs.js';
-import { effectiveReplyHandler, inputObserverProblem, nextSessionMessageRecord, waitFactsOfRecord } from '../state/message-machine.js';
-import { ownsInbox } from './mailbox-access.js';
+import { SESSION_MESSAGE_MAX_TEXT_BYTES, isSystemRoundSender } from '../sessions/message-record-codecs.js';
+import { effectiveReplyHandler, inputObserverProblem, nextSessionMessageRecord, replyStillBoundToWait,
+  waitFactsOfRecord } from '../state/message-machine.js';
+import { ownsInbox, readMessage } from './mailbox-access.js';
 import { isUserRecipient, mapReadResult, internalHostContext, ownContext, ownWrite, normalizeText, normalizeMessageRef, scopeOfMessageRef, guardRejection, principalRefusal, pinsOf, judge, refusalOf, sameSessionRefAs, senderIdentityOf, identityKeyOf, fingerprintOf, eventIdOf, loadMessage, loadMessageForWrite, acceptedMessage } from './mailbox-common.js';
-import { readFreshWorkRunFacts, readWorkRunIdentity, deriveWorkRunSender, authorizeNewWorkRunAction, loadQueryRun, readQueryAnswerFacts, resolveSecretaryRound, interventionSourceFormallyEnded, nonRequestQueryRound } from './mailbox-identity.js';
-import { replayMessage, refuse, writeMessage, prepareSessionMessage, releaseDecidedChange, messageWriteResult, withdrawnResult, releaseDecidedResult } from './mailbox-write.js';
-
-// ---- ackMessage ---------------------------------------------------------
-
-export async function ackMessage(mailbox: MailboxContext, ctx: CoreCallContext, request: GraphWrite<{ messageRef: SessionMessageRef }>): Promise<WriteResult<SessionMessage>> {
-  const owned = ownContext(ctx);
-  if (!owned.ok) return owned.rejection;
-  if (owned.principal.kind !== 'work_run') return principalRefusal(owned.principal, { type: 'message_read' });
-  if (owned.signal.aborted) return reject('cancelled', 'the acknowledgement was cancelled before validation');
-  const write = ownWrite(request);
-  if (!write.ok) return write.rejection;
-  const raw = write.input as unknown as Unknown | null | undefined;
-  if (!isObject(raw)) return reject('invalid', 'ackMessage requires an input object');
-  const normalized = normalizeMessageRef(raw['messageRef']);
-  if (!normalized.ok) return reject('invalid', normalized.reason);
-  const identity = await readWorkRunIdentity(mailbox, owned, owned.principal, owned.principal.runRef);
-  if (!identity.ok) return identity.rejection;
-  // Rule W/M4: the message is in the sending line's workspace; the Run identity stays the Run's.
-  const scopeProblem = scopeOfMessageRef(owned, normalized.ref, identity.session.workspaceId);
-  if (scopeProblem !== null) return scopeProblem;
-  const pins = pinsOf(write.expected, normalized.ref);
-  if (!pins.ok) return pins.rejection;
-
-  const derived = deriveWorkRunSender(mailbox, identity);
-  if (!derived.ok) return derived.rejection;
-  const sender = derived.sender;
-  const senderIdentity = senderIdentityOf(sender);
-  const identityKey = identityKeyOf('ack', owned, senderIdentity, write.requestId);
-  const fingerprint = fingerprintOf('ack', owned, senderIdentity, { messageRef: normalized.ref }, write.expected);
-  if (owned.signal.aborted) return reject('cancelled', 'the acknowledgement was cancelled before the idempotency lookup');
-  const existing = await mailbox.records.lookupCommit({ identityKey, fingerprint });
-  if (existing.status === 'ready') return replayMessage(mailbox, existing.value);
-  if (existing.code !== 'not_found') return sessionStoreFailureToRejection(existing);
-  const authorized = await authorizeNewWorkRunAction(mailbox, {
-    owned, principal: owned.principal, operationToolName: 'ack_session_message',
-  });
-  // MSG-03. A refused admission never reads the message (the machine asks the
-  // admission before the record).
-  const read = authorized.ok ? await loadMessageForWrite(mailbox, owned, normalized.ref) : { ok: true as const, message: null };
-  if (!read.ok) return read.rejection;
-  const message = read.message;
-  const { decided, ctx: messageCtx } = judge(owned.principal, message, { type: 'message_read' }, {
-    workRunAuthorization: authorized.ok ? 'ok' : authorized.rejection,
-    callerIsRecipient: message === null ? null : ownsInbox(mailbox, sender.sessionRef, message),
-    pins: pins.pins,
-  });
-  // A same-identity request may have committed this exact acknowledgement
-  // while this call sat between its first receipt miss and the message read:
-  // its receipt is restored (`refuse`); a genuine different request
-  // keeps the domain rejection and never commits a second time.
-  if (!decided.ok) return refuse(mailbox, decided, messageCtx, identityKey, fingerprint);
-  const current = acceptedMessage(message);
-  return writeMessage(mailbox, decided, {
-    owned, identityKey, fingerprint, requestId: write.requestId, actor: sender, admission: authorized,
-    cancelled: 'the acknowledgement was cancelled before commit',
-    body: null,
-    record: (readAt) => nextSessionMessageRecord(current, { kind: 'read', readAt }),
-  });
-}
+import { readFreshWorkRunFacts, readWorkRunIdentity, deriveWorkRunSender, authorizeNewWorkRunAction, loadQueryJob, loadQueryRun, readQueryAnswerFacts, interventionSourceFormallyEnded, nonRequestQueryRound, requiredQueryRound, queryWorkspaceOfMessage, decisionAnswerQueryOf } from './mailbox-identity.js';
+import { canonicalRefKey } from '../persistence/record-codecs.js';
+import { replayMessage, refuse, writeMessage, prepareSessionMessage, messageWriteResult, withdrawnResult } from './mailbox-write.js';
 
 // ---- respondMessage -----------------------------------------------------
 
@@ -123,8 +67,8 @@ function respondInputOf(request: SessionMessageRespondInputV1): { ok: true; valu
 export async function respondMessage(mailbox: MailboxContext, ctx: CoreCallContext, request: SessionMessageRespondInputV1): Promise<WriteResult<SessionMessage>> {
   const owned = ownContext(ctx);
   if (!owned.ok) return owned.rejection;
-  // 配了问答轮身份时，`query_run` 调用方先查回执再解析：非请求问答轮写它自己的文字回复，其余照旧拒。
-  if (owned.principal.kind === 'query_run' && mailbox.deps.queryRounds !== undefined) {
+  // `query_run` 调用方先查回执再解析：问答轮写它自己的文字回复，解析不出的照旧拒。
+  if (owned.principal.kind === 'query_run') {
     return respondAsQueryRound(mailbox, owned, owned.principal.queryRunRef, request);
   }
   if (owned.principal.kind !== 'work_run') return principalRefusal(owned.principal, { type: 'message_responded', via: 'text' });
@@ -161,9 +105,10 @@ export async function respondMessage(mailbox: MailboxContext, ctx: CoreCallConte
 }
 
 /**
- * 非请求问答轮回复它收到的信：回复人是本轮 Session、QueryRun 和代数（不带 `answerRef`，正式答复另走 MSG-06）；
+ * 问答轮回复它收到的信：回复人是本轮 Session、QueryRun 和代数（不带 `answerRef`，正式答复另走 MSG-06）；
  * 收件人才能回（`ownsInbox`）；守本轮读到的 QueryRun 和 Session 版本和消息 CAS。身份只认字面 QueryRun，
- * 先查回执再解析；解析不出非请求轮的照今天拒。回复槽归谁写（这一轮的来源由这一轮的结论回）不在这里判。
+ * 先查回执再解析；秘书请求轮也走这一口回普通来信（`allowRequestRound`），解析不出的照今天拒。回复槽归谁写
+ * （这一轮的来源由这一轮的结论回）不在这里判。
  */
 async function respondAsQueryRound(mailbox: MailboxContext, owned: Owned, queryRunRef: QueryRunRef,
   request: SessionMessageRespondInputV1):
@@ -183,12 +128,14 @@ async function respondAsQueryRound(mailbox: MailboxContext, owned: Owned, queryR
   const existing = await mailbox.records.lookupCommit({ identityKey, fingerprint });
   if (existing.status === 'ready') return replayMessage(mailbox, existing.value);
   if (existing.code !== 'not_found') return sessionStoreFailureToRejection(existing);
-  const routed = await nonRequestQueryRound(mailbox, owned);
+  const routed = await nonRequestQueryRound(mailbox, owned, { allowRequestRound: true });
   if (!routed.ok) return routed.rejection;
   const round = routed.round;
   if (round === null) return principalRefusal(owned.principal, { type: 'message_responded', via: 'text' });
   // 副本不冒充原线，永不回复。
   if (round.readOnlyCopy) return reject('forbidden', 'a read-only copy never replies to a Session message');
+  // C23: an independent reviewer never replies; its own send right is notify-only.
+  if (round.duty === 'reviewer') return reject('forbidden', '独立审阅只发请知悉');
   // 问答轮收到的信在线的工作区（规则 W）。
   const scopeProblem = scopeOfMessageRef(owned, messageRef, round.lineWorkspaceId);
   if (scopeProblem !== null) return scopeProblem;
@@ -196,6 +143,38 @@ async function respondAsQueryRound(mailbox: MailboxContext, owned: Owned, queryR
     queryRunRef: { ...round.run }, generation: round.sessionGeneration };
   return commitTextResponse(mailbox, owned, { requestId: input.value.requestId, messageRef, arm, text: saved.text,
     pins: pins.pins, sender, identityKey, fingerprint, authorized: null, extraGuards: round.guards });
+}
+
+/**
+ * §2.4: the owner-verified owner of this message's one reply slot. A trusted system round's source, a module-overlap
+ * gate's saved note request (design 5.1: settled only by its note round, even before that round exists), a copy
+ * question, a user card and a plain source whose deterministic planning Query already exists each keep their
+ * own writer; only a message with none of those facts has the generic slot a text reply may fill. The caller's
+ * `queryJobRef` is the same ordinary source Query the reply commit guards.
+ */
+async function replySlotOwnerOf(mailbox: MailboxContext, owned: Owned, message: SessionMessage,
+  queryJobRef: ReturnType<typeof interventionPlanningQueryRefs>['queryJobRef']):
+Promise<{ ok: true; slot: MessageResponseSlotV1 } | { ok: false; rejection: CoreRejection }> {
+  const hostCtx = internalHostContext(mailbox, { ...owned, workspaceId: message.ref.workspaceId });
+  // Design 2.2/2.6: the fixed sender only proposes a system round; the shared trusted read decides, so a forward copy
+  // of a round's letter has the generic slot of its actual recipient.
+  if (isSystemRoundSender(message.sender)) {
+    const round = await mailbox.deps.systemRounds?.readSystemRoundSource(hostCtx, message);
+    if (round === undefined) return { ok: true, slot: 'system' };
+    if (round.status !== 'ready') return { ok: false, rejection: mapReadResult(round) as CoreRejection };
+    if (round.value !== null) return { ok: true, slot: 'system' };
+  }
+  const gateNote = await mailbox.deps.gateNotes?.readGateNote(hostCtx, message);
+  if (gateNote !== undefined && gateNote.status !== 'ready') {
+    return { ok: false, rejection: mapReadResult(gateNote) as CoreRejection };
+  }
+  if (gateNote?.status === 'ready' && gateNote.value !== null) return { ok: true, slot: 'system' };
+  if (message.answeredBy === 'copy') return { ok: true, slot: 'copy' };
+  if (isUserRecipient(message.recipient) && message.decision !== undefined) return { ok: true, slot: 'card' };
+  const sourceRead = await loadQueryJob(mailbox, owned, queryJobRef);
+  if (sourceRead.status === 'ready') return { ok: true, slot: 'round' };
+  if (sourceRead.status !== 'not_found') return { ok: false, rejection: mapReadResult(sourceRead) as CoreRejection };
+  return { ok: true, slot: 'generic' };
 }
 
 /**
@@ -213,6 +192,23 @@ async function commitTextResponse(mailbox: MailboxContext, owned: Owned, input: 
     ? await loadMessageForWrite(mailbox, owned, input.messageRef) : { ok: true as const, message: null };
   if (!read.ok) return read.rejection;
   const message = read.message;
+  const current = message === null ? null : acceptedMessage(message);
+  // 通用回复守消息版本（persist 的消息 CAS）和这条来源消息的普通来源 Query 不存在：普通来信开轮时
+  // 守来源消息版本并确认尚无回复，回复提交守另一侧，两边不会同时成立。
+  let ordinarySourceQuery: RecordGuard | null = null;
+  let responseSlot: MessageResponseSlotV1 | null = null;
+  if (current !== null) {
+    const queryWorkspace = await queryWorkspaceOfMessage(mailbox, current);
+    if (!queryWorkspace.ok) return queryWorkspace.rejection;
+    const sourceQueryRef = interventionPlanningQueryRefs(current.ref, queryWorkspace.workspaceId).queryJobRef;
+    ordinarySourceQuery = { refKey: canonicalRefKey(sourceQueryRef), expectedRevision: null };
+    // §2.4: the same read names the slot's real owner, so a text reply to a round's source, a copy question, a
+    // system-round source or a user card is refused by the machine's own slot rule (and a copy's changed binding is
+    // `source_stale`).
+    const slotOwner = await replySlotOwnerOf(mailbox, owned, current, sourceQueryRef);
+    if (!slotOwner.ok) return slotOwner.rejection;
+    responseSlot = slotOwner.slot;
+  }
   const { decided, ctx: messageCtx } = judge(owned.principal, message,
     arm.reject === true
       ? { type: 'message_responded', via: 'text', rejected: true }
@@ -220,17 +216,18 @@ async function commitTextResponse(mailbox: MailboxContext, owned: Owned, input: 
     workRunAuthorization: authorized === null ? null : authorized.ok ? 'ok' : authorized.rejection,
     callerIsRecipient: message === null ? null : ownsInbox(mailbox, sender.sessionRef, message),
     pins: input.pins,
+    responseSlot,
     bodyBounded: true, // `normalizeText` held with the request
   });
   // See the acknowledgement: this exact identity's committed receipt is
   // restored instead of a second, conflicting rejection.
   if (!decided.ok) return refuse(mailbox, decided, messageCtx, identityKey, fingerprint);
-  const current = acceptedMessage(message);
+  if (current === null) throw new Error('MSG-04/05 accepted a response to an absent message');
   return writeMessage(mailbox, decided, {
     owned, identityKey, fingerprint, requestId: input.requestId, actor: sender, admission: authorized,
     cancelled: 'the response was cancelled before commit',
     body: { messageRef: current.ref, text: input.text, answerSource: null },
-    ...(input.extraGuards === undefined ? {} : { extraGuards: input.extraGuards }),
+    extraGuards: [...(input.extraGuards ?? []), ...(ordinarySourceQuery === null ? [] : [ordinarySourceQuery])],
     ...(arm.reject === true ? { acceptedRejectedAt: true as const } : {}),
     // A refusal and an application share one first-wins slot; the time is
     // this commit's own instant.
@@ -304,6 +301,8 @@ export async function respondFromQueryAnswer(mailbox: MailboxContext,
   const { decided, ctx: messageCtx } = judge(owned.principal, message, { type: 'message_responded', via: 'query_answer' }, {
     pins: pins.pins,
     queryAnswer: facts === null ? null : facts.verdict,
+    // A copy question's changed binding is the guard failure `source_stale`; a line question keeps today's refusal.
+    responseSlot: message !== null && message.answeredBy === 'copy' ? 'copy' : null,
     bodyBounded: facts === null ? null : facts.bodyBounded,
   });
   if (!decided.ok && (message === null || decided.reason === 'guard_failed')) return refusalOf(decided, messageCtx);
@@ -421,16 +420,37 @@ export async function recordInputAccepted(mailbox: MailboxContext,
   if (executionRef['projectId'] !== owned.projectId) {
     return reject('forbidden', 'the accepted input execution is outside the project');
   }
-  // Rule W/M4: the accepted input message belongs to the execution Session's workspace; the
-  // execution identity stays the Run's. The one fresh Run read also supplies the execution
-  // facts below, so it is taken here and reused.
+  // Rule W/M4: the accepted input message belongs to the executing Session's workspace; the
+  // execution identity stays the Run's or the Query's. The one fresh execution read also
+  // supplies the facts below, so it is taken here and reused.
   let messageWorkspaceId = owned.workspaceId;
-  let runRecord: TaskExecutionRecord | null = null;
+  let actualSession: SessionRef;
+  let actualKernel: { adapterId: string; kernelSessionId: string; runId: string; turnId: string } | null | undefined;
+  let consumedWait: ConsumedWaitV1 | null = null;
   if (executionRef['aggregateType'] === 'Run') {
     const runFacts = await readFreshWorkRunFacts(mailbox, owned, executionRef as unknown as RunRef);
     if (!runFacts.ok) return runFacts.rejection;
-    runRecord = runFacts.record;
+    const runRecord = runFacts.record;
     messageWorkspaceId = runRecord.session.workspaceId;
+    actualSession = { projectId: runRecord.outbox.claim.sessionRef.projectId, sessionId: runRecord.outbox.claim.sessionRef.sessionId };
+    const authorization = runRecord.run.executionAuthorization;
+    actualKernel = runRecord.run.executionHistory?.kernel ?? authorization?.kernel;
+    consumedWait = runRecord.run.consumedWait ?? null;
+  } else {
+    if (executionRef['workspaceId'] !== owned.workspaceId) return reject('forbidden', 'Query execution is outside the workspace');
+    const queryFacts = await loadQueryRun(mailbox, owned, executionRef as unknown as QueryRunRef);
+    if (queryFacts.status !== 'ready') return mapReadResult(queryFacts) as CoreRejection;
+    const state = queryFacts.value.run.executionState;
+    if (state === undefined) return reject('unavailable', 'Query has no execution identity');
+    actualSession = { projectId: state.sessionRef.projectId, sessionId: state.sessionRef.sessionId };
+    actualKernel = state.entry?.kernel;
+    // Rule W/M4: the accepted input message belongs to the claimed Session's
+    // workspace, not the Query execution's. The QueryRef keeps its own scope;
+    // the persistent claimed Session supplies the message workspace.
+    const sessionRead = await mailbox.deps.sessions.readSession(
+      internalHostContext(mailbox, owned), actualSession, 'project');
+    if (sessionRead.status !== 'ready') return mapReadResult(sessionRead) as CoreRejection;
+    messageWorkspaceId = sessionRead.value.record.workspaceId;
   }
   const scopeProblem = scopeOfMessageRef(owned, normalized.ref, messageWorkspaceId);
   if (scopeProblem !== null) return scopeProblem;
@@ -458,35 +478,28 @@ export async function recordInputAccepted(mailbox: MailboxContext,
   let facts: MessageGuardContext['inputAccepted'] = null;
   let boundHere = false;
   if (message !== null) {
-    let actualSession: SessionRef;
-    let actualKernel: { adapterId: string; kernelSessionId: string; runId: string; turnId: string } | null | undefined;
-    let consumedWait: ConsumedWaitV1 | null = null;
-    if (runRecord !== null) {
-      actualSession = { projectId: runRecord.outbox.claim.sessionRef.projectId, sessionId: runRecord.outbox.claim.sessionRef.sessionId };
-      const authorization = runRecord.run.executionAuthorization;
-      actualKernel = runRecord.run.executionHistory?.kernel ?? authorization?.kernel;
-      consumedWait = runRecord.run.consumedWait ?? null;
-    } else {
-      if (executionRef['workspaceId'] !== owned.workspaceId) return reject('forbidden', 'Query execution is outside the workspace');
-      const queryFacts = await loadQueryRun(mailbox, owned, executionRef as unknown as QueryRunRef);
-      if (queryFacts.status !== 'ready') return mapReadResult(queryFacts) as CoreRejection;
-      const state = queryFacts.value.run.executionState;
-      if (state === undefined) return reject('unavailable', 'Query has no execution identity');
-      actualSession = { projectId: state.sessionRef.projectId, sessionId: state.sessionRef.sessionId };
-      actualKernel = state.entry?.kernel;
-    }
     // The same original event is identified independently of observing
     // actor/revision: an entry of another executionRef or Kernel position is
     // another event's; this event's own entry is the machine's duplicate.
     const accepted = (message.acceptedInputs ?? []).find(entry => entry.inputId === inputId);
     const intervention = consumedWait !== null && consumedWait.kind === 'intervention';
-    const handlerHere = part === 'response' && !intervention
-      && effectiveReplyHandler(message) !== null
-      && canonicalOf(effectiveReplyHandler(message)) === canonicalOf(actualSession);
+    // 默认回复处理线只认 work_run/secretary_round；agent `ask_person` 卡的发件线也可以是 query_run，
+    // 卡答的接受身份按这条发件线核（`effectiveReplyHandler` 是唯一正本，这里只补它不收的 query_run 发件人）。
+    const replyHandler = effectiveReplyHandler(message)
+      ?? (message.sender.kind === 'query_run' ? message.sender.sessionRef : null);
+    // A reply still bound to its original wait belongs to that wait, never to an intervention; an
+    // ordinary asynchronous reply to this line records acceptance alone. The safe-point supply
+    // applies the same predicate.
+    const handlerHere = part === 'response'
+      && replyHandler !== null
+      && canonicalOf(replyHandler) === canonicalOf(actualSession)
+      && !(intervention && replyStillBoundToWait(message));
     const waitBoundHere = !intervention && consumedWait !== null
       && (part === 'expiry' ? consumedWait.kind === 'expiry' : consumedWait.kind === 'wait_reply')
       && canonicalOf(consumedWait.messageRef) === canonicalOf(message.ref);
-    boundHere = waitBoundHere || handlerHere;
+    // Only a wait actually bound to this execution, or a transferred wait this handler still owns
+    // unconsumed, consumes the wait; an ordinary asynchronous or late reply records acceptance alone.
+    boundHere = waitBoundHere || (handlerHere && replyStillBoundToWait(message));
     facts = {
       observerOwnsExecution,
       kernelMatches: actualKernel !== undefined && actualKernel !== null
@@ -511,10 +524,21 @@ export async function recordInputAccepted(mailbox: MailboxContext,
   // this event's own without its receipt) re-check the receipt first.
   if (!decided.ok) return refuse(mailbox, decided, messageCtx, identityKey, fingerprint);
   const current = acceptedMessage(message);
+  // 已答 agent `ask_person` 卡的接受提交守它自己的 `decision_answer` Query 还不存在（新 Query 从 revision 1 起，
+  // 不能写 revision 0）；平台卡、普通回复不走这一支。
+  let extraGuards: RecordGuard[] = [];
+  if (part === 'response' && current.response !== null) {
+    const cardRound = await decisionAnswerQueryOf(mailbox, current);
+    if (!cardRound.ok) return cardRound.rejection;
+    if (cardRound.queryJobRef !== null) {
+      extraGuards = [{ refKey: canonicalRefKey(cardRound.queryJobRef), expectedRevision: null }];
+    }
+  }
   return writeMessage(mailbox, decided, {
     owned, identityKey, fingerprint, requestId: write.requestId, actor: sender, admission: null,
     cancelled: 'the input acceptance was cancelled before commit',
     body: null,
+    ...(extraGuards.length === 0 ? {} : { extraGuards }),
     record: (acceptedAt) => nextSessionMessageRecord(current, {
       kind: 'input_accepted',
       input: {
@@ -529,6 +553,27 @@ export async function recordInputAccepted(mailbox: MailboxContext,
   });
 }
 
+/**
+ * Design 2.3 (a card answer reaches the line once): whether an answered agent `ask_person` card's answer is already
+ * taken by its own card-answer round. The card is read through the caller's own read admission, then its one
+ * card-answer Query by key (`decisionAnswerQueryOf`, the key the acceptance above guards absent). Every read failure
+ * is the failure.
+ */
+export async function readDecisionAnswerTaken(mailbox: MailboxContext, ctx: CoreCallContext,
+  input: { messageRef: SessionMessageRef }): Promise<ReadResult<boolean>> {
+  const owned = ownContext(ctx);
+  if (!owned.ok) return owned.rejection;
+  const card = await readMessage(mailbox, ctx, input.messageRef);
+  if (card.status !== 'ready') return card;
+  const cardRound = await decisionAnswerQueryOf(mailbox, card.value);
+  if (!cardRound.ok) return cardRound.rejection;
+  if (cardRound.queryJobRef === null) return { status: 'ready', value: false };
+  const job = await loadQueryJob(mailbox, owned, cardRound.queryJobRef);
+  if (job.status === 'not_found') return { status: 'ready', value: false };
+  if (job.status !== 'ready') return mapReadResult(job) as CoreRejection;
+  return { status: 'ready', value: true };
+}
+
 // ---- message.withdraw ---------------------------------------------------
 
 /**
@@ -538,8 +583,8 @@ export async function recordInputAccepted(mailbox: MailboxContext,
  * machine's, decided by `decideWithdraw`.
  */
 
-async function readWithdrawFacts(mailbox: MailboxContext, owned: Owned, ref: SessionMessageRef):
-Promise<{ status: 'ready'; facts: WithdrawFacts } | CoreRejection> {
+async function readWithdrawFacts(mailbox: MailboxContext, owned: Owned, ref: SessionMessageRef,
+  queryRound: QueryRoundV1 | null): Promise<{ status: 'ready'; facts: WithdrawFacts } | CoreRejection> {
   const loaded = await loadMessage(mailbox, owned, ref);
   if (loaded.status === 'not_found') return reject('not_found', 'the message does not exist');
   if (loaded.status !== 'ready') {
@@ -562,26 +607,27 @@ Promise<{ status: 'ready'; facts: WithdrawFacts } | CoreRejection> {
       if (!ended.ok) return reject('forbidden', 'a Host system sender may withdraw only its own message');
     }
   } else if (owned.principal.kind === 'query_run') {
-    // The secretary withdraws only a message of the same resolved round.
-    if (mailbox.deps.secretaryRounds === undefined) {
-      return reject('unsupported', 'the secretary withdraw is not configured');
+    // `withdrawMessage` resolved this caller's round through `requiredQueryRound`, so a query_run caller has one.
+    const round = queryRound!;
+    // A trusted query round withdraws only a message its own line sent, whatever that round's sender kind
+    // (`query_run` text or a request round's `secretary_round`). The commit carries this round's versions.
+    if (round.readOnlyCopy) {
+      return reject('forbidden', 'a read-only copy never withdraws a Session message');
     }
-    const resolved = await resolveSecretaryRound(mailbox, owned);
-    if (!resolved.ok) return resolved.rejection;
-    const round = resolved.round;
-    if (message.sender.kind !== 'secretary_round'
-      || canonicalOf(message.sender.queryRunRef) !== canonicalOf(round.run)
-      || !sameSessionRefAs(message.sender.sessionRef, round.session)) {
-      return reject('forbidden', 'a secretary may withdraw only a message of its own resolved round');
+    const sentByLine = (message.sender.kind === 'query_run' || message.sender.kind === 'secretary_round')
+      && sameSessionRefAs(message.sender.sessionRef, round.session);
+    if (!sentByLine) {
+      return reject('forbidden', 'a query round may withdraw only a message of its own line');
     }
     actor = message.sender;
+    guards = round.guards;
   } else {
     const identity = await readWorkRunIdentity(mailbox, owned, owned.principal, owned.principal.runRef);
     if (!identity.ok) return identity.rejection;
     const derived = deriveWorkRunSender(mailbox, identity);
     if (!derived.ok) return derived.rejection;
     const authorized = await authorizeNewWorkRunAction(mailbox, {
-      owned, principal: owned.principal, operationToolName: 'send_session_message',
+      owned, principal: owned.principal, operationToolName: 'withdraw_session_message',
     });
     if (!authorized.ok) return authorized.rejection;
     if (message.sender.kind !== 'work_run'
@@ -637,48 +683,6 @@ function decideWithdraw(mailbox: MailboxContext, owned: Owned, facts: WithdrawFa
   };
 }
 
-// ---- message.release -----------------------------------------------------
-
-/**
- * The approve/deny facts: the message and the person's own actor. Only the
- * Host human actor is a person; the awaiting-only state refusal is the
- * machine's, decided by `decideRelease`.
- */
-async function readReleaseFacts(mailbox: MailboxContext, owned: Owned, ref: SessionMessageRef):
-Promise<{ status: 'ready'; facts: ReleaseFacts } | CoreRejection> {
-  const loaded = await loadMessage(mailbox, owned, ref);
-  if (loaded.status === 'not_found') return reject('not_found', 'the message does not exist');
-  if (loaded.status !== 'ready') {
-    return loaded.status === 'rejected' ? loaded : mapReadResult(loaded) as CoreRejection;
-  }
-  if (owned.principal.kind !== 'host' || owned.principal.actor.kind !== 'human') {
-    return reject('forbidden', 'only the person may approve or deny a release');
-  }
-  return {
-    status: 'ready',
-    facts: {
-      message: loaded.value,
-      actor: { kind: 'host', actor: { ...owned.principal.actor } },
-    },
-  };
-}
-
-/** The machine decides the awaiting-only admission; the owner supplies the one clock. */
-function decideRelease(mailbox: MailboxContext, owned: Owned, facts: ReleaseFacts, allow: boolean):
-{ refuse: CoreRejection } | { decision: ReleaseDecision } {
-  const { decided, ctx } = judge(owned.principal, facts.message,
-    { type: 'message_release_decided', allow }, {});
-  if (!decided.ok) return { refuse: refusalOf(decided, ctx) };
-  const at = mailbox.deps.now();
-  if (!nonEmpty(at)) return { refuse: reject('invalid', 'the injected clock is not a legal instant') };
-  return {
-    decision: {
-      before: facts.message, change: releaseDecidedChange(facts.message, allow, at, null),
-      at, actor: facts.actor,
-    },
-  };
-}
-
 export async function withdrawMessage(mailbox: MailboxContext, ctx: CoreCallContext, request: GraphWrite<{ messageRef: SessionMessageRef }>):
 Promise<WriteResult<SessionMessage>> {
   const owned = ownContext(ctx);
@@ -689,15 +693,22 @@ Promise<WriteResult<SessionMessage>> {
   const normalized = normalizeMessageRef(rawRef);
   if (!normalized.ok) return reject('invalid', normalized.reason);
   const ref = normalized.ref;
-  // Rule W/M4: the message is in the sending line's workspace; the Run identity stays the Run's.
-  let messageWorkspaceId = owned.workspaceId;
-  if (owned.principal.kind === 'work_run') {
-    const identity = await readWorkRunIdentity(mailbox, owned, owned.principal, owned.principal.runRef);
-    if (!identity.ok) return identity.rejection;
-    messageWorkspaceId = identity.session.workspaceId;
+  // A message that needs no reply may cross workspaces and is then written in the recipient line's workspace;
+  // its own record, not the sending line's workspace, says where it lives. An agent caller is checked
+  // against the project here and against its trusted sending Session after the record is read; the Host
+  // person keeps the workspace bound to the call.
+  let queryRound: QueryRoundV1 | null = null;
+  if (owned.principal.kind === 'query_run') {
+    const routed = await requiredQueryRound(mailbox, owned);
+    if (!routed.ok) return routed.rejection;
+    queryRound = routed.round;
   }
-  const scopeProblem = scopeOfMessageRef(owned, ref, messageWorkspaceId);
-  if (scopeProblem !== null) return scopeProblem;
+  if (owned.principal.kind === 'host') {
+    const scopeProblem = scopeOfMessageRef(owned, ref);
+    if (scopeProblem !== null) return scopeProblem;
+  } else if (ref.projectId !== owned.projectId) {
+    return reject('invalid', 'the message ref is outside the bound project/workspace');
+  }
 
   const withdrawCommand: WriteCommand<WithdrawFacts, WithdrawDecision, CoreRejection, SessionMessage, SessionMessage> = {
     operation: 'message.withdraw',
@@ -705,7 +716,7 @@ Promise<WriteResult<SessionMessage>> {
     principal: principalIdentity(owned.principal),
     commandId: write.requestId,
     fingerprintInput: { messageRef: ref },
-    read: () => readWithdrawFacts(mailbox, owned, ref),
+    read: () => readWithdrawFacts(mailbox, owned, ref, queryRound),
     decide: (facts) => decideWithdraw(mailbox, owned, facts),
     build: async (decision, keys) => {
       const command: SessionMessageWriteCommandV1 = {
@@ -731,55 +742,4 @@ Promise<WriteResult<SessionMessage>> {
     result: withdrawnResult,
   };
   return messageWriteResult(await executeWriteCommand(mailbox.records, withdrawCommand));
-}
-export async function releaseMessage(mailbox: MailboxContext, ctx: CoreCallContext,
-  request: GraphWrite<{ messageRef: SessionMessageRef; allow: boolean }>): Promise<WriteResult<SessionMessage>> {
-  const owned = ownContext(ctx);
-  if (!owned.ok) return owned.rejection;
-  const write = ownWrite(request);
-  if (!write.ok) return write.rejection;
-  const raw = write.input as unknown as { messageRef?: unknown; allow?: unknown } | null | undefined;
-  const normalized = normalizeMessageRef(raw?.messageRef);
-  if (!normalized.ok) return reject('invalid', normalized.reason);
-  const ref = normalized.ref;
-  const scopeProblem = scopeOfMessageRef(owned, ref);
-  if (scopeProblem !== null) return scopeProblem;
-  const allow = raw?.allow;
-  if (typeof allow !== 'boolean') return reject('invalid', 'releaseMessage requires allow to be a boolean');
-
-  const releaseCommand: WriteCommand<ReleaseFacts, ReleaseDecision, CoreRejection,
-    SessionMessage, SessionMessage> = {
-    operation: 'message.release',
-    scope: { projectId: owned.projectId, workspaceId: owned.workspaceId },
-    principal: principalIdentity(owned.principal),
-    commandId: write.requestId,
-    fingerprintInput: { messageRef: ref, allow },
-    read: () => readReleaseFacts(mailbox, owned, ref),
-    decide: (facts) => decideRelease(mailbox, owned, facts, allow),
-    build: async (decision, keys) => {
-      const command: SessionMessageWriteCommandV1 = {
-        operation: 'message.release',
-        messageRef: decision.before.ref,
-        before: decision.before,
-        expectedRevision: decision.before.revision,
-        event: {
-          eventId: eventIdOf(keys.identityKey, 'SessionMessageReleaseDecided'),
-          occurredAt: decision.at,
-          requestId: write.requestId,
-          projectId: owned.projectId,
-          workspaceId: owned.workspaceId,
-          actor: decision.actor,
-        },
-        change: decision.change,
-      };
-      // No version check, no counter: the message CAS, identity and replay are
-      // the only guards, and the approval revision is this commit's revision.
-      const companions: SessionMessageCommitCompanions = {
-        records: [], events: [], guards: [], claims: [],
-      };
-      return prepareSessionMessage(mailbox.records, owned, command, companions);
-    },
-    result: releaseDecidedResult,
-  };
-  return messageWriteResult(await executeWriteCommand(mailbox.records, releaseCommand));
 }

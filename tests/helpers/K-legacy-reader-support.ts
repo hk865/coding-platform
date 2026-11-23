@@ -79,7 +79,7 @@ export async function startKLegacyReaderHost(publicDir: string, overrides: KLega
         grant: {
           budget: AG2B_RUNTIME_BUDGET,
           hostTemplate: { templateId: 'builder', revision: '1', digest: sha256Hex(AG2B_WORK_INSTRUCTION) },
-          tools: ['read', 'write', 'find_related_sessions', 'read_session_card', 'send_session_message'],
+          tools: ['read', 'write', 'send_session_message'],
           writeScope: ['.'], skills: { resourceRoot: skillsRoot, enabledIds: [] },
           systemInstruction: AG2B_WORK_INSTRUCTION, deniedPrefixes: [], processSandboxOptions: {}, materialBasis: null,
         },

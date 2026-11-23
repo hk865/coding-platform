@@ -20,24 +20,30 @@ import type { SessionRef } from '../../contracts/core/identity.js';
 import type { ReadResult } from '../../contracts/core/results.js';
 import type { QueryRunRef } from '../../contracts/query-job.js';
 import type { UserDecisionBodyV1 } from '../../contracts/goal-decisions.js';
-import { canonicalJson, type JsonValue } from '../../contracts/fingerprint.js';
 import { packString } from '../../contracts/prompts/pack-string.js';
 import type { PromptTextsV1 } from '../../contracts/prompts/prompt-set.js';
 import { renderDeliveryInput, type DeliveryInputV1 } from '../../contracts/prompts/delivery-input.js';
-import { renderTemplate } from '../../contracts/prompts/render-template.js';
 import type { SessionRecord as KernelSessionRecord } from '../../../vendor/coding-agent/dist/public-api.js';
 import type { KernelExecutionBinding } from '../work-graph/model/execution-entry-contracts.js';
+import { composeDecisionResponseInput } from '../work-graph/model/decision-contracts.js';
 import type { ConsumedWaitV1, RunRef } from '../../contracts/dispatch.js';
 import { seqOfCommitCursor } from '../../contracts/ledger.js';
 import {
-  deriveSessionInputId, type SessionMailboxPort, type SessionMessage,
+  consultationFacts, deriveSessionInputId, type SessionMailboxPort, type SessionMessage, type SessionMessageCommandPort,
 } from '../work-graph/model/communication-contracts.js';
-import { sessionMessageRefKey } from '../work-graph/sessions/message-record-codecs.js';
+import type { DeliveryEligibilityFactsPort } from '../work-graph/model/session-facts-contracts.js';
+import type { SystemRoundSourceReadPort } from '../work-graph/model/communication-contracts.js';
+import type { OverlapNoteReadPort } from '../work-graph/queries/contracts.js';
+import { isSystemRoundSender, sessionMessageRefKey } from '../work-graph/sessions/message-record-codecs.js';
+import type { SESSION_MAILBOX_TOOL_NAMES } from './communication-tools.js';
 import {
-  effectiveReplyHandler, messageConsumptionProblem, messageFactsOfRecord, waitFactsOfRecord, waitStateOf,
+  deliveryEligibility, effectiveReplyHandler, isSecretaryRequestMessage, messageConsumptionProblem,
+  messageFactsOfRecord, replyStillBoundToWait, waitFactsOfRecord,
 } from '../work-graph/state/message-machine.js';
 
 export type InputPart = 'message' | 'response' | 'expiry';
+
+const RESPOND_SESSION_MESSAGE = 'respond_session_message' satisfies (typeof SESSION_MAILBOX_TOOL_NAMES)[number];
 
 export type SuppliedInput = {
   inputId: string;
@@ -71,10 +77,9 @@ export function deriveInputId(messageRef: SessionMessage['ref'], part: InputPart
  */
 export function formatDecisionResponseInput(texts: PromptTextsV1, body: UserDecisionBodyV1,
   toolNames: readonly string[]): string {
-  // The seventh input template, rendered from the execution's frozen texts; the
-  // tool list is the one `renderDeliveryInput` takes, for the same reason.
-  return renderTemplate(texts, 'user-decision-response',
-    { bodyJson: canonicalJson(body as unknown as JsonValue) }, toolNames).text;
+  // The one composer the card-answer submit also calls, so the template has one
+  // implementation; this path still renders only the execution's frozen texts.
+  return composeDecisionResponseInput(texts, body, toolNames);
 }
 
 /**
@@ -108,11 +113,11 @@ export type MailboxInputSupplyDependencies = {
    * `readOutbox` under the one `deriveSessionInputId(messageRef, 'response')`
    * identity. Optional on the port, so an existing narrow double stays valid.
    */
-  messages: Pick<SessionMailboxPort, 'readInbox' | 'readMessageBody' | 'readOutbox' | 'readMessage' | 'readRoutedReplies'>;
+  messages: Pick<SessionMessageCommandPort,
+    'readInbox' | 'readMessageBody' | 'readOutbox' | 'readMessage' | 'readRoutedReplies' | 'readDecisionAnswerTaken'>;
   /** The trusted Run context; the same identity the Kernel tool calls use. */
   context: () => CoreCallContext;
   sessionRef: SessionRef;
-  runRef: RunRef | QueryRunRef;
   controlInputs?: InputSupply;
   /** The whole continuation (K's three-arm union); `intervention` carries no saved-reply arm. */
   consumedWait?: ConsumedWaitV1 | undefined;
@@ -123,8 +128,18 @@ export type MailboxInputSupplyDependencies = {
   texts: PromptTextsV1;
   /** The execution's frozen final tool list (`PromptSetV1.toolNames`), passed to every render. */
   toolNames: readonly string[];
-  /** A secretary round's supply: only queued/default `notify` mail. Its reply/expiry is frozen in the round. */
-  only?: 'notify';
+  /**
+   * A Query round's supply (a secretary request round included). It takes ordinary agent/platform mail
+   * and replies to this line, never the person's direct intervention, a platform system-round source,
+   * or the source that opened it (design 2.2).
+   */
+  queryRound?: Readonly<{ sourceMessageRef: SessionMessage['ref'] | null }>;
+  /** The one delivery-facts read (design 2.2); every supplied part goes through `deliveryEligibility`. */
+  deliveryFacts: DeliveryEligibilityFactsPort;
+  /** Design 5.1: the root's one `overlapNoteOf` read; a gate's saved note request is left for its note round. */
+  gateNotes?: OverlapNoteReadPort;
+  /** Design 2.2/2.6: the root's one trusted-system-round read; absent, the fixed sender alone skips a letter. */
+  systemRounds?: SystemRoundSourceReadPort;
 };
 
 export function createMailboxInputSupply(deps: MailboxInputSupplyDependencies): InputSupply {
@@ -133,25 +148,60 @@ export function createMailboxInputSupply(deps: MailboxInputSupplyDependencies): 
   const sourceRef = (messageRef: SessionMessage['ref'], part: InputPart): unknown => ({
     kind: 'SessionMessage', messageRef: { ...messageRef }, part,
   });
+  const deliveryFactsOf = async (ctx: CoreCallContext, message: SessionMessage) => {
+    const read = await deps.deliveryFacts.readDeliveryEligibilityFacts(ctx, { messageRef: message.ref });
+    if (read.status !== 'ready') {
+      throw new Error(`delivery facts unavailable: ${read.status === 'rejected' ? read.reason : read.status}`);
+    }
+    return read.value;
+  };
+  // The fixed `host:plan-round` sender only proposes a system round; the shared trusted read decides (a forward copy
+  // keeps the sender but is ordinary mail for its actual recipient). A failed read fails the supply like the others.
+  const systemRoundSource = async (ctx: CoreCallContext, message: SessionMessage): Promise<boolean> => {
+    if (deps.systemRounds === undefined) return true;
+    const read = await deps.systemRounds.readSystemRoundSource(ctx, message);
+    if (read.status !== 'ready') {
+      throw new Error(`system round read unavailable: ${read.status === 'rejected' ? read.reason : read.status}`);
+    }
+    return read.value !== null;
+  };
+  const offerable = async (ctx: CoreCallContext, message: SessionMessage, part: 'message' | 'response'): Promise<boolean> => {
+    const extra = await deliveryFactsOf(ctx, message);
+    return deliveryEligibility(consultationFacts(message, part, extra, sessionRef)).offerable;
+  };
   const readResponse = async (ctx: CoreCallContext, message: SessionMessage, seen: Set<string>,
-    results: SuppliedInput[]): Promise<void> => {
-    if (message === undefined) return;
+    results: SuppliedInput[], ownSource: SessionMessage['ref'] | null): Promise<void> => {
     if (message.status !== 'responded' || message.response === null) return;
-    if (messageConsumptionProblem(messageFactsOfRecord(message)) !== null) return;
+    // §2.2: this round's own source is not supplied to it, in either part (the
+    // source's body is the round's question or the card answer it was built from).
+    if (ownSource !== null && sessionMessageRefKey(message.ref) === sessionMessageRefKey(ownSource)) return;
+    // §2.4: a secretary request wait's reply and expiry belong to the request
+    // queue alone; no other round may take the same reply (one entry per reply).
+    if (isSecretaryRequestMessage(message)) return;
     // SR7 §7.3.3: only a reply still bound to an open/answered wait is dropped
     // here, and only when an intervention or another Session's effective handler
     // takes it. A consumed, expired or wait-less reply is an ordinary late
     // reply and is supplied by the renderer below.
-    const waitState = waitStateOf(message, waitFactsOfRecord(message));
     const handler = effectiveReplyHandler(message);
-    if (message.waitAfterSend === true && (waitState.state === 'open' || waitState.state === 'answered')
+    if (replyStillBoundToWait(message)
       && (deps.consumedWait?.kind === 'intervention' || handler === null || !sameSession(handler, sessionRef))) return;
     // §2.5: the effective reply handler is the recorded `replyHandler` when set,
     // otherwise the original work_run sender. A transferred reply is supplied
     // only to the handler, never to the original sender (`readOutbox`).
     if (message.replyHandler != null && !sameSession(message.replyHandler.sessionRef, sessionRef)) return;
     const inputId = deriveInputId(message.ref, 'response');
-    if (seen.has(inputId) || alreadyAcceptedBySource(message, inputId)) return;
+    if (seen.has(inputId)) return;
+    if (!await offerable(ctx, message, 'response')) return;
+    // Design 2.3: a card answer reaches the line once. Once the card's own card-answer round (its deterministic
+    // `decision_answer` Query) exists, that round took it and no later Work or Query round here is supplied it; a card
+    // whose round is not created yet is still supplied (the acceptance commit guards that Query absent).
+    if (message.decision !== undefined) {
+      const taken = await deps.messages.readDecisionAnswerTaken(ctx, { messageRef: message.ref });
+      if (taken.status !== 'ready') {
+        throw new Error(`card-answer round unavailable: ${taken.status === 'rejected' ? taken.reason : taken.status}`);
+      }
+      if (taken.value) return;
+    }
     const body = await deps.messages.readMessageBody(ctx, { messageRef: message.ref, part: 'response' });
     if (body.status !== 'ready') throw new Error(`input body unavailable: ${body.status}`);
     const decisionBody = decisionResponseBody(message, body.value.text);
@@ -172,10 +222,24 @@ export function createMailboxInputSupply(deps: MailboxInputSupplyDependencies): 
   };
   const readMessagePart = async (ctx: CoreCallContext, message: SessionMessage, seen: Set<string>,
     results: SuppliedInput[]): Promise<void> => {
-    if (messageConsumptionProblem(messageFactsOfRecord(message)) !== null) return;
-    if (message.intent === 'inquiry') return;
+    // An `ask_copy` question is consumed by the Host by its question identity;
+    // it is never supplied to the original line.
+    if (message.answeredBy === 'copy') return;
+    // §2.4: only a secretary request's reply and expiry belong to the request
+    // queue; its question is ordinary agent mail and reaches a running line at
+    // the next safe point.
     const inputId = deriveInputId(message.ref, 'message');
-    if (seen.has(inputId) || alreadyAcceptedBySource(message, inputId)) return;
+    if (seen.has(inputId)) return;
+    if (!await offerable(ctx, message, 'message')) return;
+    // Design 5.1 (:255): a module-overlap gate's saved note request is a platform system-round source. Its own text
+    // round consumes and settles it; no other Work or Query round on the line is supplied it.
+    if (deps.gateNotes !== undefined) {
+      const note = await deps.gateNotes.readGateNote(ctx, message);
+      if (note.status !== 'ready') {
+        throw new Error(`gate note unavailable: ${note.status === 'rejected' ? note.reason : note.status}`);
+      }
+      if (note.value !== null) return;
+    }
     const body = await deps.messages.readMessageBody(ctx, { messageRef: message.ref, part: 'message' });
     if (body.status !== 'ready') throw new Error(`input body unavailable: ${body.status}`);
     const slots = { messageId: message.ref.messageId, body: body.value.text };
@@ -188,9 +252,15 @@ export function createMailboxInputSupply(deps: MailboxInputSupplyDependencies): 
       const sender = message.sender.kind === 'host'
         ? packString(deps.texts, 'delivery.sender.platform')
         : message.sender.sessionRef.sessionId;
-      const input: DeliveryInputV1 = message.intent === 'action_request'
-        ? { template: 'action-request-delivery', ...slots, sender }
-        : { template: 'notify-delivery', ...slots, sender };
+      // The stored send facts, never the old intent: every agent or platform
+      // letter gets the one message delivery, whose header says whether it asks
+      // for a reply and whether it wakes the line.
+      const input: DeliveryInputV1 = {
+        template: 'message-delivery', ...slots, sender,
+        needsReply: message.needsReply === true,
+        wake: message.wake,
+        deadline: message.needsReply === true && message.deadline !== null ? `，截止 ${message.deadline}` : '',
+      };
       text = renderDeliveryInput(deps.texts, input, deps.toolNames);
     }
     seen.add(inputId);
@@ -214,13 +284,21 @@ export function createMailboxInputSupply(deps: MailboxInputSupplyDependencies): 
     const seen = new Set<string>(point.acceptedInputIds);
     const wait = deps.consumedWait;
     const intervention = wait?.kind === 'intervention';
-    // A request round supplies only queued/default notify mail; it skips the
-    // person pass, the whole continuation and the merged reply mail.
-    const notifyOnly = deps.only === 'notify';
+    // A Query round (a request round included) takes ordinary agent/platform mail and replies
+    // to this line only: the person's direct intervention and this round's own source have
+    // their own consumers (design 2.2). A platform system-round source is no execution's mail
+    // at all (the inbox loop below).
+    const queryRound = deps.queryRound !== undefined;
+    const ownSource = deps.queryRound?.sourceMessageRef ?? null;
+    // Design 2.6 (:160, :260): a letter delivered into a running round is answered by its actual recipient with the
+    // reply tool. A Query round frozen without that tool cannot answer one that asks for a reply, so it leaves it
+    // queued for a round that can (the line's woken round, 2.3) instead of accepting it unanswerable.
+    const queryRoundCannotReply = queryRound && !deps.toolNames.includes(RESPOND_SESSION_MESSAGE);
 
-    // (a) The inbox is read once, to its end. A person's message is the
-    //     intervention input; every execution supplies it before the continuation
-    //     and ordinary mail, in the part's own commit order.
+    // (a) The inbox is read once, to its end. A person's message is the Work
+    //     execution's intervention input and comes before the continuation and
+    //     ordinary mail, in the part's own commit order; a Query round never
+    //     takes it (design 2.2).
     const person: { message: SessionMessage; cursor: () => CommitCursor }[] = [];
     const agent: { message: SessionMessage; cursor: () => CommitCursor }[] = [];
     let inboxCursor: string | undefined;
@@ -229,8 +307,15 @@ export function createMailboxInputSupply(deps: MailboxInputSupplyDependencies): 
       if (read.status !== 'ready') throw new Error(`input index unavailable: ${read.status}`);
       const page = read.value;
       for (const [index, message] of page.items.entries()) {
-        if (message.intent === 'inquiry') continue;
-        if (notifyOnly && message.intent !== undefined && message.intent !== 'notify') continue;
+        if (message.answeredBy === 'copy') continue;
+        // Design 2.2 and 2.6 (:203, :255, :262): a platform system round's source belongs to its own round from the
+        // send on, and only that round settles it. Neither a Work nor a Query execution of the line is supplied it,
+        // so a Run that continues beside it cannot take it as mail and strand its Query unclaimed.
+        if (isSystemRoundSender(message.sender) && await systemRoundSource(ctx, message)) continue;
+        if (queryRound) {
+          if (message.sender.kind === 'host' && message.sender.actor.kind === 'human') continue;
+          if (ownSource !== null && sessionMessageRefKey(message.ref) === sessionMessageRefKey(ownSource)) continue;
+        }
         const candidate = {
           message,
           // The page's cursors are required and aligned with its items.
@@ -244,7 +329,7 @@ export function createMailboxInputSupply(deps: MailboxInputSupplyDependencies): 
       if (next === inboxCursor) throw new Error('input cursor did not advance');
       inboxCursor = next;
     }
-    if (!notifyOnly) {
+    if (!queryRound) {
       person.sort(compareInputCandidates);
       for (const candidate of person) {
         if (signal.aborted) return results;
@@ -254,14 +339,14 @@ export function createMailboxInputSupply(deps: MailboxInputSupplyDependencies): 
 
     // (b) The continuation. A wait's reply belongs to the original continuation
     //     or the effective handler execution, never to an intervention.
-    if (!notifyOnly && wait !== undefined) {
+    if (wait !== undefined) {
       if (wait.kind === 'wait_reply') {
         const read = await deps.messages.readMessage(ctx, wait.messageRef);
         if (read.status !== 'ready') throw new Error(`saved wait message unavailable: ${read.status}`);
         const handler = effectiveReplyHandler(read.value);
         if (handler === null || !sameSession(handler, sessionRef))
           throw new Error('saved wait is not this Session\'s reply handler');
-        await readResponse(ctx, read.value, seen, results);
+        await readResponse(ctx, read.value, seen, results, ownSource);
       } else if (wait.kind === 'expiry') {
         const read = await deps.messages.readMessage(ctx, wait.messageRef);
         if (read.status !== 'ready') throw new Error(`saved wait message unavailable: ${read.status}`);
@@ -271,23 +356,33 @@ export function createMailboxInputSupply(deps: MailboxInputSupplyDependencies): 
           if (read.value.sender.kind !== 'work_run' || !sameSession(read.value.sender.sessionRef, sessionRef))
             throw new Error('saved wait is not this Session\'s work_run wait');
           const inputId = deriveInputId(read.value.ref, 'expiry');
-          if (!seen.has(inputId) && !alreadyAcceptedBySource(read.value, inputId)) {
-            const body = await deps.messages.readMessageBody(ctx, { messageRef: read.value.ref, part: 'message' });
-            if (body.status !== 'ready') throw new Error(`input body unavailable: ${body.status}`);
-            const count = await deps.expiryCount?.(ctx, { messageRef: read.value.ref });
-            if (count === undefined) throw new Error('the expiry input requires the expiry chain count');
-            if (count.status !== 'ready' || count.value === 'incomplete')
-              throw new Error(`expiry chain unavailable: ${
-                count.status === 'rejected' ? count.code : count.status === 'ready' ? 'incomplete' : count.status}`);
-            seen.add(inputId);
-            results.push({
-              inputId,
-              text: renderDeliveryInput(deps.texts, {
-                template: 'wait-expiry-delivery', messageId: read.value.ref.messageId,
-                question: body.value.text, deadline: read.value.deadline as string, expiryCount: count.value,
-              }, deps.toolNames),
-              sourceRef: sourceRef(read.value.ref, 'expiry'),
+          if (!seen.has(inputId)) {
+            const extra = await deliveryFactsOf(ctx, read.value);
+            const eligibility = deliveryEligibility({
+              consumption: messageFactsOfRecord(read.value), ...extra, part: 'expiry',
+              // Only this execution's bound wait consumes the expiry; an already
+              // recorded acceptance is the same fact for the later supply.
+              waitConsumed: waitFactsOfRecord(read.value).consumed || alreadyAcceptedBySource(read.value, inputId),
+              boundHere: sessionMessageRefKey(wait.messageRef) === sessionMessageRefKey(read.value.ref),
             });
+            if (eligibility.offerable) {
+              const body = await deps.messages.readMessageBody(ctx, { messageRef: read.value.ref, part: 'message' });
+              if (body.status !== 'ready') throw new Error(`input body unavailable: ${body.status}`);
+              const count = await deps.expiryCount?.(ctx, { messageRef: read.value.ref });
+              if (count === undefined) throw new Error('the expiry input requires the expiry chain count');
+              if (count.status !== 'ready' || count.value === 'incomplete')
+                throw new Error(`expiry chain unavailable: ${
+                  count.status === 'rejected' ? count.code : count.status === 'ready' ? 'incomplete' : count.status}`);
+              seen.add(inputId);
+              results.push({
+                inputId,
+                text: renderDeliveryInput(deps.texts, {
+                  template: 'wait-expiry-delivery', messageId: read.value.ref.messageId,
+                  question: body.value.text, deadline: read.value.deadline as string, expiryCount: count.value,
+                }, deps.toolNames),
+                sourceRef: sourceRef(read.value.ref, 'expiry'),
+              });
+            }
           }
         }
       }
@@ -298,7 +393,7 @@ export function createMailboxInputSupply(deps: MailboxInputSupplyDependencies): 
     const merged: { message: SessionMessage; cursor: () => CommitCursor; response: boolean }[] =
       agent.map(candidate => ({ ...candidate, response: false }));
     const readOutbox = deps.messages.readOutbox;
-    if (!notifyOnly && readOutbox !== undefined) {
+    if (readOutbox !== undefined) {
       let cursor: string | undefined;
       while (!signal.aborted) {
         const read = await readOutbox(ctx, { senderSession: sessionRef, page: { limit: 100, ...(cursor === undefined ? {} : { cursor }) } });
@@ -314,7 +409,7 @@ export function createMailboxInputSupply(deps: MailboxInputSupplyDependencies): 
       }
     }
     const readRoutedReplies = deps.messages.readRoutedReplies;
-    if (!notifyOnly && readRoutedReplies !== undefined) {
+    if (readRoutedReplies !== undefined) {
       let cursor: string | undefined;
       while (!signal.aborted) {
         const read = await readRoutedReplies(ctx, { handler: sessionRef, page: { limit: 100, ...(cursor === undefined ? {} : { cursor }) } });
@@ -335,9 +430,12 @@ export function createMailboxInputSupply(deps: MailboxInputSupplyDependencies): 
       if (candidate.response) {
         // The response renderer applies the one wait-bound drop rule; an
         // intervention never consumes an open/answered wait's reply.
-        await readResponse(ctx, candidate.message, seen, results);
+        await readResponse(ctx, candidate.message, seen, results, ownSource);
       } else {
-        if (intervention && candidate.message.intent === 'action_request') continue;
+        // An intervention round answers ordinary mail but never consumes an
+        // agent's action request; that message waits for the line's next round.
+        if (intervention && candidate.message.needsReply === true) continue;
+        if (queryRoundCannotReply && candidate.message.needsReply === true) continue;
         await readMessagePart(ctx, candidate.message, seen, results);
       }
     }

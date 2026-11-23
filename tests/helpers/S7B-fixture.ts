@@ -61,7 +61,7 @@ export async function runS7BWait(world: S6AHostWorld, input: { label: string }) 
     await createS6BLine(main, { label: `s7b-${input.label}-recipient`, role: S6A_WORK_ROLE }));
   await world.scripted.script(sender, [
     { kind: 'calls', calls: [{ callId: `s7b-${input.label}-send`, name: 'send_session_message',
-      args: { recipient: recipient.ref, text: `S7B message from ${input.label}`, intent: 'inquiry',
+      args: { recipient: recipient.ref, text: `S7B message from ${input.label}`,
         needsReply: true, waitAfterSend: true } }] },
     { kind: 'text', text: `S7B ${input.label} answered` },
   ]);
@@ -182,7 +182,7 @@ export async function openS7BLookupWorld(world: S6AHostWorld, input: { count: nu
   const recipient = await sessionOf(world,
     await createS6BLine(main, { label: 's7b-lookup-recipient', role: S6A_WORK_ROLE }));
   const send = (index: number) => ({ callId: `s7b-lookup-${index}`, name: 'send_session_message',
-    args: { recipient: recipient.ref, text: `S7B lookup message ${index}`, intent: 'inquiry' } });
+    args: { recipient: recipient.ref, text: `S7B lookup message ${index}` } });
   const replies: S6AReply[] = [];
   for (let index = 0; index < runs; index += 1) {
     const calls = index === runs - 1
@@ -222,7 +222,7 @@ export async function openS7BInterventionWorld(world: S6AHostWorld, input: { lab
 }> {
   const wait = await runS7BWait(world, { label: `s7b-intervention-${input.label}` });
   const sent = committed<SessionMessage>(await world.post('messages/send', graphWrite(S6A_SCOPE, {
-    recipient: wait.sender.ref, text: `S7B intervention ${input.label}`, intent: 'action_request',
+    recipient: wait.sender.ref, text: `S7B intervention ${input.label}`, entry: 'person_intervention',
     goalRef: wait.goal, taskRef: wait.tasks[0],
   }, `s7b-${input.label}-intervention`)), `the ${input.label} person message`);
   const claimed = await callPublishedOwnerAsHost(world, 'S7B', {
@@ -277,7 +277,7 @@ export async function readS7BMessage(world: S6AHostWorld,
 export async function sendS7BWaitingInquiry(world: S6AHostWorld, input: {
   goal: GoalRef; session: S6ASession; taskId: string; label: string; trailingText?: boolean;
   body: {
-    recipient: S6ASession['ref']; text: string; intent: 'inquiry'; needsReply: true; waitAfterSend: true;
+    recipient: S6ASession['ref']; text: string; needsReply: true; waitAfterSend: true;
     deadlineMs?: number; followupOf?: SessionMessage['ref'];
   };
 }): Promise<SessionMessage> {
@@ -309,11 +309,11 @@ export async function retireS7BSender(world: S6AHostWorld, input: {
 }): Promise<void> {
   await world.scripted.script(input.sender, [
     { kind: 'calls', calls: [{ callId: `s7b-${input.label}-retire`, name: 'send_session_message',
-      args: { recipient: input.sender.ref, text: `S7B ${input.label} retirement notice`, intent: 'notify' } }] },
+      args: { recipient: input.sender.ref, text: `S7B ${input.label} retirement notice`, wake: false } }] },
   ]);
   const hold = await world.gates.toolCall(input.sender, 'send_session_message');
   const sent = committed<SessionMessage>(await world.post('messages/send', graphWrite(S6A_SCOPE, {
-    recipient: input.sender.ref, text: `S7B retire ${input.label}`, intent: 'action_request',
+    recipient: input.sender.ref, text: `S7B retire ${input.label}`, entry: 'person_intervention',
     goalRef: input.goal, taskRef: input.task,
   }, `s7b-${input.label}-retire`)), `the ${input.label} retirement intervention message`);
   const claimed = await callPublishedOwnerAsHost(world, 'S7B', {

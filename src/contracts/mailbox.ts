@@ -8,13 +8,12 @@ import type { ArtifactRef } from './artifact.js';
 import type { ActorRef, CommitCursor } from './command-event.js';
 import type { SessionRef } from './core/identity.js';
 import type {
-  ApplicationProofV1, DecisionApplicationV1, DecisionMessageMetadataV1, MessageDeliveryStateV1,
-  MessageReadDispositionV1, MessageRecipient, MessageReleaseV1, SessionMessageIntentV1, SessionMessageRef,
-  UserMessageResponseV1,
+  ApplicationProofV1, DecisionApplicationV1, DecisionMessageMetadataV1, MessageAnsweredByV1,
+  MessageDeliveryStateV1, MessageEntryV1, MessageReadDispositionV1, MessageRecipient, MessageRoundEndingV1,
+  SessionMessageRef, UserMessageResponseV1,
 } from './core/session-message.js';
 import type { RoleBindingRefV1, RunRef, SourceRefV1, TaskTriple } from './dispatch.js';
-import type { MessageReleaseBlockV1 } from './goal-decisions.js';
-import type { DispatchBasisV1, GoalRef } from './ledger.js';
+import type { GoalRef } from './ledger.js';
 import type { QueryJobAnswerRef, QueryJobRef, QueryRunRef } from './query-job.js';
 
 /** Trusted Host sender: a real human/system identity, never fabricated per recipient. */
@@ -39,8 +38,11 @@ export type MessageWorkRunSenderRecord = {
 /**
  * Formal Query Answer sender. It is DERIVED by the mailbox from the settled
  * official Query Job/Run/Answer, never supplied by a caller: `sessionRef` is the
- * original recipient, `queryRunRef`/`answerRef` are the persisted facts and
- * `generation` is the claimed Session generation that produced the Answer.
+ * line that claimed and answered the Query, `queryRunRef`/`answerRef` are the
+ * persisted facts and `generation` is the claimed Session generation that
+ * produced the Answer. For a planresume/planfix Answer written to the executor
+ * message frozen on `repliesToMessageRef`, that line is the source message R's
+ * recipient, not the reply target's recipient.
  */
 export type MessageQueryAnswerSenderRecord = {
   kind: 'query_run';
@@ -165,12 +167,16 @@ export type SessionMessageRecord = {
   decision?: DecisionMessageMetadataV1;
   /** Slice 5: the recorded application of the user's answer, when requirements demanded one. */
   application?: DecisionApplicationV1 | null;
-  /** Explicit communication intent; absent keeps the historical notify default. */
-  intent?: SessionMessageIntentV1;
   /** The sender expects a semantic reply (independent of whether it waits now). */
   needsReply?: boolean;
   /** The sender chose to yield execution after the message is durably saved. */
   waitAfterSend?: boolean;
+  /** The sender chose to wake an idle recipient line; the write defaults it to true. A reply never carries it. */
+  wake: boolean;
+  /** `copy` on a consultation question from intake, never on the original line; absence is not a second value. */
+  answeredBy: MessageAnsweredByV1;
+  /** The Host entry that wrote this message; absent on agent and platform messages. */
+  entry?: MessageEntryV1;
   acceptedInputs?: MessageAcceptedInput[];
   consultationDerivation?: MessageConsultationDerivation;
   /**
@@ -197,7 +203,6 @@ export type SessionMessageRecord = {
   followupOf: SessionMessageRef | null;
   deadline: string | null;
   deadlineMs: number | null;
-  release: MessageReleaseV1 | null;
   delivery: MessageDeliveryV1;
   deliveryEvidence: MessageDeliveryEvidenceV1 | null;
   expiredAt: string | null;
@@ -207,10 +212,7 @@ export type SessionMessageRecord = {
   originalRef: SessionMessageRef | null;
   appliedAt: string | null;
   rejectedAt: string | null;
-  approvedAt: string | null;
-  approvalRevision: number | null;
   applicationProof: ApplicationProofV1 | null;
-  pins: DispatchBasisV1 | null;
 };
 
 /**
@@ -221,8 +223,9 @@ export type SessionMessageReadV1 = {
   message: SessionMessageRecord;
   delivery: MessageDeliveryStateV1;
   disposition: MessageReadDispositionV1;
-  /** §3.8 item 4: `null` unless this message is an approved, not withdrawn, not released message. */
-  releaseBlock: MessageReleaseBlockV1 | null;
+  /** The round's committed formal `no_answer` conclusion, when the receipt proves it; absent otherwise. A separate
+   *  fact, never a disposition: reply, withdrawal and Kernel acceptance keep their own fields. */
+  roundEnding?: MessageRoundEndingV1;
 };
 /** The view read's page: the same keyset shape as `SessionMessagePage`, items carrying the derived fields. */
 export type SessionMessageReadPageV1 = {

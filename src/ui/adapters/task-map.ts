@@ -17,6 +17,7 @@ import { catalogForWorkspace } from '../../contracts/workspace-catalog.js';
 import { displayProjectPath, qualifyProjectPath } from '../../contracts/workspace-path.js';
 import type { AdoptedArchitecture } from '../../contracts/architecture-catalog.js';
 import type { TaskRow } from '../../contracts/task-graph.js';
+import type { TaskTriple } from '../../contracts/dispatch.js';
 import { revisionAssignments } from '../../contracts/plan.js';
 import { asRecord, asText, type JsonRecord } from '../values.js';
 
@@ -84,6 +85,10 @@ export type TaskMapDag = {
 export type TaskMapData = {
   /** `ordinal`: the Host's number only; never counted from the Goal list. */
   goal: { id: string; name: string; st: string; word: string; ordinal?: number | null };
+  /** boot stamps this read's own workspace scope; `publish` hands it to the one
+   * `tasks/hold/release` write, so the TaskMap card releases holds without a
+   * second navigation read. */
+  scope?: { projectId: string; workspaceId: string };
   stages: Array<{ id: string; name: string; description: string }>;
   tasks: TaskMapTask[];
   dag: TaskMapDag;
@@ -642,6 +647,8 @@ export type TaskMapDetailTaskRead = {
   workspaceId?: unknown;
   disposition?: unknown; owners?: unknown; participatedLines?: unknown; failure?: unknown;
   actualFiles?: unknown; responsibleNow?: unknown; plannedModules?: unknown; plannedFiles?: unknown;
+  /** §2.8: the held claim-hold reasons, the release-all affordance, the dispatch request and the stop card. */
+  holds?: unknown; holdRelease?: unknown; dispatch?: unknown; stop?: unknown;
 };
 /** The Task's Goal workspace and the board's main workspace are both required:
  * a Task living in another workspace is never keyed by the board's scope. */
@@ -698,6 +705,17 @@ export type TaskMapNodeDetailData = {
   overlaps: Array<{ id: string; text: string }>; overlapsComplete: boolean;
   /** E3I:244 without 从 <from> (`active` has no word): 由 <actor> 于计划 <time> 改为 <to>：<reason>. */
   disposition: { word: string; text: string } | null;
+  /** §2.8: every hold reason worded as one line, including released and expired ones;
+   * `current` marks a held, unexpired reason. */
+  holds: Array<{ text: string; current: boolean }>;
+  /** §2.8: the release-all affordance; null when the read carried none. */
+  holdRelease: { available: boolean; task: TaskTriple } | null;
+  /** §2.8: the dispatch request's detail lines and its short mini-card state. */
+  dispatch: { lines: string[]; cardStatus: string } | null;
+  /** §2.8: the stop request's steps and not-sent reason, and its short mini-card state. */
+  stop: { lines: string[]; cardStatus: string } | null;
+  /** §2.8: the mini card's one status line: the current holds, the waiting stop card and the dispatch request. */
+  cardStatus: string;
 };
 
 export const PHASE_WORD: Record<string, string> = {
@@ -771,6 +789,72 @@ function participantText(item: Record<string, unknown>, counts: TaskMapParticipa
   return parts.join(' · ');
 }
 
+/* §2.8: the actions a task card names in the same words Decide's release card
+ * uses; this module owns the one copy both cards import. */
+const HOLD_KIND_WORD: Record<string, string> = {
+  agent: '暂缓', stop: '叫停', scribe_stop: '书记暂缓',
+};
+const TARGET_BLOCKER_WORD: Record<string, string> = {
+  module_gate: '模块门', node_occupied: '节点被占用', line_busy: '工作线都在忙',
+};
+
+/** The three hold kinds' words: the task card and the request feedback share
+ * this one table, and an unknown kind falls back to 暂缓. */
+export function holdKindWordOf(kind: unknown): string {
+  return HOLD_KIND_WORD[asText(kind)] ?? '暂缓';
+}
+
+/** The one “计划第 n 版 / 还没有计划” wording the task card, the release card
+ * and the request feedback share. */
+export function planVersionText(revision: number | null): string {
+  return revision === null ? '还没有计划' : '计划第 ' + String(revision) + ' 版';
+}
+
+/** One plan reference in human words: the current version's number when it is
+ * that same version, otherwise only how it stands against the plan read now. */
+export function planRefText(planId: string, current: unknown): string {
+  const plan = asRecord(current);
+  if (Object.keys(plan).length === 0) return '当时的那一版计划';
+  if (asText(plan.planId) !== planId) return '较早的一版计划';
+  return planVersionText(typeof plan.planRevision === 'number' ? plan.planRevision : null);
+}
+
+/** The Run a stop request names, in human words; the attempt ordinal is the
+ * row's own, never a counter kept here. */
+export function stopRunText(stopRun: unknown, taskRow: Record<string, unknown> | null): string {
+  if (taskRow === null) return '这个任务的一次运行';
+  if (asText(asRecord(stopRun).runId) !== asText(asRecord(taskRow.execution).runId)) {
+    return '这个任务较早的一次运行';
+  }
+  const attempt = attemptText(typeof taskRow.attemptOrdinal === 'number' ? taskRow.attemptOrdinal : null);
+  return '正在跑的这一次' + (attempt === '' ? '' : '（' + attempt + '）');
+}
+
+/** One claim blocker as the task card's own sentence; an unknown kind adds nothing. */
+export function blockerTextOf(row: Record<string, unknown>): string {
+  const kind = asText(row.kind);
+  const reason = asText(row.reason);
+  if (kind === 'claim_hold') {
+    return holdKindWordOf(row.holdKind) + (reason === '' ? '' : '：' + reason);
+  }
+  if (kind === 'stop_pending') return '有叫停请求在等答复';
+  if (kind === 'goal_paused') return '目标已暂停';
+  const word = TARGET_BLOCKER_WORD[kind];
+  return word === undefined ? '' : word + (reason === '' ? '' : '：' + reason);
+}
+
+/* §2.8: the stop request's steps in the order the record proves them. */
+const STOP_STEP_WORD: Record<string, string> = {
+  requested: '已请求', hold_placed: '已暂缓领取', sent: '已发送', delivered: '已送达',
+  run_ended: '运行已结束', not_sent: '没有发送', void: '已作废',
+};
+
+/** A released stop's not-sent cause; anything else adds no sentence. */
+function notSentWordOf(outcome: Record<string, unknown>): string {
+  const notSent = asText(outcome.notSent);
+  return notSent === 'person_stopped' ? '你叫停了' : notSent === 'run_ended' ? '运行已结束' : '';
+}
+
 /** Pure detail projection (design §6): no request, no DOM. `summary` is the
  * unwrapped `graph/detail` summary; participants are its `section:'participants'`
  * pages; `catalog` names planned modules and groups actual files. A plan that lists
@@ -794,6 +878,10 @@ export function adaptTaskMapDetail(
   attempt: number | null = null,
   /** E3-7: the `files/uncommitted` value for this Task's actual paths; null when it was not read or failed. */
   uncommitted: TaskMapUncommittedRead = null,
+  /** The `tasks/query` plan read at this place; the claimed plan is worded against it. */
+  currentPlan: unknown = null,
+  /** The `tasks/query` Task row read at this place; the stop Run is worded against it. */
+  taskRow: Record<string, unknown> | null = null,
 ): TaskMapNodeDetailData | null {
   const task = summary.task;
   if (task === null) return null;
@@ -979,6 +1067,149 @@ export function adaptTaskMapDetail(
   const participantsLoaded = participants.length > 0;
   const participantsComplete = participantsLoaded
     && (participants[participants.length - 1]?.nextCursor ?? null) === null;
+  /* §2.8: who placed a hold, claimed the Task or asked for the stop is a line;
+   * this read already carries the current owners and the participation pages,
+   * so a SessionRef is named from them and never printed as an id. */
+  const nameBySession = new Map<string, string>();
+  const rememberLine = (key: unknown, name: unknown): void => {
+    const sessionKey = trackSessionKeyOf(key);
+    const word = lineNameOf(name) || asText(name);
+    if (sessionKey !== '/' && word !== '') nameBySession.set(sessionKey, word);
+  };
+  for (const entry of Array.isArray(task.responsibleNow) ? task.responsibleNow : []) {
+    const row = asRecord(entry); rememberLine(row.key, row.name);
+  }
+  for (const page of participants) {
+    for (const item of page.items) { const row = asRecord(item); rememberLine(row.key, row.name); }
+  }
+  const lineOfSession = (session: unknown): string =>
+    nameBySession.get(trackSessionKeyOf(session)) ?? '';
+  const requesterWordOf = (requester: unknown): string => {
+    const row = asRecord(requester);
+    return lineOfSession(row.session) || DUTY_WORD[asText(row.duty)] || '';
+  };
+  /* §2.8: every hold reason stays on the card with who, why, its expiry rule and
+   * whether it was released or expired; only a held, unexpired reason is current. */
+  const holds: TaskMapNodeDetailData['holds'] = [];
+  const currentHoldWords: string[] = [];
+  for (const entry of Array.isArray(task.holds) ? task.holds : []) {
+    const hold = asRecord(entry);
+    const kind = asText(hold.kind);
+    const placedBy = asRecord(hold.placedBy);
+    const placedKind = asText(placedBy.kind);
+    const who = placedKind === 'agent'
+      ? lineOfSession(placedBy.session) || DUTY_WORD[asText(placedBy.duty)] || ''
+      : placedKind === 'action' ? requesterWordOf(hold.requester)
+        : placedKind === 'platform' ? '平台' : '';
+    const reason = asText(hold.reason);
+    const lead = kind === 'scribe_stop' ? '由书记暂缓'
+      : kind === 'stop' ? '叫停请求' + (who === '' ? '' : '（' + who + '）') + '批准后暂缓'
+        : who === '' ? '暂缓' : '由 ' + who + ' 暂缓';
+    const current = asText(hold.state) === 'held' && hold.expired !== true;
+    let stateText: string;
+    if (current) {
+      stateText = asText(asRecord(hold.expiry).rule) === 'never'
+        ? '不会自动失效' : '等同一来源的候选了结后失效';
+    } else if (asText(hold.state) === 'released') {
+      const releasedBy = asRecord(hold.releasedBy);
+      const releasedKind = asText(releasedBy.kind);
+      const by = releasedKind === 'agent' ? (lineOfSession(releasedBy.session) || '一条工作线')
+        : releasedKind === 'person' ? (asText(asRecord(releasedBy.actor).kind) === 'human' ? '你' : '平台')
+          : releasedKind === 'intervention' ? '你的直接干预' : '';
+      const note = asText(hold.releaseNote);
+      stateText = '已撤销' + (by === '' ? '' : '：' + by) + (note === '' ? '' : '，' + note);
+    } else {
+      stateText = '已失效：同一来源的候选已了结';
+    }
+    holds.push({ text: lead + (reason === '' ? '' : '：' + reason) + '（' + stateText + '）', current });
+    if (current) currentHoldWords.push(holdKindWordOf(kind) + (reason === '' ? '' : '：' + reason));
+  }
+  const release = asRecord(task.holdRelease);
+  const releaseTask = asRecord(asRecord(release.target).task);
+  const releaseProjectId = asText(releaseTask.projectId);
+  const releaseGoalId = asText(releaseTask.goalId);
+  const releaseTaskId = asText(releaseTask.taskId);
+  const holdRelease: TaskMapNodeDetailData['holdRelease'] = asText(release.availability) === 'available'
+    && releaseProjectId !== '' && releaseGoalId !== '' && releaseTaskId !== ''
+    ? { available: true, task: { projectId: releaseProjectId, goalId: releaseGoalId, taskId: releaseTaskId } }
+    : null;
+  /* §2.8: the dispatch request's own row. A waiting card never blocks the claim:
+   * the target loop still claims, and the claim closes the card. The target loop's
+   * gate/node/line judgment is shown only when the read supplied it. */
+  const dispatchRead = asRecord(task.dispatch);
+  const dispatchRequest = asRecord(dispatchRead.request);
+  const dispatchLines: string[] = [];
+  let dispatchCard = '';
+  if (asText(dispatchRequest.action) === 'dispatch') {
+    const who = requesterWordOf(dispatchRequest.requester);
+    const reason = asText(dispatchRequest.reason);
+    dispatchLines.push((who === '' ? '派活请求' : '由 ' + who + ' 请求派活') + (reason === '' ? '' : '：' + reason));
+    const planVersion = asRecord(dispatchRequest.planVersion);
+    if (Object.keys(planVersion).length > 0) {
+      dispatchLines.push('请求时的计划版本：' + planVersionText(
+        typeof planVersion.planRevision === 'number' ? planVersion.planRevision : null));
+    }
+    const state = asText(dispatchRequest.state);
+    const outcome = asRecord(dispatchRequest.outcome);
+    if (state === 'applied') {
+      const claimed = lineOfSession(outcome.session);
+      dispatchCard = claimed === '' ? '已有工作线领取' : '已由 ' + claimed + ' 领取';
+      dispatchLines.push(dispatchCard);
+      const planId = asText(asRecord(dispatchRead.claimedPlanRef).planId);
+      if (planId !== '') dispatchLines.push('领取时用的计划：' + planRefText(planId, currentPlan));
+    } else if (state === 'void' || asText(outcome.kind) === 'void') {
+      const why = asText(outcome.reason);
+      dispatchCard = '派活请求作废' + (why === '' ? '' : '：' + why);
+      dispatchLines.push(dispatchCard);
+    } else if (state === 'released' || state === 'denied' || state === 'withdrawn') {
+      const notSent = asText(outcome.kind) === 'released' ? notSentWordOf(outcome) : '';
+      dispatchCard = '派活请求已关闭';
+      dispatchLines.push(dispatchCard + (notSent === '' ? '' : '：' + notSent));
+    } else if (state === 'pending' || state === 'open') {
+      dispatchLines.push('平台会照常安排领取，领到后这张卡自动关闭');
+      dispatchCard = '等领取';
+      const blockers = (Array.isArray(dispatchRead.claimBlockers) ? dispatchRead.claimBlockers : [])
+        .map((entry) => blockerTextOf(asRecord(entry))).filter((text) => text !== '');
+      const target = dispatchRead.targetLoopBlockers;
+      if (target !== 'not_read' && target !== undefined && target !== null) {
+        const targetRows = asRecord(target).blockers;
+        for (const entry of Array.isArray(targetRows) ? targetRows : []) {
+          const text = blockerTextOf(asRecord(entry));
+          if (text !== '') blockers.push(text);
+        }
+      }
+      if (blockers.length > 0) dispatchLines.push('现在不能领取：' + blockers.join('；'));
+      else if (dispatchRead.claimableNow === false) dispatchLines.push('现在不能领取');
+      else if (dispatchRead.claimableNow === true) dispatchLines.push('现在可以领取');
+    }
+  }
+  const dispatch = dispatchLines.length > 0 ? { lines: dispatchLines, cardStatus: dispatchCard } : null;
+  /* §2.8: the stop card's steps and its not-sent reason; while its card waits,
+   * the task is not claimable. */
+  const stopRead = asRecord(task.stop);
+  const stopRequest = asRecord(stopRead.request);
+  const stopLines: string[] = [];
+  let stopCard = '';
+  if (Object.keys(stopRequest).length > 0) {
+    const who = requesterWordOf(stopRequest.requester);
+    const reason = asText(stopRequest.reason);
+    stopLines.push((who === '' ? '叫停请求' : '由 ' + who + ' 请求叫停') + (reason === '' ? '' : '：' + reason));
+    const runId = asText(asRecord(stopRequest.stopRun).runId);
+    if (runId !== '') stopLines.push('要停的运行：' + stopRunText(stopRequest.stopRun, taskRow));
+  }
+  const steps = (Array.isArray(stopRead.steps) ? stopRead.steps : []).map(asText).filter((step) => step !== '');
+  if (steps.length > 0) {
+    stopLines.push('各步：' + steps.map((step) => STOP_STEP_WORD[step] ?? '').filter((word) => word !== '').join(' → '));
+  }
+  const notSent = notSentWordOf(asRecord(stopRequest.outcome));
+  if (notSent !== '') stopLines.push('没有发送：' + notSent);
+  if (asText(stopRead.claim) === 'answer_card_first') stopCard = '先答卡、暂不领';
+  const stop = stopLines.length > 0 || stopCard !== '' ? { lines: stopLines, cardStatus: stopCard } : null;
+  const cardParts: string[] = [];
+  if (currentHoldWords.length > 0) cardParts.push(currentHoldWords.join('；'));
+  if (stopCard !== '') cardParts.push(stopCard);
+  if (dispatchCard !== '') cardParts.push(dispatchCard);
+  const cardStatus = cardParts.join(' · ');
   return {
     id, word, why: mapWhy !== '' ? mapWhy : detailWhy(task),
     stageName: '',
@@ -1000,6 +1231,7 @@ export function adaptTaskMapDetail(
     overlapsComplete: (risks[risks.length - 1]?.nextCursor ?? null) === null,
     countsComplete: counts !== null && counts.complete,
     attemptOrdinal: attempt,
+    holds, holdRelease, dispatch, stop, cardStatus,
     disposition: (disposition === 'cancelled' || disposition === 'superseded' || disposition === 'deferred') ? (() => {
       const change = asRecord(dispositionChange);
       const word = PHASE_WORD[disposition] ?? disposition;

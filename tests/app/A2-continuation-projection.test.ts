@@ -67,7 +67,7 @@ it('TD-5: a paused yielded wait is blocked, a resumed one ready, a cancelled one
     `<!doctype html><meta name="${PLATFORM_TOKEN_META_NAME}" content="${PLATFORM_TOKEN_PLACEHOLDER}">`);
   let recipient: SessionRef | undefined;
   const send = { callId: 'a2-td5-send', name: 'send_session_message',
-    args: { recipient: {}, text: 'A2 TD-5 question that nobody answers', intent: 'inquiry', needsReply: true, waitAfterSend: true } as Record<string, unknown> };
+    args: { recipient: {}, text: 'A2 TD-5 question that nobody answers', needsReply: true, waitAfterSend: true } as Record<string, unknown> };
   const replies: ScriptedReply[] = [{ kind: 'calls', calls: [send] }];
   const host = await startAG2bHost(publicDir, { replies, beforeReply: async (_request, index) => {
     if (index === 0 && recipient !== undefined) send.args['recipient'] = { projectId: recipient.projectId, sessionId: recipient.sessionId };

@@ -81,7 +81,7 @@ export type RoleLineSlowV1 = { tooSlow: boolean; count: number; stretchStartedAt
 /** One input still waiting on its recipient: an `action_request`/`inquiry` the one consumption rule offers and no
  *  execution has accepted. `notify` never counts. */
 function waitingInput(message: SessionMessage): boolean {
-  return (message.intent === 'action_request' || message.intent === 'inquiry')
+  return message.needsReply === true
     && messageConsumptionProblem(messageFactsOfRecord(message)) === null
     && !(message.acceptedInputs ?? []).some((input) => input.part === 'message');
 }

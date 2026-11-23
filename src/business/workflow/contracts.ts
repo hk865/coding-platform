@@ -3,11 +3,13 @@ import type { SessionRef, WorkspaceScope } from '../../contracts/core/identity.j
 import type { CoreRejection, ReadResult, WriteResult } from '../../contracts/core/results.js';
 import type { SessionMessageRef } from '../../contracts/core/session-message.js';
 import type { AggregateRef, GoalRef } from '../../contracts/ledger.js';
+import type { ModuleOverlapGateRef } from '../../contracts/module-overlap-gate.js';
 import type { PlanRevisionRef, PlanRevisionSnapshot } from '../../contracts/plan.js';
 import type { QueryJobAnswerSnapshot, QueryJobIntentV1, QueryRunRef } from '../../contracts/query-job.js';
 import type { RoleBindingRefV1, RunRef, TaskBudgetV1, TaskTriple } from '../../contracts/dispatch.js';
 import type { UnknownCallReviewRef } from '../../contracts/unknown-call-review.js';
 import type { CommandRerunRequestRef } from '../../contracts/command-rerun-request.js';
+import type { ActionRequestRef } from '../../contracts/action-request.js';
 import type { RuntimeBudget } from '../../contracts/runtime-budget.js';
 import type { TaskRequeueRef } from '../../contracts/task-requeue.js';
 import type { DecisionSourceV1 } from '../../contracts/goal-decisions.js';
@@ -17,9 +19,7 @@ import type {
 import type { MemberRequestPortV1 } from '../../core/work-graph/tasks/member-service.js';
 import type { OverlapGatePort } from '../../core/work-graph/tasks/overlap-gates.js';
 import type { PickBasisV1 } from '../../contracts/pick-basis.js';
-import type {
-  GoalDecisionCauseReadV1, MessageReleasePort,
-} from '../../core/work-graph/model/decision-contracts.js';
+import type { GoalDecisionCauseReadV1 } from '../../core/work-graph/model/decision-contracts.js';
 import type { QueryJobRecord } from '../../core/work-graph/queries/contracts.js';
 import type { GoalTaskPort } from '../../core/work-graph/model/task-contracts.js';
 import type { TaskClaimPort } from '../../core/work-graph/model/claim-contracts.js';
@@ -31,6 +31,7 @@ import type { RuntimeExecutionPort } from '../../core/agent-runtime/ports.js';
 import type { RegisteredCheckRunner } from '../../core/agent-runtime/check-execution.js';
 import type { SessionResponsibilityPort } from '../../core/work-graph/sessions/session-responsibility-service.js';
 import type { RunControlPort } from '../../core/work-graph/tasks/control-contracts.js';
+import type { ActionRequestPort } from '../../core/work-graph/model/action-request-contracts.js';
 import type { InternalSessionArchivePort } from './session-archive.js';
 import type { SessionLifecyclePort } from '../../core/work-graph/sessions/lifecycle-contracts.js';
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
@@ -69,7 +70,7 @@ export type {
 export type RedriveAnswerV1 =
   | { kind: 'unknown_call_review'; reviewRef: UnknownCallReviewRef; answerMessageRef: SessionMessageRef }
   | { kind: 'command_rerun_request'; requestRef: CommandRerunRequestRef; answerMessageRef: SessionMessageRef }
-  | { kind: 'message_release'; answerMessageRef: SessionMessageRef }
+  | { kind: 'action_release'; requestRef: ActionRequestRef; answerMessageRef: SessionMessageRef }
   | { kind: 'repair_approval'; answerMessageRef: SessionMessageRef };
 
 /**
@@ -171,11 +172,6 @@ export type WorkflowCalls = {
    * exception to the "exact owner method" rule above.
    */
   archive_predecessor: InternalSessionArchivePort['archiveLineInternal'];
-  /**
-   * Book §3.8 item 3 (`book-7a.md:359–:360`, `:380–:381`): the release step's perform. The selection only reads the
-   * bounded candidate page; `perform` calls this one owner method.
-   */
-  release_message: MessageReleasePort['releaseApproved'];
   // The adviser's one Host-system `sendMessage`, released directly: the only send on this
   // step. No person or secretary send.
   suggest_member: SessionMailboxPort['sendMessage'];
@@ -198,6 +194,11 @@ export type WorkflowCalls = {
   send_system_round: NonNullable<WorkflowDependencies['send']>;
   /** PL §6.1.4/§6.7.1: adoption through the existing Plan owner method. */
   adopt_plan: PlanTaskPort['applyPlanChange'];
+  /**
+   * 2.5 作废：目标循环读到派活请求点名的任务已取消、替代、完成或人停过时，以平台自动化身份调动作请求 owner 记
+   * `void` 和原因（`basis` 是 owner 自己的作废依据形状）。一次 `perform` 只调这一个 owner。
+   */
+  settle_action_request: ActionRequestPort['settle'];
 };
 
 export type WorkflowStepKind = keyof WorkflowCalls;
@@ -294,11 +295,6 @@ export type WorkflowAdvanceInternal = {
    */
   failedCardRefs?: FailedCardRefV1[];
   /**
-   * `book-7a.md:386–:389`: the `sessionMessageRefKey` values of the items THIS pass already found blocked, so the
-   * same selection is not asked for them twice in one pass. Absent for every other Host-driver call.
-   */
-  releaseSkip?: string[];
-  /**
    * The Tasks some Run watch of this Goal is already advancing. The Goal-level
    * selection skips them; a selection pinned to one `taskId` ignores it. Host
    * driver only, never a public advance input.
@@ -356,6 +352,12 @@ export type WorkflowAdvanceResult = CoreRejection | {
      */
     source?: DecisionSourceV1 | null;
     waitBasis?: GoalWaitBasisV1;
+    /**
+     * Design 5.1: a `waiting` whose overlap-note send failed transiently. The gate already holds the note's ref, so
+     * the driver backs off and reselects the Goal; the selection replays the same request id while the gate keeps
+     * this basis, still waits and its note is still missing.
+     */
+    retry?: { goalRef: GoalRef; gate: ModuleOverlapGateRef; basisDigest: string };
   };
 };
 
@@ -402,7 +404,6 @@ export type InitialPlanningGoalInputResult = CoreRejection | {
  */
 export type ConsultationInput = {
   schemaVersion: 1;
-  part?: 'response';
   messageRef: SessionMessageRef;
   goalRef: GoalRef | null;
   roleBinding: RoleBindingRefV1;
@@ -529,3 +530,11 @@ export type GoalWaitBasisV1 = {
   recordKinds: readonly AggregateRef['aggregateType'][];
   reasons: readonly string[];
 };
+
+/**
+ * The ONE fixed platform identity of the Host's automatic notices (a finished round's close-out, an expiry, a
+ * "please note"): a system actor, never the configured operator and never an agent line. It is deliberately not
+ * `SYSTEM_ROUND_ACTOR`: a notice is not a round, opens none, and must not read as one; its sender, its receipt and
+ * every reader of that receipt use this one identity.
+ */
+export { PLATFORM_NOTICE_ACTOR } from '../../contracts/core/session-message.js';

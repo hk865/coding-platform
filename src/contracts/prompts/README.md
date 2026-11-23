@@ -15,7 +15,7 @@
 - `prompt-set.ts` — 冻结的提示词集、模型请求事实、内容类型常量、严格解码、工具说明规范正文/摘要与正文校验。
 - `render-template.ts` — 三种模板构造的解析与渲染、槽的 UTF-8 字节范围、渲染错误类型；`secretary-round` 的三个 `task_*` 槽是同一个 `task` 段，必须相邻且保持内部顺序；六个交接模板各只有一个 `task_round` 槽，其中两个秘书模板 `handoff-write-understanding-secretary` 和 `handoff-brief-secretary` 渲染出来是秘书轮 task 段开头的一段材料。
 - `resolve-pack.ts` — 继承链（请求包在前、`platform` 最后）的校验与合并，收集全部问题且不抛错。
-- `slot-tables.ts` — 代码拥有的槽表：`exec-review-input` 没有槽，`unknown-call-advice-input` 只有一个必填槽 `record`（整份核对记录，平台在准备时读好渲染进去）；`command-rerun-advice-input` 有两个必填槽 `request`（整份重跑请求）、`review`（拦下它的整份核对记录）；包可以改文字，不能增删槽或改必填性。除 `secretary-round` 的三个 task 槽外，六个交接模板各有一行必填的 `task_round`；六个投递模板 `action-request-delivery`、`inquiry-delivery`、`notify-delivery`、`wait-reply-delivery`、`wait-expiry-delivery`、`intervention-delivery` 各有一行必填槽；`intervention-planning` 的 `role`/`goal`/`message` 必填，`plan`（映射到 `task` 段）与 `prelude` 可选；Run 里联系被改断时的输入 `link-breaks-input` 的 `noteId`、`version`、`missing` 三个槽都必填；Run 里改过的 Python 文件有语法错时的输入 `python-syntax-input` 只有一个必填槽 `problems`；压缩的摘要提示 `context-summary-request`（slice-K2-SPEC L18）是固定文字，没有槽，表里照样有一行（每个模板都要有键）。
+- `slot-tables.ts` — 代码拥有的槽表：`exec-review-input` 没有槽，`unknown-call-advice-input` 只有一个必填槽 `record`（整份核对记录，平台在准备时读好渲染进去）；`command-rerun-advice-input` 有两个必填槽 `request`（整份重跑请求）、`review`（拦下它的整份核对记录）；包可以改文字，不能增删槽或改必填性。除 `secretary-round` 的三个 task 槽外，六个交接模板各有一行必填的 `task_round`；四个投递模板 `message-delivery`（`messageId`、`sender`、`needsReply`、`wake`、`body` 必填，`deadline` 可选（值为“，截止 X”或空））、`wait-reply-delivery`、`wait-expiry-delivery`、`intervention-delivery` 各有必填槽；`intervention-planning` 的 `role`/`goal`/`message` 必填，`plan`（映射到 `task` 段）、`source`（来源行，渲染在 `message` 的提问标题之前）与 `prelude` 可选；Run 里联系被改断时的输入 `link-breaks-input` 的 `noteId`、`version`、`missing` 三个槽都必填；Run 里改过的 Python 文件有语法错时的输入 `python-syntax-input` 只有一个必填槽 `problems`；压缩的摘要提示 `context-summary-request`（slice-K2-SPEC L18）是固定文字，没有槽，表里照样有一行（每个模板都要有键）。
 
 ## 可以复用的能力
 | 名字 | 位置 | 做什么 | 什么时候用 |
@@ -25,9 +25,9 @@
 | `parseTemplateV1` | `src/contracts/prompts/render-template.ts:279` | 只解析模板，收齐槽、必填槽和输入模板段序等可独立判定的问题；`secretary-round` 的三个 `task_*` 槽都必须出现（值可空），块分开或换序也算问题。 | 选包校验或需要一次报告多个模板问题时；真正出文字用 `renderTemplate`。 |
 | `contextSectionOfSlot` | `src/contracts/prompts/render-template.ts:53` | 把一个槽名投影到它所属的段；`task_round`/`task_batched`/`task_earlier` 都是 `task`。 | 段序计算与校验；不要另写槽到段的映射。 |
 | `PromptRenderError` | `src/contracts/prompts/render-template.ts:21` | 模板非法、必填槽为空、段序非法的错误类型，带 `code`/`templateId`/`slot`。 | 把渲染失败映射成 `invalid`，或按 code 收集问题。 |
-| `renderDeliveryInput` | `src/contracts/prompts/delivery-input.ts:30` | 按执行冻结的文本渲染一条投递输入：除 `template` 外每个字段是模板的一个槽，`expiryCount` 按十进制数字；空必填槽抛 `PromptRenderError`；全局包从不作回退。 | 投递消息出可变文字时；不要另写槽收集或替换器。 |
-| `DELIVERY_TEMPLATE_IDS` | `src/contracts/prompts/delivery-input.ts:16` | 六个投递模板 id，按包的顺序。 | 校验或遍历投递模板时；不要另写 id 清单。 |
-| 投递输入类型 | `src/contracts/prompts/delivery-input.ts:5` | `DeliveryInputV1`、`DeliveryTemplateIdV1`。 | 构造 `renderDeliveryInput` 的输入、给投递模板 id 定型。 |
+| `renderDeliveryInput` | `src/contracts/prompts/delivery-input.ts:31` | 按执行冻结的文本渲染一条投递输入：除 `template` 外每个字段是模板的一个槽，`expiryCount` 按十进制数字，`needsReply`/`wake` 渲染成“是/否”“会/不会”；空必填槽抛 `PromptRenderError`；全局包从不作回退。 | 投递消息出可变文字时；不要另写槽收集或替换器。 |
+| `DELIVERY_TEMPLATE_IDS` | `src/contracts/prompts/delivery-input.ts:19` | 四个投递模板 id，按包的顺序。 | 校验或遍历投递模板时；不要另写 id 清单。 |
+| 投递输入类型 | `src/contracts/prompts/delivery-input.ts:9` | `DeliveryInputV1`、`DeliveryTemplateIdV1`。 | 构造 `renderDeliveryInput` 的输入、给投递模板 id 定型。 |
 | `resolvePromptPackV1` | `src/contracts/prompts/resolve-pack.ts:79` | 校验并合并整条包链，最近包覆盖，返回 templates/strings/tools 及 origins/toolOrigins；从不抛错。 | 唯一的选包与继承合并入口；app 读盘后调它。 |
 | `createPlatformPromptPackSource` | `src/contracts/prompts/prompt-pack.ts:73` | 只提供生成平台包的 `PromptPackSourcePort`；其他包 id 返回 invalid。 | 没有设置目录的 Host/组合根；有磁盘包时由 app 提供另一个 source。 |
 | `PromptPackSourcePort` | `src/contracts/prompts/prompt-pack.ts:64` | 准备执行时取已解析包的端口。 | 运行时只依赖这个端口，不直接读包文件。 |
@@ -38,7 +38,7 @@
 | `promptToolTextDigest` | `src/contracts/prompts/prompt-set.ts:244` | 规范工具说明正文的 sha256。 | 冻结集和编辑路由核对同一份工具说明。 |
 | `checkPromptBody` | `src/contracts/prompts/prompt-set.ts:255` | 校验存储正文的 content type、digest、UTF-8 大小与 ref 一致，返回正文或 null。 | 读任何冻结提示词正文（模板、字符串表、base、Skill、工具说明）时。 |
 | `PROMPT_TEXT_CONTENT_TYPE`、`PROMPT_TOOL_SPECS_CONTENT_TYPE`、`PROMPT_TOOL_TEXT_CONTENT_TYPE` | `src/contracts/prompts/prompt-set.ts:25`、`src/contracts/prompts/prompt-set.ts:27`、`src/contracts/prompts/prompt-set.ts:29` | 三类提示词正文的内容类型常量。 | 写/读 artifact 正文时按类型区分。 |
-| `PLATFORM_PROMPT_PACK_V1` | `src/contracts/prompts/platform-pack.generated.ts:4` | 平台包（清单 schemaVersion 1，含 Work/Query 第 2 版模板、`intervention-planning` 模板、两个秘书模板、六个交接模板、六个投递模板 `action-request-delivery`、`inquiry-delivery`、`notify-delivery`、`wait-reply-delivery`、`wait-expiry-delivery`、`intervention-delivery`，以及 Run 里联系被改断时交给执行者的输入模板 `link-breaks-input`、Run 里改过的 Python 文件有语法错时交给执行者的输入模板 `python-syntax-input`、轮开始压缩时摘要调用的提示 `context-summary-request`）的只读解析结果。 | 没有自定义包时的默认包、测试默认值；不要运行时从 resources 现读。 |
+| `PLATFORM_PROMPT_PACK_V1` | `src/contracts/prompts/platform-pack.generated.ts:4` | 平台包（清单 schemaVersion 1，含 Work/Query 第 2 版模板、`intervention-planning` 模板、两个秘书模板、六个交接模板、四个投递模板 `message-delivery`、`wait-reply-delivery`、`wait-expiry-delivery`、`intervention-delivery`，以及 Run 里联系被改断时交给执行者的输入模板 `link-breaks-input`、Run 里改过的 Python 文件有语法错时交给执行者的输入模板 `python-syntax-input`、轮开始压缩时摘要调用的提示 `context-summary-request`）的只读解析结果。 | 没有自定义包时的默认包、测试默认值；不要运行时从 resources 现读。 |
 | `PLATFORM_SKILLS` | `src/contracts/prompts/platform-skills.ts:6` | 五个平台 Skill 的 id/title/kind/priority/templateId。 | agent-runtime 构造或校验平台 Skill 时。 |
 | `TEMPLATE_SLOTS` | `src/contracts/prompts/slot-tables.ts:17` | 每个模板的槽与必填性（代码契约）；六个交接模板各只有一行必填的 `task_round`。 | 包编辑器、解析、渲染校验；包不能改这张表。 |
 | 包与解析类型 | `src/contracts/prompts/prompt-pack.ts:9` | `PromptPackManifestV1`、`PromptPackChainEntryV1`、`ResolvedPromptPackV1`、`PromptPackValidationV1`、`PromptPackProblemV1`、`TemplateSlotTableV1`、`ToolTextV1`。 | app 读盘、组合根接线和解析结果传递。 |

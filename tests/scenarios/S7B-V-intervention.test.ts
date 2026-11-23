@@ -15,7 +15,7 @@ import type { DispatchBasisV1 } from '../../src/contracts/ledger.js';
 import type { S6AHostWorld } from '../helpers/S6A-host-fixture.js';
 import { S6A_SCOPE, S6A_WORK_ROLE } from '../helpers/S6A-request-fixture.js';
 import { cancelS7AGoal, committed, ready, setS7AAutonomy } from '../helpers/S7A-fixture.js';
-import { approveS7A2Message, sendS7A2PersonMessage } from '../helpers/S7A2-fixture.js';
+import { sendS7A2PersonMessage } from '../helpers/S7A2-fixture.js';
 import { openS7BWorld } from '../helpers/S7B-fixture.js';
 import { openS7BPlanningWorld, type S7BPlanningWorld } from '../helpers/S7B3-planning-world.js';
 import { completeS7BGoal, driveS7BIntervention, firstPlan, interveneS7B, refinementPlan, s7bVWorkProfile }
@@ -292,18 +292,21 @@ describe('V-intervention: an authorized agent message', () => {
       plain(S6A_SCOPE, { goalRef: goal })), 'the dispatch basis');
     await world.scripted.script(sender, [{ kind: 'calls', calls: [{ callId: 's7b3-v-agent',
       name: 'send_session_message', args: { recipient: recipient.ref, text: 'S7B3 V agent action',
-        intent: 'action_request', needsReply: true, expected: basis } }] },
+        needsReply: true } }] },
     { kind: 'text', text: 'S7B3 V agent sent' }]);
     const next = await advanceUntil(world.ag2b, { schemaVersion: 1, goalRef: goal, flowId: 's7b3-v-agent',
       sessionHint: sender.ref, kind: 'select_work', taskId: tasks[0]!.taskId }, 'claim_task');
     await driveWorkflow(world.ag2b, next, { stopBefore: 'open_checks' });
     const saved = ready<{ items: SessionMessage[] }>(await world.post('messages/outbox',
       plain(S6A_SCOPE, { senderSession: sender.ref, page: { limit: 20 } })), 'the agent outbox').items
-      .find(item => item.sender.kind === 'work_run' && item.intent === 'action_request');
-    if (saved === undefined) throw new Error('V: the agent action_request is not in its outbox');
-    const message = saved.release === 'awaiting' ? await approveS7A2Message(world, saved, 'v-agent') : saved;
+      .find(item => item.sender.kind === 'work_run');
+    if (saved === undefined) throw new Error('V: the agent request message is not in its outbox');
+    // P2: a message is never "released" before use; the agent's saved send is the real message.
+    const message = saved;
     expect(message.sender.kind).toBe('work_run');
-    expect(message.intent).toBe('action_request');
+    // The agent message stores only the sender/needsReply facts; `entry` belongs to the person's
+    // direct-intervention message (asserted where that message is built), never to a work_run send.
+    expect(message).toMatchObject({ sender: { kind: 'work_run' }, needsReply: true });
     expect(await interveneS7B(world, message.ref, s7bVWorkProfile()))
       .toMatchObject({ status: 'progressed', branch: 'no_task', stage: 'query' });
   });
@@ -330,8 +333,8 @@ describe('V-intervention: a cancelled Goal with a pending UCR card', () => {
       if (line.status !== 'completed' || line.value === undefined) throw new Error('V-07: the line did not open');
       const sessionRef = { projectId: line.value.ref.projectId, sessionId: line.value.ref.sessionId };
       const message = committed<SessionMessage>(await h.post('messages/send', graphWrite(AG2B_SCOPE, {
-        recipient: sessionRef, text: 'S7B3 V-07 cancelled intervention', intent: 'action_request',
-        goalRef: AG2B_GOAL_REF,
+        recipient: sessionRef, text: 'S7B3 V-07 cancelled intervention', entry: 'person_intervention',
+        needsReply: true, goalRef: AG2B_GOAL_REF,
       }, 's7b3-v-cancelled-message')), 'the V-07 message');
 
       // `cancelS7AGoal` reads only the world's public `post`; the scenario Host supplies that real route.

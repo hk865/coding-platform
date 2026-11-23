@@ -14,6 +14,14 @@ import { createTaskClaimService } from '../../src/core/work-graph/tasks/claim-se
 import { createRunControlService } from '../../src/core/work-graph/tasks/control-service.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
 import { createMaterialRecordReaders } from '../../src/core/work-graph/materials/record-readers.js';
+import { createMaterialService } from '../../src/core/work-graph/materials/material-service.js';
+import { createSessionMailbox } from '../../src/core/work-graph/communication/mailbox-service.js';
+import { createPlanService } from '../../src/core/work-graph/tasks/plan-service.js';
+import { createInitializationBindingReader } from '../../src/core/work-graph/tasks/goal-confirm-service.js';
+import { createQueryRoundResolver } from '../../src/core/work-graph/tasks/query-round.js';
+import { createQueryJobService } from '../../src/core/work-graph/queries/query-job-service.js';
+import { RawArtifactBodyStore } from '../../src/core/record-store/body-store.js';
+import { planSourceRootOf } from '../helpers/task-claim-fixture.js';
 import { createRoleConfigurationService } from '../../src/core/work-graph/configuration/role-memory-service.js';
 import { randomUUID } from 'node:crypto';
 import {
@@ -30,6 +38,21 @@ async function make(kind: 'memory' | 'sqlite'): Promise<GraphSessionFixture> {
 }
 function moduleTarget(fixture: GraphSessionFixture, moduleId: string): WorkLinkTarget {
   return { kind: 'module', ref: fixture.moduleRef(moduleId) };
+}
+/** The claim owner's source-chain root over this fixture's records: the production walk, never a stub. */
+function planSourceRootFor(fixture: GraphSessionFixture) {
+  const now = () => '2026-09-24T00:00:00.000Z';
+  const bodies = new RawArtifactBodyStore();
+  const materials = createMaterialService({ bodies, authority: createMaterialRecordReaders(fixture.records).authority, now });
+  const plans = createPlanService({ records: fixture.records, bindings: createInitializationBindingReader({ records: fixture.records }),
+    knowledge: fixture.knowledge, materials, now, eventId: randomUUID });
+  const mailbox = createSessionMailbox({ records: fixture.records, sessions: fixture.sessionsPort,
+    executions: createRunStateReader({ records: fixture.records }),
+    roles: createRoleConfigurationService({ records: fixture.records, now, eventId: randomUUID }), materials,
+    queryRounds: createQueryRoundResolver({ records: fixture.records, duties: fixture.duty, bodies }),
+    defaultInquiryDeadlineMs: 86_400_000, systemActor: { kind: 'system', id: 'a1-lineage' }, now, newId: randomUUID });
+  return planSourceRootOf({ messages: mailbox, plans,
+    queries: createQueryJobService({ records: fixture.records, now, eventId: randomUUID }) });
 }
 
 describe.each(['memory', 'sqlite'] as const)('A1 Session lifecycle over real %s RecordStore', kind => {
@@ -127,6 +150,7 @@ describe.each(['memory', 'sqlite'] as const)('A1 Session lifecycle over real %s 
     const roles = createRoleConfigurationService({ records: fixture.records,
       now: () => '2026-09-24T00:00:00.000Z', eventId: randomUUID });
     const claims = createTaskClaimService({ records: fixture.records, roles,
+      planSourceRoot: planSourceRootFor(fixture),
       now: () => '2026-09-24T00:00:00.000Z', newId: randomUUID });
     const claimed = await claims.claimTask(fixture.ctx, {
       input: { goalRef, planRef, taskId: taskRef.taskId, sessionRef: session,
@@ -277,6 +301,7 @@ describe.each(['memory', 'sqlite'] as const)('A1 Session lifecycle over real %s 
     const roles = createRoleConfigurationService({ records: barrier.records,
       now: () => '2026-09-25T00:00:00.000Z', eventId: randomUUID });
     const claims = createTaskClaimService({ records: barrier.records, roles,
+      planSourceRoot: planSourceRootFor(f),
       now: () => '2026-09-25T00:00:00.000Z', newId: randomUUID });
     const claim = { input: { goalRef: task.goalRef, planRef: task.planRef, taskId: task.taskRef.taskId, sessionRef,
       roleBinding: { schemaVersion: 1 as const, bindingId: 'a1-binding', templateId: 'builder', templateRevision: '1',

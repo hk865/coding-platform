@@ -158,11 +158,11 @@ describe.each(['memory', 'sqlite'] as const)('S5R2 queue history (%s)', kind => 
     const f = await open();
     const mailbox = realOwners(f).mailbox;
     const sent = committed(await mailbox.sendMessage(workContext(f), {
-      input: { recipient: f.sessionSecond, text: 'Session-to-Session notification', intent: 'notify' },
+      input: { recipient: f.sessionSecond, text: 'Session-to-Session notification', wake: false },
       meta: { requestId: 's5r2-a10-send', expected: [] },
     })).value;
     expect(sent).toMatchObject({ revision: 1, status: 'pending', recipient: f.sessionSecond,
-      sender: { kind: 'work_run', sessionRef: f.sessionS, runRef: f.runRA.ref }, intent: 'notify' });
+      sender: { kind: 'work_run', sessionRef: f.sessionS, runRef: f.runRA.ref }, wake: false });
     // Lead: a read adds the slice-1 decode defaults (replyHandler/archiveWaitDisposition = null).
     expect(ready(await mailbox.readMessage(f.ctx, sent.ref))).toEqual({ ...sent, replyHandler: null, archiveWaitDisposition: null });
     const source: DecisionSourceV1 = { kind: 'message',
@@ -236,7 +236,7 @@ describe('S5R2 message capacity (memory only)', () => {
     expect(stored).toHaveLength(5);
     expect(stored.map(message => keyOf(message.ref)).sort()).toEqual(sentKeys.sort());
     for (const message of stored) {
-      expect(message).toMatchObject({ goalRef: GOAL_B, revision: 1, status: 'pending', intent: 'decision_request',
+      expect(message).toMatchObject({ goalRef: GOAL_B, revision: 1, status: 'pending',
         recipient: { kind: 'user', projectId: 'P', workspaceId: 'W' }, decision: { syntheticAnswer: false },
         sender: { kind: 'work_run', sessionRef: f.sessionS, runRef: f.runRA.ref } });
     }

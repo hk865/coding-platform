@@ -76,7 +76,7 @@ describe('S5R2 message capacity (memory only)', () => {
     expect(stored).toHaveLength(5001);
     expect(stored.map(message => keyOf(message.ref)).sort()).toEqual(sentKeys.sort());
     for (const message of stored) {
-      expect(message).toMatchObject({ goalRef: GOAL_B, revision: 1, status: 'pending', intent: 'decision_request',
+      expect(message).toMatchObject({ goalRef: GOAL_B, revision: 1, status: 'pending',
         recipient: { kind: 'user', projectId: 'P', workspaceId: 'W' }, decision: { syntheticAnswer: false },
         sender: { kind: 'work_run', sessionRef: f.sessionS, runRef: f.runRA.ref } });
     }

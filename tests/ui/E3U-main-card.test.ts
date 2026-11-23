@@ -154,7 +154,11 @@ describe('E3U Main decision card', () => {
       expect(input['regenerate']).toBe(false);
       expect(input['text']).toBe('这个卡怎么办');
       await quietPage(log);
-      expect(countRoute(log, 'requests/read')).toBe(1);
+      /* Ruling 14: Main's own refresh also reads this request now. Assert that one
+         read is of this submitted round (the page reads with the card's requestRef),
+         never how many refresh reads happened. */
+      expect(callsTo(log, 'requests/read').map((call) =>
+        (call.input as { requestRoot?: unknown }).requestRoot)).toContainEqual(candidate.requestRef);
       await waitFor(() => userTexts(page.root).includes('这个卡怎么办'));
     } finally {
       await page.restore();

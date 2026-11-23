@@ -75,7 +75,7 @@ import type {
     EncodedDomainEvent, EncodedRecord, GoalRecordTransactionPort, PreparedCommit, RecordCommitIdentityPort, RecordGuard,
     StoreCommitReceipt, UniqueClaimChange,
 } from '../../record-store/ports.js';
-import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
+import type { RecordLookupPort, RecordOrderedLookupPort } from '../../record-store/lookup-ports.js';
 import type { WorkspaceHostBindings } from '../../workspace/access.js';
 import type { SessionMailboxPort } from '../model/communication-contracts.js';
 import type { MaterialPort } from '../model/material-contracts.js';
@@ -172,7 +172,7 @@ import {
 } from '../tasks/claim-holds.js';
 import { sessionMessageRefProblem } from '../tasks/codec-shape-checks.js';
 
-export type Records = GoalRecordTransactionPort & RecordLookupPort;
+export type Records = GoalRecordTransactionPort & RecordLookupPort & RecordOrderedLookupPort;
 type HostActor = { kind: 'human' | 'system'; id: string };
 type LoadedRound = { ok: true; round: RoundSnapshot } | { ok: false; rejection: CoreRejection };
 
@@ -926,7 +926,7 @@ export type AutomaticReverifyPolicyV1 = (input: {
  *    open/begin are explicitly unsupported while history reads keep working).
  */
 export type EvidenceServiceDependencies = {
-    records: GoalRecordTransactionPort & RecordLookupPort;
+    records: GoalRecordTransactionPort & RecordLookupPort & RecordOrderedLookupPort;
     /** Slice 9 (VR-16): the identity-only receipt read of a review booking (the store object's member beside `records`). */
     commitIdentities: Pick<RecordCommitIdentityPort, 'readCommitByIdentity'>;
     /** KLS-2b: a staged repair's ops come from its note file when a round binds it. */

@@ -73,8 +73,9 @@ async function openWorld(backend: 'memory' | 'sqlite', extraBindings: readonly S
 const senderContext = () => systemRoundContext({ ...S6A_SECOND_SCOPE }, new AbortController().signal);
 
 /** One Host system send from the second workspace, through the public mailbox owner. */
-const systemSend = (world: S6ARequestWorld, requestId: string, input: SessionMessageSendInputV1['input']) =>
-  world.platform.messages.sendMessage(senderContext(), { input, meta: { requestId, expected: [] } });
+const systemSend = (world: S6ARequestWorld, requestId: string,
+  input: SessionMessageSendInputV1['input'] & { readonly wake?: boolean }) =>
+  world.platform.messages.sendMessage(senderContext(), { input: { ...input }, meta: { requestId, expected: [] } });
 
 /** One workspace's inbox read; `S7B-F-support.inboxOf` is A-only (it hardcodes `S6A_SCOPE`), so this takes the
  * workspace the read runs in. */
@@ -100,13 +101,13 @@ describe.each(['memory', 'sqlite'] as const)('XWS cross-workspace delivery (%s)'
     const expectedRef = { aggregateType: 'SessionMessage', projectId: P, workspaceId: A_WORKSPACE,
       messageId: idOf(HOST_SYSTEM, 'xws-1') } as const;
 
-    const first = await systemSend(world, 'xws-1', { recipient: lineA.ref, intent: 'notify', text });
+    const first = await systemSend(world, 'xws-1', { recipient: lineA.ref, wake: false, text });
     expect(first.status, `the first send: ${JSON.stringify(first)}`).toBe('committed');
     if (first.status !== 'committed') throw new Error(`XW-1: the first send was not committed: ${JSON.stringify(first)}`);
     expect(first.value.ref).toEqual(expectedRef);
     expect(first.value.revision).toBe(1);
 
-    const second = await systemSend(world, 'xws-1', { recipient: lineA.ref, intent: 'notify', text });
+    const second = await systemSend(world, 'xws-1', { recipient: lineA.ref, wake: false, text });
     expect(second.status, `the replay: ${JSON.stringify(second)}`).toBe('committed');
     if (second.status !== 'committed') throw new Error(`XW-1: the replay was not committed: ${JSON.stringify(second)}`);
     expect(second.value.ref).toEqual(expectedRef);
@@ -126,12 +127,12 @@ describe.each(['memory', 'sqlite'] as const)('XWS cross-workspace delivery (%s)'
     const { world, a, b } = await openWorld(backend);
     const lineA = await createS6BLine(a, { label: 'xws-line-a', role: S6A_WORK_ROLE });
     const lineB = await createS6BLine(b, { label: 'xws-line-b', role: S6A_WORK_ROLE });
-    const first = await systemSend(world, 'xws-2', { recipient: lineB.ref, intent: 'notify', text: 'XWS-2' });
+    const first = await systemSend(world, 'xws-2', { recipient: lineB.ref, wake: false, text: 'XWS-2' });
     expect(first.status, `the first send: ${JSON.stringify(first)}`).toBe('committed');
     if (first.status !== 'committed') throw new Error(`XW-2: the first send was not committed: ${JSON.stringify(first)}`);
     expect(first.value.ref.workspaceId).toBe('s6a-second-workspace');
 
-    const second = await systemSend(world, 'xws-2', { recipient: lineA.ref, intent: 'notify', text: 'XWS-2' });
+    const second = await systemSend(world, 'xws-2', { recipient: lineA.ref, wake: false, text: 'XWS-2' });
     expect(second).toMatchObject({ status: 'rejected', code: 'idempotency_conflict' });
     expect((await inboxIn(a, lineA.ref)).map(item => item.ref.messageId))
       .not.toContain(idOf(HOST_SYSTEM, 'xws-2'));
@@ -139,14 +140,14 @@ describe.each(['memory', 'sqlite'] as const)('XWS cross-workspace delivery (%s)'
 });
 
 describe('XWS a Host system action_request crosses', () => {
-  it('XW-3b delivers a Host system action_request into the recipient workspace', async () => {
+  it('XW-3b delivers a Host system notice (wake:false) into the recipient workspace', async () => {
     /* Named mutation: narrow the cross-workspace condition back to `notify` only
        (`src/core/work-graph/communication/mailbox-send.ts`, the recipient-scope refusal). The send is then
        refused `not_found`, so the committed assertion and the recipient-inbox row go red. */
     const { world, a } = await openWorld('memory');
     const lineA = await createS6BLine(a, { label: 'xws-line-a', role: S6A_WORK_ROLE });
     const messageId = idOf(HOST_SYSTEM, 'xws-3b');
-    const sent = await systemSend(world, 'xws-3b', { recipient: lineA.ref, intent: 'action_request', text: 'XWS-3b' });
+    const sent = await systemSend(world, 'xws-3b', { recipient: lineA.ref, wake: false, text: 'XWS-3b' });
     expect(sent.status, `the send: ${JSON.stringify(sent)}`).toBe('committed');
     if (sent.status !== 'committed') throw new Error(`XW-3b: the send was not committed: ${JSON.stringify(sent)}`);
     expect((await inboxIn(a, lineA.ref)).map(item => item.ref.messageId)).toContain(messageId);
@@ -156,21 +157,19 @@ describe('XWS a Host system action_request crosses', () => {
 type XW3Case = { label: string; requestId: string; messageId: string; input: Record<string, unknown> };
 
 const XW3_CASES: readonly XW3Case[] = [
-  /* AGTX-2 (i). Today red at the rejection shape: the old guard refuses the cross-workspace
-     inquiry `not_found` / `the requested record does not exist`. Green after the package because
-     `message-machine.ts:556–:560` answers `invalid` with L1. Named mutation: remove the intent
-     condition from `mayCross` (`src/core/work-graph/communication/mailbox-send.ts:425–:458`) →
-     the inquiry commits, so the `toMatchObject` goes red (if it were bypassed, only A's inbox
-     would hold the message). */
+  /* AGTX-2 (i). The inquiry asks for a reply, which after §2.1 deleted `intent` is the `needsReply` fact
+     (design §2.1 item 3). The old `intent`-keyed guard refused it `not_found`; `mailbox-send.ts:490`'s
+     `mayCross` keys on `!send.needsReply` and the owner answers `invalid` with L1. Named mutation: drop
+     `!send.needsReply` from `mayCross` → the inquiry commits, so the `toMatchObject` goes red. */
   { label: 'an inquiry', requestId: 'xws-3a', messageId: idOf(OPERATOR, 'xws-3a'),
-    input: { intent: 'inquiry', text: 'XWS-3a' } },
+    input: { needsReply: true, text: 'XWS-3a' } },
   /* AGTX-2 (ii). Today red at the same rejection shape. Green after the package for the same
      reason: the notify still needs a reply, so it is `other_workspace` and L1 answers `invalid`.
      Named mutation: remove `!send.needsReply` from `mayCross` (`mailbox-send.ts:425–:458`) →
      the notify that needs a reply commits, so the `toMatchObject` goes red (if it were bypassed,
      only A's inbox would hold the message). */
   { label: 'a notify that needs a reply', requestId: 'xws-3b', messageId: idOf(OPERATOR, 'xws-3b'),
-    input: { intent: 'notify', needsReply: true, text: 'XWS-3b' } },
+    input: { wake: false, needsReply: true, text: 'XWS-3b' } },
 ];
 
 describe('rejects: a cross-workspace send that asks for a reply (coordination)', () => {
@@ -225,7 +224,7 @@ describe('XWS a Work Run notify crosses', () => {
     const lineA = await createS6BLine(a, { label: 'xws-line-a', role: S6A_WORK_ROLE, tasks });
     world.scriptReplies([
       { kind: 'calls', calls: [{ callId: 'xws-4-send', name: 'send_session_message',
-        args: { recipient: lineB.ref, intent: 'notify', text: 'XWS-4' } }] },
+        args: { recipient: lineB.ref, wake: false, text: 'XWS-4' } }] },
       { kind: 'text', text: 'XWS-4 answered' },
     ]);
     const receipts: WorkflowStepReceipt[] = [];

@@ -182,9 +182,9 @@ describe('P1S buildRunSteps 纯表', () => {
 
   const MESSAGE = { aggregateType: 'SessionMessage', projectId: 'p', workspaceId: 'w', messageId: 'msg-1' };
   it.each([
-    ['send_session_message', { recipient: { projectId: 'p', sessionId: 's-sec' }, intent: 'notify', text: '做完了' },
+    ['send_session_message', { recipient: { projectId: 'p', sessionId: 's-sec' }, text: '做完了' },
       { kind: 'session', sessionRef: { projectId: 'p', sessionId: 's-sec' } }, '做完了'],
-    ['send_user_message', { text: '请看一下' }, { kind: 'person' }, '请看一下'],
+    ['notify_person', { text: '请看一下' }, { kind: 'person' }, '请看一下'],
     ['respond_session_message', { messageRef: MESSAGE, text: '收到' }, { kind: 'reply', messageRef: MESSAGE }, '收到'],
   ])('T12 %s 读成 message 步，to 分三种', (tool, args, to, text) => {
     const answer = read(oneCall(kernelToolCall('c1', tool, args), ok('c1')));
@@ -202,7 +202,7 @@ describe('P1S buildRunSteps 纯表', () => {
   it.each([
     ['思考 6,000 个“汉”（18,000 字节）从头取 5,333 个（15,999 字节）', () => reply(new KernelTurnRecords().runStarted(), [],
       { reasoningContent: '汉'.repeat(6000) }), { kind: 'think', text: bounded('汉'.repeat(5333), true) }],
-    ['消息 3,000 个“汉”从头取 1,333 个（3,999 字节）', () => oneCall(kernelToolCall('c1', 'send_user_message',
+    ['消息 3,000 个“汉”从头取 1,333 个（3,999 字节）', () => oneCall(kernelToolCall('c1', 'notify_person',
       { text: '汉'.repeat(3000) }), ok('c1')), { kind: 'message', text: bounded('汉'.repeat(1333), true) }],
     ['stdout 3,000 个 x 取末尾 2,000 个', () => oneCall(shellCall('c1', 'seq'), b => {
       b.toolCompleted('c1', ran('c1', commandOutput('x'.repeat(3000))));

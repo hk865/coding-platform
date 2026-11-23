@@ -150,7 +150,7 @@ export type QueueSection = QueueInput['sections'][number];
 export async function attentionNotices(world: S6AHostWorld, recipient: SessionRef): Promise<SessionMessage[]> {
   const found: SessionMessage[] = [];
   for (const item of await inboxOf(world, recipient)) {
-    if (item.intent !== 'notify') continue;
+    if (item.sender.kind !== 'host' || item.needsReply === true) continue;
     if ((await readBody(world, item.ref, 'message')).includes(S7C_L2_ATTENTION_PATH)) found.push(item);
   }
   return found;
@@ -160,7 +160,7 @@ export async function attentionNotices(world: S6AHostWorld, recipient: SessionRe
 export async function reworkNotices(world: S6AHostWorld, recipient: SessionRef): Promise<SessionMessage[]> {
   const found: SessionMessage[] = [];
   for (const item of await inboxOf(world, recipient)) {
-    if (item.intent !== 'notify') continue;
+    if (item.sender.kind !== 'host' || item.needsReply === true) continue;
     if ((await readBody(world, item.ref, 'message')).startsWith('自动返工')) found.push(item);
   }
   return found;

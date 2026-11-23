@@ -276,27 +276,45 @@ function entryOf(read: QueryRead): { hostConfigurationRevision: string;
 // them: right after the read tools in the executor's local grant, at the end of each duty's list (`localDutyGrant`).
 const readTools = ['read', 'look_graph', 'find_graph', 'check_links'];
 const webTools = ['web_search', 'web_fetch'];
-const executorReadonlyTools = [...readTools, ...webTools, 'run_readonly_command', 'send_session_message',
-  'read_session_inbox', 'read_session_message', 'read_session_message_body', 'propose_future_plan'];
+const sessionMailboxTools = ['send_session_message', 'read_session_inbox', 'read_session_message',
+  'read_session_message_body', 'respond_session_message', 'withdraw_session_message'];
+const actionTools = ['dispatch_task', 'hold_claim', 'release_hold', 'request_stop'];
+const executorReadonlyTools = [...readTools, ...webTools, 'run_readonly_command',
+  ...sessionMailboxTools, 'ask_copy', 'notify_person', 'read_user_decision',
+  'query_task_graph', 'query_ready_tasks', 'propose_future_plan'];
 const executorWritableTools = [...readTools, ...webTools, 'run_readonly_command', 'write', 'record_note',
-  'send_session_message', 'read_session_inbox', 'read_session_message', 'read_session_message_body',
-  'propose_future_plan', 'request_rework', 'request_recheck', 'hand_off', 'shell'];
-const secretaryBindingTools = [...readTools, 'run_readonly_command', 'record_note', 'send_session_message',
-  'withdraw_session_message', 'create_member', 'read_requests', ...webTools];
-const secretaryTools = [...readTools, 'run_readonly_command', 'record_note', ...webTools];
-const adviserBindingTools = [...readTools, 'run_readonly_command', 'record_note', 'query_task_graph',
-  'query_ready_tasks', 'propose_future_plan', 'find_related_sessions', 'send_session_message', 'create_member',
+  ...sessionMailboxTools, 'ask_copy', 'notify_person', 'read_user_decision',
+  'query_task_graph', 'query_ready_tasks', 'propose_future_plan',
+  'request_rework', 'request_recheck', 'hand_off', 'shell'];
+// P2 §2.6/design:614: the secretary request round has the whole mailbox/person/action families, the two plan reads,
+// member creation and the request read; `localDutyGrant` appends the workspace model's web names.
+const secretaryBindingTools = [...readTools, 'run_readonly_command', 'record_note',
+  ...sessionMailboxTools, 'notify_person', 'ask_person', 'ask_copy', 'read_user_decision',
+  ...actionTools, 'query_task_graph', 'query_ready_tasks', 'create_member', 'read_requests', ...webTools];
+const adviserBindingTools = [...readTools, 'run_readonly_command', 'record_note',
+  ...sessionMailboxTools, 'notify_person', 'ask_person', 'ask_copy', 'read_user_decision',
+  ...actionTools, 'query_task_graph', 'query_ready_tasks', 'propose_future_plan', 'create_member',
   'assign_module_maintainer', 'propose_role_split', 'propose_architecture_revision', 'read_requests',
-  'request_rework', 'request_recheck', 'send_user_message', 'hand_off', ...webTools];
-const adviserTools = [...readTools, 'run_readonly_command', 'record_note', 'query_task_graph', 'query_ready_tasks',
-  'propose_future_plan', 'find_related_sessions', 'assign_module_maintainer', 'propose_role_split',
-  'propose_architecture_revision', 'request_rework', 'request_recheck', 'send_user_message', 'hand_off', ...webTools];
-const scribeBindingTools = [...readTools, 'run_readonly_command', 'record_note', 'find_related_sessions',
-  'send_session_message', 'send_user_message', ...webTools];
-const scribeTools = [...readTools, 'run_readonly_command', 'record_note', 'find_related_sessions',
-  'send_user_message', ...webTools];
+  'request_rework', 'request_recheck', 'hand_off', ...webTools];
+const scribeBindingTools = [...readTools, 'run_readonly_command', 'record_note',
+  ...sessionMailboxTools, 'notify_person', 'ask_person', 'ask_copy', 'read_user_decision',
+  'query_task_graph', 'query_ready_tasks', ...webTools];
+// The Query projection (`query-preparation.ts` `projectQueryConfiguration`): the Host grant intersected with the
+// Role ceiling and the round's §2.6 families. The executor keeps the mailbox/person/plan-read families it was
+// granted; a plain Query drops `write`, `shell`, the write-only rework trio and `propose_future_plan`.
+const secretaryTools = [...readTools, 'run_readonly_command', 'record_note',
+  ...sessionMailboxTools, 'notify_person', 'ask_person', 'ask_copy', 'read_user_decision',
+  ...actionTools, 'query_task_graph', 'query_ready_tasks', ...webTools];
+const adviserTools = [...readTools, 'run_readonly_command', 'record_note',
+  ...sessionMailboxTools, 'notify_person', 'ask_person', 'ask_copy', 'read_user_decision',
+  ...actionTools, 'query_task_graph', 'query_ready_tasks', 'propose_architecture_revision', ...webTools];
+const scribeTools = [...readTools, 'run_readonly_command', 'record_note',
+  ...sessionMailboxTools, 'notify_person', 'ask_person', 'ask_copy', 'read_user_decision',
+  'query_task_graph', 'query_ready_tasks', ...webTools];
 
-const executorReadonlyProjection = [...readTools, ...webTools, 'run_readonly_command', 'propose_future_plan'];
+const executorReadonlyProjection = [...readTools, ...webTools, 'run_readonly_command',
+  ...sessionMailboxTools, 'ask_copy', 'notify_person', 'read_user_decision',
+  'query_task_graph', 'query_ready_tasks'];
 
 // The revision material written out as canonical JSON text: keys in sorted
 // order (duty, modelRevision, residentBytes, scope, tools, writeScope; inside
@@ -410,7 +428,8 @@ describe('the local workbench publishes a secretary profile', () => {
   const queryProjection = (tools: readonly string[]): string[] =>
     tools.filter(name => !['propose_future_plan'].includes(name));
   const executorWritableProjection = [...readTools, ...webTools, 'run_readonly_command', 'record_note',
-    'propose_future_plan', 'request_rework', 'request_recheck', 'hand_off'];
+    ...sessionMailboxTools, 'ask_copy', 'notify_person', 'read_user_decision',
+    'query_task_graph', 'query_ready_tasks'];
   const dutyCases: ReadonlyArray<readonly [string, number, boolean, string, string, readonly string[],
     readonly string[], readonly string[]]> = [
     ['adviser', 2, true, 'local-adviser', 'adviser', adviserBindingTools, adviserTools, []],
@@ -587,6 +606,13 @@ async function runProfile(started: Started, suffix: string, index = 1): Promise<
   return runPlainQuery(started, scope, profile, suffix);
 }
 
+// cp2f7 补充裁定 3: NA-3, NA-5 and NA-6 check the web tools' 32 KiB contract, not the secretary. Since P2 hung the
+// design §6 tools on every secretary round, the secretary's plain-Query request (about 76.7 KB) leaves no room for a
+// full 32 KiB result under the Kernel's 107,520-byte request cap, so the page arrives as plain text without
+// `nextOffset`. These rows run on the reviewer profile (index 4): it carries both web names (NA-1) and has the most
+// headroom of the published profiles. The secretary gap itself is recorded by the lead (121-111).
+const FULL_PAGE_PROFILE = 4;
+
 function pageOf(value: unknown): { title: string; content: string; nextOffset: number | null } {
   return value as { title: string; content: string; nextOffset: number | null };
 }
@@ -719,7 +745,7 @@ describe('NET-A the platform web tools', () => {
       { kind: 'text', text: 'na3 done' },
     ], fake.webFetch);
     try {
-      await runProfile(started, 'na3');
+      await runProfile(started, 'na3', FULL_PAGE_PROFILE); // cp2f7 补充裁定 3: reviewer, see FULL_PAGE_PROFILE
       const first = pageOf(toolValue(started.scripted, 1, 'na3-a'));
       const second = pageOf(toolValue(started.scripted, 2, 'na3-b'));
       const third = pageOf(toolValue(started.scripted, 3, 'na3-c'));
@@ -768,7 +794,7 @@ describe('NET-A the platform web tools', () => {
       { kind: 'text', text: 'na5 done' },
     ], fake.webFetch);
     try {
-      await runProfile(started, 'na5');
+      await runProfile(started, 'na5', FULL_PAGE_PROFILE); // cp2f7 补充裁定 3: reviewer, see FULL_PAGE_PROFILE
       expect(started.scripted.requests).toHaveLength(2);
       expect(pageOf(toolValue(started.scripted, 1, 'na5-fetch')).content.length).toBe(32768);
     } finally {
@@ -788,7 +814,7 @@ describe('NET-A the platform web tools', () => {
       { kind: 'text', text: 'na6 done' },
     ], fake.webFetch);
     try {
-      await runProfile(started, 'na6');
+      await runProfile(started, 'na6', FULL_PAGE_PROFILE); // cp2f7 补充裁定 3: reviewer, see FULL_PAGE_PROFILE
       const value = toolValue(started.scripted, 1, 'na6-search') as
         { results: { url: string }[]; omitted: number };
       expect(value.results).toHaveLength(8);
@@ -799,7 +825,7 @@ describe('NET-A the platform web tools', () => {
     }
   });
 
-  it('NA-7 an OpenAI workspace keeps the five-name local grant and runs the Query', async () => {
+  it('NA-7 an OpenAI workspace keeps the P2 local grant without the web names and runs the Query', async () => {
     const started = await startLocalSecretaryHost([{ kind: 'text', text: 'na7 done' }]);
     try {
       const { scope } = await openAndSelect(started);
@@ -814,10 +840,11 @@ describe('NET-A the platform web tools', () => {
       const profile = (await profilesOf(started, scope))[0];
       if (profile === undefined) throw new Error('the local profile is not published');
       const run = await runPlainQuery(started, scope, profile, 'na7');
-      // A literal five-name ceiling on purpose: `localTools` grows with the builder's §4 change to
-      // include the web names, and a non-DeepSeek workspace must not get them (NA-7, §3/§5).
+      // A literal P2 list on purpose: the local grant has the mailbox/person/plan-read families, and a
+      // non-DeepSeek workspace must not get the two web names (NA-7, §3/§5).
       expect(entryOf(run).permissions).toEqual({
-        tools: ['read', 'look_graph', 'find_graph', 'check_links', 'run_readonly_command'], writeScope: [] });
+        tools: [...readTools, 'run_readonly_command', ...sessionMailboxTools, 'ask_copy', 'notify_person',
+          'read_user_decision', 'query_task_graph', 'query_ready_tasks'], writeScope: [] });
     } finally {
       await started.host.close();
     }

@@ -66,18 +66,36 @@ describe.each(BACKENDS)('the Query tools and the Query principal on the %s backe
     const prompt = await readPromptRecord.call(world.platform.runtime, world.humanContext(), refs.queryRunRef);
     expect(prompt.status).toBe('ready');
     if (prompt.status !== 'ready') return;
-    // Today's Query kernel list: the granted builtin read plus the conditional
-    // exploration subset, in its declared order, never sorted.
-    expect(prompt.value.set.toolNames).toEqual(['read', 'list_files', 'search', 'symbols', 'code_index',
-      'project_source', 'python_index', 'cpp_index', 'source_excerpt']);
+    // The plain Query's final list: the granted builtin read plus the
+    // conditional exploration subset, then the secretary round's mailbox,
+    // decision read, person, ask_copy and action families the Host grants and
+    // §2.6 lets a text Query select (no note without an admission class, no
+    // member without a Goal, no answer tool on an unshaped round), in declared
+    // order, never sorted. design §6 secretary rows (:604), p2-frozen §2.6
+    // (:216-238).
+    expect(prompt.value.set.toolNames).toEqual([
+      'read', 'list_files', 'search', 'symbols', 'code_index', 'project_source', 'python_index', 'cpp_index',
+      'source_excerpt',
+      'send_session_message', 'read_session_inbox', 'read_session_message', 'read_session_message_body',
+      'respond_session_message', 'withdraw_session_message',
+      'read_user_decision', 'notify_person', 'ask_person', 'ask_copy',
+      'dispatch_task', 'hold_claim', 'release_hold', 'request_stop',
+    ]);
 
     const read = await world.post('queries/read', plain(S6A_SCOPE, refs.queryJobRef));
     expect(read.httpStatus).toBe(200);
     const record = read.body as ReadResult<QueryJobRecord>;
     expect(record.status).toBe('ready');
     if (record.status !== 'ready') return;
-    // The entry froze exactly the granted tool list of the plain profile.
-    expect(record.value.run.run.executionState?.entry?.permissions.tools).toEqual(['read']);
+    // The entry froze the §2.6 round projection of the Host grant: the plain
+    // text Query keeps the mailbox, decision-read, person, ask_copy and action
+    // families and the note tool, and no member or request read.
+    expect(record.value.run.run.executionState?.entry?.permissions.tools).toEqual([
+      'read', 'send_session_message', 'read_session_inbox', 'read_session_message', 'read_session_message_body',
+      'respond_session_message', 'withdraw_session_message',
+      'notify_person', 'ask_person', 'ask_copy', 'read_user_decision',
+      'dispatch_task', 'hold_claim', 'release_hold', 'request_stop', 'record_note',
+    ]);
     const intent = record.value.job.job.intent;
     // The intent is the claim's own literal: the secretary binding and the
     // fixture's budgets.

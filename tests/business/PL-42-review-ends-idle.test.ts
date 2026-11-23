@@ -7,18 +7,19 @@
  * Named mutation: the candidate wait's kinds become `['Goal']`; the driver then never wakes on the review's answer.
  */
 import { afterEach, expect, it } from 'vitest';
-import type { PlanProposal } from '../../src/core/work-graph/model/plan-contracts.js';
 import { driveWorkflow } from '../helpers/A2-restart-fixture.js';
-import { graphWrite } from '../helpers/AG2b-collaboration-fixture.js';
 import { checkConfiguration, ready, sessionOf, setS7AAutonomy } from '../helpers/S7A-fixture.js';
 import { OPERATOR, S6A_SCOPE, S6A_WORK_ROLE } from '../helpers/S6A-request-fixture.js';
 import { createS6BLine } from '../helpers/S6B1-fixture.js';
 import { createPLAdviserLine } from '../helpers/PL-consumption-fixture.js';
-import { heartbeatUntil, heartbeatUntilModel, readProposal, waitForResponse } from '../helpers/IV-host-fixture.js';
+import { abandonCandidate, heartbeat, heartbeatUntil, heartbeatUntilModel, readProposal, waitForResponse } from '../helpers/IV-host-fixture.js';
+import { readS7BMessage } from '../helpers/S7B-fixture.js';
+import { waitFor } from '../scenarios/harness.js';
 import {
-  adoptPLTwoStageSkeleton, createPLReviewerLine, openPLWorkflowWorld, performOne, plSupersedeDraft, plSystemRoundRef,
-  runPLAutomaticChain, verdictOf, type PLWorkflowWorld,
+  adoptPLTwoStageSkeleton, createPLReviewerLine, openPLPendingCandidateWorld, openPLWorkflowWorld, performOne,
+  plStageTwoDraft, plSystemRoundRef, runPLAutomaticChain, verdictOf, type PLWorkflowWorld,
 } from '../helpers/PL-workflow-fixture.js';
+import { proposePLCandidateFromIntervention } from '../helpers/PL-forms-fixture.js';
 import { startGoalDriver, waitDriver } from '../helpers/DRV-fixture.js';
 
 let opened: PLWorkflowWorld | null = null;
@@ -52,6 +53,41 @@ it('PL-42: the review answer alone wakes a Goal with no work and no Run, and the
     && !(snapshot.last.status === 'ready' && (snapshot.last.value.waitBasis?.reasons ?? [])
       .includes('plan_review_pending')), 'PL-42: the driver leaves the review wait');
   expect(moved.last).toMatchObject({ status: 'ready' });
+});
+
+it('PL-42: a completed Goal keeps the undecided chain registered; its abandonment wakes the Goal and replies M once', async () => {
+  const { workflow, candidate, messageRef } = await openPLPendingCandidateWorld({ label: 'pl-42-tail' });
+  opened = workflow;
+  const { world, goal } = workflow;
+  // The Goal completes through its own `complete_goal` step while the candidate chain is still undecided. That
+  // step's result is not the completion exit; the exit runs on the next Goal-level pass, exactly the pass the
+  // driver's first read makes below.
+  const completed = await driveWorkflow(world.ag2b, { schemaVersion: 1, goalRef: goal,
+    flowId: 'pl-42-tail-complete', sessionHint: null, kind: 'select_work' });
+  expect(completed.at(-1), JSON.stringify(completed.map(step => [step.state, step.receipt?.kind])))
+    .toMatchObject({ state: 'completed', receipt: { kind: 'complete_goal' } });
+
+  await startGoalDriver(world, goal, 'pl-42-tail-goal');
+  const done = await waitDriver(world, goal, undefined, snapshot => snapshot.state === 'completed',
+    'PL-42: the completed Goal carries the undecided chain');
+  // The completion exit leaves the still-undecided chain one `PlanProposal` wait on the completed Goal; the driver
+  // registers that basis, so the chain's later abandonment can wake the Goal.
+  expect(done.last).toMatchObject({ status: 'ready', value: { state: 'completed', waitBasis: {
+    reasons: expect.arrayContaining(['abandoned_candidate_reply_pending']),
+    recordKinds: ['PlanProposal'] } } });
+  expect((await readS7BMessage(world, messageRef)).response, 'an undecided chain leaves M unanswered').toBeNull();
+
+  await abandonCandidate(world, goal, candidate, 'pl-42-tail-abandon');
+  const replied = await waitFor(() => readS7BMessage(world, messageRef),
+    message => message.response !== null, 'PL-42: the abandoned tail M reply');
+  expect(replied.response?.sender.kind, 'the reply is the chain tail\'s formal answer').toBe('query_run');
+  const woken = await waitDriver(world, goal, undefined, snapshot => snapshot.state === 'completed'
+    && snapshot.last?.status === 'ready' && snapshot.last.value.waitBasis === undefined,
+  'PL-42: the completed Goal is woken by the abandonment');
+  expect(woken.last).toMatchObject({ status: 'ready',
+    value: { state: 'completed', reason: 'the Goal is formally COMPLETED' } });
+  await heartbeat(world);
+  expect(await readS7BMessage(world, messageRef), 'M has exactly this one reply').toEqual(replied);
 });
 
 /** Each cell leaves the candidate in one state and returns what lets its held round go. */
@@ -91,11 +127,13 @@ it.each(parked)('PL-42: a candidate $state keeps nobody from working; the wait c
   const line = await sessionOf(workflow.world, await createS6BLine(workflow.main, { label: `${label}-line`,
     role: S6A_WORK_ROLE, tasks: skeleton.tasks.filter(task => ['pl-a', 'pl-b'].includes(task.taskId)) }));
   await workflow.world.scripted.script(line, [{ kind: 'text', text: 'PL-42 first' }, { kind: 'text', text: 'PL-42 second' }]);
-  const proposed = (await workflow.main.post('plans/propose', graphWrite(S6A_SCOPE, {
-    goalRef: workflow.goal, basedOn: skeleton.plan.ref, draft: plSupersedeDraft(skeleton.plan, workflow.goal, label),
-    reason: { text: 'PL-42 a candidate beside the work', sources: [], affectedTaskIds: ['pl-a'] },
-  }, `${label}-propose`))) as { status: string; value: PlanProposal };
-  expect(proposed.status, JSON.stringify(proposed)).toBe('committed');
+  // P2 A13 (`p2-frozen.md:208`, `:210`): only a candidate whose author is readable and that touches no existing Task
+  // reaches the review round, so the candidate beside the work names its real source and only fills the stage-2
+  // placeholder (the lead-approved `plan_only` filling exemption).
+  await proposePLCandidateFromIntervention({ world: workflow.world, goal: workflow.goal, basedOn: skeleton.plan.ref,
+    draft: plStageTwoDraft(skeleton.plan, workflow.goal, label),
+    reason: { text: 'PL-42 a candidate beside the work', sources: [], affectedTaskIds: ['pl-placeholder-pl-stage-2'] },
+    label });
   const release = await cell.prepare(workflow, label);
   try {
     const steps = await driveWorkflow(workflow.world.ag2b, { schemaVersion: 1, goalRef: workflow.goal,

@@ -526,7 +526,7 @@ export async function openS2BTimelineFixture(kind: ClaimFixtureKind = 'memory'):
       tools: ['send_session_message'],
       replies: [
         { kind: 'calls', calls: [{ callId: 's2b-timeline-yield-send', name: 'send_session_message',
-          args: { recipient: replySession, text: 'Which file should this work use?', intent: 'inquiry',
+          args: { recipient: replySession, text: 'Which file should this work use?',
             needsReply: true, waitAfterSend: true } }] },
         { kind: 'text', text: 'the inquiry is durably saved' },
       ] });

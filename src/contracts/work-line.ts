@@ -5,24 +5,23 @@
  * `src/core/work-graph/state/line-status.ts` reads these shapes (plus its own
  * pure input types); no persistence schema lives here.
  */
+import type { ActionRequestRef } from './action-request.js';
 import type { CommitCursor } from './command-event.js';
 import type { ControlIntentRef } from './control-intent.js';
 import type { CoreCallContext } from './core/call-context.js';
 import type { ModuleRef, SessionRef, VersionPin, WorkLinkRelation, WorkLinkTarget } from './core/identity.js';
 import type { OperationRef } from './core/operations.js';
 import type { CoreError, ReadResult } from './core/results.js';
-import type {
-  MessageDeliveryStateV1, MessageReadDispositionV1, MessageReleaseV1, SessionMessageRef,
-} from './core/session-message.js';
+import type { MessageDeliveryStateV1, MessageReadDispositionV1, SessionMessageRef } from './core/session-message.js';
 import type { SessionHealthConclusion, SessionProvenanceV1 } from './core/session.js';
 import type { RunOutcome, RunRef, TaskTriple } from './dispatch.js';
 import type { DecisionSourceV1 } from './goal-decisions.js';
 import type { GraphNodeRefV1 } from './graph-context.js';
-import type { GoalRef } from './ledger.js';
+import type { DispatchBasisV1, GoalRef } from './ledger.js';
 import type { NoteAnchorV1, NoteKind, NoteSectionsV1, NoteSourceV1, NoteState } from './note.js';
 import type { Disposition, Phase, PlanRevisionRef } from './plan.js';
 import type { PlatformDutyV1 } from './platform-duty.js';
-import type { QueryExecutionStateV1, QueryRunRef, QueryRunV1 } from './query-job.js';
+import type { QueryExecutionStateV1, QueryJobRef, QueryRunRef, QueryRunV1 } from './query-job.js';
 import type { SessionRoleFactsV1 } from './role-lines.js';
 import type { SessionAnomalyViewV1 } from './session-anomaly.js';
 import type { TaskPhaseCauseV1 } from './task-failure.js';
@@ -104,6 +103,19 @@ export type LineControlV1 = {
   target: { runRef?: RunRef; queryRunRef?: QueryRunRef; task?: TaskTriple; sessionRef?: SessionRef };
   pins: VersionPin[];                                                      // 提交时要带的版本
 };
+/**
+ * §2.8: whose message last woke this line, from the Session's stored activity
+ * record and the message's stored sender — never the removed message `intent`.
+ * A sender Session is absent only for a Host (person/platform) message; the UI
+ * resolves the line name from the same `lines/list` page.
+ */
+export type LineWokenByV1 = {
+  /** The activity record's stored instant. */
+  at: string;
+  messageRef: SessionMessageRef;
+  senderKind: 'work_run' | 'query_run' | 'secretary_round' | 'host';
+  senderSessionRef: SessionRef | null;
+};
 export type LineRowV1 = {
   key: SessionRef;                                                         // 线头；本次读的键
   duty: PlatformDutyV1 | 'unknown';                                        // unknown 也包括读角色配置失败（L7）
@@ -121,6 +133,8 @@ export type LineRowV1 = {
   chainSessions: SessionRef[];                                             // 线头在前，至多 33 个（L2）；给 2B 的 sessionRefs 用
   pinned: boolean; pinnedBy: SessionRef[];
   lastActivityAt: string; sortKey: string;
+  /** §2.8: null when the last activity was not an input message (or the line has no activity record). */
+  wokenBy: LineWokenByV1 | null;
   controls: LineControlV1[];
   problem: { code: CoreError | 'source_moving'; reason: string } | null;
 };
@@ -194,7 +208,8 @@ export type LineParticipationV1 = {
 };
 export type LineMessageStateV1 = {
   messageRef: SessionMessageRef; revision: number; createdAt: string;
-  release: MessageReleaseV1 | null;
+  /** §2.1: the stored send facts a line message shows; the reply slot is the response, so a reply carries no wake. */
+  needsReply: boolean; wake: boolean;
   /** The derived triple's own value, never the stored record's `delivery`. */
   delivery: MessageDeliveryStateV1['delivery'];
   deliveredTo: MessageDeliveryStateV1['deliveredTo'];
@@ -312,10 +327,128 @@ export type NodeNotesV1 =
   | { status: 'available'; understanding: NodeNoteUnderstandingV1 | null;
       items: NodeNoteRowV1[]; next: string | null; complete: boolean };
 
+/**
+ * §2.8 task card: the request-side blockers a person sees on a dispatch request. These are the claim-hold owner's
+ * own causes (a held reason, a waiting stop card, a paused Goal); the module gate, node occupancy and line busy are
+ * the target loop's separate judgment (`TaskClaimTargetBlockerV1`), never re-derived here.
+ */
+export type ActionRequestBlockerV1 =
+  | { kind: 'claim_hold'; reasonId: string; holdKind: 'agent' | 'stop' | 'scribe_stop'; reason: string }
+  | { kind: 'stop_pending'; actionRef: ActionRequestRef }
+  | { kind: 'goal_paused' };
+
+/**
+ * §2.8: the target loop's own blockers for one Task — the module gate, node occupancy and line busy. The judgment
+ * stays in the target loop; the views only show what one optional read port returns.
+ */
+export type TaskClaimTargetBlockerV1 = { kind: 'module_gate' | 'node_occupied' | 'line_busy'; reason: string };
+
+/** The request facts the task card shows; a dispatch has a plan version and a preferred line, a stop its frozen Run. */
+export type NodeActionRequestV1 = {
+  action: 'dispatch' | 'stop';
+  ref: ActionRequestRef;
+  state: 'pending' | 'open' | 'released' | 'void' | 'applied' | 'denied' | 'withdrawn';
+  requester: { kind: 'work_run' | 'query_run'; session: SessionRef;
+    duty: 'executor' | 'adviser' | 'secretary' };
+  reason: string;
+  requestedAt: string;
+  /** Dispatch: the three values read at intake. Stop cards carry none. */
+  planVersion: DispatchBasisV1 | null;
+  preferredLine: SessionRef | null;
+  /** Stop: the Run to stop (`frozen.run`). Dispatch cards carry none. */
+  stopRun: RunRef | null;
+  outcome:
+    | { kind: 'applied'; session: SessionRef; run: RunRef; byRequest: boolean }
+    | { kind: 'released'; holdReasonId: string | null; notSent: 'person_stopped' | 'run_ended' | null }
+    | { kind: 'void'; reason: string }
+    | null;
+};
+
+/** One held claim-hold reason: who placed it, why, and the stored source the read uses to judge its expiry. */
+/**
+ * One claim-hold reason: who placed it, why, whether it still blocks, and the stored source the read judges its expiry
+ * by. A released or expired reason stays in this list for the detail ("who released it / when it expired"); only the
+ * held, unexpired reasons are current blockers and the revoke affordance.
+ */
+export type NodeTaskHoldV1 = {
+  reasonId: string;
+  kind: 'agent' | 'stop' | 'scribe_stop';
+  /** The stored state; a released reason never blocks. */
+  state: 'held' | 'released';
+  placedBy:
+    | { kind: 'agent'; session: SessionRef; queryRun: QueryRunRef; duty: 'secretary' | 'adviser' }
+    | { kind: 'action'; actionRef: ActionRequestRef }
+    | { kind: 'platform'; operationId: string };
+  /** A stop reason placed by an approval: the requester of `placedBy.actionRef`'s request (null for the other kinds). */
+  requester: { kind: 'work_run' | 'query_run'; session: SessionRef;
+    duty: 'executor' | 'adviser' | 'secretary' } | null;
+  /** Q4b: a settled candidate of this same source, after `since`, that touches the Task clears the reason; `scribe_stop` never does. */
+  basis:
+    | { kind: 'round'; requestRoot: QueryJobRef | null; sourceMessage: SessionMessageRef | null; round: QueryJobRef }
+    | { kind: 'scribe'; sourceMessage: SessionMessageRef; run: RunRef };
+  /** The commit cursor the reason was placed at; null while the write has not bound it. */
+  since: CommitCursor | null;
+  /** Q4b: `agent`/`stop` expire when a same-source settled candidate after `since` touches the Task; `scribe_stop` never does. */
+  expiry: { rule: 'same_source_settled_candidate'; after: CommitCursor | null } | { rule: 'never' };
+  /** Read-only expiry: a same-source settled candidate cleared this held reason; never written back to the record. */
+  expired: boolean;
+  releasedBy:
+    | { kind: 'agent'; session: SessionRef }
+    | { kind: 'person'; actor: { kind: 'human' | 'system'; id: string } }
+    | { kind: 'intervention'; messageRef: SessionMessageRef }
+    | null;
+  releaseNote: string | null;
+  reason: string;
+  placedAt: string;
+};
+
+/** §2.8: the "release every hold reason" affordance; the write is `tasks/hold/release` (all reasons, pendingStop untouched). */
+export type NodeTaskHoldReleaseV1 = {
+  availability: 'available' | 'unavailable';
+  reason: string | null;
+  route: 'tasks/hold/release';
+  target: { task: TaskTriple };
+  pins: VersionPin[];
+};
+
+/** §2.8: the dispatch-request row; a waiting dispatch card does NOT block a claim (it closes on the claim). */
+export type NodeTaskDispatchV1 = {
+  request: NodeActionRequestV1 | null;
+  /** A dispatch card waiting for the person never blocks the claim; the request is not a priority until approved. */
+  cardBlocksClaim: false;
+  claimBlockers: ActionRequestBlockerV1[];
+  /** true: neither list blocks; false: one does; null: no request-side blocker and the target-loop port is not wired. */
+  claimableNow: boolean | null;
+  /** The target loop's gate/node/line judgment (§2.8); `not_read` is the old read when no port is wired. */
+  targetLoopBlockers: 'not_read' | { blockers: TaskClaimTargetBlockerV1[] };
+  /**
+   * §2.8: the plan the claiming Run actually read (`outcome.run` → `Run.planRef`), so the detail shows the claimed
+   * version beside the intake version in `request.planVersion`; null when nothing claimed this Task or the Run is not
+   * in this read's canonical set.
+   */
+  claimedPlanRef: PlanRevisionRef | null;
+};
+
+/** §2.8: the stop card row; while its card waits the task is not claimable. */
+export type NodeTaskStopV1 = {
+  request: NodeActionRequestV1 | null;
+  /** `answer_card_first` is the waiting stop card's "answer the card first"; otherwise no hold cause blocks the claim. */
+  claim: 'answer_card_first' | 'not_blocked_by_hold';
+  /**
+   * The steps the request record and its one control intent prove, in order: requested → hold_placed (only when the
+   * approval wrote a `stop` hold) → sent (intent queued) → delivered (intent applied) → run_ended (the frozen Run's own
+   * fact) → not_sent (its cause) → void. A person takeover (`person_stopped`) has no `hold_placed`.
+   */
+  steps: ('requested' | 'hold_placed' | 'sent' | 'delivered' | 'run_ended' | 'not_sent' | 'void')[];
+};
+
 export type NodeDetailV1 =
   | { section: 'summary'; node: GraphNodeRefV1; pin: VersionPin;
       task: (TaskHoverV1 & { workspaceId: string; plannedModules: ModuleRef[]; plannedFiles: string[]; actualFiles: ExecutedFilesViewV1;
-        responsibleNow: LineBriefV1[]; responsibility: 'has_responsibility' | 'none' }) | null;
+        responsibleNow: LineBriefV1[]; responsibility: 'has_responsibility' | 'none';
+        /** §2.8 task card: the held claim-hold reasons, the release affordance, the dispatch request and the stop card. */
+        holds: NodeTaskHoldV1[]; holdRelease: NodeTaskHoldReleaseV1;
+        dispatch: NodeTaskDispatchV1; stop: NodeTaskStopV1 }) | null;
       group: GroupHoverV1 | null;                                           // 目标、阶段节点
       goal: { anomalyCount: LineCountV1; workingLines: LineCountV1 } | null;
       module: ModuleHoverV1 | null;

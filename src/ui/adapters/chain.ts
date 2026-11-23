@@ -7,7 +7,7 @@
  * ten executions (§2.4); the page never re-sorts it. The task bar's words are
  * the TaskMap tables' own (`task-map.ts`), not a second copy here.
  */
-import type { ArchivedLinePageV1, LineControlV1, LineExecutionItemV1, LineRowV1, WorkLineSectionPageV1 } from '../../contracts/work-line.js';
+import type { ArchivedLinePageV1, LineControlV1, LineExecutionItemV1, LineRowV1, LineWokenByV1, WorkLineSectionPageV1 } from '../../contracts/work-line.js';
 import type { RunOutcome, RunRef } from '../../contracts/dispatch.js';
 import type { TaskExecutionRecord } from '../../contracts/execution-read.js';
 import type { SessionHistoryEntry } from '../../contracts/session-activity.js';
@@ -19,9 +19,10 @@ import type { SessionRef } from '../../contracts/core/identity.js';
 import { asRecord, asText } from '../values.js';
 import {
   CHECK_RESULT_WORD, FAILURE_CLASS_WORD, PHASE_WORD, RUN_RESULT_WORD, requirementWordOf,
-  taskStateOfRow, taskWhyOf,
+  localShortAt, taskStateOfRow, taskWhyOf,
 } from './task-map.js';
-import { decideTextOf, dutyWordOf, lineHref, lineStatusView, type LineKey, type NavData, type NavLine } from './nav.js';
+import { decideTextOf, dutyWordOf, lineHref, lineNameOfSession, lineStatusView,
+  type LineKey, type NavData, type NavLine, type NavWakeBy } from './nav.js';
 import { requeueVisible } from './line-shared.js';
 import { briefRowsOf } from './member.js';
 
@@ -304,7 +305,33 @@ function chainTraceOf(source: ChainSource): ChainTraceRecord[] {
   return records;
 }
 
-function railCardOf(name: string, word: string, responsibleNow: string[], lastActivityAt: string): ChainRailRow['card'] {
+/** §2.8: who last woke the line, named from the same page's lines; a sender
+ * Session this page cannot name stays a Session reference, and a Host message
+ * has no Session. The message's removed `intent` is never read. */
+function wakeByOf(wake: LineWokenByV1 | null, lines: readonly NavLine[]): NavWakeBy | null {
+  if (wake === null || wake.at === '') return null;
+  return {
+    at: wake.at,
+    senderName: lineNameOfSession(lines, wake.senderSessionRef),
+    senderSessionRef: wake.senderSessionRef,
+  };
+}
+
+/** The card's one row: the sender and the instant, never a message kind. */
+function wakeByTextOf(wake: NavWakeBy | null): string {
+  if (wake === null || wake.at === '') return '没有记录';
+  /* §2.8: the row writes the Session/line that woke it; a sender this page
+     cannot name still shows its Session id rather than a bare placeholder. */
+  const sender = wake.senderSessionRef !== null
+    ? (wake.senderName !== '' ? '“' + wake.senderName + '”' : '一条不在列表里的工作线')
+      + '（' + wake.senderSessionRef.sessionId + '）'
+    : '你或平台';
+  return '最近由' + sender + '的消息叫醒（' + localShortAt(wake.at) + '）';
+}
+
+function railCardOf(
+  name: string, word: string, responsibleNow: string[], lastActivityAt: string, wakeBy: NavWakeBy | null,
+): ChainRailRow['card'] {
   return {
     name,
     word,
@@ -312,6 +339,7 @@ function railCardOf(name: string, word: string, responsibleNow: string[], lastAc
       { k: '负责', v: responsibleNow.length === 0 ? '未分配' : responsibleNow.join('、') },
       { k: '正在做', v: word },
       { k: '最近一步', v: lastActivityAt === '' ? '没有记录' : lastActivityAt },
+      { k: '叫醒', v: wakeByTextOf(wakeBy) },
     ],
   };
 }
@@ -329,16 +357,17 @@ function railRowOf(line: NavLine, selected: SessionRef | null): ChainRailRow {
     chainSessions: line.chainSessions as SessionRef[],
     pinned: line.pinned,
     current: sameSessionRef(selected, line.key),
-    card: railCardOf(line.name, line.word, line.responsibleNow, line.lastActivityAt),
+    card: railCardOf(line.name, line.word, line.responsibleNow, line.lastActivityAt, line.wokenBy),
   };
 }
 
-function archivedRowOf(row: LineRowV1, selected: SessionRef | null): ChainRailRow {
+function archivedRowOf(row: LineRowV1, selected: SessionRef | null, nav: NavData): ChainRailRow {
   const view = lineStatusView(row.status);
   const nameRow = asRecord(row.name);
   const name = nameRow.source === 'duty_only' ? dutyWordOf(row.duty)
     : (asText(nameRow.primary) || dutyWordOf(row.duty));
   const responsible = row.responsibleNow.map((entry) => entry.title);
+  const wakeBy = wakeByOf(row.wokenBy, [...nav.lines, ...nav.archived]);
   return {
     key: { projectId: row.key.projectId, sessionId: row.key.sessionId },
     name,
@@ -351,7 +380,7 @@ function archivedRowOf(row: LineRowV1, selected: SessionRef | null): ChainRailRo
     chainSessions: row.chainSessions,
     pinned: row.pinned,
     current: sameSessionRef(selected, row.key),
-    card: railCardOf(name, view.word, responsible, row.lastActivityAt),
+    card: railCardOf(name, view.word, responsible, row.lastActivityAt, wakeBy),
   };
 }
 
@@ -442,7 +471,7 @@ export function adaptChain(source: ChainSource, ui: ChainUi): ChainData {
     : nav.goals.find((goal) => goal.goalId === nav.selectedGoalId) ?? null;
   const selected = ui.selected;
   const rows = nav.lines.map((line) => railRowOf(line, selected));
-  const archived = (source.archive?.rows ?? []).map((row) => archivedRowOf(row, selected));
+  const archived = (source.archive?.rows ?? []).map((row) => archivedRowOf(row, selected, nav));
   const archivedText = String(nav.archivedText);
   const parts = archivedText.split('（');
   const withoutArchivedAt = countOfCount(source.archive?.withoutArchivedAt);

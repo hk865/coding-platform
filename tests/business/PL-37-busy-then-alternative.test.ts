@@ -22,6 +22,7 @@ import { advanceUntil, driveWorkflow, post, readExecution } from '../helpers/A2-
 import { graphWrite, plain } from '../helpers/AG2b-collaboration-fixture.js';
 import { createS6BLine } from '../helpers/S6B1-fixture.js';
 import { heartbeatUntilModel, readProposal } from '../helpers/IV-host-fixture.js';
+import { proposePLCandidateFromIntervention } from '../helpers/PL-forms-fixture.js';
 import { checkConfiguration, ready, sessionOf, setS7AAutonomy } from '../helpers/S7A-fixture.js';
 import { OPERATOR, S6A_SCOPE, S6A_WORK_ROLE } from '../helpers/S6A-request-fixture.js';
 import {
@@ -54,13 +55,13 @@ it('PL-37: a running A makes the loop busy; after the Run ends the loop retries 
     expect(held.execution.run.status).toBe('running');
 
     // Disposition-only: A superseded -> A′, the same obligation keeps A and adds A′.
-    const proposed = (await workflow.main.post('plans/propose', graphWrite(S6A_SCOPE, {
-      goalRef: workflow.goal, basedOn: skeleton.plan.ref, draft: plSupersedeDraft(skeleton.plan, workflow.goal, 'pl-37'),
-      reason: { text: 'PL-37 supersede A with A2', sources: [], affectedTaskIds: ['pl-a'] },
-    }, 'pl-37-propose'))) as { status: string; value?: PlanProposal };
-    expect(proposed.status, JSON.stringify(proposed)).toBe('committed');
-    candidate = proposed.value;
-    if (candidate === undefined) throw new Error('PL-37: the replacement candidate was not written');
+    // P2 A13 (`p2-frozen.md:208`): an author that cannot be read leaves the candidate on its card before any review,
+    // so the replacement names its real source; its author is not a secretary, so touching A still goes on to the
+    // review and the automatic adoption (user 11-23, `cp2f7-rulings.md` P-A 1).
+    const written = await proposePLCandidateFromIntervention({ world: workflow.world, goal: workflow.goal,
+      basedOn: skeleton.plan.ref, draft: plSupersedeDraft(skeleton.plan, workflow.goal, 'pl-37'),
+      reason: { text: 'PL-37 supersede A with A2', sources: [], affectedTaskIds: ['pl-a'] }, label: 'pl-37' });
+    candidate = await readProposal(workflow.world, written.ref);
 
     // The reviewer's real Query passes; the Goal loop then adopts the candidate.
     const reviewer = await createPLReviewerLine(workflow.world, workflow.main, 'pl-37-reviewer');

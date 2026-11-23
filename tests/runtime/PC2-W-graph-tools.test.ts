@@ -24,7 +24,7 @@ const specification = (tools: ToolDefinition[]) => tools.map(tool => ({ name: to
 const DEFAULT_SPECIFICATION: readonly ToolSpecification[] = [
   {
     "name": "look_graph",
-    "description": "Read the graph by `mode`, sending only that mode's fields: `node` {target, relation?, page?{afterCursor, limit}} (`mode` may be left out when `target` is given); `path` {path (a workspace path, not a node id), relation?, page?}; `history` {runRef, afterCursor?, limit?}, one Run's original execution history; `input` {consumer, planRef, declarationId, candidateKey?, afterCursor?, maxBytes?}, a declared task input body by page. `relation` is card/children/neighbours/executions/checks. Or read notes with `{ memory: { v: 1, op: lookup|neighbors|history|conflicts, ... } }` alone. The Goal, scope and identity are bound by the platform; do not send them.",
+    "description": "Read the graph by `mode`; send only its fields: `node` {target, relation?, page?}; `path` {path (not a node id), relation?, page?}; `history` {runRef, afterCursor?, limit?}; `input` {consumer, planRef, declarationId, candidateKey?, afterCursor?, maxBytes?}. `relation`: card/children/neighbours/executions/checks. Or `{ memory: { v: 1, op: lookup|neighbors|history|conflicts } }`. Returns nodes/edges/lines/Session refs; Goal/scope/identity bound.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "anyOf": [
@@ -1214,7 +1214,7 @@ const DEFAULT_SPECIFICATION: readonly ToolSpecification[] = [
   },
   {
     "name": "find_graph",
-    "description": "Search the bound Goal graph case-insensitively (NFC + ASCII-lowercased): node names and summaries by substring; module paths when the path equals the query, is the query's longest directory-boundary owner, or lies under `query + '/'`. Send either `{ needle, page? }` or, to search notes, `{ memory: { v: 1, op: find|stale, ... } }` with its paging inside `memory`; never both. The Goal, scope and identity are bound by the platform; do not send them.",
+    "description": "Search the Goal graph case-insensitively (NFC + ASCII-lowercase): node names/summaries by substring; module paths by exact match, longest directory owner, or under `query + '/'`. Send either `{ needle, page? }` or `{ memory: { v: 1, op: find|stale, ... } }` (paging inside); never both. Goal/scope/identity bound; do not send.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "anyOf": [

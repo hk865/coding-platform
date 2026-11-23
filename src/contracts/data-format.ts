@@ -25,11 +25,11 @@ export type Lookup = {
   text?: readonly string[];
 };
 
-/** The seven top-level cursor names the Store may fill with the commit cursor. */
-type BoundCursorName = 'since' | 'until' | 'unavailableSince' | 'responseSince' | 'startedSince'
+/** The eight top-level cursor names the Store may fill with the commit cursor. */
+type BoundCursorName = 'since' | 'until' | 'createdSince' | 'unavailableSince' | 'responseSince' | 'startedSince'
   | 'openedAt' | 'closedAt';
-const BOUND_CURSOR_NAMES: readonly BoundCursorName[] = ['since', 'until', 'unavailableSince', 'responseSince',
-  'startedSince', 'openedAt', 'closedAt'];
+const BOUND_CURSOR_NAMES: readonly BoundCursorName[] = ['since', 'until', 'createdSince', 'unavailableSince',
+  'responseSince', 'startedSince', 'openedAt', 'closedAt'];
 /**
  * The four nested array element cursors: three a role-line record binds, and `reasons[].since`, each claim-hold
  * reason's placing commit (`TaskClaimHold`).

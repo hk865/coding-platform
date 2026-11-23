@@ -16,6 +16,7 @@ import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { planningAnswerShapeOf } from '../../src/business/workflow/plan-round.js';
+import type { SystemRoundV1 } from '../../src/contracts/plan-round.js';
 import type { WorkflowAdvanceInput, WorkflowStepReceipt } from '../../src/business/workflow/contracts.js';
 import { driveWorkflow } from '../helpers/A2-restart-fixture.js';
 import {
@@ -30,25 +31,31 @@ import { waitFor } from '../scenarios/harness.js';
 let opened: PLWorkflowWorld | null = null;
 afterEach(async () => { await opened?.close(); opened = null; });
 
-const systemRound = { sender: { kind: 'host' as const, actor: { kind: 'system' as const, id: 'host:plan-round' } },
-  intent: 'action_request' as const };
-const person = { sender: { kind: 'host' as const, actor: { kind: 'human' as const, id: 's9g3-person' } },
-  intent: 'action_request' as const };
+const systemSender = { sender: { kind: 'host' as const, actor: { kind: 'system' as const, id: 'host:plan-round' } } };
+const personSender = { sender: { kind: 'host' as const, actor: { kind: 'human' as const, id: 's9g3-person' } } };
+const GOAL = { aggregateType: 'Goal' as const, projectId: 'P', goalId: 'g-1' };
+const EXEC_ROUND: SystemRoundV1 = { kind: 'exec_review', goalRef: GOAL,
+  roundRef: { aggregateType: 'VerificationRound', projectId: 'P', workspaceId: 'W', goalId: 'g-1',
+    taskId: 't-1', runId: 'r-1', roundId: 'rd-1' } };
+const UNKNOWN_CALL_ROUND: SystemRoundV1 = { kind: 'unknown_call', goalRef: GOAL,
+  subject: { reviewRef: { aggregateType: 'UnknownCallReview', projectId: 'P', goalId: 'g-1', runId: 'r-1' },
+    revision: 1, phase: 'disposition', goalBasisDigest: 'd-1' } };
+const PLAN_REVIEW_ROUND: SystemRoundV1 = { kind: 'planreview', goalRef: GOAL, proposalId: 'p-1', proposalRevision: 1 };
 
 describe('O1 the exec review answer shape', () => {
   it.each([
-    ['reviewer, system round, execreview head', systemRound, 'reviewer', 'exec_review', 'exec_review'],
-    ['reviewer, system round, no head', systemRound, 'reviewer', undefined, 'plan_review'],
-    ['reviewer, system round, planreview head', systemRound, 'reviewer', 'planreview', 'plan_review'],
-    ['adviser, system round, execreview head', systemRound, 'adviser', 'exec_review', 'plan_round'],
-    ['reviewer, a person, execreview head', person, 'reviewer', 'exec_review', 'text'],
+    ['reviewer, system round, execreview head', systemSender, 'reviewer', EXEC_ROUND, 'exec_review'],
+    ['reviewer, system round, no head', systemSender, 'reviewer', null, 'text'],
+    ['reviewer, system round, planreview head', systemSender, 'reviewer', PLAN_REVIEW_ROUND, 'plan_review'],
+    ['adviser, system round, execreview head', systemSender, 'adviser', EXEC_ROUND, 'plan_round'],
+    ['reviewer, a person, execreview head', personSender, 'reviewer', null, 'text'],
     // R4 named mutations: reading the head before the sender -> the person cell red; giving every duty the new
     // shape -> the reviewer cell red.
-    ['adviser, system round, unknown_call head', systemRound, 'adviser', 'unknown_call', 'unknown_call_advice'],
-    ['reviewer, system round, unknown_call head', systemRound, 'reviewer', 'unknown_call', 'plan_review'],
-    ['adviser, a person, unknown_call head', person, 'adviser', 'unknown_call', 'plan_round'],
-  ] as const)('%s', (_label, message, duty, roundKind, expected) => {
-    expect(planningAnswerShapeOf(message, duty, roundKind)).toBe(expected);
+    ['adviser, system round, unknown_call head', systemSender, 'adviser', UNKNOWN_CALL_ROUND, 'unknown_call_advice'],
+    ['reviewer, system round, unknown_call head', systemSender, 'reviewer', UNKNOWN_CALL_ROUND, 'plan_review'],
+    ['adviser, a person, unknown_call head', personSender, 'adviser', null, 'plan_round'],
+  ] as const)('%s', (_label, message, duty, round, expected) => {
+    expect(planningAnswerShapeOf(message, duty, round, false, message === personSender)).toBe(expected);
   });
 });
 

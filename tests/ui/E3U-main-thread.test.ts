@@ -194,7 +194,14 @@ describe('E3U Main thread', () => {
         await waitFor(() => card(page.root) === undefined && labelled(page.root, '发送') !== undefined);
         typeInto(page.root, 'composer-input', SAME);
         click(labelled(page.root, '发送')!);
-        await waitFor(() => answered('requests/submit') === n && answered('requests/read') === n);
+        await waitFor(() => answered('requests/submit') === n);
+        /* Ruling 15: only count the `requests/read` of each submitted root; Main's
+           refresh reads the newest request too, so the exact total is not fixed. */
+        const submittedRoots = log.submits.map((submit) =>
+          (submit as { requestRoot?: { queryJobId?: unknown } }).requestRoot?.queryJobId);
+        await waitFor(() => submittedRoots.every((root) => callsTo(log, 'requests/read').some((call) =>
+          call.reply !== undefined
+          && (call.input as { requestRoot?: { queryJobId?: unknown } }).requestRoot?.queryJobId === root)));
         await quietPage(log);
       };
       const reread = async (id: string): Promise<void> => {

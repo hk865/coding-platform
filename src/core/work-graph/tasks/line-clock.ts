@@ -27,6 +27,7 @@ import {
 import { S2C_SESSION_BY_LIFECYCLE_KIND_LOOKUP, decodeSessionRecord } from '../sessions/session-record-codecs.js';
 import { decodeDispatchOutboxEntry, S2C_WORK_CLAIM_BY_SESSION_GENERATION_LOOKUP } from './claim-record-codecs.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
+import { queryEnteredKernel } from '../model/query-activity-plan.js';
 
 /** The store surface these reads need. */
 export type LineClockStore =
@@ -165,9 +166,11 @@ export async function readQueryJobGoal(
 
 /**
  * A read-only copy's phase and Query start: its latest QueryRun's persisted
- * phase and `startedAt`, either null for a copy whose Query never started. The
- * run's QueryJob is read too, so a failed or damaged job is reported as it is
- * on a line card; the copy has no use for its goal.
+ * phase, and its `startedAt` only once the Kernel really entered the round
+ * (`queryEnteredKernel`; the platform's `entering` start is no clock instant),
+ * either null for a copy whose Query never started. The run's QueryJob is read
+ * too, so a failed or damaged job is reported as it is on a line card; the copy
+ * has no use for its goal.
  */
 export async function copyPhase(
   records: LineClockStore,
@@ -177,7 +180,8 @@ export async function copyPhase(
 ): Promise<{ phase: QueryExecutionStateV1['phase'] | null; startedAt: string | null }> {
   const latest = await readLatestQueryRun(records, workspace, copy, onProblem);
   if (latest !== null) await readQueryJobGoal(records, latest, onProblem);
-  return { phase: latest?.run.executionState?.phase ?? null, startedAt: latest?.run.startedAt ?? null };
+  return { phase: latest?.run.executionState?.phase ?? null,
+    startedAt: latest !== null && queryEnteredKernel(latest) ? latest.run.startedAt : null };
 }
 
 /**

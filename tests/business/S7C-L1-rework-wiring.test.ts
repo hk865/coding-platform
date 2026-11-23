@@ -52,7 +52,7 @@ describe('L1-rework-wiring: the rework tool names and their receipts', () => {
           callKind: 'query', noteAdmission: { class: 'none' }, selected: ['request_rework', 'request_recheck'],
           reviewPhase: null, hasBlockedCommands: false,
           reviewSource: false, frozenSource: false, materialTools: false,
-          owners: { mailbox: true, decisionMessages: true, applicationReceipt: true, sessions: true,
+          owners: { mailbox: true, decisionMessages: true, applicationReceipt: true,
             plans: true, graph: true, notes: true, unknownCallReviews: true, commandRerunRequests: true,
             memberCreation: true, reworkRequests: true, recheckRequests: true },
           readonlyCommand: { requested: false, access: undefined, allowsReadWholeWorkspace: false },
@@ -95,7 +95,7 @@ describe('L1-rework-wiring: the rework tool names and their receipts', () => {
         });
         expect(memberAttempt.status).toBe('not_committed');
         const sent = committed<{ ref: unknown }>(await opened.world.post('messages/send', graphWrite(S6A_SCOPE, {
-          recipient: rework.line.ref, text: 'L1-rework-wiring: withdraw lookup', intent: 'notify',
+          recipient: rework.line.ref, text: 'L1-rework-wiring: withdraw lookup', needsReply: false, wake: false,
         }, 's7c-l1-withdraw-lookup')), 'the withdraw lookup message');
         const withdrawAttempt = await lookup(opened.world.systemContext(), {
           toolName: 'withdraw_session_message', arguments: { messageRef: sent.ref },

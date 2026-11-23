@@ -47,6 +47,7 @@ import type { ContinuationWorkspaceBytes } from '../workspace/continuation-diff-
 import type { RoleBindingFactsPort } from '../work-graph/model/configuration-contracts.js';
 import type { MaterialPort } from '../work-graph/model/material-contracts.js';
 import type { TaskClaimPort } from '../work-graph/model/claim-contracts.js';
+import type { DeliveryEligibilityFactsPort } from '../work-graph/model/session-facts-contracts.js';
 import type { EvidencePort } from '../work-graph/model/evidence-contracts.js';
 import type {
   UnknownCallReviewPort, UnknownCallReviewReadPort,
@@ -69,11 +70,12 @@ import type { ModelRequestPort, ModelRequestReadPort } from '../work-graph/tasks
 import type { MainSurfaceReadPort } from '../work-graph/views/main-surface-read-model.js';
 import type { PlanTaskPort } from '../work-graph/model/plan-contracts.js';
 import type { ControlObservationPort, RunControlPort } from '../work-graph/tasks/control-contracts.js';
-import type { SessionMessageCommandPort } from '../work-graph/model/communication-contracts.js';
+import type { SessionMessageCommandPort, SystemRoundSourceReadPort } from '../work-graph/model/communication-contracts.js';
 import type { DecisionMessagePort } from '../work-graph/model/decision-contracts.js';
+import type { ActionRequestPort, ClaimHoldPort } from '../work-graph/model/action-request-contracts.js';
 import type { SessionDirectoryPort } from '../work-graph/model/session-contracts.js';
 import type { SourceSnapshotReads } from '../work-graph/source-authority-ports.js';
-import type { QueryExecutionPort } from '../work-graph/queries/contracts.js';
+import type { OverlapNoteReadPort, QueryExecutionPort } from '../work-graph/queries/contracts.js';
 import type { SessionHistoryEntry, SessionHistoryRequest, SessionOperationsPort } from './session-operations.js';
 import type { ExecutionHistoryPage, ExecutionHistoryPort, GraphExecutionHistoryReadPort } from './execution-history-contracts.js';
 import type { KernelStoreRegistry } from './kernel-store-locator.js';
@@ -271,6 +273,17 @@ export type RuntimeExecutionDependencies = {
    * with this dependency absent must fail closed as `unsupported` before the model.
    */
   messages?: SessionMessageCommandPort;
+  /**
+   * The one delivery-facts read (design 2.2): the Work safe-point supply and the
+   * Query supply assemble the message's Goal, Task block and recipient outcome
+   * from it before `deliveryEligibility`. Required so no supply path keeps its
+   * own admission.
+   */
+  deliveryFacts: DeliveryEligibilityFactsPort;
+  /** Design 5.1: the root's one `overlapNoteOf` read; both supplies leave a gate's saved note request for its round. */
+  gateNotes?: OverlapNoteReadPort;
+  /** Design 2.2/2.6: the root's one trusted-system-round read; both supplies skip only a round's own sent letter. */
+  systemRounds?: SystemRoundSourceReadPort;
   /** The one member request owner behind the `create_member` adapter. */
   memberCreation?: MemberRequestPortV1;
   /** LD-06 (lead, 11-01): the `request_recheck` owner, only the method the tool calls; the card path stays on the Workflow side. */
@@ -290,6 +303,14 @@ export type RuntimeExecutionDependencies = {
    */
   decisionMessages?: Pick<DecisionMessagePort,
     'sendUserMessage' | 'recordDecisionApplication' | 'readDecisionAnswer'>;
+  /**
+   * §2.6: the two P1 action owners behind `dispatch_task`/`hold_claim`/
+   * `release_hold`/`request_stop`. Both are optional so an old composition keeps
+   * working; a Query whose frozen list selects one of those tools fails closed
+   * as `unsupported` before the model when either is absent.
+   */
+  actionRequests?: Pick<ActionRequestPort, 'requestDispatch' | 'requestStop'>;
+  claimHolds?: Pick<ClaimHoldPort, 'place' | 'release'>;
   /** The same plan-application receipt reader the Workflow gets, shared with the whiteboard tools. */
   applicationReceipt?: (ctx: CoreCallContext, cursor: CommitCursor) => Promise<DecisionApplicationReceiptV1 | null>;
   /** The secretary facts read; absent fails a secretary round `unsupported` before the model. */

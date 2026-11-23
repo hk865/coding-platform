@@ -114,7 +114,7 @@ async function expectNoWorkReadTool(): Promise<void> {
     callKind: 'work', noteAdmission: { class: 'none' }, selected: ['read', 'read_requests'],
     reviewPhase: null, hasBlockedCommands: false, reviewSource: false,
     frozenSource: false, materialTools: false,
-    owners: { mailbox: true, decisionMessages: true, applicationReceipt: true, sessions: true,
+    owners: { mailbox: true, decisionMessages: true, applicationReceipt: true,
       plans: true, graph: true, notes: true, unknownCallReviews: true, commandRerunRequests: true,
       memberCreation: true, reworkRequests: true, recheckRequests: true },
     readonlyCommand: { requested: false, access: undefined, allowsReadWholeWorkspace: false },

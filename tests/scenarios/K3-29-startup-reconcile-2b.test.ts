@@ -174,6 +174,13 @@ async function reconcile(world: World, goals: readonly GoalSnapshot[], reviews: 
     sessions: { findSessions: async () => ({ status: 'ready', value: { items: [], nextCursor: null, sourceCursor: 'c-1' } }) as never },
     executions: untouched('executions'),
     controls: untouched('controls'),
+    actionRequests: {
+      listOpenDispatchesInProject: async () => ({ status: 'ready' as const, value: [] }),
+      readRequest: async () => { throw new Error('actionRequests.readRequest must not be called'); },
+      deliverStop: async () => { throw new Error('actionRequests.deliverStop must not be called'); },
+    },
+    claimHolds: { readHold: async () => ({ status: 'not_found' as const }) },
+    deliverControl: async () => { throw new Error('deliverControl must not be called'); },
     plans: { queryTaskGraph: async (ctx, input) => {
       planReads.push(input.goalRef.goalId);
       // The real Plan/Task projection: the re-drive reads the genuine graph.

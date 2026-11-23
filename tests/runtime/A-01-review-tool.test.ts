@@ -31,7 +31,7 @@ import { canonicalJson } from '../../src/contracts/fingerprint.js';
 
 describe('A-01: one pass review through the reviewer Host line', () => {
   it('freezes submit_plan_review, saves the exact pass answer, replies 审阅通过 and leaves the candidate', async () => {
-    const opened = await openPLReviewCandidateWorld();
+    const opened = await openPLReviewCandidateWorld({ sourced: true });
     try {
       await opened.script([{ kind: 'calls', calls: [{
         callId: 'pl-review-pass', name: 'submit_plan_review', args: { verdict: 'pass', findings: [] },

@@ -144,7 +144,7 @@ import {
   encodePlanProposalRecordedEvent,
   planProposalRefKey,
   planRevisionRefKey,
-  type NoticeOriginWireV1,
+  type PlanProposalOriginWireV1,
   type PlanProposalRecordedEvent,
 } from '../persistence/plan-record-codecs.js';
 import { sessionMessageRefKey } from '../sessions/message-record-codecs.js';
@@ -366,7 +366,7 @@ function planProposalRefFromUnknown(value: unknown): PlanProposalRef | null {
     workspaceId: value['workspaceId'], proposalId: value['proposalId'] };
 }
 const DECISION_SOURCE_KINDS: readonly DecisionSourceV1['kind'][] = ['message', 'goal_cause', 'candidate', 'note_review',
-  'planning_question', 'goal_conflict', 'message_release', 'repair_approval', 'structural_proposal'];
+  'planning_question', 'goal_conflict', 'action_release', 'repair_approval', 'structural_proposal'];
 function decisionSourceFromUnknown(value: unknown): DecisionSourceV1 | null {
   if (!isRecord(value)) return null;
   if (typeof value['kind'] !== 'string'
@@ -447,16 +447,18 @@ function proposeFingerprint(input: {
   replaces?: { proposalRef: PlanProposalRef; revision: number } | null;
   acknowledgement?: SessionMessageRef;
   sourceMessageRef?: SessionMessageRef | null;
+  sourcePart?: 'decision_answer';
   checks?: readonly RegisteredCommandCheck[];
 }): string {
   // rd7a2b-12: `canonicalJson` is the recursive JCS encoder, not `JSON.stringify` — it takes `Object.keys` of the
   // value and so refuses a `undefined` member (`contracts/fingerprint.ts:24–:45`). An absent key is therefore never
   // resident: the material is expanded present-only, exactly as `applyFingerprint` does (`:414–:429`), and an old call
   // keeps its fingerprint byte for byte.
-  const { acknowledgement, sourceMessageRef, checks, ...base } = input;
+  const { acknowledgement, sourceMessageRef, sourcePart, checks, ...base } = input;
   return sha256Hex(canonicalJson({ schemaVersion: 2, commandType: 'PlanPropose', ...base,
     ...(acknowledgement === undefined ? {} : { acknowledgement }),
     ...(sourceMessageRef === undefined ? {} : { sourceMessageRef }),
+    ...(sourcePart === undefined ? {} : { sourcePart }),
     ...(checks === undefined ? {} : { checks }),
   } as unknown as JsonValue));
 }
@@ -1140,6 +1142,8 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
     acknowledgement?: SessionMessageRef;
     /** The intervention message this proposal came from; `null` for every other propose. */
     sourceMessageRef: SessionMessageRef | null;
+    /** The frozen part of that message on its `intervention_planning` Query; present-only. */
+    sourcePart?: 'decision_answer';
     /** 121-136: the checks the plan proposes; only the Host `plans.proposePlan` passes them. */
     checks?: readonly RegisteredCommandCheck[];
   }): Promise<EffectWriteResultV1<PlanProposal>> {
@@ -1189,9 +1193,10 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
     let requestGuards: readonly RecordGuard[] = [];
     let oldHead: CandidatePlanProposal | null = null;
     // Slice 5 §2.5/T-R2-2: a replacement copies the replaced chain's wire-only
-    // creation origin; it never rebinds. `undefined` means the old record
-    // carried no `since` (a legacy/pre-slice chain), so the successor keeps none.
-    let replacedOrigin: NoticeOriginWireV1 | undefined;
+    // creation origin (`since`); it never rebinds. `undefined` means the old
+    // record carried no `since` (a legacy/pre-slice chain), so the successor
+    // keeps none. The successor's own `createdSince` is bound below.
+    let replacedOrigin: PlanProposalOriginWireV1 | undefined;
     if (requestRef !== null) {
       const factsRead = await requestFactsReader.readCandidateRequestFacts(ctx, { requestRef, goalRef });
       if (factsRead.status !== 'ready') return asWriteRejection(factsRead, 'the request facts are unavailable');
@@ -1199,6 +1204,9 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
       if (sourceMessageRef !== null) {
         if (!isInterventionSource(sourceMessageRef, factsRead.value)) {
           return rejected('invalid', 'the proposal sourceMessageRef is not this intervention Query source message');
+        }
+        if ((input.sourcePart ?? null) !== (factsRead.value.interventionSourcePart ?? null)) {
+          return rejected('invalid', 'the proposal sourcePart disagrees with the intervention Query source');
         }
       } else {
         if (!factsRead.value.root) return rejected('invalid', 'the requestRef root does not belong to this Goal');
@@ -1262,6 +1270,7 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
       const event = { type: 'proposal_replaced' as const, writer: input.writer, ref: input.ref, goalRef,
         basedOn: input.basedOn, draft: input.draft, reason: input.reason as unknown as PlanChangeReason,
         issues, catalogPin: catalog.catalogPin, submittedBy: null, sourceMessageRef: input.sourceMessageRef,
+        ...(input.sourcePart === undefined ? {} : { sourcePart: input.sourcePart }),
         ...(input.checks === undefined ? {} : { checks: input.checks }),
         expectedHeadRevision: replaces.revision,
         requestedBy: input.actor, at: deps.now(), head: { proposalRef: replaces.proposalRef, revision: replaces.revision },
@@ -1282,6 +1291,7 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
       const recorded = { type: 'proposal_recorded' as const, writer: input.writer, ref: input.ref, goalRef,
         basedOn: input.basedOn, draft: input.draft, reason: input.reason as unknown as PlanChangeReason, submittedBy: null,
         sourceMessageRef: input.sourceMessageRef,
+        ...(input.sourcePart === undefined ? {} : { sourcePart: input.sourcePart }),
         ...(input.checks === undefined ? {} : { checks: input.checks }),
         ...(requestRef === null ? {} : { requestRef }) };
       // L10: the early ask has no module fact yet, so it stops before it; the catalog fact is judged only after it holds.
@@ -1319,13 +1329,20 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
     // commit cursor's event is always the candidate: replay needs no scan.
     const encodedEvents = (replacedRecord === null ? [] : [encodePlanProposalRecordedEvent(eventFor(replacedRecord))])
       .concat([encodePlanProposalRecordedEvent(eventFor(candidate, input.acknowledgement))]);
-    // Slice 5 §2.5/T-R2-2: a NEW chain's first candidate binds its creation
-    // commit cursor to the wire `since`; a replacement copies the old chain's
-    // preserved origin into both the rewritten old head and the new candidate.
+    // Slice 5 §2.5/T-R2-2: a NEW chain's first candidate binds BOTH wire
+    // cursors to this creation commit (`since` is the chain position,
+    // `createdSince` this candidate's own); a replacement copies the old chain's
+    // `since` into the rewritten old head and the new candidate but binds the
+    // candidate's own `createdSince`, never the predecessor's.
     const replacing = replacedRecord !== null;
+    const candidateKey = planProposalRefKey(candidate.ref);
+    const candidateOrigin = replacing ? { ...replacedOrigin, createdSince: null } : { since: null, createdSince: null };
     const encodedRecords = (replacedRecord === null ? [] : [encodePlanProposal(replacedRecord, replacedOrigin)])
-      .concat([encodePlanProposal(candidate, replacing ? replacedOrigin : { since: null })]);
-    const cursorBindings = replacing ? [] : [{ refKey: planProposalRefKey(candidate.ref), field: 'since' as const }];
+      .concat([encodePlanProposal(candidate, candidateOrigin)]);
+    const cursorBindings = replacing
+      ? [{ refKey: candidateKey, field: 'createdSince' as const }]
+      : [{ refKey: candidateKey, field: 'since' as const },
+        { refKey: candidateKey, field: 'createdSince' as const }];
     const merged = mergeGuards([...commitGuards, ...requestGuards, ...input.extraGuards]);
     if (!merged.ok) return merged.rejection;
     const claims: UniqueClaimChange[] = requestSlotEffect === null ? [] : [requestSlotClaim(requestSlotEffect)];
@@ -1336,7 +1353,7 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
     const committed = await records.commit({ identityKey: input.identityKey, fingerprint: input.fingerprint,
       guards: merged.guards, records: encodedRecords, claims, indexGuards: [], indexChanges: [],
       events: encodedEvents, ledgerHorizon: horizon,
-      ...(cursorBindings.length === 0 ? {} : { commitCursorBindings: cursorBindings }) });
+      commitCursorBindings: cursorBindings });
     if (committed.status !== 'committed') return mapRequestSlotCommitFailure(committed, claims.length > 0);
     if (!committed.replayed) return { status: 'committed', value: candidate, replayed: false, cursor: committed.cursor,
       ...proofReceiptOf(input, committed) };
@@ -1442,6 +1459,19 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
       }
     }
     const sourceMessageRefArg = sourceMessageRefRaw === undefined ? {} : { sourceMessageRef };
+    // The frozen part of the intervention source message: a card-answer round's
+    // candidate carries `decision_answer` so its source lineage and recomputation
+    // key match the Query; present-only like the source message itself.
+    const sourcePartRaw = rawInput['sourcePart'];
+    let sourcePart: 'decision_answer' | undefined;
+    if (sourcePartRaw !== undefined) {
+      if (sourcePartRaw !== 'decision_answer') return rejected('invalid', 'proposePlan sourcePart must be decision_answer');
+      sourcePart = 'decision_answer';
+    }
+    const sourcePartArg = sourcePart === undefined ? {} : { sourcePart };
+    if (sourcePart !== undefined && sourceMessageRef === null) {
+      return rejected('invalid', 'a proposal sourcePart requires the intervention sourceMessageRef');
+    }
     // A source is only provable through its intervention Query: the shared entry refuses the pair that would
     // otherwise skip the proof on both the Host and the Agent path.
     if (sourceMessageRef !== null && requestRef === null) {
@@ -1453,7 +1483,8 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
       if (ownedContext.status === 'invalid') return rejected('invalid', ownedContext.reason);
       return proposePlanAsAgent(deps, records, ownedContext.value, {
         goalRef, basedOn, draft, reason: reasonRaw, requestId, expected: rawMeta['expected'], workspaceId,
-        requestRef, replaces, ...(acknowledgement === undefined ? {} : { acknowledgement }), ...sourceMessageRefArg,
+        requestRef, replaces, ...(acknowledgement === undefined ? {} : { acknowledgement }),
+        ...sourceMessageRefArg, ...sourcePartArg,
       });
     }
     const bound = boundWriteActor(ctx, goalRef.projectId, workspaceId);
@@ -1465,7 +1496,8 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
     const proposalId = planProposalIdFor({ projectId: goalRef.projectId, workspaceId, goalId: goalRef.goalId, requestId });
     const ref: PlanProposalRef = { aggregateType: 'PlanProposal', projectId: goalRef.projectId, workspaceId, proposalId };
     const fingerprint = proposeFingerprint({ projectId: goalRef.projectId, workspaceId, goalRef, basedOn, draft, reason: reasonRaw,
-      requestRef, replaces, ...(acknowledgement === undefined ? {} : { acknowledgement }), ...sourceMessageRefArg,
+      requestRef, replaces, ...(acknowledgement === undefined ? {} : { acknowledgement }),
+      ...sourceMessageRefArg, ...sourcePartArg,
       ...(checks === undefined ? {} : { checks }) });
     const qualified = await planDraftInProjectView(deps.knowledge, ctx, draft, workspaceId);
     if (qualified.status !== 'ready') return qualified;
@@ -1474,7 +1506,7 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
       ctx, writer: 'host', goalRef, workspaceId, actor: bound.actor, identityKey, fingerprint, proposalId, ref,
       basedOn, draft: qualified.value, reason: reasonRaw, requestId, expected: rawMeta['expected'], extraGuards: [],
       requestRef, replaces, ...(acknowledgement === undefined ? {} : { acknowledgement }),
-      sourceMessageRef, ...(checks === undefined ? {} : { checks }),
+      sourceMessageRef, ...sourcePartArg, ...(checks === undefined ? {} : { checks }),
     });
   }
 
@@ -2594,7 +2626,8 @@ export function createRequestCandidateService(deps: PlanServiceDependencies): Re
       }
       const proposal = proposalRead.proposal;
       // Slice 5 §2.5/T-R2-2: an abandon rewrites the same proposal; it copies
-      // the preserved creation origin and never rebinds.
+      // the preserved creation origins (`since`, `createdSince`) and never
+      // rebinds them.
       const proposalOrigin = await readProposalOrigin(records, proposalRef);
       if (proposalOrigin.status !== 'ready') return asWriteRejection(proposalOrigin, 'the proposal origin is unavailable');
       const requestRef = candidateRequestRef(proposal);
@@ -3113,10 +3146,11 @@ type AdoptionRead = {
   scope: GoalScopeFacts;
   adoptionScope: PlanAdoptionScope;
   /**
-   * Slice 5 §2.5/T-R2-2: the accepted proposal's preserved creation origin, so
-   * the adopt write copies `since` instead of dropping/rebinding it.
+   * Slice 5 §2.5/T-R2-2: the accepted proposal's preserved creation origins, so
+   * the adopt write copies `since` and `createdSince` instead of
+   * dropping/rebinding them.
    */
-  origin: NoticeOriginWireV1;
+  origin: PlanProposalOriginWireV1;
   /** The proposal read is the FIRST read of the window: the commit horizon. */
   horizon: CommitCursor | null;
 };
@@ -3220,6 +3254,11 @@ async function proveFutureAdoptionSource(
   if (proof.status !== 'ready') return asWriteRejection(proof, 'the intervention source proof is not readable');
   if (proof.value === null) {
     return rejected('source_stale', 'the intervention source no longer proves this Query and Goal');
+  }
+  // The candidate's frozen part must be the Query's own part: a plain source
+  // carries none, and a card-answer round carries `decision_answer` on both.
+  if ((candidate.sourcePart ?? null) !== (proof.value.sourcePart ?? null)) {
+    return rejected('source_stale', 'the proposal sourcePart disagrees with the intervention Query source');
   }
   return { guards: proof.value.guards };
 }
@@ -3588,7 +3627,9 @@ async function proposePlanAsAgent(
     /** 7A §3.5 item 2: the acknowledged message, present-only. */
     acknowledgement?: SessionMessageRef;
     /** The intervention message this proposal came from; absent keeps every old fingerprint byte-identical. */
-    sourceMessageRef?: SessionMessageRef | null },
+    sourceMessageRef?: SessionMessageRef | null;
+    /** The frozen part of that message on its `intervention_planning` Query; present-only. */
+    sourcePart?: 'decision_answer' },
 ): Promise<EffectWriteResultV1<PlanProposal>> {
   const delegated = deps.delegatedWrites;
   if (delegated === undefined) {
@@ -3620,7 +3661,8 @@ async function proposePlanAsAgent(
     basedOn: input.basedOn, draft: input.draft, reason: input.reason, expected,
     requestRef: input.requestRef, replaces: input.replaces,
     ...(input.acknowledgement === undefined ? {} : { acknowledgement: input.acknowledgement }),
-    ...(input.sourceMessageRef === undefined ? {} : { sourceMessageRef: input.sourceMessageRef }) });
+    ...(input.sourceMessageRef === undefined ? {} : { sourceMessageRef: input.sourceMessageRef }),
+    ...(input.sourcePart === undefined ? {} : { sourcePart: input.sourcePart }) });
   // rd7a2b-11: this path's `input` carries no `identityKey`/`fingerprint` — they are the two locals beside it — so the
   // ONE material `proofReceiptOf` reads is built here and every exit below reads it.
   const receiptExpected = { identityKey, fingerprint, projectId: scope.projectId,
@@ -3647,7 +3689,8 @@ async function proposePlanAsAgent(
   const admissionRecorded = { type: 'proposal_recorded' as const, writer: 'agent' as const, ref, goalRef: input.goalRef,
     basedOn: input.basedOn, draft, reason: input.reason as unknown as PlanChangeReason,
     submittedBy: freshAdmission === null ? null : freshAdmission.provenance,
-    sourceMessageRef: input.sourceMessageRef ?? null };
+    sourceMessageRef: input.sourceMessageRef ?? null,
+    ...(input.sourcePart === undefined ? {} : { sourcePart: input.sourcePart }) };
   // PLAN-02: the fresh admission first; a refused write re-reads the same-identity receipt.
   const refusedAdmission = planProposalProblem(null, admissionRecorded, { agentAdmission: freshAdmission === null
     ? asWriteRejection(authorized, 'the Agent plan write is not authorized') : 'ok' });
@@ -3673,8 +3716,9 @@ async function proposePlanAsAgent(
     let requestGuards: readonly RecordGuard[] = [];
     let oldHead: CandidatePlanProposal | null = null;
     // Slice 5 §2.5/T-R2-2: a replacement copies the replaced chain's wire-only
-    // creation origin; `undefined` keeps a legacy chain without `since`.
-    let replacedOrigin: NoticeOriginWireV1 | undefined;
+    // creation origin (`since`); `undefined` keeps a legacy chain without it.
+    // The successor's own `createdSince` is bound below.
+    let replacedOrigin: PlanProposalOriginWireV1 | undefined;
     if (input.requestRef !== null) {
       const factsRead = await requestFactsReader.readCandidateRequestFacts(ctx, { requestRef: input.requestRef, goalRef: input.goalRef });
       if (factsRead.status !== 'ready') return asWriteRejection(factsRead, 'the request facts are unavailable');
@@ -3682,6 +3726,9 @@ async function proposePlanAsAgent(
       if (sourceMessageRef !== null) {
         if (!isInterventionSource(sourceMessageRef, factsRead.value)) {
           return rejected('invalid', 'the proposal sourceMessageRef is not this intervention Query source message');
+        }
+        if ((input.sourcePart ?? null) !== (factsRead.value.interventionSourcePart ?? null)) {
+          return rejected('invalid', 'the proposal sourcePart disagrees with the intervention Query source');
         }
       } else {
         if (!factsRead.value.root) return rejected('invalid', 'the requestRef root does not belong to this Goal');
@@ -3718,7 +3765,8 @@ async function proposePlanAsAgent(
     // the draft schema and basedOn before the source read, then the source.
     const recorded = { type: 'proposal_recorded' as const, writer: 'agent' as const, ref, goalRef: input.goalRef,
       basedOn: input.basedOn, draft, reason: input.reason as unknown as PlanChangeReason,
-      submittedBy: admission.provenance, sourceMessageRef: input.sourceMessageRef ?? null };
+      submittedBy: admission.provenance, sourceMessageRef: input.sourceMessageRef ?? null,
+      ...(input.sourcePart === undefined ? {} : { sourcePart: input.sourcePart }) };
     // N4 (lead): a replacement is an Agent future revision too; the scoped
     // check (scope, schema, basedOn) runs before the source read for both.
     {
@@ -3755,6 +3803,7 @@ async function proposePlanAsAgent(
         goalRef: input.goalRef, basedOn: input.basedOn, draft,
         reason: input.reason as unknown as PlanChangeReason, issues, catalogPin: catalog.catalogPin,
         submittedBy: admission.provenance, sourceMessageRef: input.sourceMessageRef ?? null,
+        ...(input.sourcePart === undefined ? {} : { sourcePart: input.sourcePart }),
         expectedHeadRevision: input.replaces!.revision, requestedBy: writer.actor, at: deps.now(),
         head: { proposalRef: input.replaces!.proposalRef, revision: input.replaces!.revision },
         replaces: input.replaces!, requestRef: input.requestRef! }, ctxFacts);
@@ -3777,19 +3826,25 @@ async function proposePlanAsAgent(
     // the Host path orders them; the commit cursor's event is always the candidate.
     const encodedEvents = (commit.replaced === null ? [] : [encodePlanProposalRecordedEvent(eventFor(commit.replaced))])
       .concat([encodePlanProposalRecordedEvent(eventFor(candidate, input.acknowledgement))]);
-    // Slice 5 §2.5/T-R2-2: a NEW chain's first candidate binds its creation
-    // commit cursor to `since`; a replacement copies the old chain's origin.
+    // Slice 5 §2.5/T-R2-2: a NEW chain's first candidate binds BOTH wire cursors
+    // to this creation commit; a replacement copies the old chain's `since` and
+    // binds only the candidate's own `createdSince`.
     const replacing = commit.replaced !== null;
+    const candidateKey = planProposalRefKey(candidate.ref);
+    const candidateOrigin = replacing ? { ...replacedOrigin, createdSince: null } : { since: null, createdSince: null };
     const encodedRecords = (commit.replaced === null ? [] : [encodePlanProposal(commit.replaced, replacedOrigin)])
-      .concat([encodePlanProposal(candidate, replacing ? replacedOrigin : { since: null })]);
-    const cursorBindings = replacing ? [] : [{ refKey: planProposalRefKey(candidate.ref), field: 'since' as const }];
+      .concat([encodePlanProposal(candidate, candidateOrigin)]);
+    const cursorBindings = replacing
+      ? [{ refKey: candidateKey, field: 'createdSince' as const }]
+      : [{ refKey: candidateKey, field: 'since' as const },
+        { refKey: candidateKey, field: 'createdSince' as const }];
     const merged = mergeGuards([...commit.guards, ...requestGuards]);
     if (!merged.ok) return merged.rejection;
     const claims: UniqueClaimChange[] = commit.requestSlot === null ? [] : [requestSlotClaim(commit.requestSlot)];
     if (ctx.signal.aborted) return rejected('cancelled', 'the Agent plan proposal was cancelled before commit');
     const committed = await records.commit({ identityKey, fingerprint, guards: merged.guards,
       records: encodedRecords, claims, indexGuards: [], indexChanges: [], events: encodedEvents,
-      ...(cursorBindings.length === 0 ? {} : { commitCursorBindings: cursorBindings }) });
+      commitCursorBindings: cursorBindings });
     if (committed.status !== 'committed') return mapRequestSlotCommitFailure(committed, claims.length > 0);
     if (!committed.replayed) return { status: 'committed', value: candidate, replayed: false, cursor: committed.cursor,
       ...proofReceiptOf(receiptExpected, committed) };

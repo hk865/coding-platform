@@ -20,15 +20,17 @@ import { afterEach, expect, it } from 'vitest';
 import type { PlanRevisionDraft, PlanRevisionSnapshot } from '../../src/contracts/plan.js';
 import type { PlanProposal } from '../../src/core/work-graph/model/plan-contracts.js';
 import { advanceUntil } from '../helpers/A2-restart-fixture.js';
-import { graphWrite, plain } from '../helpers/AG2b-collaboration-fixture.js';
-import { checkConfiguration, ready, setS7AAutonomy } from '../helpers/S7A-fixture.js';
+import { plain } from '../helpers/AG2b-collaboration-fixture.js';
+import { checkConfiguration, ready, sessionOf, setS7AAutonomy } from '../helpers/S7A-fixture.js';
 import { OPERATOR, S6A_SCOPE, S6A_WORK_ROLE } from '../helpers/S6A-request-fixture.js';
+import { createS6BLine } from '../helpers/S6B1-fixture.js';
 import {
   awaitProposal, candidateCards, proposalRefOf, readProposal,
 } from '../helpers/IV-host-fixture.js';
 import {
-  adoptPLTwoStageSkeleton, createPLReviewerLine, openPLWorkflowWorld,
-  plPlanChangeDraft, plSystemRoundRef, plToolPlanOf, requestHeads, settlePLGoal, verdictOf, type PLWorkflowWorld,
+  adoptPLTwoStageSkeleton, createPLReviewerLine, openPLWorkflowWorld, PL_PROPOSE_FUTURE_TOOLS,
+  plPlanChangeDraft, plSystemRoundRef, plToolPlanOf, requestHeads, satisfyPLTaskWithPropose, settlePLGoal, verdictOf,
+  type PLWorkflowWorld,
 } from '../helpers/PL-workflow-fixture.js';
 import { createPLAdviserLine } from '../helpers/PL-consumption-fixture.js';
 import type { CandidateCardFactsV1 } from '../../src/core/work-graph/views/decision-read-model.js';
@@ -66,6 +68,7 @@ async function sendOne(world: PLWorkflowWorld, flowId: string): Promise<Record<s
 
 it('PL-24: the fourth fix on the same basedOn cards fix_cap; three planfix, four planreview', async () => {
   const workflow = opened = await openPLWorkflowWorld({ label: 'pl-24',
+    extraBindings: [PL_PROPOSE_FUTURE_TOOLS],
     extraHostOptions: { checks: checkConfiguration({ kind: 'human', id: OPERATOR.id }) } });
   const skeleton = await adoptPLTwoStageSkeleton(workflow.main, workflow.goal, {
     label: 'pl-24', stageOneTaskIds: ['pl-a', 'pl-b'],
@@ -81,15 +84,16 @@ it('PL-24: the fourth fix on the same basedOn cards fix_cap; three planfix, four
     } }],
   })));
 
-  // P1@1: the first refinement candidate on the active Plan.
-  const drafted = (await workflow.main.post('plans/propose', graphWrite(S6A_SCOPE, {
-    goalRef: workflow.goal, basedOn: skeleton.plan.ref,
-    draft: refinementDraft(skeleton.plan, 'pl-24-p1'),
-    reason: { text: 'PL-24 P1 refinement', sources: [] },
-  }, 'pl-24-p1-propose'))) as { status: string; value?: PlanProposal };
-  expect(drafted.status, JSON.stringify(drafted)).toBe('committed');
-  const p1 = drafted.value;
-  if (p1 === undefined) throw new Error('PL-24: P1 was not written');
+  // P1@1: the first refinement candidate through a real Work Run's `propose_future_plan` (A-13,
+  // `p2-frozen.md:208/210/345`): its `submittedBy` names the writing line, and it only fills the `plan_only` slot.
+  const p1Line = await sessionOf(workflow.world, await createS6BLine(workflow.main, {
+    label: 'pl-24-p1-line', role: S6A_WORK_ROLE,
+    tasks: [{ projectId: workflow.goal.projectId, goalId: workflow.goal.goalId, taskId: 'pl-a' }],
+  }));
+  const written = await satisfyPLTaskWithPropose(workflow.world, workflow.goal, 'pl-a', p1Line, 'pl-24-p1',
+    { basedOn: skeleton.plan.ref, draft: refinementDraft(skeleton.plan, 'pl-24-p1'),
+      reasonText: 'PL-24 P1 refinement' });
+  const p1 = await readProposal(workflow.world, written.proposalRef);
   expect(p1.status).toBe('candidate');
 
   const rounds: PlanProposal[] = [p1];

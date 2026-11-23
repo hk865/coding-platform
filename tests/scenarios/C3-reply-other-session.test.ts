@@ -5,7 +5,8 @@
  * §12.2 W-21 for the Session the requeue is claimed in).
  *
  * Run 1 sends a wait message to a member Session B and yields (P5). While it waits, a person cancels
- * it (P17: `failed/continuation_cancelled`). B's answer then arrives (one read-only Query on B), and a
+ * it (P17: `failed/continuation_cancelled`). B's answer then arrives (B's own woken round, P2: the question is
+ * a line question, never a copy's, p2-frozen.md:133; design-frozen.md:210, :262), and a
  * person requeues the Task with the answered message as its new input. Run 2 writes the result file and
  * the Goal completes. The reply is long, so a bounded copy is cut.
  *
@@ -31,7 +32,7 @@ import { AG2B_QUERY_ROLE, AG2B_WORK_ROLE, AG2B_WORK_TASK_ID, createAG2bSession }
 import { submitControl, TASK } from '../helpers/A2-restart-fixture.js';
 import { waitReplyDeliveryText } from '../helpers/S7B-delivery-samples.js';
 import { assertInvariants, cleanupScenarios, openHostScenario, SCENARIO_OPERATOR, type HostScenario } from './harness.js';
-import { acceptedMessageInputs, archiveSession, consult, occurrences } from './support/brief.js';
+import { acceptedMessageInputs, archiveSession, occurrences, wakeLineRound } from './support/brief.js';
 import {
   briefOf, editThenText, execution, operatorRequeue, readMessage, selectedRun, stepOf,
 } from './support/common.js';
@@ -47,20 +48,20 @@ const REPLY = `${REPLY_HEAD} ${'detail '.repeat(700)}${REPLY_TAIL}`;
 const OTHER_TASK_ID = 'ag2b-work-c3-other';
 const OTHER_TEXT = 'C3-OTHER-TASK: the other Task answers in its own Session';
 
-type Answered = { h: HostScenario; run1Ref: RunRef; messageRef: SessionMessageRef; sessionA: string };
+type Answered = { h: HostScenario; run1Ref: RunRef; messageRef: SessionMessageRef; sessionA: string; bCalls: number };
 
 /**
  * Run 1 sends a wait message to B and yields; a person cancels the wait (P17); B answers through one
- * read-only Query. Answers the scenario, Run 1, the wait message and Run 1's Session. With `otherTask`,
+ * own woken round. Answers the scenario, Run 1, the wait message, Run 1's Session and B's model calls. With `otherTask`,
  * the Goal has a second work Task whose one Run answers `otherTask` (scripted between Run 1 and Run 2),
  * and the registered check PASSes every round, so that Run needs no tool call.
  */
 async function waitCancelledThenAnswered(label: string, otherTask: ScriptedReply | null = null): Promise<Answered> {
   const send = { callId: `${label}-send`, name: 'send_session_message',
-    args: { recipient: {}, text: QUESTION, intent: 'inquiry', needsReply: true, waitAfterSend: true } as Record<string, unknown> };
+    args: { recipient: {}, text: QUESTION, needsReply: true, waitAfterSend: true } as Record<string, unknown> };
   const replies: ScriptedReply[] = [{ kind: 'calls', calls: [send] }, ...(otherTask === null ? [] : [otherTask]),
     ...editThenText(`${label}-run2`)];
-  const h = await openHostScenario({ script: { replies, queryReplies: [{ kind: 'text', text: REPLY }] },
+  const h = await openHostScenario({ script: { replies },
     ...(otherTask === null ? {} : { workIds: [AG2B_WORK_TASK_ID, OTHER_TASK_ID], check: 'pass' as const }) });
   const recipient = (await createAG2bSession(h.host, `${label}-member-b`, AG2B_QUERY_ROLE,
     [{ target: { kind: 'task', ref: TASK }, relation: 'participates' }])).sessionRef;
@@ -77,7 +78,7 @@ async function waitCancelledThenAnswered(label: string, otherTask: ScriptedReply
   expect(run1.run).toMatchObject({ status: 'ended', outcome: 'yielded', continuation: { kind: 'wait_reply' } });
   const messageRef = run1.run.continuation?.messageRef;
   if (messageRef === undefined) throw new Error('Run 1 must wait on its message');
-  expect(await readMessage(h, messageRef)).toMatchObject({ status: 'pending', intent: 'inquiry', needsReply: true, waitAfterSend: true,
+  expect(await readMessage(h, messageRef)).toMatchObject({ status: 'pending', needsReply: true, waitAfterSend: true,
     recipient: { sessionId: recipient.sessionId }, sender: { kind: 'work_run', sessionRef: { sessionId: run1.session.ref.sessionId } } });
 
   // P17: the person cancels the wait; the Task is failed/continuation_cancelled and is not continued.
@@ -85,12 +86,13 @@ async function waitCancelledThenAnswered(label: string, otherTask: ScriptedReply
   await assertInvariants(h, `${label}: the wait cancelled`, stepOf(h, 'other', `${label}: the wait cancelled`));
   expect(await h.taskRow()).toMatchObject({ effectivePhase: 'failed', phaseCause: { code: 'continuation_cancelled' } });
 
-  // The reply arrives: B answers the message through one read-only Query.
-  expect(await consult(h, messageRef)).toMatchObject({ status: 'ready', value: { state: 'responded' } });
+  // The reply arrives: B's own line answers the message in its woken round.
+  const woken = await wakeLineRound(h, messageRef, REPLY);
   await assertInvariants(h, `${label}: B answered`, stepOf(h, 'other', `${label}: B answered`));
-  expect(await readMessage(h, messageRef)).toMatchObject({ status: 'responded' });
-  expect(h.modelCalls(), 'Run 1 (the wait message) and B\'s Query').toBe(2);
-  return { h, run1Ref, messageRef, sessionA: run1.session.ref.sessionId };
+  expect(await readMessage(h, messageRef)).toMatchObject({ status: 'responded',
+    response: { sender: { kind: 'query_run', sessionRef: { sessionId: recipient.sessionId } } } });
+  expect(h.modelCalls() + woken.modelCalls, 'Run 1 (the wait message) and B\'s round').toBe(2);
+  return { h, run1Ref, messageRef, sessionA: run1.session.ref.sessionId, bCalls: woken.modelCalls };
 }
 
 /**
@@ -118,7 +120,8 @@ async function requeueWithReply(answered: Answered, label: string, earlierWorkCa
   // Run 2's model requests (the earlier work Runs made the first ones; B's Query is on the query model).
   const run2Requests = h.modelRequests().slice(earlierWorkCalls);
   expect(run2Requests).toHaveLength(2);
-  expect(h.modelCalls(), 'the earlier work Runs, B\'s Query, Run 2 (edit and final text)').toBe(earlierWorkCalls + 3);
+  expect(h.modelCalls() + answered.bCalls, 'the earlier work Runs, B\'s round, Run 2 (edit and final text)')
+    .toBe(earlierWorkCalls + 3);
   return { run2Ref, run2, brief: bound.brief, run2Requests };
 }
 

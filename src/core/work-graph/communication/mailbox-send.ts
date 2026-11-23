@@ -1,12 +1,14 @@
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { VersionPin, WorkspaceScope } from '../../../contracts/core/identity.js';
 import type { CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
-import type { MessageRecipient, MessageReleaseV1, SessionMessageRef, DecisionMessageMetadataV1 } from '../../../contracts/core/session-message.js';
+import type { MessageRecipient, SessionMessageRef, DecisionMessageMetadataV1 } from '../../../contracts/core/session-message.js';
 import type { DecisionObjectV1, DecisionOptionV1, GoalAutonomyV1, GoalDecisionBasisV1 } from '../../../contracts/goal-decisions.js';
-import type { DispatchBasisV1, GoalRef, GoalSnapshot } from '../../../contracts/ledger.js';
+import type { GoalRef, GoalSnapshot } from '../../../contracts/ledger.js';
+import type { TaskTriple } from '../../../contracts/dispatch.js';
+import { TaskTripleShape } from '../../../contracts/data-format-refs.js';
+import { checkShape } from '../../../contracts/validation/data-format.js';
 import type { RecordBatchRead, EncodedRecord, RecordGuard, StoreResult } from '../../record-store/ports.js';
 import type { MessageSender, SendMessageResultV1, SessionMessage, SessionMessageSendInputV1 } from '../model/communication-contracts.js';
-import type { DispatchBasisFactsV1 } from '../model/dispatch-basis-contracts.js';
 import type { QueryRoundV1 } from '../model/query-round-contracts.js';
 import type { SecretaryQueryRunV1 } from '../model/secretary-query-run-contracts.js';
 import type { GraphWrite } from '../model/task-contracts.js';
@@ -22,17 +24,16 @@ import { decodePlanRevisionSnapshot } from '../persistence/plan-record-codecs.js
 import { sessionStoreFailureToRejection } from '../persistence/read-result-failures.js';
 import { canonicalRefKey, decodeGoalSnapshot } from '../persistence/record-codecs.js';
 import { SESSION_MESSAGE_MAX_TEXT_BYTES, sessionMessageTextBound, checkSessionMessageRef } from '../sessions/message-record-codecs.js';
-import { canSendUserMessage, decisionActionPolicy } from '../state/decision-policy.js';
+import { canSendUserMessage } from '../state/decision-policy.js';
 import { createSessionMessageRecord, messageRecipientProjectProblem, messageSendFlagsProblem } from '../state/message-machine.js';
-import { sameBasis, dispatchCurrentOf, basisPinsOf, releasedMessageCompanions, basisConflictCurrent } from './mailbox-basis.js';
-import { isGoalRef, mapReadResult, ownContext, ownWrite, normalizeText, guardRejection, judge, refusalOf, followupConnects, senderIdentityOf, identityKeyOf, fingerprintOf, messageIdOf, internalHostContext, loadMessage } from './mailbox-common.js';
+import { sendUserMessageFingerprintPayload } from '../model/tool-commit-arguments.js';
+import { sentMessageCompanions } from './mailbox-basis.js';
+import { isGoalRef, mapReadResult, ownContext, ownWrite, normalizeText, guardRejection, judge, refusalOf, followupConnects, senderIdentityOf, identityKeyOf, fingerprintOf, messageRefOf, internalHostContext, loadMessage } from './mailbox-common.js';
 import {
-  readWorkRunIdentity, deriveWorkRunSender, authorizeNewWorkRunAction, nonRequestQueryRound, resolveSecretaryRound,
+  readWorkRunIdentity, deriveWorkRunSender, authorizeNewWorkRunAction, requiredQueryRound, resolveSecretaryRound,
+  requestRoundOwnership, reviewerFactsOfLine,
 } from './mailbox-identity.js';
 import { replayMessage, recheckAfterMiss, refuse, writeMessage } from './mailbox-write.js';
-
-/** An agent's goal-bearing `action_request` sent without the dispatch basis it read (decision 49). */
-const MISSING_EXPECTED_BASIS = 'a goal-bearing action_request requires the expected basis';
 
 // ---- slice-5 user-send helpers ------------------------------------------
 
@@ -281,18 +282,17 @@ function validOptionObjects(mailbox: MailboxContext, options: readonly DecisionO
 // ---- sendMessage --------------------------------------------------------
 
 /**
- * The send's own result: the one commit's outcome plus the release state it
- * wrote (`awaiting_release` exactly when the stored `release` is `'awaiting'`).
- * A rejection already carries the frozen `SendRejectionV1` shape.
+ * The send's own result: the one commit's outcome. A rejection already carries
+ * the frozen `SendRejectionV1` shape.
  */
-function sendStatusOf(mailbox: MailboxContext, result: WriteResult<SessionMessage>): SendMessageResultV1 {
+function sendStatusOf(result: WriteResult<SessionMessage>): SendMessageResultV1 {
   if (result.status !== 'committed') return result;
-  return { ...result, sendStatus: result.value.release === 'awaiting' ? 'awaiting_release' : 'sent' };
+  return { ...result, sendStatus: 'sent' };
 }
 
 async function refuseSend<T extends CoreRejection>(mailbox: MailboxContext, rejection: T, identityKey: string, fingerprint: string): Promise<SendMessageResultV1> {
   const restored = await recheckAfterMiss(mailbox, identityKey, fingerprint);
-  return restored === null ? rejection : sendStatusOf(mailbox, restored);
+  return restored === null ? rejection : sendStatusOf(restored);
 }
 
 export async function sendMessage(mailbox: MailboxContext, ctx: CoreCallContext, request: SessionMessageSendInputV1): Promise<SendMessageResultV1> {
@@ -335,7 +335,6 @@ export async function sendMessage(mailbox: MailboxContext, ctx: CoreCallContext,
   let senderIdentity: Unknown;
   let workRunPrincipal: WorkRunPrincipal | null = null;
   let workRunSessionWorkspaceId: string | null = null;
-  let secretaryRound: SecretaryQueryRunV1 | null = null;
   if (owned.principal.kind === 'host') {
     sender = { kind: 'host', actor: { ...owned.principal.actor } };
     senderIdentity = senderIdentityOf(sender);
@@ -363,64 +362,60 @@ export async function sendMessage(mailbox: MailboxContext, ctx: CoreCallContext,
   // event, before any admission and without re-reading the world.
   if (owned.signal.aborted) return reject('cancelled', 'the send was cancelled before the idempotency lookup');
   const existing = await mailbox.records.lookupCommit({ identityKey, fingerprint });
-  if (existing.status === 'ready') return sendStatusOf(mailbox, await replayMessage(mailbox, existing.value));
+  if (existing.status === 'ready') return sendStatusOf(await replayMessage(mailbox, existing.value));
   if (existing.code !== 'not_found') return sessionStoreFailureToRejection(existing);
 
-  // 非请求问答轮自己发信，也在查回执之后解析（`nonRequestQueryRound` 一处分流）：发件人是本轮 Session、QueryRun
-  // 和代数，信放线的工作区，目标是本轮冻结的目标，提交守本轮读到的 QueryRun 和 Session 版本。没配、解析失败、
-  // 请求轮的 `query_run` 照旧走下面的秘书路径，原文不变。
+  // 问答轮自己发信，也在查回执之后解析，只经 `requiredQueryRound` 这一次：非请求轮的发件人是本轮 Session、QueryRun
+  // 和代数；秘书请求轮复用这一次解析出的请求根和准入守卫，与当前请求归属严格合并。没有第二条路：解析不出、请求记录
+  // 损坏的 `query_run` 就拒。
   let queryRound: QueryRoundV1 | null = null;
+  let secretaryGuards: readonly RecordGuard[] = [];
   if (owned.principal.kind === 'query_run') {
-    const routed = await nonRequestQueryRound(mailbox, owned);
-    if (!routed.ok) return refuseSend(mailbox, routed.rejection, identityKey, fingerprint);
-    queryRound = routed.round;
-    if (queryRound !== null) {
-      // 副本不冒充原线，永不发信。
-      if (queryRound.readOnlyCopy) {
-        return refuseSend(mailbox, reject('forbidden', 'a read-only copy never sends a Session message'), identityKey, fingerprint);
+    const routed = await requiredQueryRound(mailbox, owned);
+    // A business refusal (no stored round, not entered, an unknown duty) may be stale: a concurrent same-identity
+    // send can have committed after this send's lookup missed, so restore its receipt. A read failure stays the
+    // read failure.
+    if (!routed.ok) {
+      return routed.rejection.code === 'forbidden'
+        ? refuseSend(mailbox, routed.rejection, identityKey, fingerprint) : routed.rejection;
+    }
+    const round = routed.round;
+    queryRound = round;
+    // 副本不冒充原线，永不发信。
+    if (round.readOnlyCopy) {
+      return refuseSend(mailbox, reject('forbidden', 'a read-only copy never sends a Session message'),
+        identityKey, fingerprint);
+    }
+    if (round.requestRound) {
+      // 请求轮只属于秘书（请求由秘书持有，设计 2.4）；请求根没存下是记录坏了，读不到的事实不能当真。
+      if (round.duty !== 'secretary') {
+        return refuseSend(mailbox, reject('forbidden', 'the round Session is not the secretary duty'),
+          identityKey, fingerprint);
       }
-      // 等待只给做事轮：问答轮没有可让出、可接续的运行。
-      if (send.waitAfterSend) {
-        return refuseSend(mailbox, reject('invalid', 'a query round cannot set waitAfterSend: it has no Run to yield '
-          + 'and resume; send without waiting, and the reply arrives in your next round'), identityKey, fingerprint);
+      if (round.requestRoot === null) return reject('unavailable', 'the round QueryJob names no request root');
+      const ownership = await requestRoundOwnership(mailbox, owned, {
+        requestRoot: round.requestRoot, session: round.session, scope: round.scope });
+      if (!ownership.ok) {
+        return ownership.rejection.code === 'forbidden'
+          ? refuseSend(mailbox, ownership.rejection, identityKey, fingerprint) : ownership.rejection;
       }
-      sender = { kind: 'query_run', sessionRef: { ...queryRound.session }, queryRunRef: { ...queryRound.run },
-        generation: queryRound.sessionGeneration };
+      // The first trusted read's QueryRun/Session versions stay in the commit, strictly merged with the
+      // current request ownership; a round that ended between the two reads is a revision_conflict.
+      secretaryGuards = [...round.guards, ...ownership.guards];
+      sender = { kind: 'secretary_round', sessionRef: { ...round.session },
+        queryRunRef: { ...round.run }, requestRoot: { ...round.requestRoot },
+        generation: round.sessionGeneration };
+    } else {
+      sender = { kind: 'query_run', sessionRef: { ...round.session }, queryRunRef: { ...round.run },
+        generation: round.sessionGeneration };
     }
-  }
-
-  // The secretary's one admission, only after the receipt miss: the resolved
-  // round must be this QueryRun, in this scope, and it supplies the persisted
-  // sender and the trusted goal. A NEW secretary path needs all three
-  // injections; it never reads open executions.
-  if (owned.principal.kind === 'query_run' && queryRound === null) {
-    if (mailbox.deps.secretaryRounds === undefined || mailbox.deps.requestOwners === undefined
-      || mailbox.deps.recipientExecutions === undefined) {
-      return reject('unsupported', 'the secretary send is not configured');
-    }
-    const resolved = await resolveSecretaryRound(mailbox, owned);
-    if (!resolved.ok) {
-      // A business refusal (no stored round, not entered, not a secretary
-      // round) may be stale: a concurrent same-identity send can have committed
-      // after this send's lookup missed, so restore its receipt. A read failure
-      // stays the read failure.
-      return resolved.rejection.code === 'forbidden'
-        ? refuseSend(mailbox, resolved.rejection, identityKey, fingerprint) : resolved.rejection;
-    }
-    const round = resolved.round;
-    secretaryRound = round;
-    sender = {
-      kind: 'secretary_round',
-      sessionRef: { ...round.session },
-      queryRunRef: { ...round.run },
-      requestRoot: { ...round.requestRoot },
-      generation: round.sessionGeneration,
-    };
   }
   if (sender === null) throw new Error('a send reached admission without its trusted sender facts');
   const committedSender: MessageSender = sender;
+  const committedRequestRoot = committedSender.kind === 'secretary_round' ? committedSender.requestRoot : null;
   // Rule W: a Work Run's message belongs to the sending line's workspace, not
-  // the Run's. Host and secretary sends keep the caller's workspace.
+  // the Run's; a request round's message belongs to its line's workspace too. A
+  // Host send keeps the caller's workspace.
   // 问答轮的信同样放线的工作区：规划 Query 在目标的工作区，线可能在别处，放 Query 那边它就读不到自己的信。
   const lineWorkspaceId = workRunSessionWorkspaceId ?? queryRound?.lineWorkspaceId ?? owned.workspaceId;
   const lineCtx = lineWorkspaceId === owned.workspaceId
@@ -430,9 +425,14 @@ export async function sendMessage(mailbox: MailboxContext, ctx: CoreCallContext,
   // MSG-02's fresh admission comes before the target Session read; a refused
   // admission never reads the target (the machine asks the admission first).
   let authorized: AuthOutcome | null = null;
+  let senderReviewer = false;
   if (workRunPrincipal !== null) {
+    // The real tool name comes from the send shape: a copy question is `ask_copy`;
+    // every other Session send is `send_session_message`. The Host grants the new
+    // names, so the old `send_user_message` fallback is gone.
+    const operationToolName = send.answeredBy === 'copy' ? 'ask_copy' : 'send_session_message';
     authorized = await authorizeNewWorkRunAction(mailbox, {
-      owned, principal: workRunPrincipal, operationToolName: 'send_session_message',
+      owned, principal: workRunPrincipal, operationToolName,
     });
     // The trusted duties facts refuse the two senders that are never senders:
     // a read-only copy and an independent reviewer. The adapter is the only
@@ -445,8 +445,30 @@ export async function sendMessage(mailbox: MailboxContext, ctx: CoreCallContext,
       });
       if (duties.status !== 'ready') return duties.status === 'rejected' ? duties : mapReadResult(duties) as CoreRejection;
       if (duties.value.readOnlyCopy) return refuseSend(mailbox, reject('forbidden', 'a read-only copy never sends a Session message'), identityKey, fingerprint);
-      if (duties.value.independentReview) return refuseSend(mailbox, reject('forbidden', 'an independent reviewer never sends a Session message'), identityKey, fingerprint);
+      senderReviewer = duties.value.independentReview || duties.value.duties.includes('reviewer');
     }
+  }
+  if (queryRound !== null) senderReviewer = queryRound.duty === 'reviewer';
+  // C23: an independent reviewer only sends a message that asks no reply and does not wait. Asking a copy question
+  // is the same forbidden ask; `wake` keeps its frozen default (true), so its absence is not a refusal. Reply, ask,
+  // action and forwarding are outside this owner; the adapter is refused here.
+  if (senderReviewer && (send.needsReply || send.waitAfterSend || send.answeredBy === 'copy')) {
+    return refuseSend(mailbox, reject('forbidden', '独立审阅只发请知悉'), identityKey, fingerprint);
+  }
+  // 让出执行只属于做事轮：问答轮没有可让出、可接续的运行，owner 在查回执之后、解析之前就拒；平台为请求等待
+  // 发的问件不属这条工具规则。审阅者的 C23 拒绝先于这条普通等待拒绝。
+  if (owned.principal.kind === 'query_run' && send.waitAfterSend) {
+    return refuseSend(mailbox, reject('invalid', 'a query round cannot set waitAfterSend: it has no Run to yield '
+      + 'and resume; send without waiting, and the reply arrives in your next round'), identityKey, fingerprint);
+  }
+  // S-1 applies to `send_session_message` (`answeredBy:'line'`): an agent's reply-asking letter must wake its
+  // recipient. An explicit `wake:false` on `needsReply:true` is refused here, in the send owner, before anything is
+  // written; omitting `wake` keeps the record default (true). A copy question (`ask_copy`, `answeredBy:'copy'`)
+  // deliberately does not wake the original line, so it is not this rule's subject.
+  if (sender.kind !== 'host' && send.answeredBy === 'line' && send.needsReply && send.wake === false) {
+    return refuseSend(mailbox, reject('invalid',
+      'a message that needs a reply must wake the recipient; drop wake:false or set needsReply:false'),
+    identityKey, fingerprint);
   }
 
   // The target Session must exist in the same project (the directory's project read). Across workspaces of the
@@ -464,13 +486,25 @@ export async function sendMessage(mailbox: MailboxContext, ctx: CoreCallContext,
     if (target.status === 'ready') {
       const targetWorkspaceId = target.value.record.workspaceId;
       const hostSystem = owned.principal.kind === 'host' && owned.principal.actor.kind === 'system';
-      const mayCross = ((send.intent === null || send.intent === 'notify') && !send.needsReply)
-        || (hostSystem && (send.intent === 'notify' || send.intent === 'action_request'));
+      // 跨工作区只放开不要回复的请知悉；Host 系统的通知和系统轮照旧能过。
+      const mayCross = !send.needsReply || hostSystem;
       if (targetWorkspaceId === lineWorkspaceId || mayCross) {
         recipientScope = 'same_workspace';
         receivingWorkspaceId = targetWorkspaceId;
       } else {
         recipientScope = 'other_workspace';
+      }
+      // C23/S6: an AGENT that asks a reviewer line for a reply is refused at send
+      // time; the person's own direct intervention is unchanged. The recipient
+      // line's duty comes from the one duties read, never from the caller.
+      if (send.needsReply && sender.kind !== 'host') {
+        const lineReviewer = await reviewerFactsOfLine(mailbox, owned, {
+          sessionRef: send.recipient, role: target.value.record.role, workspaceId: targetWorkspaceId,
+        });
+        if (!lineReviewer.ok) return refuseSend(mailbox, lineReviewer.rejection, identityKey, fingerprint);
+        if (lineReviewer.reviewer) {
+          return refuseSend(mailbox, reject('forbidden', '审阅者不回复（C23），要回复请发给参谋或秘书'), identityKey, fingerprint);
+        }
       }
     }
   }
@@ -488,7 +522,7 @@ export async function sendMessage(mailbox: MailboxContext, ctx: CoreCallContext,
   if (!decided.ok) return refuseSend(mailbox, refusalOf(decided, messageCtx), identityKey, fingerprint);
 
   // The Goal comes from the sender's trusted facts: a work Run's Task goal, the
-  // secretary round's `effectiveGoalId` (never its `goals` batch), the person's
+  // query round's `effectiveGoalId` (never a request's `goals` batch), the person's
   // own `goalRef` input. An input that disagrees with the trusted fact is
   // `invalid`, never a silent override.
   let trustedGoal: GoalRef | null = null;
@@ -501,8 +535,7 @@ export async function sendMessage(mailbox: MailboxContext, ctx: CoreCallContext,
       return refuseSend(mailbox, reject('invalid', 'the send goalRef disagrees with the sender Session\'s trusted Goal'), identityKey, fingerprint);
     }
   } else {
-    const effectiveGoalId = secretaryRound !== null ? secretaryRound.effectiveGoalId
-      : queryRound !== null ? queryRound.effectiveGoalId : null;
+    const effectiveGoalId = queryRound !== null ? queryRound.effectiveGoalId : null;
     trustedGoal = effectiveGoalId === null
       ? null : { aggregateType: 'Goal', projectId: owned.projectId, goalId: effectiveGoalId };
     if (send.goalRef !== null && (trustedGoal === null
@@ -528,173 +561,63 @@ export async function sendMessage(mailbox: MailboxContext, ctx: CoreCallContext,
     }
   }
 
-  // Only an autonomy-controlled, goal-bearing `action_request` uses the one
-  // facts read; every other send never reads it. A read failure is the failure
-  // and its guards are the facts' own.
-  let basis: DispatchBasisFactsV1 | null = null;
-  if (send.intent === 'action_request' && sender.kind !== 'host') {
-    if (trustedGoal === null) return refuseSend(mailbox, reject('invalid', 'an agent action_request requires the Goal it belongs to'), identityKey, fingerprint);
-    if (mailbox.deps.dispatchBasis === undefined) {
-      return refuseSend(mailbox, send.expected === null ? reject('invalid', MISSING_EXPECTED_BASIS)
-        : reject('unsupported', 'the dispatch basis read is not configured for a new action_request'), identityKey, fingerprint);
-    }
-    if (owned.signal.aborted) return reject('cancelled', 'the send was cancelled before the dispatch facts read');
-    const facts = await mailbox.deps.dispatchBasis.readDispatchFacts(internalHostContext(mailbox, owned), { goalRef: trustedGoal });
-    if (facts.status !== 'ready') return facts.status === 'rejected' ? facts : mapReadResult(facts) as CoreRejection;
-    if (facts.value.plan === null) return refuseSend(mailbox, reject('invalid', 'an action_request requires the Goal\'s active Plan'), identityKey, fingerprint);
-    basis = facts.value;
-    // E09F（lead 11-17）：缺 expected 时，像下面的版本冲突那样带回这次读到的当前三个版本，并写明下次怎么填；
-    // 执行者照着重发即可，保护强度和冲突分支一样（G6 E09：执行者向参谋上报被这里拒收，只能降成 notify）。
-    if (send.expected === null) {
-      return refuseSend(mailbox, { ...reject('invalid', `${MISSING_EXPECTED_BASIS}: send it again with expected set to the `
-        + 'planRevision, pointerRevision and dispatchSequence of dispatchCurrent (the Goal card\'s dispatchBasis in look_graph)'),
-      dispatchCurrent: dispatchCurrentOf(basis) }, identityKey, fingerprint);
-    }
-    // A three-version mismatch is the stage's own read: its values and cursor,
-    // and the current versions the caller has to re-read.
-    if (!sameBasis(basis.values, send.expected)) {
-      return refuseSend(mailbox, {
-        ...reject('revision_conflict', 'the dispatch basis moved since it was read', basisPinsOf(basis)),
-        dispatchCurrent: dispatchCurrentOf(basis),
-      }, identityKey, fingerprint);
-    }
+  // 目标暂停只影响投递，发送时只拒取消（`sendGoal`）；Goal 读失败是读失败，不当成没目标。这次读到的
+  // Goal 版本也进同一次提交，读和提交之间目标换了代就冲突；暂停在读时已看到，照收下排队。
+  let sendGoal: GoalSnapshot['desiredState'] | null = null;
+  let sendGoalGuard: RecordGuard | null = null;
+  if (trustedGoal !== null) {
+    if (owned.signal.aborted) return reject('cancelled', 'the send was cancelled before the Goal read');
+    const goal = await loadGoal(mailbox, owned, trustedGoal);
+    if (goal.status !== 'ready') return mapReadResult(goal) as CoreRejection;
+    sendGoal = goal.value.desiredState;
+    sendGoalGuard = { refKey: canonicalRefKey(goal.value.ref), expectedRevision: goal.value.revision };
   }
+  // 只有人的直接干预入口写 `entry`；agent 和平台填了也不用。
+  const entry = sender.kind === 'host' && sender.actor.kind === 'human' ? send.entry ?? undefined : undefined;
 
-  // The action_request's own guard keys: a commit conflict on one of them is
-  // the three-version window's, and only that one gets the post-miss read.
-  const basisRefKeys = new Set((basis?.guards ?? []).map((guard) => guard.refKey));
-
-  // Book §3.3 / §2.1 steps 8-11: a send is the record CONSTRUCTOR's create, and
-  // its release is this path's own fact. A person's send keeps `release: null`.
-  // A notify is always released and never counts or advances the Session. An
-  // agent's inquiry or action_request takes the Goal's autonomy through the one
-  // shared policy: 「每步确认」 awaits the person, the automatic level releases.
-  // An inquiry freezes its duration; an `action_request` reads the basis above.
-  let release: MessageReleaseV1 | null = null;
-  let pins: DispatchBasisV1 | null = null;
-  let goalGuard: RecordGuard | null = null;
-  // The Goal facts the release was decided on travel to the state original,
-  // which owns direct-release eligibility (`desiredState === 'active'`).
-  let releaseGoal: { desiredState: 'active' | 'paused' | 'cancelled'; revision: number } | null = null;
-  // Every inquiry freezes its duration (the input's, else the injected
-  // default); the record stores `deadlineMs` and only a RELEASED inquiry stores
-  // the instant. A missing injection is `unsupported`, never an invented one.
-  let deadlineMs: number | null = null;
-  if (send.intent === 'inquiry') {
-    const duration = send.deadlineMs ?? mailbox.deps.defaultInquiryDeadlineMs;
-    // A NEW inquiry without a duration is `unsupported`: no silent "no deadline".
-    if (duration === undefined) return refuseSend(mailbox, reject('unsupported', 'the inquiry deadline duration is not configured'), identityKey, fingerprint);
-    deadlineMs = duration;
-  }
-  if (sender.kind !== 'host' && send.intent !== null) {
-    if (trustedGoal === null) {
-      // A no-goal notify or inquiry is released directly; no Goal, no
-      // counter and no pins. Any other agent intent still needs its Goal.
-      if (send.intent !== 'notify' && send.intent !== 'inquiry') {
-        return refuseSend(mailbox, reject('invalid', `an agent ${send.intent} requires the Goal it belongs to`), identityKey, fingerprint);
-      }
-      release = 'released';
-    } else {
-      // An action_request reuses the ONE facts read's Goal; every other
-      // goal-bearing send reads the Goal here and guards that same revision.
-      let autonomy: GoalAutonomyV1;
-      if (send.intent === 'action_request') {
-        if (basis === null) throw new Error('an action_request release needs its dispatch facts');
-        autonomy = basis.goal.settings.autonomy;
-        releaseGoal = { desiredState: basis.goal.desiredState, revision: basis.goal.revision };
-        goalGuard = { refKey: canonicalRefKey(basis.goal.ref), expectedRevision: basis.goal.revision };
-      } else {
-        if (owned.signal.aborted) return reject('cancelled', 'the send was cancelled before the Goal read');
-        const goal = await loadGoal(mailbox, owned, trustedGoal);
-        if (goal.status !== 'ready') return mapReadResult(goal) as CoreRejection;
-        autonomy = goal.value.settings.autonomy;
-        releaseGoal = { desiredState: goal.value.desiredState, revision: goal.value.revision };
-        goalGuard = { refKey: canonicalRefKey(goal.value.ref), expectedRevision: goal.value.revision };
-      }
-      if (send.intent === 'notify') {
-        // Notify is always released: it skips the counter and the activity
-        // advance, never the Goal read or its guard.
-        release = 'released';
-      } else {
-        const verdict = decisionActionPolicy({
-          autonomy,
-          action: send.intent === 'inquiry' ? 'secretary_inquiry' : 'secretary_action',
-          actorClass: 'agent', countedNext: null, cap: 0,
-        });
-        release = verdict === 'needs_decision' ? 'awaiting' : 'released';
-        if (send.intent === 'action_request') {
-          // A released action_request pins the facts read BEFORE the counter +1; an
-          // awaiting one pins the sender's own expected basis.
-          pins = release === 'awaiting' ? send.expected : (basis === null ? null : basis.values);
-        }
-      }
-    }
-  }
-
-  const messageRef: SessionMessageRef = {
-    aggregateType: 'SessionMessage', projectId: owned.projectId, workspaceId: receivingWorkspaceId,
-    messageId: messageIdOf(owned, senderIdentity, write.requestId),
-  };
-  // The release is decided above; the machine's accepted state carries it, so
-  // the canonical comparison at commit needs no overlay (§3.4 invariant 1).
-  // Its normal refusals (a direct release on a non-active Goal) are a result,
-  // never an exception, and recover the same identity's receipt like the first
-  // judge's refusals.
+  const messageRef = messageRefOf(owned, senderIdentity, write.requestId, receivingWorkspaceId);
+  // The machine's send row refuses a cancelled Goal; a paused one is accepted
+  // and the delivery gate withholds it until the Goal resumes.
   const { decided: sent, ctx: sentCtx } = judge(owned.principal, null, { type: 'message_sent' },
-    { ...sendFacts, sendRelease: { release, pins, goal: releaseGoal } });
+    { ...sendFacts, sendGoal });
   if (!sent.ok) return refuseSend(mailbox, refusalOf(sent, sentCtx), identityKey, fingerprint);
-  // The released inquiry's deadline is frozen at the commit's one clock instant;
-  // an overflow is refused before anything is written.
+  // The deadline is frozen at the commit's one clock instant; an overflow is
+  // refused before anything is written.
+  // A reply-asking send with no explicit deadline gets the platform's default
+  // inquiry deadline; the frozen instant and the record both use this value.
+  const deadlineMs = send.deadlineMs ?? (send.needsReply ? mailbox.deps.defaultInquiryDeadlineMs ?? null : null);
   let frozenDeadline: string | null = null;
   const companions = async (at: string) => {
-    if (release !== 'released') {
-      return { ok: true as const,
-        value: { records: [], events: [], guards: goalGuard === null ? [] : [goalGuard], claims: [] } };
-    }
-    const released = await releasedMessageCompanions(mailbox.records, {
-      at, messageRef, recipient: send.recipient, intent: send.intent, deadlineMs, basis,
-    });
-    if (!released.ok) return released;
-    frozenDeadline = released.value.deadline;
-    return {
-      ok: true as const,
-      value: {
-        records: released.value.records,
-        events: [],
-        guards: goalGuard === null ? released.value.guards : [goalGuard, ...released.value.guards],
-        claims: [],
-      },
-    };
+    const sentCompanions = sentMessageCompanions(at, deadlineMs);
+    if (!sentCompanions.ok) return sentCompanions;
+    frozenDeadline = sentCompanions.value.deadline;
+    return { ok: true as const, value: { records: [], events: [], guards: [], claims: [] } };
   };
 
+  // 问答轮守它这一读窗的 QueryRun 和 Session 版本（请求轮另并入当前请求归属）：读和提交之间这一轮结束或换代
+  // 就是冲突。
+  const roundGuards: readonly RecordGuard[] = secretaryGuards.length > 0
+    ? secretaryGuards : queryRound === null ? [] : queryRound.guards;
   const written = await writeMessage(mailbox, sent, {
     owned, identityKey, fingerprint, requestId: write.requestId, actor: committedSender, admission: authorized,
     cancelled: 'the send was cancelled before commit',
-    // 问答轮守它这一读窗的 QueryRun 和 Session 版本：读和提交之间这一轮结束或换代就是冲突。
-    ...(queryRound === null ? {} : { extraGuards: queryRound.guards }),
+    ...(roundGuards.length === 0 && sendGoalGuard === null ? {}
+      : { extraGuards: [...roundGuards, ...(sendGoalGuard === null ? [] : [sendGoalGuard])] }),
     companions,
     body: { messageRef, text: text.text, answerSource: null },
     record: (createdAt, bodyRef) => createSessionMessageRecord({
       ref: messageRef, sender: committedSender, recipient: send.recipient, bodyRef, sourceRef: bodyRef.source, createdAt,
-      intent: send.intent, needsReply: send.needsReply, waitAfterSend: send.waitAfterSend,
+      wake: send.wake, answeredBy: send.answeredBy,
+      ...(entry === undefined ? {} : { entry }),
+      needsReply: send.needsReply, waitAfterSend: send.waitAfterSend,
       goalRef: trustedGoal === null ? null : structuredClone(trustedGoal),
       taskRef: send.taskRef === null ? null : structuredClone(send.taskRef),
       followupOf: send.followupOf === null ? null : structuredClone(send.followupOf),
-      requestRoot: secretaryRound === null ? null : { ...secretaryRound.requestRoot },
-      release, pins, deadlineMs, deadline: frozenDeadline,
+      requestRoot: committedRequestRoot === null ? null : { ...committedRequestRoot },
+      deadlineMs, deadline: frozenDeadline,
     }),
   });
-  // The writer already re-checked this identity's receipt (a replay would have
-  // returned committed). Only a three-version guard conflict reads the basis
-  // once more; an activity-only or message conflict is never re-projected, and
-  // this one extra read's failure returns the original written rejection.
-  if (written.status === 'rejected' && written.code === 'revision_conflict'
-    && basis !== null && trustedGoal !== null && mailbox.deps.dispatchBasis !== undefined) {
-    const dispatchBasis = mailbox.deps.dispatchBasis;
-    return sendStatusOf(mailbox, await basisConflictCurrent(written, basisRefKeys,
-      () => dispatchBasis.readDispatchFacts(internalHostContext(mailbox, owned), { goalRef: trustedGoal })));
-  }
-  return sendStatusOf(mailbox, written);
+  return sendStatusOf(written);
 }
 
 // ---- sendUserMessage (slice 5 user-send owner) --------------------------
@@ -709,6 +632,10 @@ export async function sendMessage(mailbox: MailboxContext, ctx: CoreCallContext,
 export async function sendUserMessage(mailbox: MailboxContext, ctx: CoreCallContext, request: GraphWrite<{
   goalRef: GoalRef; intent: 'notify' | 'decision_request'; text: string;
   needsReply: boolean; waitAfterSend: boolean;
+  /** The sender's choice; omitted is the record constructor's `true`. */
+  wake?: boolean;
+  /** The Task of the message's Goal, when the sender names one. */
+  taskRef?: TaskTriple;
   options: DecisionOptionV1[]; objects: DecisionObjectV1[];
   forwardedFrom?: SessionMessageRef;
 }>): Promise<WriteResult<SessionMessage>> {
@@ -722,8 +649,19 @@ export async function sendUserMessage(mailbox: MailboxContext, ctx: CoreCallCont
 
   const rawGoal = raw['goalRef'];
   if (!isGoalRef(rawGoal)) return reject('invalid', 'sendUserMessage requires a complete GoalRef');
-  const goalRef = structuredClone(rawGoal) as unknown as GoalRef;
+  // `ownWrite` already isolated the whole input; a second clone would only copy the copy.
+  const goalRef = rawGoal as GoalRef;
   if (goalRef.projectId !== owned.projectId) return reject('forbidden', 'the user message Goal is outside the bound project');
+
+  const rawTaskRef = raw['taskRef'];
+  if (rawTaskRef !== undefined) {
+    const problem = checkShape(TaskTripleShape, rawTaskRef, 'stored');
+    if (problem !== null) return reject('invalid', `sendUserMessage taskRef: ${problem}`);
+  }
+  const taskRef = rawTaskRef === undefined ? null : rawTaskRef as TaskTriple;
+  if (taskRef !== null && (taskRef.projectId !== goalRef.projectId || taskRef.goalId !== goalRef.goalId)) {
+    return reject('invalid', 'the user message taskRef is not a Task of the message\'s Goal');
+  }
 
   const intent = raw['intent'];
   if (intent !== 'notify' && intent !== 'decision_request') {
@@ -736,6 +674,11 @@ export async function sendUserMessage(mailbox: MailboxContext, ctx: CoreCallCont
   if (typeof needsReply !== 'boolean' || typeof waitAfterSend !== 'boolean') {
     return reject('invalid', 'sendUserMessage requires boolean needsReply and waitAfterSend');
   }
+  const rawWake = raw['wake'];
+  if (rawWake !== undefined && typeof rawWake !== 'boolean') {
+    return reject('invalid', 'sendUserMessage wake must be a boolean');
+  }
+  const wake = rawWake ?? true;
   if (waitAfterSend && !needsReply) return reject('invalid', 'waitAfterSend requires needsReply');
   if (intent === 'decision_request' && !needsReply) {
     return reject('invalid', 'a decision_request must expect a reply');
@@ -745,24 +688,23 @@ export async function sendUserMessage(mailbox: MailboxContext, ctx: CoreCallCont
   if (!Array.isArray(rawOptions) || !Array.isArray(rawObjects)) {
     return reject('invalid', 'sendUserMessage requires option and object arrays');
   }
-  let options: DecisionOptionV1[];
-  let objects: DecisionObjectV1[];
-  const forwardedFrom = raw['forwardedFrom'];
-  try {
-    options = structuredClone(rawOptions) as DecisionOptionV1[];
-    objects = structuredClone(rawObjects) as DecisionObjectV1[];
-    if (forwardedFrom !== undefined) structuredClone(forwardedFrom);
-  } catch {
-    return reject('invalid', 'the user message decision inputs cannot be isolated from the caller');
-  }
-  if (forwardedFrom !== undefined && checkSessionMessageRef(forwardedFrom) !== null) {
+  const options = rawOptions as DecisionOptionV1[];
+  const objects = rawObjects as DecisionObjectV1[];
+  const rawForwardedFrom = raw['forwardedFrom'];
+  if (rawForwardedFrom !== undefined && checkSessionMessageRef(rawForwardedFrom) !== null) {
     return reject('invalid', 'the forwardedFrom ref must be a complete SessionMessageRef');
   }
+  const forwardedFrom = rawForwardedFrom as SessionMessageRef | undefined;
 
-  let sender: MessageSender;
+  let sender: MessageSender | null = null;
   let workRunPrincipal: WorkRunPrincipal | null = null;
+  let queryRound: QueryRoundV1 | null = null;
+  let secretaryRound: SecretaryQueryRunV1 | null = null;
+  let roundGuards: readonly RecordGuard[] = [];
+  let senderIdentity: Unknown;
   if (owned.principal.kind === 'host') {
     sender = { kind: 'host', actor: { ...owned.principal.actor } };
+    senderIdentity = senderIdentityOf(sender);
   } else if (owned.principal.kind === 'work_run') {
     const identity = await readWorkRunIdentity(mailbox, owned, owned.principal, owned.principal.runRef);
     if (!identity.ok) return identity.rejection;
@@ -770,54 +712,129 @@ export async function sendUserMessage(mailbox: MailboxContext, ctx: CoreCallCont
     if (!derived.ok) return derived.rejection;
     sender = derived.sender;
     workRunPrincipal = owned.principal;
+    senderIdentity = senderIdentityOf(sender);
   } else {
-    return reject('unsupported', 'the user-message sender principal is not supported');
+    // The round is resolved after the receipt miss, like the Session send; its
+    // literal QueryRun is the identity material.
+    senderIdentity = { kind: 'query_run', queryRunRef: { ...owned.principal.queryRunRef } };
   }
-  if (sender.kind === 'work_run'
-    && (sender.runRef.projectId !== goalRef.projectId || sender.runRef.goalId !== goalRef.goalId)) {
-    return reject('forbidden', 'the user message Goal is not the sender Run Goal');
-  }
-
-  const senderIdentity = senderIdentityOf(sender);
-  const messageRef: SessionMessageRef = {
-    aggregateType: 'SessionMessage', projectId: owned.projectId, workspaceId: owned.workspaceId,
-    messageId: messageIdOf(owned, senderIdentity, write.requestId),
-  };
+  const messageRef = messageRefOf(owned, senderIdentity, write.requestId, owned.workspaceId);
   const identityKey = identityKeyOf('user-send', owned, senderIdentity, write.requestId);
-  const fingerprint = fingerprintOf('user-send', owned, senderIdentity, {
-    goalRef, intent, text: text.text, needsReply, waitAfterSend, options, objects,
+  // The write and `lookupToolCommit` share this payload, `wake` included: the
+  // same request id with another wake must not replay the old receipt.
+  const fingerprint = fingerprintOf('user-send', owned, senderIdentity, sendUserMessageFingerprintPayload({
+    goalRef, intent, text: text.text, needsReply, waitAfterSend, wake, options, objects,
+    ...(taskRef === null ? {} : { taskRef }),
     ...(forwardedFrom === undefined ? {} : { forwardedFrom }),
-  }, write.expected);
+  }), write.expected);
   if (owned.signal.aborted) return reject('cancelled', 'the user send was cancelled before the idempotency lookup');
   const existing = await mailbox.records.lookupCommit({ identityKey, fingerprint });
   if (existing.status === 'ready') return replayMessage(mailbox, existing.value);
   if (existing.code !== 'not_found') return sessionStoreFailureToRejection(existing);
 
+  // A query-round sender is the resolved round's Session and QueryRun (no
+  // `answerRef`). A secretary REQUEST round is a sender too: it keeps the
+  // resolved `secretary_round` identity and its real `requestRoot`, and its
+  // commit carries this round's and the request's current ownership versions.
+  if (owned.principal.kind === 'query_run') {
+    const routed = await requiredQueryRound(mailbox, owned);
+    if (!routed.ok) return routed.rejection;
+    const round = routed.round;
+    queryRound = round;
+    if (round.readOnlyCopy) {
+      return reject('forbidden', 'a read-only copy never sends a Session message');
+    }
+    if (round.requestRound) {
+      const resolved = await resolveSecretaryRound(mailbox, owned);
+      if (!resolved.ok) return resolved.rejection;
+      const ownership = await requestRoundOwnership(mailbox, owned, resolved.round);
+      if (!ownership.ok) return ownership.rejection;
+      secretaryRound = resolved.round;
+      roundGuards = [...round.guards, ...ownership.guards];
+      sender = { kind: 'secretary_round', sessionRef: { ...secretaryRound.session },
+        queryRunRef: { ...secretaryRound.run }, requestRoot: { ...secretaryRound.requestRoot },
+        generation: secretaryRound.sessionGeneration };
+    } else {
+      roundGuards = round.guards;
+      sender = { kind: 'query_run', sessionRef: { ...round.session },
+        queryRunRef: { ...round.run }, generation: round.sessionGeneration };
+    }
+  }
+  if (sender === null) throw new Error('a user message reached admission without its trusted sender facts');
+  if (sender.kind === 'work_run'
+    && (sender.runRef.projectId !== goalRef.projectId || sender.runRef.goalId !== goalRef.goalId)) {
+    return reject('forbidden', 'the user message Goal is not the sender Run Goal');
+  }
+  if (sender.kind === 'query_run') {
+    if (queryRound === null) throw new Error('a query-round user message reached admission without its round');
+    if (queryRound.effectiveGoalId === null || queryRound.effectiveGoalId !== goalRef.goalId) {
+      return reject('forbidden', 'the user message Goal is not the sender round\'s effective Goal');
+    }
+  }
+  if (sender.kind === 'secretary_round') {
+    if (secretaryRound === null) throw new Error('a secretary user message reached admission without its round');
+    if (secretaryRound.effectiveGoalId === null || secretaryRound.effectiveGoalId !== goalRef.goalId) {
+      return reject('forbidden', 'the user message Goal is not the sender round\'s effective Goal');
+    }
+  }
+
   // S5-MSG-01: the legacy work_run admission still runs; a refused admission
   // never reads the Goal or the duties facts.
   let authorized: AuthOutcome | null = null;
   if (workRunPrincipal !== null) {
-    authorized = await authorizeNewWorkRunAction(mailbox, { owned, principal: workRunPrincipal, operationToolName: 'send_user_message' });
+    // A user send is one of the two person tools: `notify_person` asks nothing,
+    // `ask_person` carries the decision card. G3 grants these names.
+    const operationToolName = intent === 'decision_request' ? 'ask_person' : 'notify_person';
+    authorized = await authorizeNewWorkRunAction(mailbox, { owned, principal: workRunPrincipal, operationToolName });
   }
-  // D3: the trusted duties seam is the ONLY duties source. Absent => unsupported.
-  if (sender.kind !== 'work_run') {
+  // D3: the trusted duties seam is the ONLY duties source for a Work Run. A
+  // query round already carries its trusted duty and copy flag in the resolver.
+  let dutiesAllowSend: boolean;
+  let dutiesGuards: readonly RecordGuard[];
+  let senderReviewer = false;
+  if (sender.kind === 'work_run') {
+    if (mailbox.deps.duties === undefined) {
+      return reject('unsupported', 'the trusted duties adapter is not configured for a new user message');
+    }
+    if (owned.signal.aborted) return reject('cancelled', 'the user send was cancelled before the duties read');
+    const facts = await mailbox.deps.duties.readMessageDutiesFacts(internalHostContext(mailbox, owned), {
+      sessionRef: sender.sessionRef, roleBinding: sender.roleBinding,
+    });
+    if (facts.status !== 'ready') {
+      if (facts.status === 'rejected') return facts;
+      return mapReadResult(facts) as CoreRejection;
+    }
+    dutiesGuards = facts.value.guards;
+    dutiesAllowSend = canSendUserMessage({
+      duties: facts.value.duties, readOnlyCopy: facts.value.readOnlyCopy,
+      independentReview: facts.value.independentReview,
+      kind: intent === 'decision_request' ? 'ask_person' : 'notify_person',
+    });
+    senderReviewer = facts.value.independentReview || facts.value.duties.includes('reviewer');
+  } else if (sender.kind === 'query_run') {
+    if (queryRound === null) throw new Error('a query-round user message reached admission without its round');
+    dutiesGuards = queryRound.guards;
+    dutiesAllowSend = canSendUserMessage({
+      duties: queryRound.duty === 'unknown' ? [] : [queryRound.duty],
+      readOnlyCopy: queryRound.readOnlyCopy, independentReview: false,
+      kind: intent === 'decision_request' ? 'ask_person' : 'notify_person',
+    });
+    senderReviewer = queryRound.duty === 'reviewer';
+  } else if (sender.kind === 'secretary_round') {
+    if (secretaryRound === null) throw new Error('a secretary user message reached admission without its round');
+    dutiesGuards = roundGuards;
+    dutiesAllowSend = canSendUserMessage({
+      duties: ['secretary'], readOnlyCopy: false, independentReview: false,
+      kind: intent === 'decision_request' ? 'ask_person' : 'notify_person',
+    });
+  } else {
     return reject('unsupported', 'a user message must be sent by a trusted Session');
   }
-  if (mailbox.deps.duties === undefined) {
-    return reject('unsupported', 'the trusted duties adapter is not configured for a new user message');
+  // C23: the reviewer's only person send is a notification: no card, no reply,
+  // no waking. Ask-person/card and every other kind are refused with this text.
+  if (senderReviewer && !(intent === 'notify' && !needsReply && !waitAfterSend && wake === false)) {
+    return reject('forbidden', '独立审阅只发请知悉');
   }
-  if (owned.signal.aborted) return reject('cancelled', 'the user send was cancelled before the duties read');
-  const facts = await mailbox.deps.duties.readMessageDutiesFacts(internalHostContext(mailbox, owned), {
-    sessionRef: sender.sessionRef, roleBinding: sender.roleBinding,
-  });
-  if (facts.status !== 'ready') {
-    if (facts.status === 'rejected') return facts;
-    return mapReadResult(facts) as CoreRejection;
-  }
-  const duties = facts.value;
-  const dutiesAllowSend = canSendUserMessage({
-    duties: duties.duties, readOnlyCopy: duties.readOnlyCopy, independentReview: duties.independentReview, intent,
-  });
 
   // S5-MSG-01: the real owning Goal of the recipient user workspace.
   if (owned.signal.aborted) return reject('cancelled', 'the user send was cancelled before the Goal read');
@@ -852,13 +869,13 @@ export async function sendUserMessage(mailbox: MailboxContext, ctx: CoreCallCont
     const source = {
       kind: 'message' as const,
       key: decisionSourceKey({ kind: 'message', messageRef }),
-      subject: { kind: 'goal' as const, goalRef: structuredClone(goalRef) },
+      subject: { kind: 'goal' as const, goalRef },
       pins: sourcePins,
       goalBases: [goalBasis(mailbox, goal)],
     };
     const metadata: DecisionMessageMetadataV1 = {
       schemaVersion: 1, source, objects, options, syntheticAnswer: false,
-      forwardedFrom: forwardedFrom === undefined ? null : structuredClone(forwardedFrom) as SessionMessageRef,
+      forwardedFrom: forwardedFrom === undefined ? null : forwardedFrom as SessionMessageRef,
     };
     if (Buffer.byteLength(source.key, 'utf8') > 8192
       || Buffer.byteLength(canonicalJson(metadata as never), 'utf8') > 64 * 1024) {
@@ -875,12 +892,10 @@ export async function sendUserMessage(mailbox: MailboxContext, ctx: CoreCallCont
     sendFlags: { needsReply, waitAfterSend, pinCount: 0 },
     userSend: { goalScopeMatches: true, dutiesAllowSend, decisionParamsValid: true },
     workRunAuthorization: authorized === null ? null : authorized.ok ? 'ok' : authorized.rejection,
-    // A person's send keeps no release (§3.3), the same fact its record carries.
-    sendRelease: { release: null, pins: null },
   });
   if (!decided.ok) return refuse(mailbox, decided, messageCtx, identityKey, fingerprint);
 
-  const extraGuards: RecordGuard[] = [...duties.guards,
+  const extraGuards: RecordGuard[] = [...dutiesGuards,
     { refKey: canonicalRefKey(goal.ref), expectedRevision: goal.revision }];
   for (const pin of decisionObjectPins) {
     const refKey = canonicalOf(pin.ref);
@@ -897,8 +912,10 @@ export async function sendUserMessage(mailbox: MailboxContext, ctx: CoreCallCont
     extraGuards,
     record: (createdAt, bodyRef) => createSessionMessageRecord({
       ref: messageRef, sender, recipient: userRecipient, bodyRef, sourceRef: bodyRef.source, createdAt,
-      intent, needsReply, waitAfterSend,
-      goalRef: structuredClone(goalRef),
+      wake, needsReply, waitAfterSend,
+      ...(taskRef === null ? {} : { taskRef }),
+      goalRef,
+      requestRoot: secretaryRound === null ? null : { ...secretaryRound.requestRoot },
       ...(decisionMetadata === null ? {} : { decision: decisionMetadata }),
     }),
   });

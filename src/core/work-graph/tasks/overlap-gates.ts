@@ -3,6 +3,7 @@ import { hostPrincipalOf, principalIdentity, type CoreCallContext } from '../../
 import type { SessionRef } from '../../../contracts/core/identity.js';
 import { rejected } from '../../../contracts/core/rejections.js';
 import type { CoreRejection, ReadResult } from '../../../contracts/core/results.js';
+import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
 import type { RunRef, TaskTriple } from '../../../contracts/dispatch.js';
 import { messageOf } from '../../../contracts/error-message.js';
 import { canonicalJson, canonicalKey, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
@@ -12,6 +13,7 @@ import type { GoalRef } from '../../../contracts/ledger.js';
 import type { ModuleOverlapGateRef } from '../../../contracts/module-overlap-gate.js';
 import type { NoteVersionSnapshot } from '../../../contracts/note.js';
 import type { Phase } from '../../../contracts/plan.js';
+
 import { isRecord } from '../../../contracts/validation/common.js';
 import type { RecordOrderedLookupPort } from '../../record-store/lookup-ports.js';
 import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
@@ -126,6 +128,12 @@ export type OverlapGateServiceDependencies = {
   resolveRecipient(ctx: CoreCallContext, goalRef: GoalRef, duty: 'adviser' | 'secretary'):
     Promise<ReadResult<SessionRef | null>>;
   sendMessage(ctx: CoreCallContext, write: SessionMessageSendInputV1): Promise<SendMessageResultV1>;
+  /**
+   * The full ref the mailbox will give this note, computed before the send: the mailbox's one `messageRefOf` over the
+   * calling Host's scope and identity and the request id, in the recipient line's workspace.
+   */
+  noteMessageRefOf(ctx: CoreCallContext, recipient: SessionRef, requestId: string):
+    Promise<ReadResult<SessionMessageRef>>;
   /** The note service's current-version read, injected by L1; N adds no note reader or codec. */
   readNotes(ctx: CoreCallContext, input: { goalRef: GoalRef; moduleId: string }):
     Promise<ReadResult<readonly NoteVersionSnapshot[]>>;
@@ -174,6 +182,26 @@ export function createOverlapGateService(deps: OverlapGateServiceDependencies): 
     return 'rejection' in read ? read.rejection : { status: 'not_found' };
   }
 
+  /** The one request identity of a gate note: the same string the mailbox records the message under. */
+  function noteRequestIdOf(gate: ModuleOverlapGateV1, basisDigest: string): string {
+    return `${NOTE_COMMAND_PREFIX}:${canonicalKey(gate.ref)}:${basisDigest}`;
+  }
+
+  /**
+   * The note send itself: the mailbox replays the same request id, so the gate can record the ref first. Like a system
+   * round, the request is a platform carrier that needs a reply (`needsReply: true`, design 5.1): the recipient's text
+   * round answers it.
+   */
+  function sendNoteRequest(ctx: CoreCallContext, gate: ModuleOverlapGateV1, recipient: SessionRef,
+    basisDigest: string): Promise<SendMessageResultV1> {
+    return deps.sendMessage(ctx, {
+      input: { recipient, text: `${deps.noteRequestText}${gate.moduleId}`, needsReply: true,
+        goalRef: goalRefFor(gate.ref.projectId, gate.ref.goalId) },
+      meta: { requestId: noteRequestIdOf(gate, basisDigest), expected: [] },
+    });
+  }
+
+
   async function requestOverlapNote(ctx: CoreCallContext, input: RequestOverlapNoteInputV1):
   Promise<RequestOverlapNoteResultV1 | CoreRejection> {
     const key = canonicalKey(input.gate);
@@ -192,7 +220,7 @@ export function createOverlapGateService(deps: OverlapGateServiceDependencies): 
       project: (decoded: ModuleOverlapNoteRequestedEventV1) => decoded,
     };
     // R2 order: the committed receipt comes before the current gate. A note already written for this gate and
-    // basis replays its own record; only a miss resolves a recipient, sends and writes.
+    // basis replays its own record; on a miss the record writes first and the message follows it.
     const keys = commandKeys({ operation: NOTE_OPERATION, scope, principal, commandId, fingerprintInput });
     const receipt = await lookupCommittedReceipt(deps.records, keys.identityKey, keys.fingerprint);
     if (receipt.status === 'conflict') return rejected('idempotency_conflict', receipt.reason);
@@ -207,8 +235,12 @@ export function createOverlapGateService(deps: OverlapGateServiceDependencies): 
       const current = await readGate(input.gate);
       if (current.status !== 'ready') return readRejection(current);
       const noteRequest = replayed.value.noteRequest;
-      return { status: noteRequest === null || noteRequest.recipient === null ? 'none' : 'sent',
-        gate: current.value };
+      // The gate ref was committed before the send. A crash between those two commits leaves this record without
+      // its message; re-issue the same request id, then answer from the idempotent send (A2-04).
+      if (noteRequest === null || noteRequest.recipient === null) return { status: 'none', gate: current.value };
+      const send = await sendNoteRequest(ctx, current.value, noteRequest.recipient, input.basisDigest);
+      return send.status === 'committed'
+        ? { status: 'sent', gate: current.value } : { status: 'unavailable', gate: current.value };
     }
     const read = await readGate(input.gate);
     if (read.status !== 'ready') return readRejection(read);
@@ -242,13 +274,14 @@ export function createOverlapGateService(deps: OverlapGateServiceDependencies): 
     if (recipient === null) {
       noteRequest = { recipient: null, reason: 'no_adviser_or_secretary' };
     } else {
-      const send = await deps.sendMessage(ctx, {
-        input: { recipient, text: `${deps.noteRequestText}${gate.moduleId}`, intent: 'action_request', goalRef },
-        meta: { requestId: `${NOTE_COMMAND_PREFIX}:${canonicalKey(gate.ref)}:${input.basisDigest}`, expected: [] },
-      });
-      // A rejected send leaves the gate's noteRequest null: never a fabricated recipient (E28).
-      if (send.status !== 'committed') return { status: 'unavailable', gate };
-      noteRequest = { recipient, duty, messageRef: send.value.ref };
+      // The message ref is deterministic from the request id and the recipient's workspace, so it can be recorded
+      // before the send: whoever sees the message then finds the gate ref already there (A2-04).
+      const requestId = noteRequestIdOf(gate, input.basisDigest);
+      const messageRef = await deps.noteMessageRefOf(ctx, recipient, requestId);
+      if (messageRef.status !== 'ready') {
+        return messageRef.status === 'rejected' ? messageRef : { status: 'unavailable', gate };
+      }
+      noteRequest = { recipient, duty, messageRef: messageRef.value };
     }
     // The record write and its event are ONE commit under the note operation's own identity; the same gate and
     // basis replays the receipt instead of writing a new revision.
@@ -296,7 +329,12 @@ export function createOverlapGateService(deps: OverlapGateServiceDependencies): 
     }
     const written = await readGate(gate.ref);
     if (written.status !== 'ready') return readRejection(written);
-    return { status: recipient === null ? 'none' : 'sent', gate: written.value };
+    if (recipient === null) return { status: 'none', gate: written.value };
+    // A2-04 order: the gate's saved ref is committed FIRST, the message follows it. A rejected send leaves the
+    // committed ref in place; the next request's receipt replay re-issues the same request id (no compensating clear).
+    const send = await sendNoteRequest(ctx, written.value, recipient, input.basisDigest);
+    return send.status === 'committed'
+      ? { status: 'sent', gate: written.value } : { status: 'unavailable', gate: written.value };
   }
 
   async function checkOverlapGate(ctx: CoreCallContext, input: { gate: ModuleOverlapGateRef }):

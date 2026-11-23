@@ -56,10 +56,10 @@ describe('L-expiry-host (SQLite only: the Host restart)', () => {
 
     // Two real waits on the injected clock: 60 s and a follow-up of it at 120 s.
     const first = await sendS7BWaitingInquiry(world, { goal, session: sender, taskId: tasks[0]!.taskId,
-      label: 'first', body: { recipient: follower.ref, text: 'S7B first expiry question', intent: 'inquiry',
+      label: 'first', body: { recipient: follower.ref, text: 'S7B first expiry question',
         needsReply: true, waitAfterSend: true, deadlineMs: 60_000 } });
     const second = await sendS7BWaitingInquiry(world, { goal, session: follower, taskId: tasks[1]!.taskId,
-      label: 'second', body: { recipient: sender.ref, text: 'S7B second expiry question', intent: 'inquiry',
+      label: 'second', body: { recipient: sender.ref, text: 'S7B second expiry question',
         needsReply: true, waitAfterSend: true, deadlineMs: 120_000, followupOf: first.ref } });
     expect(first.expiredAt).toBeNull();
     expect(second.followupOf).toEqual(first.ref);
@@ -96,7 +96,12 @@ describe('L-expiry-host (SQLite only: the Host restart)', () => {
       scope: { projectId: world.scope.projectId, workspaceId: world.scope.workspaceId } }, { messageRef: first.ref });
     const rescan = await readS7BMessage(world, first.ref);
     expect(rescan.revision).toBe(revisions);
-    expect(rescan.acceptedInputs ?? []).toEqual([]);
+    // design-frozen.md:201: the follower's own Work Run (the second wait's sender) took the first question at its
+    // safe point; no expiry or reply input is accepted.
+    const questionTaken = [{ part: 'message', executionRef: second.sender.kind === 'work_run' ? second.sender.runRef : undefined }];
+    const acceptedOf = (message: SessionMessage) => (message.acceptedInputs ?? [])
+      .map(input => ({ part: input.part, executionRef: input.executionRef }));
+    expect(acceptedOf(rescan)).toEqual(questionTaken);
 
     // The wait read on the injected clock.
     const facts = ready<SessionFactsV1>(await world.post('sessions/facts', plain(S6A_SCOPE, sender.ref)),
@@ -125,7 +130,7 @@ describe('L-expiry-host (SQLite only: the Host restart)', () => {
     const after = await sessionOf(world, await createS6BLine(main, { label: 's7b-eh-after',
       role: S6A_WORK_ROLE, tasks: [tasks[2]!] }));
     const later = await sendS7BWaitingInquiry(world, { goal, session: after, taskId: tasks[2]!.taskId,
-      label: 'after', body: { recipient: sender.ref, text: 'S7B after the reopen', intent: 'inquiry',
+      label: 'after', body: { recipient: sender.ref, text: 'S7B after the reopen',
         needsReply: true, waitAfterSend: true, deadlineMs: 60_000 } });
 
     // Window A: the claim's commit is held, the Host is crashed and reopened on the same directory. The read after the
@@ -135,7 +140,7 @@ describe('L-expiry-host (SQLite only: the Host restart)', () => {
     const reopened = await reopenS7BHost(world, {
       advance: await advanceUntil(world.ag2b, select, 'claim_task'), messageRef: first.ref, session: sender });
     expect(reopened.message).toMatchObject({ ref: first.ref, expiredAt: clock.now() });
-    expect(reopened.message.acceptedInputs ?? []).toEqual([]);
+    expect(acceptedOf(reopened.message)).toEqual(questionTaken);
     expect(reopened.wait).toMatchObject({ messageRef: first.ref,
       runRef: first.sender.kind === 'work_run' ? first.sender.runRef : undefined });
     // Re-driving the same continuation writes no second claim: the one claim committed under the hold, and the drive

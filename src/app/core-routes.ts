@@ -12,11 +12,13 @@ import type { TaskClaimPort } from '../core/work-graph/model/claim-contracts.js'
  * the bindings carry no business logic of their own.
  */
 import type { CoreCallContext } from '../contracts/core/call-context.js';
+import type { CommitCursor } from '../contracts/command-event.js';
 import type { CoreRejection, ReadResult, WriteResult } from '../contracts/core/results.js';
 import type { ModuleRef, SessionRef, WorkspaceScope } from '../contracts/core/identity.js';
 import type { RunRef, RunSnapshot, TaskTriple } from '../contracts/dispatch.js';
 import type { ControlIntentSnapshotV1 } from '../contracts/control-intent.js';
 import { canonicalJson, sha256Hex } from '../contracts/fingerprint.js';
+import { ACTION_RELEASE_OPTIONS } from '../contracts/goal-decisions.js';
 import type { UnknownCallReviewV1 } from '../contracts/unknown-call-review.js';
 import { reworkFenceOf } from '../core/work-graph/state/task-failure.js';
 import type { QueryRunRef } from '../contracts/query-job.js';
@@ -31,6 +33,7 @@ import type {
   MessageForwardingPort, SessionMailboxPort, SessionMessageCommandPort,
 } from '../core/work-graph/model/communication-contracts.js';
 import type { MessageApplyPort } from '../core/work-graph/communication/message-apply.js';
+import type { ClaimHoldPort } from '../core/work-graph/model/action-request-contracts.js';
 import type { ModuleMaintainerPort } from '../core/work-graph/model/module-maintainer-contracts.js';
 import type {
   CompletionPolicyConfigurationPort,
@@ -130,6 +133,7 @@ import {
   type KnowledgeCoreRouteDto,
   type MaintainerCoreRouteDto,
   type MessagesCoreRouteDto,
+  type TasksHoldReleaseCoreRouteDto,
   type OverlapCoreRouteDto,
   type QueriesCancelCoreRouteDto,
   type NodesCoreRouteDto,
@@ -148,6 +152,7 @@ import {
   type Slice2CCoreRouteDto,
   type UnknownCallReviewReleaseHoldValue,
 } from './core-http-types.js';
+
 
 /** One named binding per route. The types are the exact public port methods;
  * the names disambiguate the two `captureSourceChanges` owners. */
@@ -209,7 +214,6 @@ export type CoreRouteBindings = {
   readMessageBody: SessionMailboxPort['readMessageBody'];
   readOutbox: NonNullable<SessionMailboxPort['readOutbox']>;
   // The message commands and the two derived view reads: each binding is the command port's exact method.
-  releaseMessage: SessionMessageCommandPort['releaseMessage'];
   withdrawMessage: SessionMessageCommandPort['withdrawMessage'];
   readMessageView: SessionMessageCommandPort['readMessageView'];
   readInboxView: SessionMessageCommandPort['readInboxView'];
@@ -262,6 +266,8 @@ export type CoreRouteBindings = {
   stopCommand: WorkbenchToolsPort['stopCommand'];
   // A.2 step 5.4: the requeue owner (TD-6) and the continuation brief read (C3).
   requeueTask: NonNullable<TaskClaimPort['requeueTask']>;
+  /** §2.5: the configured operator's release-every-hold-reason write; the owner admits the operator itself. */
+  releaseClaimHolds: ClaimHoldPort['releaseAll'];
   /** K3 L21 (UCR-15): the human direct "I'll handle it" (UCR-15). */
   holdUnknownCallReview: UnknownCallReviewPort['holdReview'];
   /** K3 L21 ruling 4: releaseHold, then the human requeue when the original Run's fence is human. */
@@ -328,7 +334,6 @@ export type CoreRouteBindings = {
   resolveDecision: NonNullable<WorkflowPort['resolveDecision']>;
   recordDecisionApplication: DecisionMessagePort['recordDecisionApplication'];
   markNoticesSeen: WorkspaceDecisionSettingsPort['markNoticesSeen'];
-  sendUserMessage: DecisionMessagePort['sendUserMessage'];
   // Slice 2B L9–L12/L15: the ONE activity owner (calendar + per-Run and
   // per-Query views + track bars) and the task-state timeline owner, plus the
   // human range backfill.
@@ -499,7 +504,7 @@ export type CoreRoutePlatform = {
   messages: Pick<SessionMailboxPort, 'sendMessage' | 'readInbox' | 'readMessage' | 'readMessageBody'>
     & Required<Pick<SessionMailboxPort, 'readOutbox'>>
     & Pick<SessionMailboxPort, 'readUndeliveredReplies'>
-    & Pick<SessionMessageCommandPort, 'releaseMessage' | 'withdrawMessage' | 'readMessageView' | 'readInboxView'>
+    & Pick<SessionMessageCommandPort, 'withdrawMessage' | 'readMessageView' | 'readInboxView'>
     & Pick<MessageApplyPort, 'applyMessage'>;
   /** F's person entries; `unsupported` when a narrow platform does not publish the owner. */
   messageForwarding?: Pick<MessageForwardingPort, 'forwardMessage' | 'disposeWait'>;
@@ -568,6 +573,8 @@ export type CoreRoutePlatform = {
   };
   /** The non-enumerable overlap-gate owner. A narrow platform without it answers `unsupported`. */
   overlapGates?: OverlapGatePort;
+  /** §2.5: the claim-hold owner's operator-only release-all write; internal like the other owner groups. */
+  claimHolds?: Pick<ClaimHoldPort, 'releaseAll'>;
   /** The two secretary lifecycle accept owners, non-enumerable on the composed platform (they are internal owners,
    * not public keys), so a narrow platform without them answers `unsupported`. The advance half is the Workflow's
    * `sessionHandoff`, published beside them. */
@@ -648,6 +655,7 @@ export type CoreRouteSpec = {
 export const CORE_ROUTE_SPECS: Record<
   CoreRouteSuffix | keyof Slice1CoreRouteDto | keyof Slice2CCoreRouteDto | keyof K3CoreRouteDto
   | keyof MessagesCoreRouteDto
+  | keyof TasksHoldReleaseCoreRouteDto
   | keyof ArchitectureCoreRouteDto
   | keyof OverlapCoreRouteDto
   | keyof RequestCommandCoreRouteDto | keyof SecretaryLifecycleCoreRouteDto | keyof WaitsCoreRouteDto
@@ -709,9 +717,8 @@ export const CORE_ROUTE_SPECS: Record<
   'messages/outbox': { kind: 'plain', binding: 'readOutbox', owner: 'messages.readOutbox' },
   'messages/read': { kind: 'plain', binding: 'readMessage', owner: 'messages.readMessage' },
   'messages/body': { kind: 'plain', binding: 'readMessageBody', owner: 'messages.readMessageBody' },
-  // The release/withdraw commands stay in the messages family; the two view reads are the derived reads the page
-  // consumes, so it never derives delivery itself. The Workflow's own release has no route here.
-  'messages/release': { kind: 'graph_write', binding: 'releaseMessage', owner: 'messages.releaseMessage' },
+  // The withdraw command stays in the messages family; the two view reads are the derived reads the page
+  // consumes, so it never derives delivery itself.
   'messages/withdraw': { kind: 'graph_write', binding: 'withdrawMessage', owner: 'messages.withdrawMessage' },
   'messages/view': { kind: 'plain', binding: 'readMessageView', owner: 'messages.readMessageView' },
   'messages/inbox-view': { kind: 'plain', binding: 'readInboxView', owner: 'messages.readInboxView' },
@@ -757,6 +764,8 @@ export const CORE_ROUTE_SPECS: Record<
   'network/read': { kind: 'plain', binding: 'readRunNetwork', owner: 'runNetwork.readRunNetwork' },
   // A.2 step 5.4 (spec §4.3 "公开入口与操作者", §6.1 (e)).
   'tasks/requeue': { kind: 'graph_write', binding: 'requeueTask', owner: 'claims.requeueTask' },
+  // §2.5: release every hold reason of one Task; the owner admits the configured operator and checks the project.
+  'tasks/hold/release': { kind: 'graph_write', binding: 'releaseClaimHolds', owner: 'claimHolds.releaseAll' },
   'executions/brief': { kind: 'plain', binding: 'readContinuationBrief', owner: 'runtime.readContinuationBrief' },
   // P1 (decision 121-147): one Work Run's or Query round's steps, `{ ref, after, limit }`.
   'executions/steps': { kind: 'plain', binding: 'readRunSteps', owner: 'runtime.readRunSteps' },
@@ -830,7 +839,6 @@ export const CORE_ROUTE_SPECS: Record<
   'decisions/answer': { kind: 'graph_write', binding: 'resolveDecision', owner: 'workflow.resolveDecision' },
   'decisions/application': { kind: 'graph_write', binding: 'recordDecisionApplication', owner: 'decisionMessages.recordDecisionApplication' },
   'decisions/notices/seen': { kind: 'graph_write', binding: 'markNoticesSeen', owner: 'workspaceDecisionSettings.markNoticesSeen' },
-  'messages/user-send': { kind: 'graph_write', binding: 'sendUserMessage', owner: 'decisionMessages.sendUserMessage' },
   // Slice 2B L9–L12/L15: the six activity/timeline reads and the human backfill.
   'activity/calendar': { kind: 'plain', binding: 'readActivityCalendar', owner: 'activity.readActivityCalendar' },
   'activity/runs': { kind: 'plain', binding: 'readRunActivities', owner: 'activity.readRunActivities' },
@@ -1015,9 +1023,15 @@ export function createPlatformCoreRouteBindings(
   goalControl?: GoalControlPort,
   hostReport?: HostReconcileReportPort,
   initialization?: InitializationAdoptionHostPort,
-  armMessageRelease?: (scope: WorkspaceScope) => void,
+  // A person's advance and Goal resume are commands: they arm the workspace's queues (the Host binds the request
+  // wake). Until P2 the message-release wake armed on these two routes; it went with the release queue.
+  armWorkspace?: (scope: WorkspaceScope) => void,
   readArchitectureProposal?: ArchitectureProposalService['readArchitectureProposal'],
   hostCommands?: HostRunningCommandsPort,
+  // P2 §2.5: a resume that committed wakes the Goal's own wait so the goal loop re-selects the `open`
+  // dispatch requests a paused Goal could not serve. The Host only marks the Goal and wakes `goal_waits`; that
+  // queue's pass reads the Goal's requests and its restart interruption. The claim itself stays the one owner.
+  resumeGoalWait?: (scope: WorkspaceScope, goalRef: GoalRef, cursorAtRead: CommitCursor) => void,
 ): CoreRouteBindings {
   // A Host that assembles no collaboration driver still publishes the exact
   // routes, but every one answers an explicit `unsupported` instead of a fake
@@ -1202,19 +1216,8 @@ export function createPlatformCoreRouteBindings(
     readOutbox: platform.messages.readOutbox.bind(platform.messages),
     readMessage: platform.messages.readMessage.bind(platform.messages),
     readMessageBody: platform.messages.readMessageBody.bind(platform.messages),
-    // The release decision is the person's: the route refuses a member or a system actor BEFORE the owner runs, and
-    // the owner re-checks the same rule together with the awaiting-only admission. The withdraw route adds no check
-    // of its own; the owner admits the person or the original sender and refuses everyone else.
-    releaseMessage: async (ctx, request) => {
-      if (!personOnly(ctx)) {
-        return { status: 'rejected', code: 'forbidden', reason: 'only the person may approve or deny a message release' };
-      }
-      const written = await platform.messages.releaseMessage(ctx, request);
-      if (written.status === 'committed' && written.value.release === 'approved') {
-        armMessageRelease?.({ projectId: written.value.ref.projectId, workspaceId: written.value.ref.workspaceId });
-      }
-      return written;
-    },
+    // The withdraw route adds no check of its own; the owner admits the person or the original sender and
+    // refuses everyone else.
     withdrawMessage: platform.messages.withdrawMessage.bind(platform.messages),
     readMessageView: platform.messages.readMessageView.bind(platform.messages),
     readInboxView: platform.messages.readInboxView.bind(platform.messages),
@@ -1243,9 +1246,7 @@ export function createPlatformCoreRouteBindings(
     handleGoalInput: platform.workflow.handleGoalInput.bind(platform.workflow),
     advanceWork: async (ctx, input, internal) => {
       const advanced = await platform.workflow.advanceWork(ctx, input, internal);
-      if (advanced.status === 'ready') {
-        armMessageRelease?.({ projectId: input.goalRef.projectId, workspaceId: ctx.workspaceId ?? '' });
-      }
+      if (advanced.status === 'ready') armWorkspace?.({ projectId: input.goalRef.projectId, workspaceId: ctx.workspaceId ?? '' });
       return advanced;
     },
     consumeConsultation: platform.workflow.consumeConsultation.bind(platform.workflow),
@@ -1282,6 +1283,10 @@ export function createPlatformCoreRouteBindings(
     requeueTask: platform.claims.requeueTask === undefined
       ? unsupported('the Host does not publish the requeue owner')
       : platform.claims.requeueTask.bind(platform.claims),
+    // §2.5: the owner admits only the configured operator and checks the Task's project; the route adds nothing.
+    releaseClaimHolds: platform.claimHolds === undefined
+      ? unsupported('the platform does not publish claimHolds.releaseAll')
+      : platform.claimHolds.releaseAll.bind(platform.claimHolds),
     readContinuationBrief: platform.runtime.readContinuationBrief === undefined
       ? unsupported('the Host Runtime does not publish the continuation brief read')
       : platform.runtime.readContinuationBrief.bind(platform.runtime),
@@ -1295,7 +1300,9 @@ export function createPlatformCoreRouteBindings(
       }
       const written = await goalControl.setGoalControl(ctx, request);
       if (written.status === 'committed' && request.input.control === 'resume') {
-        armMessageRelease?.({ projectId: request.input.goalRef.projectId, workspaceId: ctx.workspaceId ?? '' });
+        const scope = { projectId: request.input.goalRef.projectId, workspaceId: ctx.workspaceId ?? '' };
+        armWorkspace?.(scope);
+        resumeGoalWait?.(scope, request.input.goalRef, written.cursor);
       }
       return written;
     },
@@ -1410,15 +1417,33 @@ export function createPlatformCoreRouteBindings(
     readCandidateCard: platform.readCandidateCard === undefined
       ? unsupported('the platform does not publish readCandidateCard')
       : (ctx, input) => platform.readCandidateCard!.call(platform, ctx, input),
-    resolveDecision: platform.workflow.resolveDecision === undefined
-      ? unsupported('the Workflow does not publish the finite decision coordinator (resolveDecision)')
-      : platform.workflow.resolveDecision.bind(platform.workflow),
+    resolveDecision: async (ctx, request) => {
+      const resolve = platform.workflow.resolveDecision;
+      if (resolve === undefined) {
+        return unsupported<CoreRouteBindings['resolveDecision']>(
+          'the Workflow does not publish the finite decision coordinator (resolveDecision)')(ctx, request);
+      }
+      const resolved = await resolve.call(platform.workflow, ctx, request);
+      // MP-8: a person's approved action card is a human command like `advanceWork` and a Goal
+      // `resume`; the approval's own ordinary commit no longer arms the workspace (P1's release
+      // wake is gone), so arm the answering workspace here after the approve committed and let
+      // the existing sink schedule its queues/Goal wait. Deny and every other card stay as they are.
+      if (resolved.status === 'ready' && resolved.value.action === null
+        && request.input.source.kind === 'action_release'
+        && request.input.selection.kind === 'option'
+        && request.input.selection.optionId === ACTION_RELEASE_OPTIONS.approve) {
+        // `resolveDecision` returns the answer rejection early (decision-actions.ts), so a ready result's answer
+        // is committed; the cast states that invariant instead of re-checking a condition that cannot fail.
+        const answered = (resolved.value.answer as Extract<typeof resolved.value.answer,
+          { status: 'committed' }>).value.ref;
+        armWorkspace?.({ projectId: answered.projectId, workspaceId: answered.workspaceId });
+      }
+      return resolved;
+    },
     recordDecisionApplication: platform.decisionMessages === undefined ? unsupported('the platform does not publish decisionMessages.recordDecisionApplication')
       : platform.decisionMessages.recordDecisionApplication.bind(platform.decisionMessages),
     markNoticesSeen: platform.workspaceDecisionSettings === undefined ? unsupported('the platform does not publish workspaceDecisionSettings.markNoticesSeen')
       : platform.workspaceDecisionSettings.markNoticesSeen.bind(platform.workspaceDecisionSettings),
-    sendUserMessage: platform.decisionMessages === undefined ? unsupported('the platform does not publish decisionMessages.sendUserMessage')
-      : platform.decisionMessages.sendUserMessage.bind(platform.decisionMessages),
     // Slice 2B L9–L12/L15: the non-enumerable activity/timeline owners; a narrow
     // platform without them keeps an explicit unsupported gap. The human range
     // backfill is the optional Workflow operation the real composition installs.
@@ -1823,7 +1848,6 @@ export async function dispatchCoreRoute(
       case 'messages/outbox': return bindings.readOutbox(ctx, plain.input as never);
       case 'messages/read': return bindings.readMessage(ctx, plain.input as never);
       case 'messages/body': return bindings.readMessageBody(ctx, plain.input as never);
-      case 'messages/release': return bindings.releaseMessage(ctx, graphWrite.request as never);
       case 'messages/withdraw': return bindings.withdrawMessage(ctx, graphWrite.request as never);
       case 'messages/view': return bindings.readMessageView(ctx, plain.input as never);
       case 'messages/inbox-view': return bindings.readInboxView(ctx, plain.input as never);
@@ -1861,6 +1885,7 @@ export async function dispatchCoreRoute(
       case 'commands/stop': return bindings.stopCommand(ctx, plain.input as never);
       case 'network/read': return bindings.readRunNetwork(ctx, plain.input as never);
       case 'tasks/requeue': return bindings.requeueTask(ctx, graphWrite.request as never);
+      case 'tasks/hold/release': return bindings.releaseClaimHolds(ctx, graphWrite.request as never);
       case 'executions/brief': return bindings.readContinuationBrief(ctx, plain.input as never);
       case 'executions/steps': return bindings.readRunSteps(ctx, plain.input as never);
       case 'goals/control': return bindings.setGoalControl(ctx, graphWrite.request as never);
@@ -1908,7 +1933,6 @@ export async function dispatchCoreRoute(
       case 'decisions/answer': return bindings.resolveDecision(ctx, graphWrite.request as never);
       case 'decisions/application': return bindings.recordDecisionApplication(ctx, graphWrite.request as never);
       case 'decisions/notices/seen': return bindings.markNoticesSeen(ctx, graphWrite.request as never);
-      case 'messages/user-send': return bindings.sendUserMessage(ctx, graphWrite.request as never);
       // Slice 2B L9–L12/L15: the six activity/timeline routes are all plain.
       case 'activity/calendar': return bindings.readActivityCalendar(ctx, plain.input as never);
       case 'activity/runs': return bindings.readRunActivities(ctx, plain.input as never);

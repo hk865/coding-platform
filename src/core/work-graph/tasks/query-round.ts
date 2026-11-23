@@ -138,12 +138,16 @@ async function resolveQueryRound(
   return { status: 'ready', value: {
     ...roundFactsOf(principal, read),
     duty: line.duty,
+    requestRoot: job.requestRoot === null ? null : { ...job.requestRoot },
     shape: manifest.answerShape,
     sourceMessageRef: intent.kind === 'intervention_planning' && intent.sourceMessageRef !== undefined
       ? { ...intent.sourceMessageRef } : null,
     readOnlyCopy: line.session.provenance.kind === 'readonly_copy',
     requestRound: execution.requestProfile !== null,
     lineWorkspaceId: line.session.workspaceId,
+    // The same manifest read this function already did carries the round's frozen final tool list (prepared and
+    // start-verified); the action owner checks its own name against it (Q1a) without a second manifest read.
+    grantedToolNames: [...manifest.promptSet.toolNames],
     guards: [
       { refKey: canonicalJson(principal.queryRunRef as unknown as JsonValue), expectedRevision: run.revision },
       { refKey: sessionAggregateRefKey(plainSessionRefToAggregate(execution.sessionRef)),

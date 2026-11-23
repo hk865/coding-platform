@@ -25,7 +25,8 @@ export function consultRetiredLine(input: S7BDamagedWorld, options: { replay: tr
 export async function consultRetiredLine(input: S7BDamagedWorld, options: { replay?: boolean } = {}):
   Promise<{ first: S7B3Consultation | S7B3Persisted; second: S7B3Consultation | null }> {
   const { world, source } = input;
-  const messageRef = (await sendS7A2PersonMessage(world, { label: `s7b3-cs-${input.defect}`, recipient: source.ref })).ref;
+  const messageRef = (await sendS7A2PersonMessage(world,
+    { label: `s7b3-cs-${input.defect}`, recipient: source.ref, answeredBy: 'copy' })).ref;
   const profile = (await world.readProfiles())[0];
   if (profile === undefined) throw new Error('S7B3: the world publishes no query profile');
   const body: WorkflowConsultationBody = { scope: S6A_SCOPE, input: {

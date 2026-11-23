@@ -27,18 +27,20 @@
  * records; `claimRecords` takes each from its own machine (RUN-01,
  * ATT-01/14/15/24, SES-02) and all are written in the one commit.
  */
-import type { ActorRef } from '../../../contracts/command-event.js';
+import type { ActorRef, CommitCursor } from '../../../contracts/command-event.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { RoleConfigurationRef, SessionRef, SessionWorkLinkRef, VersionPin, WorkspaceScope } from '../../../contracts/core/identity.js';
 import type { SessionRecord, SessionWorkLink } from '../../../contracts/core/session.js';
-import type { EffectWriteResultV1 } from '../../../contracts/core/session-message.js';
+import type { EffectWriteResultV1, SessionMessageRef } from '../../../contracts/core/session-message.js';
 import type { CoreRejection, ReadResult } from '../../../contracts/core/results.js';
 import type {
   ConsumedWaitV1, DispatchOutboxRef, RoleBindingRefV1, RunContinuationV1, RunRef, RunSnapshot, TaskAttemptRef,
   TaskEligibility, TaskLeaseSnapshot, TaskTriple,
 } from '../../../contracts/dispatch.js';
 import type { GoalRef, GoalSnapshot } from '../../../contracts/ledger.js';
+import { compareCursors } from '../../../contracts/ledger.js';
 import type { PlanRevisionSnapshot, RuntimeTask } from '../../../contracts/plan.js';
+import type { QueryJobRef } from '../../../contracts/query-job.js';
 import { revisionAssignments } from '../../../contracts/plan.js';
 import { canonicalJson, sameJson as sameRef, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
 import type { RoleSpecResolutionV1 } from '../../../contracts/role-spec-materials.js';
@@ -82,21 +84,25 @@ import {
   decodeUnknownCallReview, encodeUnknownCallReview, encodeUnknownCallReviewChangedEvent,
   unknownCallReviewRefKey, UNKNOWN_CALL_REVIEW_CHANGED_EVENT_TYPE, UNKNOWN_CALL_REVIEW_EVENT_SCHEMA_VERSION,
 } from './unknown-call-review-codecs.js';
-import type { ClaimTaskInput, TaskClaim, TaskClaimDependencies, TaskClaimPort } from '../model/claim-contracts.js';
+import type {
+  ClaimTaskInput, PlanSourceRootPort, TaskClaim, TaskClaimDependencies, TaskClaimPort,
+} from '../model/claim-contracts.js';
 import type { SessionFactsV1 } from '../model/session-facts-contracts.js';
 import type { GoalSettingsPort } from '../model/decision-contracts.js';
 import type { GraphWrite } from '../model/task-contracts.js';
 import { evaluateEligibility } from './eligibility.js';
 import {
-  readCanonicalTaskFacts, readGoal, readGoalPhase, readPlan, sameCursor,
+  enumerateGoalCandidates, readCanonicalTaskFacts, readGoal, readGoalPhase, readPlan, readProposalOrigin, sameCursor,
   type CanonicalTaskFacts, type CanonicalTaskState, type Rejected,
 } from './plan-readers.js';
+import { deriveFuturePlanDelta } from './plan-validation.js';
+import type { PlanProposal } from '../model/plan-contracts.js';
 import { goalStartPolicy } from '../state/goal-settings-machine.js';
 import type { SessionMessage } from '../model/communication-contracts.js';
 import { sessionMessageRefKey } from '../sessions/message-record-codecs.js';
 import { taskRequeueRefProblem } from '../persistence/rework-codecs.js';
 import { pinsFromStoreCurrent } from '../persistence/read-result-failures.js';
-import { rejectedWithCurrent as reject } from '../../../contracts/core/rejections.js';
+import { rejected, rejectedWithCurrent as reject } from '../../../contracts/core/rejections.js';
 import { isNonNeg as isSafeRevision, isPos as isPositiveBudget, isRecord, nonEmpty } from '../../../contracts/validation/common.js';
 import { isolatedWriteOf, trustedContextOf } from './trusted-context.js';
 import { taskPhaseFactsOf } from './task-phase-facts.js';
@@ -107,15 +113,16 @@ import {
   applyDispatchRequest, actionRequestSnapshotOf, type ActionRequestV1, type PendingActionRequestV1,
 } from '../state/action-request.js';
 import {
-  holdBlockerOf, nextTaskClaimHold, releaseAllHoldReasons, yieldHoldPointer, type PendingTaskClaimHoldV1,
-  type TaskClaimHoldV1,
+  holdBlockerOf, nextTaskClaimHold, releaseAllHoldReasons, withReasons, yieldHoldPointer, type HoldBlockerV1,
+  type PendingTaskClaimHoldReasonV1, type PendingTaskClaimHoldV1, type TaskClaimHoldV1,
 } from '../state/task-claim-hold.js';
 import type { DispatchBasisFactsV1 } from '../model/dispatch-basis-contracts.js';
 import { firstDispatch, nextDispatch } from '../state/dispatch-counter.js';
 import { dispatchCounterCodec } from '../persistence/dispatch-counter-codecs.js';
 import { mergeGuards } from '../persistence/record-guards.js';
 import { actionRequestChangedCodec, actionRequestCodec, readActionRequestRecord } from './action-request-codecs.js';
-import { readTaskClaimHold } from './claim-holds.js';
+import { readTaskClaimHold, storedMessageRequestRoot } from './claim-holds.js';
+import { goalRefFor } from '../persistence/commit-compiler.js';
 
 const RUN_SCHEMA_ID = 'RunSnapshot@1';
 const TASK_LEASE_SCHEMA_ID = 'TaskLeaseSnapshot@1';
@@ -123,6 +130,9 @@ const CLAIM_CONTINUATION_PREFIX = 'claim-continuation:';
 const CLAIM_IDENTITY_PREFIX = 'task-claim:';
 
 type Records = GoalRecordTransactionPort & RecordLookupPort & RecordOrderedLookupPort;
+
+/** 失效判断只用读口：`readMany`、`lookup`（两个候选枚举也只声明这两个）。 */
+type HoldRecords = Pick<GoalRecordTransactionPort, 'readMany'> & RecordLookupPort;
 
 // --------------------------------------------------------------------------
 // Small pure helpers
@@ -777,6 +787,182 @@ export type TaskClaimGoalSettingsDependencies = TaskClaimDependencies & {
   goalSettings?: GoalSettingsPort;
 };
 
+/**
+ * Q4b：`agent`/`stop` 原因在同来源、游标之后、动到这个任务、已了结的候选存在时失效；`scribe_stop` 不随同源候选消失。
+ * 只在领取 owner 的这次读里推（不写、不扫库）：读不到候选或候选底版时不证明失效，原因继续挡。
+ * 同来源认请求根（候选自己记的，或它来源消息存下的）和来源消息本身；两边都没有请求根时认来源链根
+ * （设计 3.3 的 `planSourceLineageOf`；组合根把同一个根交给领取 owner、卡源、派活受理回执和任务详情）。
+ */
+export async function holdWithoutExpiredReasons<H extends TaskClaimHoldV1 | PendingTaskClaimHoldV1>(
+  records: HoldRecords, ctx: CoreCallContext, goalRef: GoalRef, hold: H | null, taskId: string,
+  planSourceRoot: PlanSourceRootPort,
+): Promise<H | null> {
+  if (hold === null) return null;
+  const expirable = (hold.reasons as readonly PendingTaskClaimHoldReasonV1[]).some(
+    (reason) => reason.state === 'held' && reason.kind !== 'scribe_stop');
+  if (!expirable) return hold;
+  const candidates = await enumerateGoalCandidates(records, goalRef, { status: 'any' });
+  // 读不全时只保留原因（设计 3.3：“来源链读不到时只能等人撤”），不拿读失败当失效。
+  if (candidates.status !== 'ready') return hold;
+  const settled: { proposal: PlanProposal; createdSince: CommitCursor }[] = [];
+  for (const proposal of candidates.proposals) {
+    if (proposal.status === 'candidate') continue;
+    // 被后继承接的旧候选还不是结算：等后继被采用或放弃（设计 3.3）。
+    if (proposal.status === 'not_adopted' && proposal.notAdopted?.reason === 'replaced') continue;
+    const origin = await readProposalOrigin(records, proposal.ref);
+    if (origin.status !== 'ready') continue;
+    // Slice 5 §2.5：`createdSince` 是这份候选自身首次提交的游标；替换候选绑自己的、不复制链首。
+    // 旧记录没有 `createdSince`：不证明失效，也不回退去比通知用的链首 `since`。
+    const createdSince = origin.origin.createdSince;
+    if (createdSince === undefined) continue;
+    settled.push({ proposal, createdSince });
+  }
+  const bases = new Map<string, PlanRevisionSnapshot | null>();
+  const reads: HoldSourceReads = { goalWorkspaceId: hold.workspaceId,
+    requestRoots: new Map<string, QueryJobRef | null>(), sourceRoots: new Map<string, SessionMessageRef | null>() };
+  const dropped = new Set<PendingTaskClaimHoldReasonV1>();
+  for (const reason of hold.reasons as readonly PendingTaskClaimHoldReasonV1[]) {
+    if (reason.state === 'held' && reason.kind !== 'scribe_stop' && reason.since !== null
+      && reason.basis.kind === 'round'
+      && await reasonExpired(records, ctx, planSourceRoot, reason.basis, reason.since, taskId, settled, bases, reads)) {
+      dropped.add(reason);
+    }
+  }
+  return withReasons(hold, (reason) => dropped.has(reason) ? null : reason);
+}
+
+/**
+ * §2.8/§3.3: one Task's effective claim blocker for the target loop (and every caller that only projects the
+ * claim judgment). It reads the Task's fixed hold record and applies the SAME expiry judgment the claim owner
+ * applies in its commit window (`holdWithoutExpiredReasons`), then names the first held reason or the waiting
+ * stop (`holdBlockerOf`). A read never writes or guards; a later claim still reads and guards the record itself.
+ */
+export async function readEffectiveClaimBlocker(
+  records: HoldRecords, ctx: CoreCallContext, task: TaskTriple, planSourceRoot: PlanSourceRootPort,
+): Promise<{ status: 'ready'; blocker: HoldBlockerV1 | null } | CoreRejection> {
+  const read = await readTaskClaimHold(records, task);
+  if (read.status !== 'ready') return read;
+  const effective = await holdWithoutExpiredReasons(records, ctx, goalRefFor(task.projectId, task.goalId),
+    read.hold, task.taskId, planSourceRoot);
+  return { status: 'ready', blocker: holdBlockerOf(effective) };
+}
+
+/** 这次读里共用的来源消息读：同一条消息只读一次。 */
+type HoldSourceReads = {
+  /** 暂缓记录存的工作区（任务所属 Goal 的，放下时写入）：来源链在那里查系统轮回执（设计 :554），不另读 Goal。 */
+  goalWorkspaceId: string;
+  /** 已存来源消息带的请求根；`null` 是读到了但没有。 */
+  requestRoots: Map<string, QueryJobRef | null>;
+  /** 来源链根；`null` 是读不到，不证明同来源。 */
+  sourceRoots: Map<string, SessionMessageRef | null>;
+};
+
+/** 这次读里一条来源消息带的请求根，经 `storedMessageRequestRoot` 一处读、同一条只读一次；读不到不算同来源。 */
+async function cachedRequestRoot(
+  records: HoldRecords, source: SessionMessageRef, reads: HoldSourceReads,
+): Promise<QueryJobRef | null> {
+  const key = sessionMessageRefKey(source);
+  if (reads.requestRoots.has(key)) return reads.requestRoots.get(key) ?? null;
+  const read = await storedMessageRequestRoot(records, source);
+  const root = read.ok ? read.value : null;
+  reads.requestRoots.set(key, root);
+  return root;
+}
+
+/** 一条来源消息的来源链根；`planSourceRoot` 回读失败时不算同来源。 */
+async function storedMessageSourceRoot(
+  ctx: CoreCallContext, source: SessionMessageRef, planSourceRoot: PlanSourceRootPort, reads: HoldSourceReads,
+): Promise<SessionMessageRef | null> {
+  const key = sessionMessageRefKey(source);
+  if (reads.sourceRoots.has(key)) return reads.sourceRoots.get(key) ?? null;
+  const read = await planSourceRoot.messageRoot(ctx, source, reads.goalWorkspaceId);
+  const root = read.status === 'ready' ? read.value : null;
+  reads.sourceRoots.set(key, root);
+  return root;
+}
+
+/**
+ * 一份候选来源带的请求根：直接来源信上有就用它（有别的根就是别的请求）；没有时沿可信系统轮回到首封信
+ * （`planSourceRoot`）再取它的根。链上读不到是 `null`：不证明同来源，暂缓留着。
+ */
+async function sourceRequestRoot(
+  records: HoldRecords, ctx: CoreCallContext, planSourceRoot: PlanSourceRootPort, source: SessionMessageRef,
+  reads: HoldSourceReads,
+): Promise<QueryJobRef | null> {
+  const direct = await cachedRequestRoot(records, source, reads);
+  if (direct !== null) return direct;
+  const first = await storedMessageSourceRoot(ctx, source, planSourceRoot, reads);
+  if (first === null || sameRef(first, source)) return null;
+  return cachedRequestRoot(records, first, reads);
+}
+
+/** 一份已了结的候选是否让这个原因失效：同来源、候选自身创建游标之后、动到这个任务。 */
+async function reasonExpired(
+  records: HoldRecords, ctx: CoreCallContext, planSourceRoot: PlanSourceRootPort,
+  basis: Extract<PendingTaskClaimHoldReasonV1['basis'], { kind: 'round' }>,
+  since: CommitCursor, taskId: string,
+  settled: readonly { proposal: PlanProposal; createdSince: CommitCursor }[],
+  bases: Map<string, PlanRevisionSnapshot | null>, reads: HoldSourceReads,
+): Promise<boolean> {
+  for (const entry of settled) {
+    if (compareCursors(entry.createdSince, since) <= 0) continue;
+    if (!await sameProposalSource(records, ctx, planSourceRoot, basis, entry.proposal, reads)) continue;
+    if (await proposalTouchesTask(records, entry.proposal, taskId, bases)) return true;
+  }
+  return false;
+}
+
+/**
+ * 同一份来源：候选自己记的请求根、它来源消息存下的请求根（或沿来源链回到的首封信的根）、同一条来源消息；
+ * 暂缓和候选都没有请求根时，
+ * 来源链根相同也算（纯 `planfix`/`planresume` 的链，设计 3.3）。
+ */
+async function sameProposalSource(
+  records: HoldRecords, ctx: CoreCallContext, planSourceRoot: PlanSourceRootPort,
+  basis: Extract<PendingTaskClaimHoldReasonV1['basis'], { kind: 'round' }>, proposal: PlanProposal,
+  reads: HoldSourceReads,
+): Promise<boolean> {
+  if (basis.requestRoot !== null) {
+    if (proposal.requestRef !== undefined && proposal.requestRef !== null
+      && sameRef(proposal.requestRef, basis.requestRoot)) return true;
+    // 转手的候选：这次规划的 Query 引用和来源消息都可能与暂缓记录不同，但来源消息存着同一个请求根；转手后再走
+    // `planfix`/`planresume` 的后继，来源信是不带请求根的系统轮，沿来源链回到首封信再取根（设计 3.3）。
+    if (proposal.sourceMessageRef !== null) {
+      const root = await sourceRequestRoot(records, ctx, planSourceRoot, proposal.sourceMessageRef, reads);
+      if (root !== null && sameRef(root, basis.requestRoot)) return true;
+    }
+  }
+  if (basis.sourceMessage !== null && proposal.sourceMessageRef !== null
+    && sameRef(proposal.sourceMessageRef, basis.sourceMessage)) return true;
+  if (basis.requestRoot === null && basis.sourceMessage !== null && proposal.sourceMessageRef !== null) {
+    const reasonRoot = await storedMessageSourceRoot(ctx, basis.sourceMessage, planSourceRoot, reads);
+    if (reasonRoot === null) return false;
+    const candidateRoot = await storedMessageSourceRoot(ctx, proposal.sourceMessageRef, planSourceRoot, reads);
+    return candidateRoot !== null && sameRef(candidateRoot, reasonRoot);
+  }
+  return false;
+}
+
+/** 候选改过这个任务：取消、替代、改定义或处置（新任务也算动到）。读不到底版时不证明动过。 */
+async function proposalTouchesTask(
+  records: HoldRecords, proposal: PlanProposal, taskId: string, bases: Map<string, PlanRevisionSnapshot | null>,
+): Promise<boolean> {
+  if (proposal.basedOn === null) return proposal.draft.tasks.some((task) => task.taskId === taskId);
+  const key = canonicalJson(proposal.basedOn as unknown as JsonValue);
+  let base = bases.get(key);
+  if (base === undefined) {
+    const read = await readPlan(records, proposal.basedOn);
+    const loaded: PlanRevisionSnapshot | null = read.status === 'ready' ? read.plan : null;
+    bases.set(key, loaded);
+    base = loaded;
+  }
+  if (base === null) return false;
+  const delta = deriveFuturePlanDelta(base, proposal.draft);
+  if (delta.status !== 'supported') return false;
+  // 本次的定义或处置差异；不用 cancelledTaskIds（它把基版早已取消的任务也列进来）。
+  return [delta.delta.changedTaskIds, delta.delta.dispositionOnlyTaskIds].some((ids) => ids.includes(taskId));
+}
+
 export function createTaskClaimService(deps: TaskClaimGoalSettingsDependencies): TaskClaimPort {
   const records: Records = deps.records;
   // Slice 1 §0.2 L1: the direct Work claim reads the same-submodule Session
@@ -1169,7 +1355,10 @@ export function createTaskClaimService(deps: TaskClaimGoalSettingsDependencies):
     if (releasesHolds && holdAfter !== null) {
       holdAfter = releaseAllHoldReasons(holdAfter, { kind: 'intervention', messageRef: input.intervention!.messageRef });
     }
-    const claimHold = holdBlockerOf(holdAfter);
+    // Q4b：`agent`/`stop` 原因的失效在这次读里推出，只影响“挡不挡”，不改要写的暂缓记录。
+    const blockingHold = await holdWithoutExpiredReasons(records, scopeCtx, input.goalRef, holdAfter, input.taskId,
+      deps.planSourceRoot);
+    const claimHold = holdBlockerOf(blockingHold);
     // The SAME shared eligibility rule queryReadyTasks uses decides plan_only /
     // missing assignment BEFORE the role-binding and occupancy checks, so a
     // structural `incomplete` is never masked by a `forbidden`/`busy`.
@@ -1412,8 +1601,9 @@ export function createTaskClaimService(deps: TaskClaimGoalSettingsDependencies):
       appliedRequest = applied;
       holdAfter = yieldHoldPointer(holdAfter!, 'openDispatch', servedRecord.ref);
     }
-    const counted = basisFacts === null ? null : basisFacts.counter.record === null
-      ? firstDispatch(basisFacts.goal.ref, null) : nextDispatch(basisFacts.counter.record, null);
+    // 派工序号只按请求领取的那次 +1，`lastActionRef` 记这次了结的请求；别的领取不读三值、不动计数器。
+    const counted = servedRecord === null || basisFacts === null ? null : basisFacts.counter.record === null
+      ? firstDispatch(basisFacts.goal.ref, servedRecord.ref) : nextDispatch(basisFacts.counter.record, servedRecord.ref);
     const event: TaskClaimedEvent = { eventId, eventType: 'TaskClaimed', schemaVersion: 1, occurredAt: claimedAt,
       identityKey, actor, fingerprint, claim,
       // 7A §3.5 rule 3: the effect event carries the key only when present.

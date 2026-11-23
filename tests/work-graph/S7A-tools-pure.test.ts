@@ -26,11 +26,11 @@ describe('send builder', () => {
   it('copies the four new fields into input and keeps the empty meta pin list', () => {
     expect(sendSessionMessageRequest({
       recipient: RECIPIENT, text: 'question',
-      expected: EXPECTED, taskRef: TASK_REF, followupOf: MESSAGE_REF, deadlineMs: 2500,
+      taskRef: TASK_REF, followupOf: MESSAGE_REF, deadlineMs: 2500,
     }, 'request-send-1')).toStrictEqual({
       input: {
         recipient: RECIPIENT, text: 'question',
-        expected: EXPECTED, taskRef: TASK_REF, followupOf: MESSAGE_REF, deadlineMs: 2500,
+        taskRef: TASK_REF, followupOf: MESSAGE_REF, deadlineMs: 2500,
       },
       meta: { requestId: 'request-send-1', expected: [] },
     });

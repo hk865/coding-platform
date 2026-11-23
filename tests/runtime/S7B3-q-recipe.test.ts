@@ -118,7 +118,7 @@ describe('the intervention-planning Query recipe', () => {
     expect(input.slice(questionAt)).toContain(`## Question\n${text}`);
     // The widened preparation condition appends the initial-planning answer guide.
     expect(input).toContain(`${text}\n\nThis round's answer has one of two forms; use the form the round provides.\n`);
-    expect(input).toContain('with schemaVersion 2 and kind "plan" or "needs_decision"');
+    expect(input).toContain('(schemaVersion 2, kind "plan"|"needs_decision"');
     expect(input).not.toContain('## Footprint');
 
     const answerRef = started.answer?.ref;

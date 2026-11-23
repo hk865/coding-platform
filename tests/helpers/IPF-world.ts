@@ -77,14 +77,14 @@ export async function createIpfLine(w: IpfWorld, label: string): Promise<S6ASess
 
 /**
  * 人的“直接干预”：`messages/send`。不给 `goalRef` 时就是界面的形状（`src/ui/boot.ts` 的
- * `{ recipient, text, intent: 'action_request', needsReply: true }`）；给了就是 HTTP 调用方点名目标的形状。
+ * `{ recipient, text, entry: 'person_intervention', needsReply: true }`）；给了就是 HTTP 调用方点名目标的形状。
  */
 export async function sendIntervention(w: IpfWorld, input: {
   label: string; recipient: S6ASession; goalRef?: GoalRef;
 }): Promise<SessionMessage> {
   return committed<SessionMessage>(await w.world.post('messages/send', graphWrite(S6A_SCOPE, {
-    recipient: input.recipient.ref, text: `IPF 干预 ${input.label}：请再安排一件事`, intent: 'action_request',
-    needsReply: true, ...(input.goalRef === undefined ? {} : { goalRef: input.goalRef }),
+    recipient: input.recipient.ref, text: `IPF 干预 ${input.label}：请再安排一件事`,
+    entry: 'person_intervention', needsReply: true, ...(input.goalRef === undefined ? {} : { goalRef: input.goalRef }),
   }, `ipf-${w.label}-${input.label}-send`)), `the ${input.label} intervention message`);
 }
 

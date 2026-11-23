@@ -21,6 +21,7 @@
  * turned into an empty fact. The hover keeps the affected node and records a
  * `problem`; the single-node reads propagate the rejection.
  */
+import type { ActionRequestRef } from '../../../contracts/action-request.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { CommitCursor } from '../../../contracts/command-event.js';
 import type { AggregateRef, GoalDesiredState, GoalRef } from '../../../contracts/ledger.js';
@@ -33,14 +34,15 @@ import type { GraphNodeRefV1 } from '../../../contracts/graph-context.js';
 import { canonicalKey as keyOf } from '../../../contracts/fingerprint.js';
 import type {
   ExecutedFileV1, FromExecutedFilesV1, GraphHoverReadV1, GroupHoverV1, LineBriefV1, LineCountV1,
-  LineParticipationV1, ModuleHoverV1, NodeDetailRequestV1, NodeDetailV1, NodeNoteRowV1, NodeNotesV1, NodeRiskV1,
-  TaskDisplayFactsV1,
-  TaskHoverV1,
+  LineParticipationV1, ModuleHoverV1, NodeActionRequestV1, NodeDetailRequestV1, NodeDetailV1,
+  NodeNoteRowV1, NodeNotesV1, NodeRiskV1, NodeTaskDispatchV1, NodeTaskHoldReleaseV1, NodeTaskHoldV1, NodeTaskStopV1,
+  TaskDisplayFactsV1, TaskHoverV1,
 } from '../../../contracts/work-line.js';
 import type { CoreError, CoreRejection, ReadResult } from '../../../contracts/core/results.js';
 import type { NoteAnchorV1 } from '../../../contracts/note.js';
 import type { NoteListRequestV1, NoteListResultV1, NoteMemoryReadResult } from '../model/note-contracts.js';
-import type { GoalExecutedFilesPort } from '../model/decision-contracts.js';
+import type { GoalExecutedFilesPort, TaskClaimabilityPort } from '../model/decision-contracts.js';
+import type { PlanSourceRootPort } from '../model/claim-contracts.js';
 import type { PlanTaskPort, TaskRow } from '../model/plan-contracts.js';
 import type { NodeDetailReadPort } from '../model/work-line-contracts.js';
 import type { ModuleMaintainerPort } from '../model/module-maintainer-contracts.js';
@@ -51,6 +53,16 @@ import {
   SESSION_BY_WORKSPACE_LIFECYCLE_LOOKUP,
 } from '../sessions/session-record-codecs.js';
 import { laterCursor, readCanonicalTaskFacts, readOpenResponsibilityLines, RUN_BY_TASK_INDEX } from '../tasks/plan-readers.js';
+import { readTaskClaimHold } from '../tasks/claim-holds.js';
+import { holdWithoutExpiredReasons } from '../tasks/claim-service.js';
+import { controlIntentRefFor } from '../tasks/control-service.js';
+import { decodeControlIntentSnapshot } from '../persistence/control-record-codecs.js';
+import { readOwnerRecord } from '../persistence/owner-record-read.js';
+import { WORKFLOW_AUTOMATION_ACTOR } from '../../../contracts/task-requeue.js';
+import { readActionRequestRecord } from '../tasks/action-request-codecs.js';
+import { claimedPlanRefOf } from '../tasks/action-request-card.js';
+import type { ActionRequestV1 } from '../state/action-request.js';
+import type { TaskClaimHoldV1 } from '../state/task-claim-hold.js';
 import { decodeDispatchOutboxEntry, dispatchOutboxRefKey } from '../tasks/claim-record-codecs.js';
 import type { ResponsibilityRecipientPort, ResponsibilityRecipientV1 } from '../tasks/responsibility-recipient.js';
 import { decodeRun } from '../materials/run-snapshot-decoder.js';
@@ -61,6 +73,8 @@ import {
   assembleLineBriefs, readLatestQueryGoal, resolveContinuationLine, type StoreRead, type WorkLineReaderDeps,
   type WorkLineStore,
 } from './work-line-reader.js';
+import { actionRequestViewOf } from './decision-read-model.js';
+import { dispatchBlockersOf, stopSteerRequestIdOf } from '../tasks/action-requests.js';
 
 /**
  * The notes read the node-detail column and the hover counts
@@ -88,6 +102,10 @@ export type NodeDetailReaderDeps = {
   notes?: NodeNotesLookup;
   /** L42/L35: the task read's responsible adviser; `asker: null` reads neither the creator nor the person. */
   advisers?: Pick<ResponsibilityRecipientPort, 'resolveResponsibilityRecipient'>;
+  /** §2.8: the target loop's one claim judgment, shared with the action card; absent keeps `not_read`. */
+  taskClaimability?: TaskClaimabilityPort;
+  /** Q4b (design 3.3): the source-chain root the hold expiry reads, the same instance the claim owner uses. */
+  planSourceRoot: PlanSourceRootPort;
 };
 
 const PAGE = 200;
@@ -250,6 +268,100 @@ async function readRunsByTask(records: WorkLineStore, goalRef: GoalRef, plan: Pl
 function moduleOf(row: TaskRow): ModuleRef | null {
   const scope = row.definition.scope;
   return scope.kind === 'module' ? { projectId: row.ref.projectId, moduleId: scope.moduleRef } : null;
+}
+
+/**
+ * Every stored reason as a row: held, released and expired ones alike (the detail shows who released one and which
+ * held one no longer blocks). `heldIds` is the claim owner's read-only expiry result, so `expired` is never re-derived
+ * here. A stop reason placed by an approval reads its request for the requester `placedBy.actionRef` does not name.
+ */
+async function holdRowsOf(
+  records: WorkLineStore, hold: TaskClaimHoldV1 | null, heldIds: ReadonlySet<string>,
+): Promise<ReadResult<NodeTaskHoldV1[]>> {
+  if (hold === null) return { status: 'ready', value: [] };
+  const rows: NodeTaskHoldV1[] = [];
+  for (const reason of hold.reasons) {
+    let requester: NodeTaskHoldV1['requester'] = null;
+    if (reason.placedBy.kind === 'action') {
+      const read = await readNodeActionRequest(records, reason.placedBy.actionRef);
+      if (read.status !== 'ready') return read;
+      if (read.value !== null) requester = structuredClone(read.value.requester);
+    }
+    rows.push({
+      reasonId: reason.id,
+      kind: reason.kind,
+      state: reason.state,
+      placedBy: structuredClone(reason.placedBy),
+      requester,
+      basis: structuredClone(reason.basis),
+      since: reason.since,
+      expiry: reason.kind === 'scribe_stop'
+        ? { rule: 'never' }
+        : { rule: 'same_source_settled_candidate', after: reason.since },
+      expired: reason.state === 'held' && !heldIds.has(reason.id),
+      releasedBy: reason.releasedBy === null ? null : structuredClone(reason.releasedBy),
+      releaseNote: reason.releaseNote,
+      reason: reason.reason,
+      placedAt: reason.placedAt,
+    });
+  }
+  return { status: 'ready', value: rows };
+}
+
+/** The one release-all affordance of the task card; it exists only while an unexpired reason is held. */
+function holdReleaseOf(task: TaskTriple, hold: TaskClaimHoldV1 | null, effective: TaskClaimHoldV1 | null):
+NodeTaskHoldReleaseV1 {
+  const available = hold !== null && effective !== null
+    && effective.reasons.some((reason) => reason.state === 'held');
+  return {
+    availability: available ? 'available' : 'unavailable',
+    reason: available ? null : 'this Task has no held claim reason',
+    route: 'tasks/hold/release',
+    target: { task: structuredClone(task) },
+    pins: available && hold !== null ? [{ ref: structuredClone(hold.ref), revision: hold.revision }] : [],
+  };
+}
+
+/**
+ * 设计 3.4: the stop card's steps, all from the request record and the one control intent the stop owner's deterministic
+ * key names. `hold_placed` follows `holdReasonId` (a person takeover writes no hold), `not_sent` its cause, and the
+ * intent its own status; `run_ended` is the frozen Run's stored fact. A failed intent read is this read's failure.
+ */
+async function stopStepsOf(
+  records: WorkLineStore, record: ActionRequestV1, view: NodeActionRequestV1, runs: readonly RunSnapshot[],
+): Promise<ReadResult<NodeTaskStopV1['steps']>> {
+  const steps: NodeTaskStopV1['steps'] = ['requested'];
+  const outcome = view.outcome;
+  if (record.state === 'released' && outcome?.kind === 'released' && outcome.holdReasonId !== null) {
+    steps.push('hold_placed');
+  }
+  // The stop owner's one deterministic key for the closing steer (`deliverStop`): `action:<requestId>:steer`.
+  const frozen = record.frozen;
+  if (record.state === 'released' && outcome?.kind === 'released' && outcome.notSent === null && frozen !== null) {
+    const intentRef = controlIntentRefFor(WORKFLOW_AUTOMATION_ACTOR,
+      { projectId: record.ref.projectId, workspaceId: record.workspaceId },
+      stopSteerRequestIdOf(record.ref));
+    const read = await readOwnerRecord({ store: records, refKey: keyOf(intentRef), decode: decodeControlIntentSnapshot,
+      readError: (message) => ({ status: 'rejected', code: 'unavailable',
+        reason: `the stop control intent cannot be read: ${message}` }) });
+    if (!read.ok && 'rejection' in read) return read.rejection;
+    if (read.ok) {
+      steps.push('sent');
+      if (read.value.status === 'applied') steps.push('delivered');
+    }
+  }
+  const frozenRun = frozen === null ? null
+    : runs.find((candidate) => keyOf(candidate.ref) === keyOf(frozen.run)) ?? null;
+  if (frozenRun !== null && frozenRun.status === 'ended') steps.push('run_ended');
+  if (outcome?.kind === 'released' && outcome.notSent !== null) steps.push('not_sent');
+  if (record.state === 'void') steps.push('void');
+  return { status: 'ready', value: steps };
+}
+
+async function readNodeActionRequest(records: WorkLineStore, ref: ActionRequestRef):
+Promise<ReadResult<ActionRequestV1 | null>> {
+  const read = await readActionRequestRecord(records, ref);
+  return read.status === 'ready' ? { status: 'ready', value: read.record } : read;
 }
 
 /** §3.12 stages group every scoped Task (module scope carries its stage too). */
@@ -1377,6 +1489,82 @@ async function readSummary(deps: NodeDetailReaderDeps, ctx: CoreCallContext, inp
     const owners = ownerIndex.get(keyOf(row.ref)) ?? [];
     const display = await displayOf(deps, ctx, row, taskRuns, graph.rows.indexOf(row), goal.desiredState, new Map());
     if (display.problem !== null) return { status: 'rejected', code: display.problem.code, reason: display.problem.reason };
+    // §2.8 task card: the hold owner's one record (fixed key), its two request
+    // pointers, and the Goal's pause. The request after a claim/void is no
+    // longer pointed here; see the report's seam for "claimed by line Y / void".
+    const holdRead = await readTaskClaimHold(deps.records, row.ref);
+    if (holdRead.status !== 'ready') return holdRead;
+    const hold = holdRead.hold;
+    // Q4b（设计 3.3）: the claim owner's one read-only expiry judgment; the stored record is never rewritten by a read.
+    const effectiveHold = hold === null ? null
+      : await holdWithoutExpiredReasons(deps.records, ctx, goalRef, hold, row.ref.taskId, deps.planSourceRoot);
+    const heldIds = new Set((effectiveHold?.reasons ?? [])
+      .filter((reason) => reason.state === 'held').map((reason) => reason.id));
+    const rows = await holdRowsOf(deps.records, hold, heldIds);
+    if (rows.status !== 'ready') return rows;
+    const holds = rows.value;
+    const claimBlockers = dispatchBlockersOf(effectiveHold, goal);
+    // §2.8: prefer the waiting slot; a claim, void, denial or withdrawal cleared it into `lastDispatch` in that same
+    // commit, so the task detail still reads the settled request back instead of an empty row.
+    let dispatchPointer: ActionRequestRef | null = hold?.openDispatch ?? null;
+    if (dispatchPointer === null && hold?.lastDispatch != null) dispatchPointer = hold.lastDispatch;
+    let dispatchRecord: ActionRequestV1 | null = null;
+    let dispatchRequest: NodeActionRequestV1 | null = null;
+    if (dispatchPointer !== null) {
+      const read = await readNodeActionRequest(deps.records, dispatchPointer);
+      if (read.status !== 'ready') return read;
+      if (read.value !== null) {
+        dispatchRecord = read.value;
+        dispatchRequest = actionRequestViewOf(read.value);
+      }
+    }
+    // §2.8: the claimed version is the claiming Run's own plan (`outcome.run` → `Run.planRef`), never the intake value.
+    // The closed `action_release` card reads the same derivation from the same request.
+    const claimedPlanRef = dispatchRecord === null ? null : claimedPlanRefOf(dispatchRecord, taskRuns);
+    // A stop request is named by the waiting card (`pendingStop`), by `lastStop` after any release, denial or
+    // withdrawal, and otherwise by a still-held `stop` reason's `placedBy.actionRef`. Prefer the newest pointer.
+    let stopPointer: ActionRequestRef | null = hold?.pendingStop ?? null;
+    if (stopPointer === null && hold?.lastStop != null) stopPointer = hold.lastStop;
+    if (stopPointer === null) {
+      const stopReasons = (hold?.reasons ?? []).filter((reason) =>
+        reason.state === 'held' && reason.kind === 'stop' && reason.placedBy.kind === 'action');
+      const last = stopReasons.at(-1);
+      if (last !== undefined && last.placedBy.kind === 'action') stopPointer = last.placedBy.actionRef;
+    }
+    let stopRecord: ActionRequestV1 | null = null;
+    if (stopPointer !== null) {
+      const read = await readNodeActionRequest(deps.records, stopPointer);
+      if (read.status !== 'ready') return read;
+      if (read.value !== null) {
+        stopRecord = read.value;
+      }
+    }
+    const stopRequest = stopRecord === null ? null : actionRequestViewOf(stopRecord);
+    const stopSteps = stopRecord === null || stopRequest === null
+      ? ({ status: 'ready', value: [] } as ReadResult<NodeTaskStopV1['steps']>)
+      : await stopStepsOf(deps.records, stopRecord, stopRequest, taskRuns);
+    if (stopSteps.status !== 'ready') return stopSteps;
+    // §2.8: the module gate, node occupancy and line busy are the target loop's own judgment, read through the one
+    // optional port the action card also uses. A failed read is this read's failure; `not_read` only means no port,
+    // and a stop-only Task (no dispatch record) keeps its facts from the stop record and the hold.
+    const targetLoop = dispatchRequest === null || deps.taskClaimability === undefined ? null
+      : await deps.taskClaimability.readTaskClaimability(ctx, { goalRef, task: row.ref });
+    if (targetLoop !== null && targetLoop.status !== 'ready') return targetLoop;
+    const dispatch: NodeTaskDispatchV1 = {
+      request: dispatchRequest,
+      cardBlocksClaim: false,
+      claimBlockers,
+      claimableNow: claimBlockers.length > 0 ? false
+        : targetLoop === null ? null : targetLoop.value.claimable,
+      targetLoopBlockers: targetLoop === null ? 'not_read'
+        : { blockers: structuredClone(targetLoop.value.blockers) },
+      claimedPlanRef,
+    };
+    const stop: NodeTaskStopV1 = {
+      request: stopRequest,
+      claim: hold?.pendingStop == null ? 'not_blocked_by_hold' : 'answer_card_first',
+      steps: stopSteps.value,
+    };
     return { status: 'ready', value: {
       section: 'summary', node: input.node, pin: pinOf(row.ref),
       task: {
@@ -1387,6 +1575,7 @@ async function readSummary(deps: NodeDetailReaderDeps, ctx: CoreCallContext, inp
         plannedModules: moduleOf(row) === null ? [] : [moduleOf(row)!],
         plannedFiles: [...(row.definition.plannedFiles ?? [])],
         actualFiles, responsibleNow: owners, responsibility: owners.length === 0 ? 'none' : 'has_responsibility',
+        holds, holdRelease: holdReleaseOf(row.ref, hold, effectiveHold), dispatch, stop,
       },
       group: null, goal: null, module: null, line: null,
       notes: await nodeNotesOf(deps, ctx, input.node, goalRef, graph.plan.planRevision, input.page.limit),

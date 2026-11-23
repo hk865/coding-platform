@@ -85,7 +85,7 @@ describe('DRV goal driver waits (memory)', () => {
       ['drv-p1-a-send', 'drv-p1-b-send', 'drv-p1-a-reply']);
     const [a, b, reply] = await Promise.all([line(world, main, 'drv-p1-a', [tasks[0]!]),
       line(world, main, 'drv-p1-b', [tasks[1]!]), line(world, main, 'drv-p1-reply')]);
-    const body = { recipient: reply.ref, text: 'DRV D-P1 inquiry', intent: 'inquiry' as const, needsReply: true as const, waitAfterSend: true as const };
+    const body = { recipient: reply.ref, text: 'DRV D-P1 inquiry', needsReply: true as const, waitAfterSend: true as const };
     const message = await sendS7BWaitingInquiry(world, { goal, session: a, taskId: tasks[0]!.taskId, label: 'drv-p1-a', body });
     await sendS7BWaitingInquiry(world, { goal, session: b, taskId: tasks[1]!.taskId, label: 'drv-p1-b', body });
     await startTaskDriver(world, goal, tasks[0]!.taskId, 'drv-p1-a'); await startTaskDriver(world, goal, tasks[1]!.taskId, 'drv-p1-b');
@@ -108,7 +108,7 @@ describe('DRV goal driver waits (memory)', () => {
     const [sender, recipient] = await Promise.all([line(world, main, 'drv-p2-send', [tasks[0]!]),
       line(world, main, 'drv-p2-reply')]);
     await world.scripted.script(sender, [{ kind: 'calls', calls: [{ callId: 'drv-p2-send',
-      name: 'send_session_message', args: { recipient: recipient.ref, text: 'DRV D-P2 inquiry', intent: 'inquiry',
+      name: 'send_session_message', args: { recipient: recipient.ref, text: 'DRV D-P2 inquiry',
         needsReply: true, waitAfterSend: true } }] }, { kind: 'text', text: 'DRV D-P2 done' }]);
     const held = holdOutbox(world);
     const drain = holdThirdRead(world);

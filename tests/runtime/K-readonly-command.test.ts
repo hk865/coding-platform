@@ -539,7 +539,7 @@ it('KB-07 the run_readonly_command description discloses no time stop, cancellat
     const spec = scripted.requests[0]?.tools.find(tool => tool.name === READONLY_COMMAND_TOOL_NAME);
     expect(spec).toBeDefined();
     const description = spec?.description ?? '';
-    expect(description).toContain('Commands are not stopped by time');
+    expect(description).toContain('Commands are never stopped by time; bound one yourself.');
     expect(description).toContain('a cancellation replaces the captured output with empty output');
     expect(description).toContain('.git is readable but read-only');
     expect(description).toContain('Host-denied paths are hidden');

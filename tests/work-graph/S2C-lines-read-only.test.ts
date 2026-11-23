@@ -130,7 +130,7 @@ describe.each(['memory', 'sqlite'] as const)('2C-20 read does not write (%s)', (
     const claim = await f.claim('w', head, goal);
     await f.runs.enter(claim.claim);
     await f.runs.mailbox().sendMessage(f.ctx, { input: { recipient: head, text: 'S2C-L read-only',
-      intent: 'notify' }, meta: { requestId: 's20-page-msg', expected: [] } });
+      wake: false }, meta: { requestId: 's20-page-msg', expected: [] } });
     await f.runs.beginConsultationCopy(head, 's20-page-copy');
 
     for (const section of ['participation', 'messages', 'copies', 'executions'] as const) {
@@ -173,7 +173,7 @@ describe.each(['memory', 'sqlite'] as const)('2C-20 read does not write (%s)', (
     const claim = await f.claim('obs', head, goal);
     await f.runs.enter(claim.claim);
     await f.runs.mailbox().sendMessage(f.ctx, { input: { recipient: head, text: 'S2C-20 observations',
-      intent: 'notify' }, meta: { requestId: 's20-obs-msg', expected: [] } });
+      wake: false }, meta: { requestId: 's20-obs-msg', expected: [] } });
     await f.runs.beginConsultationCopy(head, 's20-obs-copy');
 
     const watched = watchStore(f.records);

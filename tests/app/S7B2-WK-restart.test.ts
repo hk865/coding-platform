@@ -1,8 +1,8 @@
 /**
  * WK-restart (SR4 §4, book-7b §3.8): H's Host `start` and a same-directory `crash`/`reopen` with
- * `resumeOnStartup` off and on, over 19 real waits (open/answered/expired) and one released unprocessed
- * action on its own new Goal. The rebuild runs in both arms: it reads every Session's waits and the
- * released-action page. After the restart all 20 Goals carry a pending restart interruption, so decision
+ * `resumeOnStartup` off and on, over 19 real waits (open/answered/expired) and one persisted `open` dispatch
+ * request on its own new Goal. The rebuild runs in both arms: it reads every Session's waits and the open
+ * dispatch request page. After the restart all 20 Goals carry a pending restart interruption, so decision
  * 97-9's `ask`/`off` hold leaves every one of them to a person: 0 advances in either arm, and
  * `goals/display` still shows `interrupted_pending_resume`. `queueAll`'s draining is proved by
  * `tests/app/S7B2-WK-registry.test.ts`'s `queueAll` case and WK-drain, not here.
@@ -24,7 +24,7 @@ import { restartGoalWaits, type S7B2RestartWorld } from '../helpers/S7B2-WK-wake
 const observed = vi.hoisted(() => ({
   record: false,
   advances: [] as string[],
-  releasedGoals: [] as string[],
+  openDispatchGoals: [] as string[],
 }));
 
 // A3: a delegating wrapper around the real platform factory, installed before the fixture's own capture spy.
@@ -46,11 +46,11 @@ vi.mock('../../src/composition/create-platform.js', async (importOriginal) => {
         }
         return advance(ctx, input, internal);
       };
-      const readReleased = platform.messageRelease.readReleasedActions;
-      platform.messageRelease.readReleasedActions = async (ctx, input) => {
-        const result = await readReleased(ctx, input);
+      const readOpen = platform.actionRequests.listOpenDispatchesInProject;
+      platform.actionRequests.listOpenDispatchesInProject = async (ctx, input) => {
+        const result = await readOpen(ctx, input);
         if (observed.record && result.status === 'ready') {
-          for (const goal of result.value.goals) observed.releasedGoals.push(goal.goalId);
+          for (const item of result.value) observed.openDispatchGoals.push(item.goalId);
         }
         return result;
       };
@@ -72,31 +72,31 @@ describe('WK-restart', () => {
     worlds.push(fixture);
     const waitGoalIds = fixture.waitGoals.map(goal => goal.goalId);
     expect(new Set(waitGoalIds).size).toBe(19);
-    // The released action has its own Goal, distinct from the 19 wait Goals.
-    expect(waitGoalIds).not.toContain(fixture.releasedGoal.goalId);
+    // The open dispatch request has its own Goal, distinct from the 19 wait Goals.
+    expect(waitGoalIds).not.toContain(fixture.openDispatchGoal.goalId);
 
     // Recovery off: the rebuild's reads still run, but the loop is unarmed and drains nothing.
     await fixture.world.setResumeOnStartup(false);
     observed.record = true;
     observed.advances.length = 0;
-    observed.releasedGoals.length = 0;
+    observed.openDispatchGoals.length = 0;
     await fixture.world.crash();
-    expect(observed.releasedGoals).toContain(fixture.releasedGoal.goalId);
+    expect(observed.openDispatchGoals).toContain(fixture.openDispatchGoal.goalId);
     expect(observed.advances).toEqual([]);
 
-    // Recovery on, `ask`: the rebuild reads the released page, then the 97-9 hold leaves all 20 interrupted
+    // Recovery on, `ask`: the rebuild reads the open dispatch page, then the 97-9 hold leaves all 20 interrupted
     // Goals to a person, so the armed loop records no wake.
     const snapshot = await fixture.world.settings('snapshot', {});
     if (snapshot.status !== 'ready') throw new Error(`WK-restart: the settings read is ${snapshot.status}`);
     await fixture.world.settings('automation/save', { autoReworkLimit: snapshot.value.automation.autoReworkLimit,
       resumeOnStartup: 'ask' });
     observed.advances.length = 0;
-    observed.releasedGoals.length = 0;
+    observed.openDispatchGoals.length = 0;
     await fixture.world.crash();
-    expect(observed.releasedGoals).toContain(fixture.releasedGoal.goalId);
-    const releasedDisplay = ready<GoalDisplayHostReadV1>(await fixture.world.post('goals/display',
-      plain(S6A_SCOPE, { goalRef: fixture.releasedGoal })), 'the released Goal display');
-    expect(releasedDisplay.display.cause).toMatchObject({ code: 'interrupted_pending_resume',
+    expect(observed.openDispatchGoals).toContain(fixture.openDispatchGoal.goalId);
+    const dispatchDisplay = ready<GoalDisplayHostReadV1>(await fixture.world.post('goals/display',
+      plain(S6A_SCOPE, { goalRef: fixture.openDispatchGoal })), 'the open dispatch Goal display');
+    expect(dispatchDisplay.display.cause).toMatchObject({ code: 'interrupted_pending_resume',
       source: 'host_restart' });
     const waitDisplay = ready<GoalDisplayHostReadV1>(await fixture.world.post('goals/display',
       plain(S6A_SCOPE, { goalRef: fixture.waitGoals[0]! })), 'the wait Goal display');

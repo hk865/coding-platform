@@ -12,32 +12,37 @@
  * 每次写都是一条 `executeWriteCommand`，事件 `ActionRequestChanged`（变化 + 快照），重放按事件回原回执。
  */
 import type { ActionRequestRef } from '../../../contracts/action-request.js';
-import type { CommitCursor } from '../../../contracts/command-event.js';
+import type { ActorRef, CommitCursor } from '../../../contracts/command-event.js';
 import type { ControlIntentRef } from '../../../contracts/control-intent.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
+import type { VersionPin } from '../../../contracts/core/identity.js';
 import { principalIdentity } from '../../../contracts/core/call-context.js';
 import { rejected, rejectedWithNonEmptyCurrent } from '../../../contracts/core/rejections.js';
 import type { CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
 import { checkShape } from '../../../contracts/validation/data-format.js';
-import { ActionRequestRefShape, SessionMessageRefShape, SessionRefShape } from '../../../contracts/data-format-refs.js';
+import { ActionRequestRefShape, PlanRevisionRefShape, SessionMessageRefShape, SessionRefShape } from '../../../contracts/data-format-refs.js';
 import type { RunRef, RunSnapshot, TaskLeaseSnapshot, TaskTriple } from '../../../contracts/dispatch.js';
 import { canonicalKey, sameJson, type JsonValue } from '../../../contracts/fingerprint.js';
-import type { GoalRef, GoalSnapshot } from '../../../contracts/ledger.js';
-import type { PlanRevisionSnapshot } from '../../../contracts/plan.js';
-import { isAutomationActor, WORKFLOW_AUTOMATION_ACTOR } from '../../../contracts/task-requeue.js';
+import type { DecisionChangeProofV1 } from '../../../contracts/goal-decisions.js';
+import { compareCursors, type GoalRef, type GoalSnapshot } from '../../../contracts/ledger.js';
+import type { PlanRevisionRef, PlanRevisionSnapshot } from '../../../contracts/plan.js';
+import { isAutomationActor, WORKFLOW_AUTOMATION_ACTOR, type StopRequester } from '../../../contracts/task-requeue.js';
 import { truncateUtf8 } from '../../../contracts/utf8.js';
 import { isRecord, nonEmpty, parseObject } from '../../../contracts/validation/common.js';
-import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
+import type { RecordLookupPort, RecordOrderedLookupPort } from '../../record-store/lookup-ports.js';
 import type { DecodeResult, EncodedRecord, GoalRecordTransactionPort, RecordGuard } from '../../record-store/ports.js';
 import type {
   ActionRequestAnswerV1, ActionRequestPort, ActionRequestRejectionV1, DeliverStopResultV1, DispatchRequestInputV1,
-  DispatchRequestResultV1, StopRequestInputV1, StopRequestResultV1,
+  DispatchRequestResultV1, OpenDispatchRequestV1, StopRequestInputV1, StopRequestResultV1,
 } from '../model/action-request-contracts.js';
 import type { DispatchBasisFactsPort, DispatchBasisFactsV1 } from '../model/dispatch-basis-contracts.js';
 import { dispatchBasisProblem } from '../model/message-payload.js';
+import type { PlanSourceRootPort } from '../model/claim-contracts.js';
 import type { QueryRoundPort } from '../model/query-round-contracts.js';
+import type { RoleLineAllocationReadPort } from '../model/session-contracts.js';
 import type { GraphWrite } from '../model/task-contracts.js';
 import type { SessionDutyReadPort } from '../model/work-line-contracts.js';
+import { decodeSessionMessageRecord } from '../sessions/message-record-codecs.js';
 import { commandKeys, executeWriteCommand, type Keys } from '../persistence/command-executor.js';
 import { decodeControlIntentSnapshot } from '../persistence/control-record-codecs.js';
 import { goalRefFor } from '../persistence/commit-compiler.js';
@@ -52,41 +57,52 @@ import {
 } from '../state/action-request.js';
 import { taskLeaseNodeOf } from '../state/attempt-machine.js';
 import { decisionActionPolicy } from '../state/decision-policy.js';
+import type { DecisionPolicyVerdictV1 } from '../state/decision-policy.js';
+import { stopRequesterOf } from '../state/task-failure.js';
 import { matchAutonomyRule } from '../state/autonomy-rules.js';
 import {
-  holdAwaitsCursor, nextTaskClaimHold, occupyHoldPointer, placeHoldReason, taskClaimHoldRefOf, yieldHoldPointer,
-  type PendingTaskClaimHoldV1, type TaskClaimHoldV1,
+  holdAwaitsCursor, nextTaskClaimHold, occupyHoldPointer, placeHoldReason, rememberLastStop, taskClaimHoldRefOf,
+  yieldHoldPointer, type PendingTaskClaimHoldV1, type TaskClaimHoldV1,
 } from '../state/task-claim-hold.js';
 import { taskMachineStateOf } from '../state/task-machine.js';
 import {
   actionRequestChangedCodec, actionRequestChangedEventFromEvent, actionRequestCodec, readActionRequestRecord,
   type ActionRequestChanged,
 } from './action-request-codecs.js';
+import { actionReleaseCardKey } from './action-request-card.js';
 import type { AutonomyRulePort } from './autonomy-rule-service.js';
 import {
-  admitActionRound, blankTextProblem, isolateActionWrite, notReadyRejection, queryRoundActorOf, queryRoundRequesterOf,
-  readTaskClaimHold, taskRefProblem, type ActionRoundAdmissionV1,
+  admitActionRound, blankTextProblem, holdSourceOf, isolateActionWrite, notReadyRejection, queryRoundActorOf,
+  queryRoundRequesterOf, readTaskClaimHold, taskRefProblem, type ActionRoundAdmissionV1, type HoldSourceV1,
 } from './claim-holds.js';
 import { taskClaimHoldCodec } from './claim-record-codecs.js';
-import { claimPhaseFacts } from './claim-service.js';
+import { claimPhaseFacts, holdWithoutExpiredReasons } from './claim-service.js';
 import type { RunControlPort } from './control-contracts.js';
 import { controlIntentRefFor } from './control-service.js';
 import { dispatchCurrentOf, sameBasis } from './dispatch-basis.js';
 import { operatorProblem } from './execution-entry-service.js';
+import {
+  actionReleaseChangeProof, actionRequestAnswerFacts, actionRequestAnswerFingerprint, type ActionRequestAnswerFactsV1,
+} from './action-request-answer.js';
 import { hostContextIn } from './plan-lineage.js';
-import { readCanonicalTaskFacts, readGoal, taskRecordRefKey } from './plan-readers.js';
+import { readCanonicalTaskFacts, readGoal, readGoalsByProject, readPlan, taskRecordRefKey } from './plan-readers.js';
 
 type HostActor = { kind: 'human' | 'system'; id: string };
 
 export type ActionRequestDependencies = {
-  records: GoalRecordTransactionPort & RecordLookupPort;
+  /** 请求轮的准入读请求的当前归属（`readRequestRounds` 的有序窗口）。 */
+  records: GoalRecordTransactionPort & RecordLookupPort & RecordOrderedLookupPort;
   queryRounds: QueryRoundPort;
   duty: SessionDutyReadPort;
   /** 派活受理读三值的那一个读口（和发信、看图同一个实例）。 */
   dispatchBasis: DispatchBasisFactsPort;
   autonomyRules: Pick<AutonomyRulePort, 'read'>;
+  /** §2.8: the same project allocation report the allocation route builds; rule matching reads the real counts once. */
+  allocation: Pick<RoleLineAllocationReadPort, 'readRoleLineAllocation'>;
   /** 送停：control owner 的动作来源 steer。 */
   control: Pick<RunControlPort, 'submitControl'>;
+  /** 回执的 `blockedBy` 推暂缓失效时的来源链根（设计 3.3），和领取 owner、卡源同一个实例。 */
+  planSourceRoot: PlanSourceRootPort;
   /** 配置的操作者（你撤回）。 */
   operatorActor?: HostActor;
   now: () => string;
@@ -96,6 +112,7 @@ export type ActionRequestDependencies = {
 /** 送停 steer 的理由上限，同 control owner 的理由字节上限。 */
 const STEER_REASON_MAX_BYTES = 2048;
 
+
 /** 一次请求写：下一版请求、读到的版本（新建是 `null`）、暂缓的读和写（`next` 为 `null` 只守不写）、别的守卫。 */
 type RequestChange = {
   record: PendingActionRequestV1;
@@ -104,6 +121,9 @@ type RequestChange = {
   guards: RecordGuard[];
   change: ActionRequestChangeV1;
   blockedBy?: DispatchBlockerV1[];
+  /** 答卡那次的决定人（Host 的人或平台）和这次应用的唯一证明；只有 `approved`/`denied` 带。 */
+  actor?: ActorRef;
+  proof?: DecisionChangeProofV1;
 };
 type Committed<T> = { status: 'committed'; value: T; replayed: boolean; cursor: CommitCursor };
 /** 两个受理口从事件推出的回执（重放同样从事件推）；提交的 `replayed`、`cursor` 由执行器给。 */
@@ -164,6 +184,8 @@ export function createActionRequestService(deps: ActionRequestDependencies): Act
           identityKey: committed.identityKey, fingerprint: committed.fingerprint, change: change.change,
           request: actionRequestSnapshotOf(change.record),
           ...(change.blockedBy === undefined ? {} : { blockedBy: change.blockedBy }),
+          ...(change.actor === undefined ? {} : { actor: change.actor }),
+          ...(change.proof === undefined ? {} : { proof: change.proof as unknown as JsonValue }),
         };
         return { guards, records: written, claims: [], events: [actionRequestChangedCodec.encode(event)],
           ...(bindings.length === 0 ? {} : { commitCursorBindings: bindings }) };
@@ -186,25 +208,34 @@ export function createActionRequestService(deps: ActionRequestDependencies): Act
 
   // ---- 读 -----------------------------------------------------------------
 
-  /** 目标的自治档和项目的规则集：规则命中走第三层；不论命中与否，提交都守读到的规则集版本（没写过的守“仍不存在”）。 */
-  async function readRules(ctx: CoreCallContext, projectId: string) {
+  /** 目标的自治档、项目的规则集和这条线的真实席位计数：规则命中走第三层；提交都守读到的规则集版本。 */
+  async function readRules(ctx: CoreCallContext, projectId: string, duty: 'secretary' | 'adviser') {
     const view = await deps.autonomyRules.read(ctx, { projectRef: { projectId } });
     if (view.status !== 'ready') return notReadyRejection(view, 'the autonomy rules');
+    // One read of the same project allocation report the route publishes; the
+    // rule's open limit is compared with this line's real holders+reservations.
+    const allocation = await deps.allocation.readRoleLineAllocation(ctx, {});
+    if (allocation.status !== 'ready') return notReadyRejection(allocation, 'the role-line allocation');
+    const line = allocation.value.duties[duty];
     const set = view.value.set;
     return { status: 'ready' as const, rules: view.value.rules, revision: set.revision,
-      guard: { refKey: canonicalKey(set.ref), expectedRevision: set.revision === 0 ? null : set.revision } };
+      guard: { refKey: canonicalKey(set.ref), expectedRevision: set.revision === 0 ? null : set.revision },
+      counts: { holders: line.holders.length, reservations: line.reservations.length, open: line.limit } };
   }
   type Rules = Exclude<Awaited<ReturnType<typeof readRules>>, CoreRejection>;
 
-  /** 放行五层（3.1）：人专属 → 已有待决卡（卡位占着时受理已拒） → 有效规则 → 出厂默认。 */
-  function needsDecision(action: 'agent_dispatch' | 'agent_stop', goal: GoalSnapshot, rules: Rules,
-    duty: 'secretary' | 'adviser'): boolean {
+  /**
+   * 放行五层（3.1）：人专属 → 已有待决卡（卡位占着时受理已拒） → 有效规则 → 出厂默认。判定结果整条记进请求的
+   * `decision`（卡、自动档、自动请知悉），不只留“要不要卡”。
+   */
+  function decisionVerdict(action: 'agent_dispatch' | 'agent_stop', goal: GoalSnapshot, rules: Rules,
+    duty: 'secretary' | 'adviser'): DecisionPolicyVerdictV1 {
     const matchedRule = matchAutonomyRule({ action, tool: action === 'agent_dispatch' ? 'dispatch_task' : 'request_stop',
       objects: [{ kind: 'goal', goalRef: goal.ref }], rules: rules.rules, now: deps.now(), catalog: null, delegation: null,
-      roleCeiling: null, createMemberAuthorized: false, duty, counts: { holders: 0, reservations: 0, open: 0 },
+      roleCeiling: null, createMemberAuthorized: false, duty, counts: rules.counts,
       newReservations: 0 });
     return decisionActionPolicy({ autonomy: goal.settings.autonomy, action, actorClass: 'agent', matchedRule,
-      ruleSetRevision: rules.revision }) === 'needs_decision';
+      ruleSetRevision: rules.revision });
   }
 
   /** 按键读一条 Run（不扫任务历史）；不在也是读不到。 */
@@ -246,17 +277,19 @@ export function createActionRequestService(deps: ActionRequestDependencies): Act
 
   /** 原 Run 此刻的事实；指针和冻结值不同时读指针所指意图的提交者（按它认“谁动的”）。 */
   async function readStopRun(run: RunSnapshot, frozenPointer: ControlIntentRef | null):
-  Promise<{ status: 'ready'; value: StopRunFactsV1 } | CoreRejection> {
+  Promise<{ status: 'ready'; value: StopRunFactsV1 & { requester: StopRequester } } | CoreRejection> {
     const pointer = run.controlState?.intentRef ?? null;
     let pointerBy: StopRunFactsV1['pointerBy'] = null;
+    let requester: StopRequester = 'none';
     if (pointer !== null && !sameJson(frozenPointer, pointer)) {
       const intent = await readOwnerRecord({ store: records, refKey: canonicalKey(pointer), decode: decodeControlIntentSnapshot,
         readError: (message) => rejected('unavailable', `the Run control intent cannot be read: ${message}`) });
       if ('rejection' in intent) return intent.rejection;
       if ('notFound' in intent) return rejected('unavailable', 'the Run control pointer names a missing intent');
       pointerBy = intent.value.requestedBy;
+      requester = stopRequesterOf(intent.value);
     }
-    return { status: 'ready', value: { ended: run.status === 'ended', pointer, pointerBy } };
+    return { status: 'ready', value: { ended: run.status === 'ended', pointer, pointerBy, requester } };
   }
 
   async function readOwnRequest(ref: ActionRequestRef): Promise<{ status: 'ready'; record: ActionRequestV1 } | CoreRejection> {
@@ -294,26 +327,34 @@ export function createActionRequestService(deps: ActionRequestDependencies): Act
     const task = input.taskRef;
     const goalRef = goalRefFor(task.projectId, task.goalId);
     type Facts = {
-      admission: ActionRoundAdmissionV1; basis: DispatchBasisFactsV1; taskProblem: CoreRejection | null;
-      leaseGuard: RecordGuard | null; hold: { hold: TaskClaimHoldV1 | null; guard: RecordGuard }; rules: Rules;
+      admission: ActionRoundAdmissionV1; source: HoldSourceV1; basis: DispatchBasisFactsV1;
+      taskProblem: CoreRejection | null; leaseGuard: RecordGuard | null;
+      hold: { hold: TaskClaimHoldV1 | null; guard: RecordGuard };
+      effectiveHold: TaskClaimHoldV1 | null; rules: Rules;
     };
     const result = await writeActionRequest<Facts, ActionRequestRejectionV1 | { already: ActionRequestRef }, DispatchProjection>(ctx, {
       operation: 'action_request.dispatch', commandId: owned.requestId,
       fingerprintInput: { taskRef: task, reason: input.reason, preferredLine: input.preferredLine ?? null,
         expected: input.expected ?? null } as unknown as JsonValue,
       read: async () => {
-        const admission = await admitActionRound(ctx, deps, goalRef, 'request a dispatch');
+        const admission = await admitActionRound(ctx, deps, goalRef, 'request a dispatch', 'dispatch_task');
         if (admission.status !== 'ready') return admission;
+        // 受理那一轮的请求根（请求轮自己的，或来源消息自带的）：反馈按它认回原请求，和叫停同一个解析。
+        const source = await holdSourceOf(ctx, deps, admission.value.round, admission.value.requestRoot);
+        if (source.status !== 'ready') return source;
         const basis = await deps.dispatchBasis.readDispatchFacts(ctx, { goalRef });
         if (basis.status !== 'ready') return notReadyRejection(basis, 'the dispatch basis');
         const taskProblem = await dispatchProblemOf(goalRef, basis.value.plan, task.taskId);
         if (taskProblem.status !== 'ready') return taskProblem;
         const hold = await readTaskClaimHold(records, task);
         if (hold.status !== 'ready') return hold;
-        const rules = await readRules(ctx, task.projectId);
+        // 回执的 blockedBy 只列读时仍有效的原因；领取侧推失效的是同一个判断。
+        const effectiveHold = await holdWithoutExpiredReasons(records, ctx, goalRef, hold.hold, task.taskId,
+          deps.planSourceRoot);
+        const rules = await readRules(ctx, task.projectId, admission.value.duty);
         if (rules.status !== 'ready') return rules;
-        return { status: 'ready', facts: { admission: admission.value, basis: basis.value,
-          taskProblem: taskProblem.problem, leaseGuard: taskProblem.leaseGuard, hold, rules } };
+        return { status: 'ready', facts: { admission: admission.value, source: source.value, basis: basis.value,
+          taskProblem: taskProblem.problem, leaseGuard: taskProblem.leaseGuard, hold, effectiveHold, rules } };
       },
       change: (facts, keys) => {
         // 三值缺了代填，给了对不上就带回当前三值；只比不守（3.2 第 2 步）。
@@ -321,24 +362,33 @@ export function createActionRequestService(deps: ActionRequestDependencies): Act
           return { refuse: { ...rejected('revision_conflict', 'the dispatch basis moved since it was read'),
             dispatchCurrent: dispatchCurrentOf(facts.basis) } };
         }
+        // 目标取消是终态：这条请求永远等不到，不建。
+        if (facts.basis.goal.desiredState === 'cancelled') {
+          return { refuse: invalid('the Goal is cancelled; a dispatch request would never be served') };
+        }
         if (facts.taskProblem !== null) return { refuse: facts.taskProblem };
         const open = facts.hold.hold?.openDispatch ?? null;
         if (open !== null) return { refuse: { already: open } };
         const goal = facts.basis.goal;
         const ref: ActionRequestRef = { aggregateType: 'ActionRequest', ...task, requestId: keys.identityKey };
+        const verdict = decisionVerdict('agent_dispatch', goal, facts.rules, facts.admission.duty);
         const record = newDispatchRequest({ ref, workspaceId: goal.workspaceRef.workspaceId, task,
           requester: requesterOf(facts.admission), reason: input.reason, requestedAt: deps.now(),
-          expected: input.expected ?? facts.basis.values, preferredLine: input.preferredLine ?? null },
-        needsDecision('agent_dispatch', goal, facts.rules, facts.admission.duty) ? 'pending' : 'open');
+          decision: { verdict }, expected: input.expected ?? facts.basis.values,
+          preferredLine: input.preferredLine ?? null,
+          basis: { requestRoot: facts.source.requestRoot, sourceMessage: facts.source.sourceMessage,
+            round: { ...facts.admission.round.round } } },
+        verdict === 'needs_decision' ? 'pending' : 'open');
         const hold = occupyHoldPointer(holdDraftOf(facts.hold, task, goal.workspaceRef.workspaceId), 'openDispatch', ref);
         return { record, before: null, hold: holdChangeOf(facts.hold, hold), change: 'created',
           guards: [...facts.admission.guards, revisionGuard(goal.ref, goal.revision), facts.rules.guard,
             ...(facts.leaseGuard === null ? [] : [facts.leaseGuard])],
-          blockedBy: dispatchBlockersOf(facts.hold.hold, goal) };
+          blockedBy: dispatchBlockersOf(facts.effectiveHold, goal) };
       },
       project: (event): DispatchProjection => event.request.state === 'pending'
-        ? { status: 'needs_decision', actionRef: event.request.ref }
-        : { status: 'requested', actionRef: event.request.ref, blockedBy: event.blockedBy ?? [] },
+        ? { status: 'needs_decision', actionRef: event.request.ref, cardKey: actionReleaseCardKey(event.request.ref) }
+        : { status: 'requested', actionRef: event.request.ref, blockedBy: event.blockedBy ?? [],
+          queueNote: '请求留着，能领时目标循环先领它' },
     });
     if (result.status === 'committed') return { ...result.value, replayed: result.replayed, cursor: result.cursor };
     if (result.status === 'refused') {
@@ -355,7 +405,7 @@ export function createActionRequestService(deps: ActionRequestDependencies): Act
   Promise<{ status: 'ready'; problem: CoreRejection | null; leaseGuard: RecordGuard | null } | CoreRejection> {
     const definition = plan?.tasks.find((candidate) => candidate.taskId === taskId);
     if (plan === null || definition === undefined) {
-      return { status: 'ready', problem: dispatchTaskProblem(null, { ranBefore: false, leaseHeld: false }), leaseGuard: null };
+      return { status: 'ready', problem: dispatchTaskProblem(null, { ranBefore: false, leaseHeld: false, reviewPending: false }), leaseGuard: null };
     }
     const read = await readCanonicalTaskFacts(records, goalRef, plan, taskId);
     if (read.status !== 'ready') return read;
@@ -363,9 +413,11 @@ export function createActionRequestService(deps: ActionRequestDependencies): Act
     const phaseFacts = state === undefined ? null : claimPhaseFacts(definition, state, read.value);
     if (phaseFacts === null) return rejected('unavailable', 'the Task state cannot be read');
     const lease = read.value.leasesByTaskId.get(taskId) ?? null;
+    const review = state?.unknownCallReview ?? null;
     return { status: 'ready',
       problem: dispatchTaskProblem(taskMachineStateOf(definition, phaseFacts),
-        { ranBefore: phaseFacts.selectedRun !== null, leaseHeld: taskLeaseNodeOf(lease) === 'held' }),
+        { ranBefore: phaseFacts.selectedRun !== null, leaseHeld: taskLeaseNodeOf(lease) === 'held',
+          reviewPending: review !== null && review.status !== 'unreadable' && review.status !== 'resolved' }),
       leaseGuard: { refKey: taskRecordRefKey('TaskLease', goalRef, taskId), expectedRevision: lease?.revision ?? null } };
   }
 
@@ -382,12 +434,13 @@ export function createActionRequestService(deps: ActionRequestDependencies): Act
     type Facts = {
       admission: ActionRoundAdmissionV1; goal: GoalSnapshot; lease: TaskLeaseSnapshot | null; run: RunSnapshot | null;
       hold: { hold: TaskClaimHoldV1 | null; guard: RecordGuard }; pendingStop: ActionRequestV1 | null; rules: Rules;
+      source: HoldSourceV1;
     };
     const result = await writeActionRequest<Facts, CoreRejection, StopProjection>(ctx, {
       operation: 'action_request.stop', commandId: owned.requestId,
       fingerprintInput: { taskRef: task, reason: input.reason },
       read: async () => {
-        const admission = await admitActionRound(ctx, deps, goalRef, 'request a stop');
+        const admission = await admitActionRound(ctx, deps, goalRef, 'request a stop', 'request_stop');
         if (admission.status !== 'ready') return admission;
         // 契约 2.3：读 TaskLease 固定键，再读它指向的 Run。
         const stopFacts = await readStopFacts(task, (lease) => lease === null ? null
@@ -404,9 +457,12 @@ export function createActionRequestService(deps: ActionRequestDependencies): Act
           // 读卡位和读卡之间被撤、被批、被拒的，当没有卡位；卡位在读后换成新卡的，提交守暂缓版本会冲突。
           pendingStop = pending.record.state === 'pending' ? pending.record : null;
         }
-        const rules = await readRules(ctx, task.projectId);
+        const source = await holdSourceOf(ctx, deps, admission.value.round, admission.value.requestRoot);
+        if (source.status !== 'ready') return source;
+        const rules = await readRules(ctx, task.projectId, admission.value.duty);
         if (rules.status !== 'ready') return rules;
-        return { status: 'ready', facts: { admission: admission.value, goal, lease, run, hold, pendingStop, rules } };
+        return { status: 'ready', facts: { admission: admission.value, goal, lease, run, hold, pendingStop, rules,
+          source: source.value } };
       },
       change: (facts, keys) => {
         const { lease, run } = facts;
@@ -415,11 +471,16 @@ export function createActionRequestService(deps: ActionRequestDependencies): Act
           return { refuse: rejectedWithNonEmptyCurrent('busy', 'the Task already has a pending stop request; '
             + 'answer or withdraw that card first', [{ ref: facts.pendingStop.ref, revision: facts.pendingStop.revision }]) };
         }
+        // 受理前目标已暂停或已取消：这次叫停都等不到放行，回 `busy`（p2-frozen.md:194）。
+        if (facts.goal.desiredState !== 'active') {
+          return { refuse: rejected('busy', `the Goal is ${facts.goal.desiredState}; `
+            + 'a stop request would never be served') };
+        }
         // 在跑的 Run，或已让出在等回复的 Run（Q8b：放行写 `stop` 挡住接续，不送）。
         const waiting = run?.status === 'ended' && run.outcome === 'yielded' && run.continuation !== undefined;
         if (lease === null || run === null || (run.status === 'ended' && !waiting)) {
-          return { refuse: invalid('the Task has no running Run to stop; use hold_claim to keep it from being claimed, '
-            + 'or submit a candidate to cancel it') };
+          return { refuse: invalid('the Task has no running Run to stop; use hold_claim to keep it from being claimed '
+            + 'first; submit a candidate to cancel it') };
         }
         // Q8a：你已暂停或正在停的 Run 不再出卡、不再送停。
         const pointerState = run.controlState?.desiredState;
@@ -432,13 +493,15 @@ export function createActionRequestService(deps: ActionRequestDependencies): Act
         const ref: ActionRequestRef = { aggregateType: 'ActionRequest', ...task, requestId: keys.identityKey };
         const frozen: StopFrozenV1 = { run: { ...run.ref }, lease: { ref: { ...lease.ref }, revision: lease.revision },
           pointer: run.controlState === undefined ? null : { ...run.controlState.intentRef } };
+        const policyVerdict = decisionVerdict('agent_stop', goal, facts.rules, facts.admission.duty);
         const common = { ref, workspaceId: goal.workspaceRef.workspaceId, task, requester: requesterOf(facts.admission),
-          reason: input.reason, requestedAt: deps.now(), frozen,
-          basis: { requestRoot: null, sourceMessage: round.sourceMessageRef, round: { ...round.round } } };
+          reason: input.reason, requestedAt: deps.now(), decision: { verdict: policyVerdict }, frozen,
+          basis: { requestRoot: facts.source.requestRoot, sourceMessage: facts.source.sourceMessage,
+            round: { ...round.round } } };
         const guards = [...facts.admission.guards, revisionGuard(goal.ref, goal.revision), facts.rules.guard,
           revisionGuard(lease.ref, lease.revision), revisionGuard(run.ref, run.revision)];
         const draft = holdDraftOf(facts.hold, task, goal.workspaceRef.workspaceId);
-        if (needsDecision('agent_stop', goal, facts.rules, facts.admission.duty)) {
+        if (policyVerdict === 'needs_decision') {
           return { record: newStopRequest(common, null), before: null, change: 'created', guards,
             hold: holdChangeOf(facts.hold, occupyHoldPointer(draft, 'pendingStop', ref)) };
         }
@@ -446,14 +509,18 @@ export function createActionRequestService(deps: ActionRequestDependencies): Act
         const verdict = stopReleaseOf({ goal: goal.desiredState, leaseHolderRunId: lease.holderRunId, frozen,
           run: { ended: run.status === 'ended', pointer: frozen.pointer, pointerBy: null } });
         const placed = stopHold(draft, verdict, ref, common.basis, input.reason, null, keys);
+        // 自动放行没有经过 `pendingStop`，同一次提交仍要把这条请求留到 `lastStop`，否则任务详情会优先读更早的卡位结果。
+        const hold = placed.hold === null ? null : rememberLastStop(placed.hold, ref);
         return { record: newStopRequest(common, { verdict, holdReasonId: placed.reasonId,
           closedBy: { commandId: owned.requestId, at: deps.now() } }), before: null, change: 'created', guards,
-          hold: holdChangeOf(facts.hold, placed.hold) };
+          hold: holdChangeOf(facts.hold, hold) };
       },
       project: (event): StopProjection => {
         const stored = event.request;
         const outcome = stored.outcome;
-        if (outcome === null) return { status: 'needs_decision', actionRef: stored.ref };
+        if (outcome === null) {
+          return { status: 'needs_decision', actionRef: stored.ref, cardKey: actionReleaseCardKey(stored.ref) };
+        }
         if (outcome.kind === 'void') return { status: 'void', actionRef: stored.ref, reason: outcome.reason };
         return { status: 'released', actionRef: stored.ref,
           holdReasonId: outcome.kind === 'released' ? outcome.holdReasonId : null,
@@ -482,10 +549,27 @@ export function createActionRequestService(deps: ActionRequestDependencies): Act
 
   type AnswerFacts = {
     record: ActionRequestV1;
+    /** 存下的合成答复：本卡的来源、CAS 版本、人和证明要记的卡来源 pins。 */
+    answer: ActionRequestAnswerFactsV1;
     /** 卡位所在的暂缓；批准派活（AR-02d）不改暂缓，不读（`null`）。 */
     hold: { hold: TaskClaimHoldV1 | null; guard: RecordGuard } | null;
     stop: { goal: GoalSnapshot; lease: TaskLeaseSnapshot | null; run: StopRunFactsV1; runGuard: RecordGuard } | null;
   };
+
+  /** 一张答卡的证明：移动的请求，和这次提交同时写下的暂缓记录（有则各一枚 before/after）。 */
+  function answerProof(record: ActionRequestV1, next: PendingActionRequestV1,
+    hold: NonNullable<RequestChange['hold']> | null, capturedPins: readonly VersionPin[],
+    answerRef: ActionRequestAnswerFactsV1['answerRef']): DecisionChangeProofV1 {
+    const changes: { before: VersionPin; after: VersionPin }[] = [
+      { before: { ref: record.ref, revision: record.revision }, after: { ref: next.ref, revision: next.revision } },
+    ];
+    if (hold !== null && hold.next !== null) {
+      changes.push({ before: { ref: hold.next.ref, revision: hold.current?.revision ?? 0 },
+        after: { ref: hold.next.ref, revision: hold.next.revision } });
+    }
+    return actionReleaseChangeProof({ answerRef,
+      capturedPins: capturedPins.map(pin => structuredClone(pin)), changes });
+  }
 
   function answerInputProblem(input: ActionRequestAnswerV1): string | null {
     if (!isRecord(input)) return 'the answer requires { request, revision, commandId, answerRef }';
@@ -505,30 +589,50 @@ export function createActionRequestService(deps: ActionRequestDependencies): Act
     const read = await readOwnRequest(input.request);
     if (read.status !== 'ready') return read;
     const record = read.record;
-    if (approving && record.kind === 'dispatch') return { status: 'ready', facts: { record, hold: null, stop: null } };
+    // ① 存下的合成答复是权威的选项与卡来源（照放行入口原路：只从答复派生，不重新准入那一轮）。
+    const answerRead = await readOwnerRecord({
+      store: records, refKey: canonicalKey(input.answerRef), decode: decodeSessionMessageRecord,
+      readError: (message) => rejected('unavailable', `the answer message could not be read: ${message}`),
+    });
+    if (!answerRead.ok) {
+      return 'rejection' in answerRead ? answerRead.rejection
+        : rejected('not_found', 'the answer message does not exist');
+    }
+    const answer = actionRequestAnswerFacts(answerRead.value);
+    if (answer === null || canonicalKey(answer.requestRef) !== canonicalKey(record.ref) || answer.allow !== approving) {
+      return rejected('invalid', 'the saved answer is not this action release decision');
+    }
+    if (approving && record.kind === 'dispatch') {
+      return { status: 'ready', facts: { record, answer, hold: null, stop: null } };
+    }
     const hold = await readTaskClaimHold(records, record.task);
     if (hold.status !== 'ready') return hold;
-    if (!approving || record.state !== 'pending') return { status: 'ready', facts: { record, hold, stop: null } };
+    if (!approving || record.state !== 'pending') return { status: 'ready', facts: { record, answer, hold, stop: null } };
     const frozen = record.frozen!;
     const stopFacts = await readStopFacts(record.task, () => frozen.run, 'the stopped Run');
     if (stopFacts.status !== 'ready') return stopFacts;
     const run = stopFacts.run!;
     const runFacts = await readStopRun(run, frozen.pointer);
     if (runFacts.status !== 'ready') return runFacts;
-    return { status: 'ready', facts: { record, hold, stop: { goal: stopFacts.goal, lease: stopFacts.lease, run: runFacts.value,
-      runGuard: revisionGuard(run.ref, run.revision) } } };
+    return { status: 'ready', facts: { record, answer, hold, stop: { goal: stopFacts.goal, lease: stopFacts.lease,
+      run: runFacts.value, runGuard: revisionGuard(run.ref, run.revision) } } };
   }
 
   /** 只收 Host 的可信输入；不重新准入原来那一轮（批准以后认记录上的原请求者和答卡回执）。 */
   async function answerRequest(ctx: CoreCallContext, input: ActionRequestAnswerV1, approving: boolean):
   Promise<WriteResult<ActionRequestSnapshotV1>> {
     if (ctx.principal.kind !== 'host') return rejected('forbidden', 'only the Host may approve or deny an action request');
+    const answerer = ctx.principal.actor;
     const problem = answerInputProblem(input);
     if (problem !== null) return invalid(problem);
     const closedBy = () => ({ commandId: input.commandId, at: deps.now() });
+    // 答卡命令的指纹正本在 `action-request-answer.ts`，答卡适配器和这里共用一份；该函数只读请求、版本、答复三项。
+    const fingerprintInput = actionRequestAnswerFingerprint({
+      requestRef: input.request, revision: input.revision, answerRef: input.answerRef,
+    });
     const result = await writeActionRequest<AnswerFacts, CoreRejection, ActionRequestSnapshotV1>(ctx, {
       operation: approving ? 'action_request.approve' : 'action_request.deny', commandId: input.commandId,
-      fingerprintInput: { request: input.request, revision: input.revision, answerRef: input.answerRef } as unknown as JsonValue,
+      fingerprintInput,
       read: () => readAnswerFacts(input, approving),
       change: (facts, keys) => {
         const record = facts.record;
@@ -538,15 +642,19 @@ export function createActionRequestService(deps: ActionRequestDependencies): Act
         if (holdRead === null) {
           const opened = approveDispatchRequest(record, input.answerRef);
           if ('status' in opened) return { refuse: opened };
-          return { record: opened, before: record.revision, change: 'approved', guards: [], hold: null };
+          return { record: opened, before: record.revision, change: 'approved', guards: [], hold: null,
+            actor: answerer,
+            proof: answerProof(record, opened, null, facts.answer.capturedPins, input.answerRef) };
         }
         const draft = holdDraftOf(holdRead, record.task, record.workspaceId);
         if (!approving) {
           const denied = denyActionRequest(record, input.answerRef, closedBy());
           if ('status' in denied) return { refuse: denied };
-          return { record: denied, before: record.revision, change: 'denied', guards: [],
-            hold: holdChangeOf(holdRead, yieldHoldPointer(draft, record.kind === 'stop' ? 'pendingStop' : 'openDispatch',
-              record.ref)) };
+          const hold = holdChangeOf(holdRead, yieldHoldPointer(draft,
+            record.kind === 'stop' ? 'pendingStop' : 'openDispatch', record.ref));
+          return { record: denied, before: record.revision, change: 'denied', guards: [], hold,
+            actor: answerer,
+            proof: answerProof(record, denied, hold, facts.answer.capturedPins, input.answerRef) };
         }
         if (facts.stop === null) return { refuse: tableOutside(record) };
         // AR-02s：放行判定在这次提交里重做，守目标、租约、原 Run；让出卡位，按判定写 `stop` 原因。
@@ -559,8 +667,10 @@ export function createActionRequestService(deps: ActionRequestDependencies): Act
         if ('status' in released) return { refuse: released };
         const guards = [revisionGuard(goal.ref, goal.revision), runGuard,
           ...(lease === null ? [] : [revisionGuard(lease.ref, lease.revision)])];
-        return { record: released, before: record.revision, change: 'approved', guards,
-          hold: holdChangeOf(holdRead, placed.hold ?? yielded) };
+        const hold = holdChangeOf(holdRead, placed.hold ?? yielded);
+        return { record: released, before: record.revision, change: 'approved', guards, hold,
+          actor: answerer,
+          proof: answerProof(record, released, hold, facts.answer.capturedPins, input.answerRef) };
       },
       project: (event) => event.request,
     });
@@ -634,18 +744,72 @@ export function createActionRequestService(deps: ActionRequestDependencies): Act
     });
   }
 
-  async function settleRequest(ctx: CoreCallContext, request: GraphWrite<{ request: ActionRequestRef; reason: string }>):
+  /**
+   * 作废依据的核实（设计 3.2 第 5 步、3.4 C19）：在同一份已采用计划上重读任务状态，核对调用方读到的原因，守目标、
+   * 计划和这次任务事实读交出的全部版本（Run、租约、归约）；理由文字本身不改事实，核实不了就拒。
+   */
+  async function readSettleBasis(record: ActionRequestV1, basis: {
+    kind: 'goal_cancelled' | 'task_cancelled' | 'task_replaced' | 'task_completed' | 'person_stopped';
+    planRevision: PlanRevisionRef;
+  }):
+  Promise<{ status: 'ready'; guards: RecordGuard[] } | CoreRejection> {
+    // 叫停不是 void 的迁移，记录版本交给状态机回 revision_conflict（handoff 2）。
+    if (record.kind !== 'dispatch') return { status: 'ready', guards: [] };
+    const goalRef = goalRefFor(record.task.projectId, record.task.goalId);
+    const goal = await readGoal(records, goalRef);
+    if (goal.status !== 'ready') return goal;
+    const active = goal.goal.activePlanRevision;
+    if (active === null || canonicalKey(active) !== canonicalKey(basis.planRevision)) {
+      return rejected('revision_conflict', 'the accepted plan changed since that revision');
+    }
+    const planRead = await readPlan(records, basis.planRevision);
+    if (planRead.status !== 'ready') return planRead;
+    const facts = await readCanonicalTaskFacts(records, goalRef, planRead.plan, record.task.taskId);
+    if (facts.status !== 'ready') return facts;
+    const state = facts.value.byTaskId.get(record.task.taskId);
+    const definition = planRead.plan.tasks.find((candidate) => candidate.taskId === record.task.taskId);
+    const phaseFacts = definition === undefined || state === undefined ? null
+      : claimPhaseFacts(definition, state, facts.value);
+    const machine = definition === undefined || phaseFacts === null ? null : taskMachineStateOf(definition, phaseFacts);
+    const selected = phaseFacts?.selectedRun ?? null;
+    // “人的”停止按控制意图的提交者认：人自己的和目标扇出算，书记硬停的平台取消不算（设计 3.4 重裁 2）。
+    let personStopped = false;
+    if (basis.kind === 'person_stopped' && selected?.controlState?.desiredState === 'cancelled') {
+      const runFacts = await readStopRun(selected, null);
+      if (runFacts.status !== 'ready') return runFacts;
+      personStopped = runFacts.value.requester === 'human' || runFacts.value.requester === 'goal_fan_out';
+    }
+    const matches = basis.kind === 'goal_cancelled' ? goal.goal.desiredState === 'cancelled'
+      : machine === null ? false
+        : basis.kind === 'task_cancelled' ? machine.disposition === 'cancelled'
+          : basis.kind === 'task_replaced' ? machine.disposition === 'superseded'
+            : basis.kind === 'task_completed' ? machine.phase === 'satisfied'
+              : personStopped;
+    if (!matches) return invalid('the stored Task state does not match the void basis');
+    return { status: 'ready', guards: [revisionGuard(goal.goal.ref, goal.goal.revision),
+      revisionGuard(planRead.plan.ref, planRead.plan.revision), ...facts.value.guards,
+      ...facts.value.reworkGuards] };
+  }
+
+  async function settleRequest(ctx: CoreCallContext, request: GraphWrite<{
+    request: ActionRequestRef; reason: string; basis: {
+      kind: 'goal_cancelled' | 'task_cancelled' | 'task_replaced' | 'task_completed' | 'person_stopped';
+      planRevision: PlanRevisionRef;
+    };
+  }>):
   Promise<WriteResult<ActionRequestSnapshotV1>> {
     if (!automationActor(ctx)) return rejected('forbidden', 'only the platform automation may settle an action request');
     const owned = isolateActionWrite(request, 'action request settle');
     if (!owned.ok) return owned.rejection;
-    const problem = actionRefProblem(owned.input.request) ?? blankTextProblem(owned.input.reason);
+    const basisProblem = checkShape(PlanRevisionRefShape, owned.input.basis.planRevision, 'stored') === null ? null
+      : 'basis.planRevision must be a complete PlanRevisionRef';
+    const problem = actionRefProblem(owned.input.request) ?? blankTextProblem(owned.input.reason) ?? basisProblem;
     if (problem !== null) return invalid(problem);
     const reason = owned.input.reason;
     return closeRequest(ctx, {
       operation: 'action_request.settle', commandId: owned.requestId, ref: owned.input.request,
-      fingerprintInput: { request: owned.input.request, reason } as unknown as JsonValue, change: 'voided',
-      right: async () => ({ status: 'ready', guards: [] }),
+      fingerprintInput: { request: owned.input.request, reason, basis: owned.input.basis } as unknown as JsonValue, change: 'voided',
+      right: async (record) => readSettleBasis(record, owned.input.basis),
       next: (record) => voidActionRequest(record, reason, { commandId: owned.requestId, at: deps.now() }),
     });
   }
@@ -690,7 +854,7 @@ export function createActionRequestService(deps: ActionRequestDependencies): Act
     if (!awaitsStopDelivery(record)) return { status: 'unchanged', request: record };
     const frozen = record.frozen!;
     const scope = { projectId: record.ref.projectId, workspaceId: record.workspaceId };
-    const steerRequestId = `action:${record.ref.requestId}:steer`;
+    const steerRequestId = stopSteerRequestIdOf(record.ref);
     const intentRef = controlIntentRefFor(WORKFLOW_AUTOMATION_ACTOR, scope, steerRequestId);
     let lastRefusal: CoreRejection | null = null;
     for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -743,11 +907,73 @@ export function createActionRequestService(deps: ActionRequestDependencies): Act
     return { status: 'ready', value: read.record };
   }
 
+  // ---- 在等的派活请求：目标循环的顺序和启动重建 -----------------------------
+
+  /**
+   * 一个目标里在等或待批的派活请求（`open`、`pending`），按受理先后（请求提交游标）排。读法复用受理和领取同一次的
+   * `readDispatchFacts`（目标、已采用计划）加每个任务固定键上的暂缓；`openDispatch` 指着的那条再按键读回来。没有新索引。
+   * `pending` 不是优先项，只用来发现任务已不可服务的作废（AR-04）。
+   */
+  async function readOpenDispatches(ctx: CoreCallContext, input: { goalRef: GoalRef }):
+  Promise<ReadResult<OpenDispatchRequestV1[]>> {
+    if (!isRecord(input) || !isRecord(input.goalRef)) return invalid('listOpenDispatches requires { goalRef }');
+    const goalRef: GoalRef = { aggregateType: 'Goal', projectId: input.goalRef.projectId, goalId: input.goalRef.goalId };
+    if (!nonEmpty(goalRef.projectId) || !nonEmpty(goalRef.goalId)) return invalid('goalRef must be a complete GoalRef');
+    if (goalRef.projectId !== ctx.projectId) return rejected('forbidden', 'the Goal belongs to another project');
+    const basis = await deps.dispatchBasis.readDispatchFacts(ctx, { goalRef });
+    if (basis.status !== 'ready') return notReadyRejection(basis, 'the dispatch basis');
+    const plan = basis.value.plan;
+    if (plan === null) return { status: 'ready', value: [] };
+    const rows: { row: OpenDispatchRequestV1; since: CommitCursor }[] = [];
+    for (const task of plan.tasks) {
+      const triple: TaskTriple = { projectId: goalRef.projectId, goalId: goalRef.goalId, taskId: task.taskId };
+      const hold = await readTaskClaimHold(records, triple);
+      if (hold.status !== 'ready') return hold;
+      const pointer = hold.hold?.openDispatch ?? null;
+      if (pointer === null) continue;
+      const read = await readActionRequestRecord(records, pointer);
+      if (read.status !== 'ready') return read;
+      if (read.record === null) return rejected('unavailable', 'the open dispatch request of the Task cannot be read');
+      if (read.record.kind !== 'dispatch'
+        || (read.record.state !== 'open' && read.record.state !== 'pending')) continue;
+      rows.push({ row: { request: actionRequestSnapshotOf(read.record), goalId: read.record.task.goalId },
+        since: read.record.since });
+    }
+    rows.sort((left, right) => compareCursors(left.since, right.since));
+    return { status: 'ready', value: rows.map((entry) => entry.row) };
+  }
+
+  /**
+   * 一个项目/工作区里所有已放行在等（`open`）的派活请求（启动重建）：启动只从 `open` 重建，待批的 `pending` 不在
+   * 这里交出去。项目的 Goal 走现成的 Goal 索引，逐目标用上面那一个读口，每条带着 `task.goalId`，启动方不必按目标反查。
+   */
+  async function readOpenDispatchesInProject(ctx: CoreCallContext, input: { projectId: string; workspaceId: string }):
+  Promise<ReadResult<OpenDispatchRequestV1[]>> {
+    if (!isRecord(input) || !nonEmpty(input.projectId) || !nonEmpty(input.workspaceId)) {
+      return invalid('listOpenDispatchesInProject requires { projectId, workspaceId }');
+    }
+    if (input.projectId !== ctx.projectId) return rejected('forbidden', 'the Goal belongs to another project');
+    if (ctx.workspaceId !== undefined && input.workspaceId !== ctx.workspaceId) {
+      return rejected('forbidden', 'the dispatch requests belong to another workspace');
+    }
+    const goals = await readGoalsByProject(records, input.projectId);
+    if (goals.status !== 'ready') return goals;
+    const rows: OpenDispatchRequestV1[] = [];
+    for (const goal of goals.goals) {
+      if (goal.workspaceRef.workspaceId !== input.workspaceId) continue;
+      const found = await readOpenDispatches(hostContextIn(ctx, input.workspaceId), { goalRef: goal.ref });
+      if (found.status !== 'ready') return found;
+      rows.push(...found.value.filter(entry => entry.request.state === 'open'));
+    }
+    return { status: 'ready', value: rows };
+  }
+
   return {
     requestDispatch, requestStop,
     approve: (ctx, input) => answerRequest(ctx, input, true),
     deny: (ctx, input) => answerRequest(ctx, input, false),
     withdraw: withdrawRequest, settle: settleRequest, deliverStop, readRequest: readOneRequest,
+    listOpenDispatches: readOpenDispatches, listOpenDispatchesInProject: readOpenDispatchesInProject,
   };
 }
 
@@ -765,8 +991,18 @@ function storedLease(record: EncodedRecord): DecodeResult<TaskLeaseSnapshot> {
     : { status: 'decoded', value: body as unknown as TaskLeaseSnapshot };
 }
 
-/** 派活受理时 owner 读得到的挡着的原因：暂缓（held 的原因）、叫停卡、目标暂停。 */
-function dispatchBlockersOf(hold: TaskClaimHoldV1 | null, goal: GoalSnapshot): DispatchBlockerV1[] {
+/** 送停 owner 的确定性意图号：同一条请求的收尾 steer 只有这一个键（`deliverStop`，读投影也用它读回意图）。 */
+export function stopSteerRequestIdOf(request: Pick<ActionRequestRef, 'requestId'>): string {
+  return `action:${request.requestId}:steer`;
+}
+
+/**
+ * 派活受理时 owner 读得到的挡着的原因：暂缓（held 的原因）、叫停卡、目标暂停。动作卡和任务卡读投影也经这一处，
+ * 不另写一份；门、节点占用、线忙仍是目标循环的判断。Goal 只用到 `desiredState`，读投影传自己已读的那一小块。
+ */
+export function dispatchBlockersOf(
+  hold: TaskClaimHoldV1 | null, goal: Pick<GoalSnapshot, 'desiredState'>,
+): DispatchBlockerV1[] {
   const blockers: DispatchBlockerV1[] = (hold?.reasons ?? []).filter((reason) => reason.state === 'held')
     .map((reason) => ({ kind: 'claim_hold', reasonId: reason.id, holdKind: reason.kind, reason: reason.reason }));
   if (hold?.pendingStop != null) blockers.push({ kind: 'stop_pending', actionRef: { ...hold.pendingStop } });

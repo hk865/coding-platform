@@ -82,11 +82,12 @@ import {
 import type { RoundReviewFactV1 } from '../state/no-progress.js';
 import type { VerifiedGovernance } from './plan-commit-compiler.js';
 import type { PlanProposal, PlanProposalRef, PlanTaskPort, TaskUnknownCallReview } from '../model/plan-contracts.js';
-import type { SessionMailboxPort } from '../model/communication-contracts.js';
+import { readNoAnswerClosingNotice, type SessionMailboxPort } from '../model/communication-contracts.js';
 import type { DecisionCardV1, DecisionMessagePort } from '../model/decision-contracts.js';
 import type { PlanningQuestionReader } from './planning-question-reader.js';
 import {
-  hostContextIn, planSourceLineageOf, sentSystemRoundRef, type PlanSourceLineageDeps, type PlanSourceLineageV1,
+  candidateIsChainEnd, hostContextIn, planSourceLineageOf, sentSystemRoundRef, type CandidateSourceIncompleteV1,
+  type CandidateSuccessorRelationV1, type PlanSourceLineageDeps,
 } from './plan-lineage.js';
 import { messageOf } from '../../../contracts/error-message.js';
 import type { QueryJobPort, QueryJobRecord } from '../queries/contracts.js';
@@ -112,7 +113,7 @@ import {
   decodePlanRevisionSnapshot,
   planProposalRefKey,
   planRevisionRefKey,
-  type NoticeOriginWireV1,
+  type PlanProposalOriginWireV1,
 } from '../persistence/plan-record-codecs.js';
 import { decodeGoalPhaseSnapshot } from './completion-record-codecs.js';
 import type { GoalInterruptionRef, GoalInterruptionV1 } from '../../../contracts/goal-interruption.js';
@@ -557,7 +558,7 @@ export async function readPlan(
 }
 
 export async function readProposal(
-  records: GoalRecordTransactionPort,
+  records: RecordReadPort,
   ref: PlanProposalRef,
 ): Promise<{ status: 'ready'; proposal: PlanProposal; record: EncodedRecord; readThrough: CommitCursor | null } | Rejected> {
   const key = planProposalRefKey(ref);
@@ -574,15 +575,20 @@ export async function readProposal(
  * Slice 5 §2.5/T-R2-2: the wire-only creation origin of one stored proposal,
  * read separately from the public DTO so a replace/accept/abandon rewrites the
  * record with the SAME `since` (never rebinds). A record without `since` is
- * invalid (the creating commit binds it), and a damaged origin is `unavailable`,
- * never silently absent. A decoded origin always carries `since`
- * (plan-record-codecs.ts:1045-1047); the shared wire type's optional field only
- * covers pre-slice records.
+ * invalid (the chain's creating commit binds it), and a damaged origin is
+ * `unavailable`, never silently absent. A decoded origin always carries `since`;
+ * `createdSince` is this candidate's own creation commit and is absent only on a
+ * legacy record, which then proves no hold expiry and never falls back to
+ * `since`.
  */
 export async function readProposalOrigin(
-  records: GoalRecordTransactionPort,
+  records: RecordReadPort,
   ref: PlanProposalRef,
-): Promise<{ status: 'ready'; origin: NoticeOriginWireV1 & { since: CommitCursor }; readThrough: CommitCursor | null } | Rejected> {
+): Promise<{
+  status: 'ready';
+  origin: PlanProposalOriginWireV1 & { since: CommitCursor; createdSince?: CommitCursor };
+  readThrough: CommitCursor | null;
+} | Rejected> {
   const key = planProposalRefKey(ref);
   const read = await readBatch(records, [key]);
   if (read.status !== 'ready') return read;
@@ -746,7 +752,7 @@ export async function readRequestCandidateHead(
  * §8.2 "request head 并发").
  */
 export async function enumerateGoalCandidates(
-  records: GoalRecordTransactionPort & RecordLookupPort,
+  records: RecordReadPort & RecordLookupPort,
   goalRef: GoalRef,
   options?: { lookupPageLimit?: number; status?: PlanProposal['status'] | 'any' },
 ): Promise<{ status: 'ready'; proposals: PlanProposal[]; readThrough: CommitCursor | null } | Rejected> {
@@ -796,7 +802,7 @@ export async function enumerateGoalCandidates(
  * finished is a failure, never a short page.
  */
 export async function enumerateClosedGoalCandidates(
-  records: GoalRecordTransactionPort & RecordLookupPort,
+  records: RecordReadPort & RecordLookupPort,
   goalRef: GoalRef,
   options?: { lookupPageLimit?: number },
 ): Promise<{ status: 'ready'; proposals: PlanProposal[]; readThrough: CommitCursor | null } | Rejected> {
@@ -2664,28 +2670,31 @@ export async function readOpenResponsibilityLines(
  * O4b (v4 §5.2 (b)), KC-1 G1: the narrowest effective region adviser of one module and its region root, over the
  * shared open-link read. The project's open responsible module links of adviser lines are the claims of 7D1's
  * `effectiveRegions`; the claim whose effective modules hold the module is the narrowest (deeper same-duty claims
- * were subtracted), and its Session and `moduleRef` answer; none is `null`. A failed page, link or duty read is the
- * read's own answer, never `null`.
+ * were subtracted), and its Session, `moduleRef` and the very link that made the claim answer (a caller that guards
+ * the relation guards that link's version, never a second lookup); none is `null`. A failed page, link or duty read
+ * is the read's own answer, never `null`.
  */
 export async function readEffectiveRegionAdviser(
   records: GoalRecordTransactionPort & RecordLookupPort, ctx: CoreCallContext,
   input: { projectId: string; moduleRef: ModuleRef; catalog: AdoptedArchitecture | null },
   duty: SessionDutyReadPort,
-): Promise<ReadResult<{ session: SessionRef; region: ModuleRef } | null>> {
+): Promise<ReadResult<{ session: SessionRef; region: ModuleRef; link: SessionWorkLink } | null>> {
   const lines = await readOpenResponsibilityLines(records, ctx, { projectId: input.projectId }, duty);
   if (lines.status !== 'ready') return lines;
   const regions: RegionClaimV1[] = [];
+  const regionLinks: SessionWorkLink[] = [];
   for (const line of lines.value) {
     if (line.duty !== 'adviser' || line.link.ref.target.kind !== 'module') continue;
     regions.push({ session: line.session, duty: line.duty, moduleRef: line.link.ref.target.ref });
+    regionLinks.push(line.link);
   }
   const effective = effectiveRegions({ regions, catalog: input.catalog });
   const found = effective.findIndex((region) => region.modules.some(
     (module) => module.projectId === input.moduleRef.projectId && module.moduleId === input.moduleRef.moduleId));
-  // `effectiveRegions` maps the claims in order, so the hit's `moduleRef` is the claim's (its `modules` are sorted,
-  // and the first is not necessarily the root).
+  // `effectiveRegions` maps the claims in order, so the hit's `moduleRef` and link are the claim's (its `modules` are
+  // sorted, and the first is not necessarily the root).
   return { status: 'ready', value: found < 0 ? null
-    : { session: effective[found]!.session, region: regions[found]!.moduleRef } };
+    : { session: effective[found]!.session, region: regions[found]!.moduleRef, link: regionLinks[found]! } };
 }
 
 // --------------------------------------------------------------------------
@@ -2719,6 +2728,11 @@ export type PlanReadersDependencies = {
   questions?: Pick<PlanningQuestionReader, 'readPlanningQuestions'>;
   /** The one saved decision-answer read the card source uses. */
   decisions?: Pick<DecisionMessagePort, 'readDecisionAnswer'>;
+  /**
+   * Optional: the existing `UnknownCallReview` read. The same source-lineage walk the fresh A13 judgement takes uses
+   * it to recognize an `unknown_call` round by its formally carried Task; absent, that round is the ordinary walk.
+   */
+  readReview?: PlanSourceLineageDeps['readReview'];
   goals?: PlanGoalReads;
   checks?: PlanCheckResolver;
 };
@@ -2732,8 +2746,18 @@ export type PlanCandidatesReadV1 = {
   }[];
 };
 
+/** The Goal loop's one latest agent candidate and every candidate whose source could not be proven complete. */
+export type LatestAgentCandidateV1 = {
+  proposal: PlanProposal | null;
+  /**
+   * Every enumerated candidate whose own lineage or request-round probe was unreadable, each with its first
+   * failure. Non-empty = no automatic adoption; a decision card only applies its own entry to itself.
+   */
+  incomplete: readonly CandidateSourceIncompleteV1[];
+};
+
 export interface PlanReaders {
-  latestAgentCandidate(goalRef: GoalRef): Promise<ReadResult<PlanProposal | null>>;
+  latestAgentCandidate(goalRef: GoalRef): Promise<ReadResult<LatestAgentCandidateV1>>;
   completedFixes(goalRef: GoalRef, basedOn: PlanRevisionRef | null): Promise<ReadResult<number>>;
   planCandidates(scope: WorkspaceScope, ctx: CoreCallContext, goalRef?: GoalRef): Promise<ReadResult<PlanCandidatesReadV1>>;
   /** The installed checks' capabilities; with `proposed` (121-136), a candidate's own checks join them. */
@@ -2741,6 +2765,16 @@ export interface PlanReaders {
     Promise<ReadResult<readonly CheckCapabilityV1[] | null>>;
   planFixRead(goalRef: GoalRef, proposalRef: PlanProposalRef, revision: number): Promise<ReadResult<PlanFixReadV1>>;
   acceptedCandidatesOf(goalRef: GoalRef): Promise<ReadResult<readonly PlanProposal[]>>;
+  /** A12: every candidate of the Goal (any status) and the trusted successor relation (the one chain judgment's input). */
+  candidateSuccessorsOf(goalRef: GoalRef): Promise<ReadResult<CandidateSuccessorRelationV1>>;
+  /**
+   * A12: the Goal's abandoned chain ends, each the candidate the one chain judgment (`candidateChainEndOf`, from the
+   * chain's root) names as its abandoned tail. A candidate whose source cannot be read is named in `incomplete` and
+   * no tail is named then (any chain may hide a live branch); only a failed enumeration or Goal read fails the list.
+   */
+  abandonedCandidateTailsOf(goalRef: GoalRef): Promise<ReadResult<AbandonedCandidateTailsV1>>;
+  /** A12: the workspace's COMPLETED (not cancelled) Goals, for the restart rebuild's abandoned-reply arm. */
+  completedGoalsOf(scope: WorkspaceScope): Promise<ReadResult<readonly { goalRef: GoalRef; readThrough: CommitCursor | null }[]>>;
   readPlanReview(ctx: CoreCallContext, input: {
     goalRef: GoalRef; proposalRef: PlanProposalRef; revision: number;
   }): Promise<ReadResult<PlanReviewReadV1>>;
@@ -2769,34 +2803,79 @@ function queryJobPinOfCard(card: DecisionCardV1): QueryJobRef | null {
  * resume. Successor existence alone replaces the old candidate; the successor's
  * own terminal state is irrelevant (§6.3.1). One enumeration pass feeds this
  * set; callers that already enumerated pass their proposals here.
+ *
+ * A source lineage that cannot be read is `incomplete`, never `not_found` and
+ * never "no successor": the confirmed relations stay, the unreadable candidate
+ * stays in the list, and its first failure is named with the candidate it
+ * belongs to. An enumeration must surface this as "source incomplete" and
+ * leave the candidate to its existing card instead of adopting automatically;
+ * `planFixRead` stays strict on the first failure.
  */
+/** A12: the abandoned chain tails of one Goal and the candidates whose source could not be read this time. */
+export type AbandonedCandidateTailsV1 = {
+  tails: readonly PlanProposal[];
+  /** The live chain ends: chains not decided yet, whose later abandonment may still owe their M. */
+  pending: readonly PlanProposal[];
+  incomplete: readonly CandidateSourceIncompleteV1[];
+};
+
+export type SuccessorParentsReadV1 = {
+  parents: Set<string>;
+  /** The same relation readable forward (A12 chain end): parent proposal key → the candidates that repaired it. */
+  successors: Map<string, PlanProposal[]>;
+  failures: readonly CandidateSourceIncompleteV1[];
+};
+
 export async function successorParentsOf(
   ctx: CoreCallContext,
   deps: PlanSourceLineageDeps,
   proposals: readonly PlanProposal[],
-): Promise<ReadResult<Set<string>>> {
+): Promise<ReadResult<SuccessorParentsReadV1>> {
   const parents = new Set<string>();
+  const successors = new Map<string, PlanProposal[]>();
+  const failures: CandidateSourceIncompleteV1[] = [];
   for (const proposal of proposals) {
     if (proposal.sourceMessageRef === null) continue;
-    const lineage = await planSourceLineageOf(ctx, deps, proposal.sourceMessageRef);
-    if (lineage.status !== 'ready') return lineage;
-    if (lineage.value.fixBase !== null) parents.add(planProposalRefKey(lineage.value.fixBase.ref));
+    // B3-05: the walk reads the part the candidate's round actually read (`decision_answer` → `response`).
+    const lineage = await planSourceLineageOf(ctx, deps, proposal.sourceMessageRef, undefined, proposal.sourcePart);
+    if (lineage.status !== 'ready') {
+      failures.push({ proposalRef: proposal.ref, failure: lineage });
+      continue;
+    }
+    if (lineage.value.fixBase !== null) {
+      const parent = planProposalRefKey(lineage.value.fixBase.ref);
+      parents.add(parent);
+      successors.set(parent, [...(successors.get(parent) ?? []), proposal]);
+    }
   }
-  return { status: 'ready', value: parents };
+  return { status: 'ready', value: { parents, successors, failures } };
 }
 
 /** Builds the goal-loop readers; the factory itself never throws. */
 export function createPlanReaders(deps: PlanReadersDependencies): PlanReaders {
-  const lineageDeps = { messages: deps.messages, queries: deps.queries, plans: deps.plans };
+  // The ONE lineage dependency bag every enumeration/decision-card walk below shares: `successorParentsOf`,
+  // `completedFixes` and `planFixRead` all take it, so an unreadable review can never make one of them call a
+  // source complete while another calls it incomplete.
+  const lineageDeps: PlanSourceLineageDeps = {
+    messages: deps.messages, queries: deps.queries, plans: deps.plans,
+    ...(deps.readReview === undefined ? {} : { readReview: deps.readReview }),
+  };
 
   const sentRoundRef = (scope: WorkspaceScope, requestId: string, signal: AbortSignal) =>
     sentSystemRoundRef(deps.messages, scope, requestId, signal);
 
-  /** The source message of a round, used for the close-out fact; read where the message lives. */
+  /**
+   * The source message of a round, used for the close-out fact; read where the message lives. A committed formal
+   * `no_answer` closing notice also settles it: the planfix round ended without a reply, so the read must not keep
+   * waiting forever. The sender's own wait and deadline stay untouched (they expire on their own).
+   */
   async function roundSettled(ctx: CoreCallContext, source: SessionMessageRef): Promise<ReadResult<boolean>> {
     const message = await deps.messages.readMessage(hostContextIn(ctx, source.workspaceId), source);
     if (message.status !== 'ready') return message;
-    return { status: 'ready', value: message.value.response !== null || message.value.withdrawnAt !== null };
+    if (message.value.response !== null || message.value.withdrawnAt !== null) {
+      return { status: 'ready', value: true };
+    }
+    return readNoAnswerClosingNotice(deps.messages.readHostSendMessageRef, ctx, source);
   }
 
   /**
@@ -2878,6 +2957,25 @@ export function createPlanReaders(deps: PlanReadersDependencies): PlanReaders {
     return { status: 'ready', value: { groups, readThrough: watermark } };
   }
 
+  /** The one chain judgment's input from one Goal's candidates and their trusted successor relation. */
+  function chainRelationOf(read: { proposals: readonly PlanProposal[]; relation: SuccessorParentsReadV1 }):
+  CandidateSuccessorRelationV1 {
+    return { proposals: read.proposals, successors: read.relation.successors, failures: read.relation.failures };
+  }
+
+  /** A12: every candidate of one Goal (any status) and the one trusted successor relation over them. */
+  async function goalSuccessorRelation(goalRef: GoalRef):
+  Promise<ReadResult<{ proposals: readonly PlanProposal[]; relation: SuccessorParentsReadV1 }>> {
+    const goalRead = await readGoal(deps.records, goalRef);
+    if (goalRead.status !== 'ready') return goalRead;
+    const ctx = planReadContext({ projectId: goalRef.projectId, workspaceId: goalRead.goal.workspaceRef.workspaceId });
+    const enumerated = await enumerateGoalCandidates(deps.records, goalRef, { status: 'any' });
+    if (enumerated.status !== 'ready') return enumerated;
+    const relation = await successorParentsOf(ctx, lineageDeps, enumerated.proposals);
+    if (relation.status !== 'ready') return relation;
+    return { status: 'ready', value: { proposals: enumerated.proposals, relation: relation.value } };
+  }
+
   return {
     async latestAgentCandidate(goalRef) {
       const goalRead = await readGoal(deps.records, goalRef);
@@ -2890,19 +2988,30 @@ export function createPlanReaders(deps: PlanReadersDependencies): PlanReaders {
       // replaces it, whether that fix was written directly or through a resume.
       const successorParents = await successorParentsOf(ctx, lineageDeps, enumerated.proposals);
       if (successorParents.status !== 'ready') return successorParents;
+      // An unreadable lineage (or a failed request-round probe) keeps every candidate in the list and names its
+      // failure in `incomplete`: the Goal loop never adopts automatically while any entry is there, and each entry
+      // belongs to the candidate it names. A lineage failure wins over a probe failure for the same candidate.
+      const incomplete = new Map<string, CandidateSourceIncompleteV1>();
+      for (const entry of successorParents.value.failures) {
+        incomplete.set(planProposalRefKey(entry.proposalRef), entry);
+      }
       const candidates: PlanProposal[] = [];
       for (const proposal of enumerated.proposals) {
         if (proposal.status !== 'candidate') continue;
         // A first plan and a request-slot head are not agent candidates.
         if (proposal.basedOn === null) continue;
-        if (successorParents.value.has(planProposalRefKey(proposal.ref))) continue;
+        if (successorParents.value.parents.has(planProposalRefKey(proposal.ref))) continue;
         const request = candidateRequestRef(proposal);
         if (request !== null) {
           const job = await deps.queries.readQueryJob(ctx, request);
           if (job.status === 'ready') {
             if (isRequestRound(job.value.job)) continue;
-          } else if (job.status !== 'not_found') {
-            return job;
+          } else {
+            // Only a PROVEN request round leaves the Goal loop's candidates. A failed probe keeps the candidate
+            // and joins the "source incomplete" result, so it reaches its existing card and is never adopted
+            // automatically.
+            const key = planProposalRefKey(proposal.ref);
+            if (!incomplete.has(key)) incomplete.set(key, { proposalRef: proposal.ref, failure: job });
           }
         }
         candidates.push(proposal);
@@ -2916,7 +3025,9 @@ export function createPlanReaders(deps: PlanReadersDependencies): PlanReaders {
           latest = { proposal, position };
         }
       }
-      return { status: 'ready', value: latest === null ? null : latest.proposal };
+      return { status: 'ready', value: {
+        proposal: latest === null ? null : latest.proposal, incomplete: [...incomplete.values()],
+      } };
     },
 
     async completedFixes(goalRef, basedOn) {
@@ -2928,7 +3039,8 @@ export function createPlanReaders(deps: PlanReadersDependencies): PlanReaders {
       const rounds = new Set<string>();
       for (const proposal of enumerated.proposals) {
         if (proposal.sourceMessageRef === null) continue;
-        const lineage = await planSourceLineageOf(ctx, lineageDeps, proposal.sourceMessageRef);
+        const lineage = await planSourceLineageOf(ctx, lineageDeps, proposal.sourceMessageRef, undefined,
+          proposal.sourcePart);
         if (lineage.status !== 'ready') return lineage;
         const fixBase = lineage.value.fixBase;
         if (lineage.value.fixRound === null || fixBase === null) continue;
@@ -3068,7 +3180,10 @@ export function createPlanReaders(deps: PlanReadersDependencies): PlanReaders {
         if (enumerated.status !== 'ready') return enumerated;
         const successors = await successorParentsOf(ctx, lineageDeps, enumerated.proposals);
         if (successors.status !== 'ready') return successors;
-        const hasSuccessor = successors.value.has(planProposalRefKey(proposalRef));
+        // `planfix` needs the definite base revision: an incomplete lineage is still the original read failure.
+        const first = successors.value.failures[0];
+        if (first !== undefined) return first.failure;
+        const hasSuccessor = successors.value.parents.has(planProposalRefKey(proposalRef));
         return { status: 'ready', value: { status: hasSuccessor ? 'waiting' : 'terminal' } };
       }
     },
@@ -3081,6 +3196,35 @@ export function createPlanReaders(deps: PlanReadersDependencies): PlanReaders {
       // Every accepted candidate of the Goal, never only the active Plan's
       // version: an earlier accepted candidate's reply may still be pending.
       return { status: 'ready', value: enumerated.proposals };
+    },
+
+    async candidateSuccessorsOf(goalRef) {
+      const relation = await goalSuccessorRelation(goalRef);
+      return relation.status === 'ready' ? { status: 'ready', value: chainRelationOf(relation.value) } : relation;
+    },
+
+    async abandonedCandidateTailsOf(goalRef) {
+      const relation = await goalSuccessorRelation(goalRef);
+      if (relation.status !== 'ready') return relation;
+      const chains = chainRelationOf(relation.value);
+      return { status: 'ready', value: {
+        tails: relation.value.proposals.filter(proposal => candidateIsChainEnd(chains, proposal, 'abandoned')),
+        pending: relation.value.proposals.filter(proposal => candidateIsChainEnd(chains, proposal, 'pending')),
+        incomplete: relation.value.relation.failures,
+      } };
+    },
+
+    async completedGoalsOf(scope) {
+      if (deps.goals === undefined) return unsupportedRead('the Goal enumeration read');
+      const listed = await deps.goals.listWorkspaceGoals(scope);
+      if (listed.truncated) return incomplete('the workspace Goal enumeration was truncated');
+      const out: { goalRef: GoalRef; readThrough: CommitCursor | null }[] = [];
+      for (const goal of listed.goals) {
+        const terminal = await deps.goals.readGoalTerminalState(goal);
+        if (terminal.status !== 'ready') return terminal;
+        if (terminal.value.completed && !terminal.value.cancelled) out.push({ goalRef: goal.ref, readThrough: listed.watermark });
+      }
+      return { status: 'ready', value: out };
     },
 
     async readPlanReview(ctx, input) {

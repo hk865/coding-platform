@@ -48,7 +48,7 @@ describe('DRV goal driver person intervention on an idle line (memory)', () => {
     // unfinished and the person's action_request can claim its released Run.
     await world.scripted.script(sessionB, [
       { kind: 'calls', calls: [{ callId: 'drv-r2-b-inquiry', name: 'send_session_message',
-        args: { recipient: sessionReply.ref, text: 'D-R2 B first inquiry', intent: 'inquiry',
+        args: { recipient: sessionReply.ref, text: 'D-R2 B first inquiry',
           needsReply: true, waitAfterSend: true } }] },
       { kind: 'text', text: 'D-R2 B intervention done' },
     ]);
@@ -60,11 +60,11 @@ describe('DRV goal driver person intervention on an idle line (memory)', () => {
 
     // The person's real action_request, then A started with only its Task and
     // its model request held at the Host gate.
-    const sent = committed<{ intent?: string }>(await world.post('messages/send', graphWrite(S6A_SCOPE, {
-      recipient: sessionB.ref, text: 'D-R2 person intervenes on B', intent: 'action_request',
+    const sent = committed<{ entry?: string }>(await world.post('messages/send', graphWrite(S6A_SCOPE, {
+      recipient: sessionB.ref, text: 'D-R2 person intervenes on B', entry: 'person_intervention',
       needsReply: true, goalRef: goal, taskRef: tasks[1]!,
     }, 'drv-r2-action')), 'D-R2 the person action_request');
-    expect(sent.intent).toBe('action_request');
+    expect(sent.entry).toBe('person_intervention');
     const gateA = await world.gates.modelRequest(sessionA);
     await startTaskDriver(world, goal, tasks[0]!.taskId, 'drv-r2-a');
     await limitHold(gateA.reached, 'D-R2 A model request');

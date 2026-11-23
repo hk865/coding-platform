@@ -60,7 +60,7 @@ describe('DRV §5.1 P/T/I rows (memory)', () => {
     const sender = await sessionOf(world, sendLine);
     const recipient = await sessionOf(world, replyLine);
     const message = await sendS7BWaitingInquiry(world, { goal, session: sender, taskId: tasks[0]!.taskId,
-      label: 'drv-t', body: { recipient: recipient.ref, text: 'DRV D-T inquiry', intent: 'inquiry',
+      label: 'drv-t', body: { recipient: recipient.ref, text: 'DRV D-T inquiry',
         needsReply: true, waitAfterSend: true } });
     const sendRow = await taskRowOf((await world.post('tasks/query', plain(S6A_SCOPE, { goalRef: goal })))
       .body as ReadResult<TaskGraph>, tasks[0]!.taskId);
@@ -118,7 +118,7 @@ describe('DRV §5.1 P/T/I rows (memory)', () => {
     const sender = await sessionOf(world, sendLine);
     const recipient = await sessionOf(world, replyLine);
     const message = await sendS7BWaitingInquiry(world, { goal, session: sender, taskId: tasks[0]!.taskId,
-      label: 'drv-p3', body: { recipient: recipient.ref, text: 'DRV D-P3 inquiry', intent: 'inquiry',
+      label: 'drv-p3', body: { recipient: recipient.ref, text: 'DRV D-P3 inquiry',
         needsReply: true, waitAfterSend: true } });
     expect(message.ref.messageId.length).toBeGreaterThan(0);
     await world.scripted.script(recipient, [{ kind: 'text', text: 'DRV D-P3 reply line done' }]);
@@ -148,7 +148,7 @@ describe('DRV §5.1 P/T/I rows (memory)', () => {
     // queue drains it to `wake`, so no manual `driver.wake`.
     const before = counts.advances;
     const wake = await world.post('messages/send', graphWrite(S6A_SCOPE, { recipient: sender.ref,
-      text: 'DRV D-P3 wake commit', intent: 'notify' }, 'drv-p3-wake'));
+      text: 'DRV D-P3 wake commit', wake: false }, 'drv-p3-wake'));
     expect(wake.body).toMatchObject({ status: 'committed' });
     await expect.poll(async () => counts.advances, { timeout: 30_000, interval: 50 }).toBeGreaterThan(before);
     expect(counts.starts).toBe(1);

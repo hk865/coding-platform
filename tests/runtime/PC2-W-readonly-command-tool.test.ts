@@ -21,13 +21,12 @@ const schemaOf = (tool: ToolDefinition) => z.toJSONSchema(tool.inputSchema) as u
 /**
  * The post-SHT-1 specification, one hand-written JSON literal. Copied by hand
  * from the SHT-1 ruling §2 A3/A4 (schema shape, key order, constraints) and the
- * regenerated platform pack (every description and parameter text). RED today:
- * the tree still carries the old description and the 1000–120000 range; GREEN
- * after SHT-1 removes the range and regenerates the pack.
+ * regenerated platform pack (every description and parameter text). The texts
+ * are the current pack after SHT-1 and the P2 prompt-budget compression.
  */
 const DEFAULT_SPECIFICATION: ToolSpecification = {
   "name": "run_readonly_command",
-  "description": "Run a non-interactive bash command in a read-only bubblewrap sandbox. When the platform proxy is on (HTTP_PROXY is set in the sandbox), HTTP and HTTPS reach the public internet through it; the host machine, loopback and private networks are never reachable, and ssh and other non-HTTP connections do not work. The workspace is mounted read-only at /workspace; Host-denied paths are hidden (for example .env, credentials and the Host hidden prefixes), and ordinary .git is readable but read-only. Git can read history and diffs, but any operation that writes .git (for example commit) fails with git's own error, and a linked worktree (.git is a file) has no usable git. Commands are not stopped by time (bound one yourself with `timeout <seconds> <command>`); a cancellation replaces the captured output with empty output. Only paths under the workspace root are visible; deeper files with a protected basename are still readable, exactly as with the read tool. There is no host-shell fallback: when bubblewrap or the read-only mounts are unavailable the call fails.",
+  "description": "Run a non-interactive read-only command in a bubblewrap sandbox. It never changes files: the workspace is mounted read-only at /workspace, ordinary .git is readable but read-only, Host-denied paths are hidden, and only workspace paths are visible. There is no network except the platform HTTP proxy. When you have your own shell, use that shell instead. Commands are never stopped by time; bound one yourself. Note: a cancellation replaces the captured output with empty output.",
   "inputSchema": {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "type": "object",
@@ -35,17 +34,17 @@ const DEFAULT_SPECIFICATION: ToolSpecification = {
       "command": {
         "type": "string",
         "minLength": 1,
-        "description": "Non-interactive bash command to run in the read-only sandbox"
+        "description": "Non-interactive bash command to run"
       },
       "cwd": {
-        "description": "Workspace-relative working directory; defaults to the workspace root",
+        "description": "Workspace-relative dir; default root",
         "type": "string"
       },
       "timeoutMs": {
         "type": "integer",
         "exclusiveMinimum": 0,
         "maximum": 9007199254740991,
-        "description": "Expected duration in milliseconds; the platform never stops the command at this time and shows a command running past it to the person. Defaults to 600000."
+        "description": "Expected duration in ms; default 600000"
       }
     },
     "required": [

@@ -49,6 +49,8 @@ import { createTaskClaimService } from '../../src/core/work-graph/tasks/claim-se
 import { EXECUTION_ENTRY_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/execution-entry-codecs.js';
 import { createQueryExecution } from '../../src/core/work-graph/queries/query-execution.js';
 import { createQueryJobService } from '../../src/core/work-graph/queries/query-job-service.js';
+import { createRunSupport } from '../helpers/S2C-L-runs-support.js';
+import { planSourceRootOf } from '../helpers/task-claim-fixture.js';
 import { QUERY_JOB_RECORD_SCHEMAS } from '../../src/core/work-graph/queries/query-record-codecs.js';
 import type {
   AuthorizeConfiguration, ExecutionEntryDependencies, ExecutionEntryPort,
@@ -441,6 +443,8 @@ export async function createAdmissionFixture(kind: ClaimFixtureKind): Promise<Ad
   const claimRoles = createRoleConfigurationService({ records, now, eventId });
   let claimIdSeq = 0;
   const claimService = createTaskClaimService({ records, roles: claimRoles, now,
+    planSourceRoot: planSourceRootOf({ messages: createRunSupport(base).mailbox(), plans: base.plans,
+      queries: createQueryJobService({ records, now, eventId }) }),
     newId: () => { claimIdSeq += 1; return claimIdSeq === 1 ? 'runB' : `ad-claim-id-${claimIdSeq}`; } });
   const claimResult = await claimService.claimTask(myCtx, { input: {
     goalRef: GOAL_REF, planRef: PLAN_REF, taskId: TB.taskId, sessionRef,

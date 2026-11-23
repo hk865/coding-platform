@@ -1,7 +1,7 @@
 /** Shared pure inputs for the message record and codec rows; registers no tests. */
 import type { ArtifactRef } from '../../src/contracts/artifact.js';
 import type { SourceRefV1 } from '../../src/contracts/dispatch.js';
-import type { MessageRecipient, SessionMessageRef } from '../../src/contracts/core/session-message.js';
+import type { MessageEntryV1, MessageRecipient, SessionMessageRef } from '../../src/contracts/core/session-message.js';
 import type { MessageHostSenderRecord, MessageSecretaryRoundSenderRecord, NewSessionMessageInput } from '../../src/core/work-graph/state/message-machine.js';
 
 const PROJECT = 'P'; const WORKSPACE = 'W'; const AT = '2026-10-25T00:00:00.000Z';
@@ -11,10 +11,16 @@ const SOURCE: SourceRefV1 = { kind: 'workspace', refId: WORKSPACE, revision: '1'
 const BODY: ArtifactRef = { kind: 'artifact', contentType: 'text/plain', digest: 'd', sizeBytes: 1, source: SOURCE };
 const HOST: MessageHostSenderRecord = { kind: 'host', actor: { kind: 'human', id: 'operator' } };
 
-export function s7aRecordInput(overrides: Partial<NewSessionMessageInput> = {}): NewSessionMessageInput {
+/**
+ * The Host send's record input. `entry` is the one optional field the constructor writes only when present; omitted,
+ * the key is absent from the input (never `entry: undefined`). `overrides` stays the escape hatch for the other fields.
+ */
+export function s7aRecordInput(overrides: Partial<NewSessionMessageInput> = {},
+  entry?: MessageEntryV1): NewSessionMessageInput {
   return {
     ref: MESSAGE_REF, sender: HOST, recipient: RECIPIENT, bodyRef: BODY, sourceRef: SOURCE,
-    createdAt: AT, intent: null, needsReply: false, waitAfterSend: false, ...overrides,
+    createdAt: AT, needsReply: false, waitAfterSend: false,
+    wake: true, answeredBy: 'line', ...(entry === undefined ? {} : { entry }), ...overrides,
   };
 }
 

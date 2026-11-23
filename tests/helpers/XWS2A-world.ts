@@ -116,7 +116,7 @@ export type XWS2AWorld = {
 };
 
 export const XWS2A_ADVISER_TOOLS = ['read', 'send_session_message', 'respond_session_message', 'read_session_inbox',
-  'read_session_message', 'read_session_message_body', 'ack_session_message', 'withdraw_session_message',
+  'read_session_message', 'read_session_message_body', 'withdraw_session_message',
   'create_member', 'look_graph', 'find_graph', 'read_requests', 'record_note',
   'propose_architecture_revision'] as const;
 
@@ -279,6 +279,12 @@ export async function refineRound(ws: S6ACardsWorkspace, goal: GoalRef, label: s
     { goalRef: goal, basedOn: null, draft, reason: { text: label, sources: [] } }, `${label}-propose`)), 'committed', label);
   valueOf(await ws.post('plans/apply', graphWrite(ws.scope, { proposalRef: proposed.ref,
     expectedProposalRevision: proposed.revision, decisionRefs: [] }, `${label}-apply`)), 'committed', label);
+  // P2 2.7 (`p2-frozen.md:243`) deleted the Host's release pass, which used to run the Goal's selection by itself.
+  // A Goal with no adviser yet takes its queue adviser in one selection pass (L33, `goal_queue`) and waits on the
+  // Session/Goal records that pass changed; this pass stands for that Host pass, and `sendRoundOf` is the wake after it.
+  const first = await ws.route('workflow/advance', { schemaVersion: 1, goalRef: goal, flowId: label, sessionHint: null,
+    kind: 'select_work' } satisfies WorkflowAdvanceInput) as WorkflowAdvanceResult;
+  if (first.status !== 'ready') return null;
   return (await sendRoundOf(ws, goal, label))?.recipient ?? null;
 }
 

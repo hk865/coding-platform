@@ -54,6 +54,7 @@ import { createSessionResponsibilityService } from '../../src/core/work-graph/se
 import { createSessionResponsibilityBasisReader } from '../../src/core/work-graph/tasks/plan-readers.js';
 import { createPlanService } from '../../src/core/work-graph/tasks/plan-service.js';
 import { createQueryJobService } from '../../src/core/work-graph/queries/query-job-service.js';
+import { planSourceRootOf } from './task-claim-fixture.js';
 import { createInitializationBindingReader } from '../../src/core/work-graph/tasks/goal-confirm-service.js';
 import { DEFAULT_TASK_AUTOMATION_POLICY } from '../../src/contracts/task-requeue.js';
 import { createTaskClaimService } from '../../src/core/work-graph/tasks/claim-service.js';
@@ -407,6 +408,8 @@ export async function openLineFixture(kind: ClaimFixtureKind): Promise<LineFixtu
     const newId = options.newId ?? (() => `s2c-l-claimwith-${++ids}`);
     const service = createTaskClaimService({ records: base.records,
       roles: createRoleConfigurationService({ records: base.records, now, eventId: () => `s2c-l-claimwith-event-${++ids}` }),
+      planSourceRoot: planSourceRootOf({ messages: runs.mailbox(), plans: base.plans,
+        queries: createQueryJobService({ records: base.records, now, eventId: () => `s2c-l-claimwith-query-${++ids}` }) }),
       now, newId });
     const goalRead = await base.plans.queryGoal(ctx, goalRef);
     if (goalRead.status !== 'ready') throw new Error('S2C-L goal read failed');
@@ -671,7 +674,7 @@ export async function waitingRun(f: LineFixture, input: {
   const started = await steps.start(claim.claim, { at: CLAIM_FIXTURE_AT, tools: ['read', 'send_session_message',
     'respond_session_message'], replies: [{ kind: 'calls', calls: [{ callId: `s2c-11-send-${input.label}`,
       name: 'send_session_message', args: { recipient: input.recipient, text: `S2C-11 ${input.label}`,
-        intent: 'inquiry', needsReply: true, waitAfterSend: true } }] }] });
+        needsReply: true, waitAfterSend: true } }] }] });
   started.release();
   await started.settled;
   return { claim, steps };

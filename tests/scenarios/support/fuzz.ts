@@ -73,8 +73,8 @@ import { VerificationWorkspaceReader } from '../../../src/core/workspace/verific
 import type { ModelRequest } from '../../../vendor/coding-agent/dist/public-api.js';
 import { moveKernelAside } from '../../helpers/A2-restart-fixture.js';
 import {
-  AG2B_CONSUMER_ID, AG2B_GATE_TASK_ID, AG2B_GOAL_REF, AG2B_QUERY_BUDGET, AG2B_QUERY_ROLE, AG2B_QUERY_ROLE_BINDING, AG2B_RESULT_FILE,
-  AG2B_RESULT_TEXT, AG2B_RUNTIME_BUDGET, AG2B_SCOPE, AG2B_WORK_TASK_ID, createAG2bSession, graphWrite, plain,
+  AG2B_GATE_TASK_ID, AG2B_GOAL_REF, AG2B_QUERY_ROLE, AG2B_RESULT_FILE,
+  AG2B_RESULT_TEXT, AG2B_SCOPE, AG2B_WORK_TASK_ID, createAG2bSession, graphWrite, plain,
 } from '../../helpers/AG2b-collaboration-fixture.js';
 import { B2_AT, B2_HOST, type B2ExecutionFixture } from '../../helpers/B2-execution-fixture.js';
 import type { ScriptedReply } from '../../helpers/B2-runtime-fixture.js';
@@ -84,6 +84,7 @@ import {
   type InvariantWorld,
 } from '../../state/invariants.js';
 import { hostCtx, openHostScenario, stepOfReceipt, workRunCtx, type HostScenario, type Platform } from '../harness.js';
+import { wakeLineRound } from './brief.js';
 import { authorizeWithoutBegin, openWorkRoot, ownerStep } from './common.js';
 import { storeDirOf } from '../../helpers/KLS1B-host-store.js';
 import { knowledgeLinesOfRoots, knowledgeLinesOver } from '../../helpers/KLS2-knowledge-lines.js';
@@ -700,7 +701,7 @@ export class HostFuzz {
         const recipient = this.recipient!;
         setCalls(reply, [{ callId: `fuzz-${index}-send`, name: 'send_session_message', args: {
           recipient: { projectId: recipient.projectId, sessionId: recipient.sessionId },
-          text: `fuzz question ${index}: which marker does src/module.ts export?`, intent: 'inquiry', needsReply: true, waitAfterSend: true } }]);
+          text: `fuzz question ${index}: which marker does src/module.ts export?`, needsReply: true, waitAfterSend: true } }]);
         return;
       }
       case 'final':
@@ -1954,14 +1955,17 @@ export class HostFuzz {
     this.record(`workspace: ${what}`);
   }
 
-  /** Answers a wait message through the formal consultation (the query model), as its recipient. */
+  /**
+   * Answers a wait message as its recipient line: P2 (p2-frozen.md:133; design-frozen.md:210, :262) the line's own
+   * woken round (`wakeLineRound`), never a copy. The state is the message's after the round: `responded`, or the
+   * round's own ending (`no_answer`, a refusal such as a paused or interrupted Goal).
+   */
   private async opReply(): Promise<void> {
     const waits = this.world().messages.filter((message) => message.status !== 'responded' && message.waitAfterSend === true);
     const message = this.rng.pick(waits);
-    const answer = await this.h.answer('workflow/consultation', plain(AG2B_SCOPE, { schemaVersion: 1, messageRef: message.ref,
-      goalRef: AG2B_GOAL_REF, roleBinding: AG2B_QUERY_ROLE_BINDING, runtimeBudget: AG2B_RUNTIME_BUDGET, budget: AG2B_QUERY_BUDGET,
-      consumerId: AG2B_CONSUMER_ID }));
-    const state = ((answer['value'] ?? {}) as { state?: string }).state ?? outcomeOf(answer);
+    const woken = await wakeLineRound(this.h, message.ref, `fuzz line reply ${this.operation}`);
+    const read = await this.h.answer('messages/read', plain(AG2B_SCOPE, message.ref));
+    const state = ((read['value'] ?? {}) as { status?: string }).status === 'responded' ? 'responded' : woken.status;
     this.counts.add(`reply:${state}`);
     this.record(`reply to message ${message.ref.messageId}: ${state}`);
     await this.gate.check('consultation reply');

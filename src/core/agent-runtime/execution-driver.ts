@@ -83,9 +83,10 @@ export type ExecutionDriverDependencies = Pick<RuntimeExecutionDependencies,
   | 'sourceAuthority' | 'sourcePolicyFor' | 'sourceAnalyzers' | 'host' | 'kernel' | 'resourceCaps' | 'commandSlots'
   | 'commandSandbox' | 'runningCommands' | 'now' | 'newId'
   | 'modelRequests' | 'roles' | 'materials' | 'bodies' | 'plans' | 'messages' | 'expiryCount' | 'decisionMessages' | 'applicationReceipt'
+  | 'deliveryFacts' | 'gateNotes' | 'systemRounds'
   | 'memberCreation' | 'handoffs' | 'maintainerAssignments' | 'roleSplit' | 'architectureProposals'
   | 'claims' | 'evidence'
-  | 'sessions' | 'runReconcile'
+  | 'runReconcile'
   | 'graphHistory' | 'graphContext' | 'taskInputs' | 'unknownCallReviews'
   | 'commandRerunRequests' | 'commandRecognizer' | 'admission' | 'pythonSyntax' | 'workRunRefsOf'> & {
   /** Slice 4C: the SAME `platform.notes` ports the note tools call. */
@@ -591,7 +592,6 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
           mailbox: deps.messages !== undefined,
           decisionMessages: deps.decisionMessages !== undefined,
           applicationReceipt: deps.applicationReceipt !== undefined,
-          sessions: deps.sessions !== undefined,
           plans: deps.plans !== undefined,
           graph: graphDeps !== undefined,
           notes: deps.notes?.write !== undefined && deps.notes?.check !== undefined,
@@ -669,7 +669,6 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
         ...(deps.memberCreation === undefined ? {} : { memberCreation: deps.memberCreation }),
         claims: deps.claims,
         ...(deps.evidence === undefined ? {} : { evidence: deps.evidence }),
-        sessions: deps.sessions,
         plans: deps.plans,
         ...(deps.mainWorkspaceOf === undefined ? {} : { mainWorkspaceOf: deps.mainWorkspaceOf }),
         context: toolContext,
@@ -1258,14 +1257,16 @@ export function createExecutionDriver(deps: ExecutionDriverDependencies): Execut
             ? createControlOnlyInputSupply(controlInputsFor)
             : deps.messages === undefined ? undefined : createMailboxInputSupply({
               messages: deps.messages,
+              deliveryFacts: deps.deliveryFacts,
               context: () => toolContext,
               sessionRef,
-              runRef,
               controlInputs: controlAndLinkBreakInputsFor,
               // The whole continuation: a saved reply, an expiry claim, or an
               // intervention that carries no reply.
               ...(record.run.consumedWait === undefined ? {} : { consumedWait: record.run.consumedWait }),
               ...(deps.expiryCount === undefined ? {} : { expiryCount: deps.expiryCount }),
+              ...(deps.gateNotes === undefined ? {} : { gateNotes: deps.gateNotes }),
+              ...(deps.systemRounds === undefined ? {} : { systemRounds: deps.systemRounds }),
               texts: promptTexts.value,
               toolNames: manifest.promptSet.toolNames,
             });

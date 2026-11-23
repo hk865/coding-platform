@@ -39,7 +39,7 @@ describe('V-D04: the intervention claim keeps the line\'s wait', () => {
     const recipient = await sessionOf(world, await createS6BLine(main, { label: 'v-d04-recipient',
       role: S6A_WORK_ROLE }));
     const inquiry = (callId: string, text: string) => ({ kind: 'calls' as const, calls: [{ callId,
-      name: 'send_session_message', args: { recipient: recipient.ref, text, intent: 'inquiry' as const,
+      name: 'send_session_message', args: { recipient: recipient.ref, text,
         needsReply: true, waitAfterSend: true } }] });
     // The first Run yields on wait A; the intervention Run (after the claim) yields on its own inquiry, so the
     // sender's Task stays dispatchable for A's reply and no Work is completed here.
@@ -56,8 +56,8 @@ describe('V-D04: the intervention claim keeps the line\'s wait', () => {
 
     // The person's message on the waiting Task and line (Part B 8's `messages/send` step).
     const person = committed<SessionMessage>(await world.post('messages/send', graphWrite(S6A_SCOPE, {
-      recipient: sender.ref, text: 'S7B3 V-D04 person intervention', intent: 'action_request',
-      goalRef: goal, taskRef: tasks[0],
+      recipient: sender.ref, text: 'S7B3 V-D04 person intervention', entry: 'person_intervention',
+      needsReply: true, goalRef: goal, taskRef: tasks[0],
     }, 's7b3-v-d04-person')), 'the V-D04 person message');
 
     // The one Host call: the unfinished Task is claimed with the `intervention` arm, not a reply-wait continuation.

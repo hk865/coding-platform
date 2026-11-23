@@ -8,8 +8,8 @@
  * internal fact scan is 100/page and at most 25 pages; a scan that does not
  * finish is `incomplete/session_facts_page_limit:` and never a fabricated
  * "not waiting". `latestWork` is the max `claim.generation`, not the last page
- * row. `waits` is every open/answered/expired released inquiry this Session
- * sent, oldest `since` first; `wait` is the first of those whose own Run really
+ * row. `waits` is every open/answered/expired wait this Session sent, oldest
+ * `since` first; `wait` is the first of those whose own Run really
  * yielded on it (yielded, no cancel control pointer, continuation on the same
  * message). A saved reply that was not consumed yet still waits.
  */
@@ -42,7 +42,7 @@ import {
 import { runControlNodeOf } from '../state/run-machine.js';
 import { sameRef } from '../state/ref-equality.js';
 import {
-  WAIT_INTENTS, isWaitMessage, messageConsumptionProblem, messageFactsOfRecord, waitFactsOfRecord, waitStateOf,
+  isWaitMessage, messageConsumptionProblem, messageFactsOfRecord, waitFactsOfRecord, waitStateOf,
 } from '../state/message-machine.js';
 import {
   QUERY_RUN_BY_SESSION_LOOKUP, SESSION_BY_PROVENANCE_LOOKUP, WORK_EXECUTION_BY_SESSION_LOOKUP,
@@ -312,27 +312,27 @@ export function createSessionFactsService(stores: SessionFactsStores): SessionFa
         if (latestWork === null || claim.generation > latestWork.generation) latestWork = claim;
       }
 
-      // Waits: one sender Session's inquiries, oldest `since` first. The ordered
-      // index pages by its own `{order, refKey}`; a page-budget hit is
-      // `incomplete`, never "no wait".
+      // Waits: one sender Session's inquiries, oldest `since` first. The wait
+      // index's two boolean key parts cannot be read through `lookupOrdered`
+      // (its values are non-empty strings), so the plain equality lookup names
+      // the stored `waitAfterSend && needsReply` tuple directly; the candidate
+      // page-budget hit is `incomplete`, never "no wait".
       const decodedWaits: { message: SessionMessage; record: EncodedRecord }[] = [];
-      for (const intent of WAIT_INTENTS) {
-        const waitWindow = await readLookupWindow(records, {
-          kind: 'ordered', index: S7B_WAITS_BY_SENDER_SESSION_LOOKUP,
-          values: [scope.projectId, scope.workspaceId, scope.sessionId, intent],
-        });
-        if (waitWindow.status !== 'ready') return waitWindow.rejection;
-        if (waitWindow.budgetHit) {
-          return incomplete(`session_facts_page_limit: the wait scan of Session ${scope.sessionId} did not finish`);
+      const waitWindow = await readLookupWindow(records, {
+        kind: 'plain', index: S7B_WAITS_BY_SENDER_SESSION_LOOKUP,
+        values: [scope.projectId, scope.workspaceId, scope.sessionId, true, true],
+      });
+      if (waitWindow.status !== 'ready') return waitWindow.rejection;
+      if (waitWindow.budgetHit) {
+        return incomplete(`session_facts_page_limit: the wait scan of Session ${scope.sessionId} did not finish`);
+      }
+      watermark = laterCursor(watermark, waitWindow.readThrough);
+      for (const record of waitWindow.records) {
+        const decoded = decodeSessionMessageRecord(record);
+        if (decoded.status !== 'decoded') {
+          return unavailable(`the wait message ${record.refKey} is damaged: ${decoded.reason}`);
         }
-        watermark = laterCursor(watermark, waitWindow.readThrough);
-        for (const record of waitWindow.records) {
-          const decoded = decodeSessionMessageRecord(record);
-          if (decoded.status !== 'decoded') {
-            return unavailable(`the wait message ${record.refKey} is damaged: ${decoded.reason}`);
-          }
-          decodedWaits.push({ message: decoded.value, record });
-        }
+        decodedWaits.push({ message: decoded.value, record });
       }
       // A forwarded tail is not a second root: every ref some candidate names as
       // `transferredTo` is reached by walking its own root, not started again.
@@ -347,8 +347,8 @@ export function createSessionFactsService(stores: SessionFactsStores): SessionFa
         if (transferredRefs.has(sessionMessageRefKey(message.ref))) continue;
         const chain = await liveWaitMessage((ref) => readWaitMessage(records, ctx.signal, ref), message);
         if (chain.status !== 'ready') return chain;
-        // The index narrows only by `intent`; the remaining residual is judged on
-        // the live tail after the walk, and `waits` keeps one row per root.
+        // The index narrows by the stored wait flags; the remaining residual is
+        // judged on the live tail after the walk, and `waits` keeps one row per root.
         const row = readWaitRow(chain.root, chain.tail, chain.complete);
         if (row === null) continue;
         if (messageConsumptionProblem(messageFactsOfRecord(chain.tail)) !== null) continue;

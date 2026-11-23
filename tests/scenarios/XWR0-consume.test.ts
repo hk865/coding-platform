@@ -26,7 +26,12 @@ vi.mock('../../src/core/work-graph/views/consumable-sessions.js', async importOr
   const real = await importOriginal<typeof import('../../src/core/work-graph/views/consumable-sessions.js')>();
   return { ...real, createConsumableSessions: (deps: ConsumableSessionsDependencies) => real.createConsumableSessions({
     ...deps, messages: { readMessage: (...args) => deps.messages.readMessage(...args),
-      readOutbox: (...args) => deps.messages.readOutbox!(...args), async readInbox(ctx, input) {
+      readMessageBody: (...args) => deps.messages.readMessageBody(...args),
+      readOutbox: (...args) => deps.messages.readOutbox!(...args),
+      // P2 2.3 (`p2-frozen.md:130`): the page proves a Host system round by the Host's sent receipt; pass it through.
+      ...(deps.messages.readHostSendMessageRef === undefined ? {}
+        : { readHostSendMessageRef: (...args) => deps.messages.readHostSendMessageRef!(...args) }),
+      async readInbox(ctx, input) {
         if (ctx.signal === armed.abort?.signal) armed.abort?.abort();
         if (!armed.unreadable.has(input.recipient.sessionId)) return await deps.messages.readInbox(ctx, input);
         return { status: 'rejected', code: 'unavailable', reason: 'XWR0: the inbox is unreadable' };
@@ -54,7 +59,7 @@ const readyPage = async (host: S6AHostWorld) => {
 };
 const send = async (host: S6AHostWorld, recipient: SessionRef, label: string): Promise<SessionMessageRef> =>
   valueOf<SessionMessage>((await host.post('messages/send', graphWrite(S6A_SCOPE, { recipient, text: `${label}: plan this`,
-    intent: 'action_request', needsReply: true, goalRef: host.goals.first }, label))).body, 'committed', label).ref;
+    entry: 'person_intervention', needsReply: true, goalRef: host.goals.first }, label))).body, 'committed', label).ref;
 const dispatched = async (host: S6AHostWorld, ref: SessionMessageRef, passes: number): Promise<boolean> =>
   (await heartbeatUntil(host, () => readPlanningQuery(host, ref), query => query !== null, passes)) !== null;
 
@@ -101,11 +106,22 @@ it('R0-4 a page read cancelled in the middle of its walk is answered cancelled, 
 it('R0-5 after the cold start the exploration please-act is settled and a later refine round on that line is dispatched', async () => {
   const cold = await opened(openS7D2ColdStartWorld(fast));
   await cold.walkToCompleted();
+  // A-13/P2: the new Goal gets the cold start's opening adviser seat through the public queue, so the refine round
+  // has a real line (the old call read `refineRound`'s `null` as a recipient).
   const goal = (await cold.main.createGoal('r05-goal', 'R0-5 goal')).ref;
-  const inbox = await listed(cold.host, 'inbox', { ref: (await refineRound(cold.main, goal, 'r05-round'))! } as S6ASession);
+  const queue = valueOf<{ revision: number }>(await cold.main.route('goals/adviser-queue', {}),
+    'ready', 'the adviser queue');
+  valueOf(await cold.main.post('goals/adviser-queue/assign', graphWrite(S6A_SCOPE, { goalRef: goal,
+    adviser: cold.lines.adviser.ref, expectedRevision: queue.revision }, 'r05-assign')), 'committed', 'the Goal adviser');
+  const lineRef = await refineRound(cold.main, goal, 'r05-round');
+  if (lineRef === null) throw new Error('R0-5: the cold-start Goal has no adviser line for its refine round');
+  const inbox = await listed(cold.host, 'inbox', { ref: lineRef } as S6ASession);
   const pleaseActs = inbox.filter(message => message.sender.kind === 'host' && message.sender.actor.kind === 'system'
-    && message.intent === 'action_request' && message.goalRef === null);
+    && message.goalRef === null);
   expect(pleaseActs.length).toBeGreaterThan(0);
-  expect(pleaseActs.filter(message => message.response === null && message.withdrawnAt === null)).toEqual([]);
+  // P2 (`p2-frozen.md:165/:168`): a consumed please-act may end unanswered; only an unconsumed, un-withdrawn one is
+  // a leak.
+  expect(pleaseActs.filter(message => message.withdrawnAt === null && message.response === null
+    && (message.acceptedInputs ?? []).length === 0 && message.readAt === null)).toEqual([]);
   expect(await dispatched(cold.host, inbox.find(message => message.goalRef?.goalId === goal.goalId)!.ref, 6)).toBe(true);
 }, 240_000);

@@ -1,22 +1,19 @@
 /**
  * L-host-gates: `consumeIdle`'s INBOX and OUTBOX reads with one real `inputConsumers` period; the all-Session
- * walk reaches the sending Work line and the two secretary recipients. The table has one row per cell:
+ * walk reaches the sending Work line and the secretary recipient. P2 replaces the message-release gate with the
+ * action gate:
  *
  * | cell | send | state before the Host reads |
  * |------|------|-----------------------------|
- * | inbox awaiting | Work Run `action_request`, `every_step` | release `awaiting` |
- * | inbox withdrawn | the person's `messages/send` | release `null`, then `messages/withdraw` |
- * | inbox released | the person's `messages/send` | release `null` |
- * | outbox awaiting | a Work Run `action_request`, `every_step` | release `awaiting`, real Work reply saved |
- * | outbox withdrawn | a Work Run inquiry at `after_plan_confirmation` | release `released`, then withdrawn, real Work reply saved |
+ * | inbox inquiry | the person's `messages/send` | `wake` and `needsReply`, no release |
+ * | dispatch | the secretary request round's `dispatch_task` | `action_release` card pending, no message |
  *
- * The person also sends a released control; each cell's result is the one rule's. The replies are real
- * `respond_session_message` calls through real Runs. A3 wraps `platform.workflow.consumeConsultation` and waits for
- * the real calls to complete; A4 shares ONE real memory records backend and body store across the world's Host
- * starts, so `reopen({ sharedMemoryStore: true })` restarts the same store on the same directory.
+ * The card is read back at `decisions/queue` (never a hand-coded cardKey), and the dispatch must not appear as an
+ * ordinary message in the recipient's inbox. The Host's own consume pass is the completion barrier.
  */
 import { afterEach, expect, it, vi } from 'vitest';
 import type { SessionMessage } from '../../src/core/work-graph/model/communication-contracts.js';
+import type { DecisionQueueReadV1 } from '../../src/core/work-graph/model/decision-contracts.js';
 import { advanceUntil, driveWorkflow } from '../helpers/A2-restart-fixture.js';
 import { graphWrite, plain } from '../helpers/AG2b-collaboration-fixture.js';
 import { s6aCardsWorkspace } from '../helpers/S6A-cards-fixture.js';
@@ -25,7 +22,7 @@ import {
   S6A_SCOPE, S6A_SECRETARY_PROFILE_ID, S6A_SECRETARY_ROLE, type S6ASession,
 } from '../helpers/S6A-request-fixture.js';
 import { adoptS6BPlan, createS6BLine, governS6B } from '../helpers/S6B1-fixture.js';
-import { committed, ready, replyS7AMessage, setS7AAutonomy } from '../helpers/S7A-fixture.js';
+import { committed, holdS7AQueryRound, ready, replyS7AMessage, setS7AAutonomy } from '../helpers/S7A-fixture.js';
 import { listed } from '../helpers/S7B-fixture.js';
 
 // A4: one real in-memory records backend and one real body store, shared by every Host start; the backend's `close`
@@ -68,7 +65,7 @@ async function pumpUntil(world: S6AHostWorld, reached: Promise<void>, beats = 12
 /** The person's own send: `release: null`, the only release a public owner writes. */
 const sendAsPerson = async (world: S6AHostWorld, recipient: S6ASession, label: string,
   text: string): Promise<SessionMessage> => committed<SessionMessage>(await world.post('messages/send',
-  graphWrite(S6A_SCOPE, { recipient: recipient.ref, text, intent: 'inquiry', needsReply: true,
+  graphWrite(S6A_SCOPE, { recipient: recipient.ref, text, needsReply: true,
     goalRef: world.goals.first }, label)),
 'control');
 const withdrawAsPerson = async (world: S6AHostWorld, messageRef: SessionMessage['ref'], label: string):
@@ -76,12 +73,12 @@ Promise<SessionMessage> => committed<SessionMessage>(await world.dispatch('messa
   graphWrite(S6A_SCOPE, { messageRef }, label)), 'withdrawal');
 /** A3: forward every real consume unchanged; record it after it COMPLETES and resolve the named barrier. */
 function consumptionBarrier(workflow: S6AHostWorld['platform']['workflow']) {
-  const consumed: Array<{ messageId: string; part: 'message' | 'response' | undefined }> = [];
+  const consumed: Array<{ messageId: string }> = [];
   const waiters: Array<{ ids: Set<string>; resolve: () => void }> = [];
   const real = workflow.consumeConsultation!;
   workflow.consumeConsultation = async (ctx, input) => {
     const result = await real(ctx, input);
-    consumed.push({ messageId: input.messageRef.messageId, part: input.part });
+    consumed.push({ messageId: input.messageRef.messageId });
     for (const waiter of [...waiters]) {
       if ([...waiter.ids].every(id => consumed.some(entry => entry.messageId === id))) waiter.resolve();
     }
@@ -110,127 +107,43 @@ async function replyRun(world: S6AHostWorld, recipient: S6ASession, messageRef: 
     text: `the ${label} reply` });
 }
 
-it('the Host skips the awaiting and withdrawn cells and consumes only the released controls', async () => {
+it('gates a dispatch on an action_release card and consumes an ordinary inquiry', async () => {
   const world = await openS6AHostWorld({ backend: 'memory', secretaryWork: true,
-    secretaryTools: ['read', 'send_session_message', 'respond_session_message'] });
+    secretaryTools: ['read', 'send_session_message', 'respond_session_message', 'dispatch_task'] });
   worlds.push(world);
   const main = s6aCardsWorkspace(world, S6A_SCOPE);
   await world.setResumeOnStartup(false);
   await governS6B(world, main, world.goals);
   const goal = world.goals.first;
   const { tasks } = await adoptS6BPlan(main, goal, { label: 's7a-gate',
-    taskIds: ['s7a-gate-awaiting-send', 's7a-gate-withdrawn-send'], role: S6A_SECRETARY_ROLE.templateId });
+    taskIds: ['s7a-gate-dispatch'], role: S6A_SECRETARY_ROLE.templateId });
   const made = await createS6BLine(main, { label: 's7a-gate-sender', role: S6A_SECRETARY_ROLE, tasks });
   const senderCard = await world.readSession(made.ref);
   const sender: S6ASession = { ...made, aggregateRef: senderCard.record.ref,
     role: structuredClone(senderCard.record.role), createdAt: senderCard.record.createdAt };
-  const awaiting = await world.createSecretary('s7a-gate-awaiting');
-  const withdrawn = await world.createSecretary('s7a-gate-withdrawn');
-  const scan1 = await world.createSecretary('s7a-gate-scan-1');
-  const scan2 = await world.createSecretary('s7a-gate-scan-2');
-  const basis = (await world.dispatch('goals/dispatch-basis', world.humanContext(),
-    plain(S6A_SCOPE, { goalRef: goal })) as { status: string; value?: Record<string, unknown> }).value;
-  // Two outbox cells in one table, one loop: the Work Run's action_request left awaiting by `every_step`, and an
-  // inquiry released at `after_plan_confirmation`, withdrawn before any reply.
-  const outboxCells = [
-    { label: 'awaiting-send', task: tasks[0]!.taskId, recipient: awaiting, autonomy: 'every_step' as const,
-      text: 'S7A gate awaiting', args: { intent: 'action_request' as const, needsReply: true, expected: basis },
-      release: 'awaiting', pinned: true, withdraw: false },
-    { label: 'withdrawn-send', task: tasks[1]!.taskId, recipient: withdrawn,
-      autonomy: 'after_plan_confirmation' as const, text: 'S7A gate withdrawn',
-      args: { intent: 'inquiry' as const, needsReply: true }, release: 'released', pinned: false, withdraw: true },
-  ];
-  const outboxSent: SessionMessage[] = [];
-  for (const cell of outboxCells) {
-    await setS7AAutonomy(world, goal, cell.autonomy);
-    await sendRun(world, sender, cell.task, cell.label, [{ callId: `s7a-gate-${cell.label}`,
-      name: 'send_session_message', args: { recipient: cell.recipient.ref, text: cell.text, ...cell.args } }]);
-    const message = (await listed(world, 'inbox', cell.recipient)).find(item => item.sender.kind === 'work_run');
-    if (message === undefined) throw new Error(`S7A: the Work Run sent no ${cell.label} cell`);
-    expect(message).toMatchObject({ release: cell.release, withdrawnAt: null });
-    if (cell.pinned) expect(message.pins).not.toBeNull();
-    if (cell.withdraw) expect(await withdrawAsPerson(world, message.ref, `s7a-gate-withdraw-${cell.label}`))
-      .toMatchObject({ withdrawnAt: expect.any(String) });
-    outboxSent.push(message);
-  }
-  const awaitingSent = outboxSent[0]!;
-  const withdrawnSent = outboxSent[1]!;
-  // The inbox cell is withdrawn BEFORE the consumer reads it and is the person's own (release null).
-  const inboxWithdrawn = await sendAsPerson(world, withdrawn, 's7a-gate-inbox-withdrawn', 'S7A gate inbox withdrawn');
-  expect(inboxWithdrawn).toMatchObject({ release: null, withdrawnAt: null });
-  expect(await withdrawAsPerson(world, inboxWithdrawn.ref, 's7a-gate-withdraw-inbox'))
-    .toMatchObject({ withdrawnAt: expect.any(String) });
-  // Both outbox cells get the recipient's real Work reply (a real Run calling `respond_session_message`).
-  const replyPlan = await adoptS6BPlan(s6aCardsWorkspace(world, S6A_SCOPE), world.goals.second,
-    { label: 's7a-gate-replies', taskIds: ['s7a-gate-reply-awaiting', 's7a-gate-reply-withdrawn'],
-      role: S6A_SECRETARY_ROLE.templateId });
-  await replyRun(world, awaiting, awaitingSent.ref, replyPlan.tasks[0]!.taskId, 'awaiting');
-  await replyRun(world, withdrawn, withdrawnSent.ref, replyPlan.tasks[1]!.taskId, 'withdrawn');
-  // The sending line is idle: the last Run ended and the Session is unoccupied.
-  const senderNow = await world.readSession(sender.ref);
-  expect({ availability: senderNow.availability, occupancy: senderNow.record.occupancy }).toEqual(
-    { availability: 'idle', occupancy: null });
-  const lastRun = senderNow.record.lastExecutionRef;
-  if (lastRun?.aggregateType !== 'Run') throw new Error('S7A: the sending line has no last Run');
-  expect(ready<{ run: { status: string } }>(await world.post('executions/read', plain(S6A_SCOPE, lastRun)),
-    'the last Run')).toMatchObject({ run: { status: 'ended' } });
-  // A4: a real same-store reopen — the same records, bodies and directory; the consumers are a start option.
-  // One 25 ms consumer is the period only: the all-Session walk reaches every gate cell, not three named lines.
-  await world.reopen({ sharedMemoryStore: true, extraHostOptions: { inputConsumers: [{
-    scope: S6A_SCOPE, sessionRef: awaiting.ref, goalRef: goal, queryProfileId: S6A_SECRETARY_PROFILE_ID,
-    heartbeatMs: 25 }] } });
-  // The reopened Host's own startup scans left the three saved forbidden cells alone: a public read of both inboxes
-  // shows no accepted input on any of them (the ids are listed in the order the Host would scan them).
-  const reopenedInbox = [...await listed(world, 'inbox', awaiting), ...await listed(world, 'inbox', withdrawn)];
-  const forbiddenIds = [awaitingSent.ref.messageId, withdrawnSent.ref.messageId, inboxWithdrawn.ref.messageId];
-  const savedCells = forbiddenIds.map(id => reopenedInbox.find(item => item.ref.messageId === id));
-  if (savedCells.some(cell => cell === undefined)) throw new Error('S7A: a reopened read lost a saved cell');
-  expect(savedCells.map(cell => cell?.acceptedInputs ?? [])).toEqual([[], [], []]);
-  // The awaiting Work Run's message body was saved before the reopen; the new Host reads it from the same store.
-  expect(ready<{ text: string }>(await world.post('messages/body',
-    plain(S6A_SCOPE, { messageRef: awaitingSent.ref, part: 'message' })), 'the awaiting message body').text)
-    .toBe('S7A gate awaiting');
-  world.scriptReplies(Array.from({ length: 8 }, () => ({ kind: 'text', text: 'S7A gate consultation answer' })));
-  const { consumed, waitFor } = consumptionBarrier(world.platform.workflow);
-  // The startup scans skip the saved awaiting/withdrawn cells: each sentinel's real consume proves its own scan;
-  // each beat below is one real barrier-terminated pass, never a sleep or a wall-clock poll.
-  const sentinel1 = await sendAsPerson(world, scan1, 's7a-gate-quiesce-1', 'S7A gate quiesce 1');
-  await pumpUntil(world, waitFor([sentinel1.ref.messageId]));
-  // A later message on the same line: the first inquiry is answered, so it must not stay that line's first offer.
-  const sameLine = await sendAsPerson(world, scan1, 's7a-gate-quiesce-1b', 'S7A gate quiesce 1b');
-  const sentinel2 = await sendAsPerson(world, scan2, 's7a-gate-quiesce-2', 'S7A gate quiesce 2');
-  await pumpUntil(world, waitFor([sentinel2.ref.messageId]));
-  const sentinels: SessionMessage[] = [sentinel1, sameLine, sentinel2];
-  // A gate that is deleted lets the Host consume one of the three refused cells: `refused` resolves and the
-  // consumption-set assertions below fail as a real assertion in normal time, not as a 120-second timeout.
-  const refused = Promise.race([waitFor([awaitingSent.ref.messageId]), waitFor([withdrawnSent.ref.messageId]),
-    waitFor([inboxWithdrawn.ref.messageId])]);
-  // The trigger: the person's two controls, then one more sent to the sending line so its outbox scan settles.
-  const awaitingControl = await sendAsPerson(world, awaiting, 's7a-gate-awaiting-control', 'S7A gate awaiting control');
-  const withdrawnControl = await sendAsPerson(world, withdrawn, 's7a-gate-withdrawn-control', 'S7A gate withdrawn control');
-  const controlsDone = waitFor([awaitingControl.ref.messageId, withdrawnControl.ref.messageId]);
-  await Promise.race([pumpUntil(world, controlsDone), refused]);
-  const senderControl = await sendAsPerson(world, sender, 's7a-gate-sender-settle', 'S7A gate sender settle');
-  const settled = waitFor([senderControl.ref.messageId]);
-  await Promise.race([pumpUntil(world, settled), refused]);
-  // The outbox cells were never consumed as responses and are still listed with their real replies. The one
-  // consumption set is the person's released sends; no awaiting/withdrawn ref was consumed at all.
-  expect(consumed.filter(entry => entry.part === 'response')).toEqual([]);
-  expect([...new Set(consumed.map(entry => entry.messageId))].sort()).toEqual(
-    [...sentinels, awaitingControl, withdrawnControl, senderControl].map(message => message.ref.messageId).sort());
-  const outbox = await listed(world, 'outbox', sender);
-  for (const sent of [awaitingSent, withdrawnSent]) {
-    const entry = outbox.find(item => item.ref.messageId === sent.ref.messageId);
-    expect(entry).toMatchObject({ ref: sent.ref });
-    expect(entry?.response).not.toBeNull();
-  }
-  expect(outbox.find(item => item.ref.messageId === withdrawnSent.ref.messageId))
-    .toMatchObject({ release: 'released', withdrawnAt: expect.any(String), response: expect.anything() });
-  for (const [session, refs] of [[awaiting, [awaitingSent.ref, awaitingControl.ref]],
-    [withdrawn, [withdrawnSent.ref, inboxWithdrawn.ref, withdrawnControl.ref]]] as const) {
-    expect((await listed(world, 'inbox', session)).map(item => item.ref.messageId)).toEqual(expect.arrayContaining(
-      refs.map(ref => ref.messageId)));
-  }
-  expect((await listed(world, 'inbox', withdrawn)).find(item => item.ref.messageId === inboxWithdrawn.ref.messageId))
-    .toMatchObject({ release: null, withdrawnAt: expect.any(String) });
+  const recipient = await world.createSecretary('s7a-gate-recipient');
+  await setS7AAutonomy(world, goal, 'every_step');
+  // The action owner: a dispatch request is a card, never a message with a release flag. A Work Run is not granted
+  // `dispatch_task` (设计 3.2: 做事轮不给); the secretary's request round asks the owner with its own Runtime context.
+  const requested = await holdS7AQueryRound(world, { label: 's7a-gate-dispatch', goalId: goal.goalId },
+    async context => world.platform.actionRequests.requestDispatch(context, {
+      input: { taskRef: { projectId: goal.projectId, goalId: goal.goalId, taskId: tasks[0]!.taskId },
+        reason: 'S7A gate dispatch' },
+      meta: { requestId: 's7a-gate-dispatch', expected: [] },
+    }));
+  expect(requested).toMatchObject({ status: 'needs_decision' });
+  // The card is read through `decisions/queue`'s own `waitingAnswer` section (`DecisionQueueReadV1`).
+  const queue = ready<DecisionQueueReadV1>(
+    await world.post('decisions/queue', plain(S6A_SCOPE,
+      { workspace: S6A_SCOPE, goalRef: goal, sections: ['waiting_answer'], page: { limit: 100 } })),
+    'the decision queue');
+  expect(queue.waitingAnswer.filter(entry => entry.source.kind === 'action_release')).toContainEqual(
+    expect.objectContaining({ source: expect.objectContaining({ kind: 'action_release' }) }));
+  // The dispatch never became an ordinary message in the recipient's inbox.
+  expect((await listed(world, 'inbox', recipient)).filter(message => message.sender.kind === 'secretary_round')).toEqual([]);
+  // An ordinary person inquiry is mail, not a card: it is offered to the recipient's consumer without a release.
+  const inquiry = await sendAsPerson(world, recipient, 's7a-gate-inquiry', 'S7A gate ordinary inquiry');
+  expect(inquiry).toMatchObject({ wake: true, status: 'pending' });
+  const offered = listed(world, 'inbox', recipient);
+  expect((await offered).some(message => message.ref.messageId === inquiry.ref.messageId)).toBe(true);
 }, 120_000);

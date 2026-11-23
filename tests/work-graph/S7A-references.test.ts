@@ -65,7 +65,7 @@ describe('X-references', () => {
   });
   it('reads one message with the derived fields, the same right and no write', async () => {
     const h = await openC1World();
-    const message = sent(await send(h, { recipient: h.busySession, text: 'for the busy line' }, 'xr-view'));
+    const message = sent(await send(h, { recipient: h.busySession, text: 'for the busy line', needsReply: true }, 'xr-view'));
     const foreign = sent(await send(h, { recipient: h.idleSession, text: 'for the idle line' }, 'xr-foreign', h.ctxHost));
     const { mailbox, writes } = counted(h);
     expect(await mailbox.readMessageView(h.ctxHost, message.ref)).toMatchObject({ status: 'ready',
@@ -75,14 +75,17 @@ describe('X-references', () => {
     expect(await mailbox.readMessageView(h.ctxWork, message.ref)).toMatchObject({ status: 'ready' });
     expect(await mailbox.readMessageView(h.ctxHost, refOf(h, 'absent'))).toMatchObject({ status: 'not_found' });
     expect(await mailbox.readMessageView(h.ctxWork, foreign.ref)).toMatchObject({ status: 'rejected', code: 'forbidden' });
-    expect(await h.mailbox.ackMessage(h.ctxWork, { input: { messageRef: message.ref },
-      meta: { requestId: 'xr-view-ack', expected: [{ ref: message.ref, revision: message.revision }] } }))
+    // T22 (P2 §6): an answered message that Kernel never accepted is not delivered again and cannot be withdrawn.
+    expect(await h.mailbox.respondMessage(h.ctxWork, { input: { messageRef: message.ref, text: 'answered' },
+      meta: { requestId: 'xr-view-answer', expected: [{ ref: message.ref, revision: message.revision }] } }))
       .toMatchObject({ status: 'committed' });
-    // The record still stores `queued`; the read derives delivered from the read mark, never that field.
     expect(await mailbox.readMessageView(h.ctxHost, message.ref)).toMatchObject({ status: 'ready',
-      value: { message: { ref: message.ref, status: 'read', delivery: 'queued' },
-        delivery: { delivery: 'delivered', deliveredTo: null, evidence: 'legacy_unknown', undeliveredReason: null },
-        disposition: { kind: 'delivered', evidence: 'legacy_unknown' } } });
+      value: { message: { ref: message.ref, status: 'responded' },
+        delivery: { delivery: 'queued', deliveredTo: null, undeliveredReason: null },
+        disposition: { kind: 'answered' } } });
+    expect(await h.mailbox.withdrawMessage(h.ctxWork, { input: { messageRef: message.ref },
+      meta: { requestId: 'xr-view-withdraw', expected: [] } })).toMatchObject({ status: 'rejected', code: 'invalid',
+      reason: 'only an unread, unanswered, undelivered message can be withdrawn' });
     expect(writes).toEqual({ commits: 0, events: 0 });
   });
   it('maps the inbox through the one derivation and keeps the keyset fields, writing nothing', async () => {

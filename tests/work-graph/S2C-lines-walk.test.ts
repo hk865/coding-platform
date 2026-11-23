@@ -19,6 +19,8 @@ import { createNodeDetailReader } from '../../src/core/work-graph/views/node-det
 import type { LineRowV1 } from '../../src/contracts/work-line.js';
 import { openLineFixture, rowOf, type LineFixture } from '../helpers/S2C-L-line-support.js';
 import { completedEvent } from '../helpers/S2C-L-runs-support.js';
+import { createQueryJobService } from '../../src/core/work-graph/queries/query-job-service.js';
+import { planSourceRootOf } from '../helpers/task-claim-fixture.js';
 
 function ready<T>(result: ReadResult<T>): T {
   if (result.status !== 'ready') throw new Error(`expected ready, got ${JSON.stringify(result)}`);
@@ -51,6 +53,9 @@ const executedFilesStub = {
 function nodeReaderOf(f: LineFixture): NodeDetailReadPort {
   return createNodeDetailReader({ records: f.records, plans: f.base.plans, catalog: catalogStub,
     anomalies: anomaliesStub, executedFiles: executedFilesStub, line: f.deps,
+    planSourceRoot: planSourceRootOf({ messages: f.runs.mailbox(), plans: f.base.plans,
+      queries: createQueryJobService({ records: f.base.records, now: () => '2026-09-24T00:00:00.000Z',
+        eventId: () => 's2c-lines-walk-lineage' }) }),
     maintainerOf: async () => ({ status: 'ready' as const, value: { status: 'none' as const } }) });
 }
 

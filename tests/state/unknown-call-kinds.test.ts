@@ -23,14 +23,14 @@ const READ_ONLY_NAMES = [
   'python_index', 'cpp_index', 'source_excerpt', 'read_source', 'read_material',
   // L3 row 2
   'read_session_inbox', 'read_session_message', 'read_session_message_body', 'read_user_decision',
-  'query_task_graph', 'query_ready_tasks', 'find_related_sessions', 'read_session_card', 'look_graph', 'find_graph',
+  'query_task_graph', 'query_ready_tasks', 'look_graph', 'find_graph',
   'check_links', 'web_search', 'web_fetch',
   // L3 row 3
   'run_readonly_command',
 ];
 const PLATFORM_NAMES = [
   // L3 row 4 (4C adds record_note)
-  'send_session_message', 'ack_session_message', 'respond_session_message', 'send_user_message',
+  'send_session_message', 'respond_session_message',
   'record_decision_application', 'propose_future_plan', 'request_command_rerun',
   // L3 row 5
   'record_unknown_call_review', 'propose_safer_method',

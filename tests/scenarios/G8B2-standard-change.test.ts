@@ -12,7 +12,8 @@
  *   也对关口一律拒（`state/task-machine.ts:1396-1398`）；lead 11-17 裁定由施工方照 R1 一起放宽（①），做完才绿。
  *   在树上把两处都临时去掉，这一行是绿的，说明期望值本身对。
  * - F2（参谋的修正轮）、人的原话（消息路径）：P 由参谋线写出。前者是审阅者对普通候选 P0（只改 W3 的指令）答 fix、平台发
- *   `planfix:`，后者是人给参谋发「彻底移除 sub」、参谋的干预规划作答；档位“方案确认后自动”，有审阅线。
+ *   `planfix:`，后者是人给参谋发「彻底移除 sub」、参谋的干预规划作答；档位“方案确认后自动”，有审阅线。P2 的 A13 只送审
+ *   作者读得出、不动已有任务的候选（`p2-frozen.md:208`、`:210`），所以 P0 经真实来源写出、只加 W4（原来只改 W3 的指令）。
  *   包落地后：这一次推进不送审、不采用，照常领取普通工作；卡上 `proposedBy` 是参谋线，`personWords` 前者 null、后者是原话。
  *   今天红在推进那一步（先送计划审阅）。**只落 B5 本身仍红在卡上的事实**：参谋这一段并进底计划时 o-sub 被带回来，只挂在
  *   已取代的 G1 上（今天写出的候选正是这样），`droppedObligations` 是空的；施工方照 R2 改完合并（②）后变绿。
@@ -38,9 +39,10 @@ import type { SessionMessage } from '../../src/core/work-graph/model/communicati
 import type { PlanProposal, PlanProposalRef } from '../../src/core/work-graph/model/plan-contracts.js';
 import { advanceUntil } from '../helpers/A2-restart-fixture.js';
 import { graphWrite, plain } from '../helpers/AG2b-collaboration-fixture.js';
-import { g8b2P, g8b2V1 } from '../helpers/G8B2-plans.js';
+import { g8b2P, g8b2V1, g8b2Work } from '../helpers/G8B2-plans.js';
 import { awaitProposal, proposalRefOf } from '../helpers/IV-host-fixture.js';
 import { createPLAdviserLine } from '../helpers/PL-consumption-fixture.js';
+import { proposePLCandidateFromIntervention } from '../helpers/PL-forms-fixture.js';
 import {
   adoptPLPlanDraft, advancePLGoal, createPLReviewerLine, openPLWorkflowWorld, performOne, PL_PROPOSE_FUTURE_TOOLS,
   plPlanChangeDraft, plSystemRoundRef, plToolPlanOf, satisfyPLTaskWithPropose, verdictOf, type PLWorkflowWorld,
@@ -128,11 +130,14 @@ it('F1：人采用 P，计划到 v2：G1 由 G2 取代，义务正好 o-main、o
 it('F2（参谋的修正轮）：审阅者对普通候选答 fix，参谋在 planfix 轮交 P；自动档出人的卡，不送审、不采用', async () => {
   const { workflow, v1, reviewer } = await openG8B2('g8b2-fix');
   const adviser = await createPLAdviserLine(workflow.world, 'g8b2-fix-adviser');
-  const p0 = committed<PlanProposal>(await workflow.main.post('plans/propose', graphWrite(S6A_SCOPE, {
-    goalRef: workflow.goal, basedOn: v1.ref, reason: { text: 'W3 换个做法', sources: [], affectedTaskIds: ['W3'] },
-    draft: plPlanChangeDraft(v1, workflow.goal, { planId: 'g8b2-plan-p0', tasks: v1.tasks, obligations: v1.obligations,
-      assignments: (v1.assignments ?? []).map(entry => entry.taskId === 'W3' ? { ...entry, instruction: 'W3 换个做法' } : entry) }),
-  }, 'g8b2-fix-p0')), 'P0');
+  // P2 A13（`p2-frozen.md:208`、`:210`）：作者读得出、不动已有任务的候选才送审，所以 P0 经真实来源写出，只加一个 W4。
+  const p0 = await proposePLCandidateFromIntervention({ world: workflow.world, goal: workflow.goal, basedOn: v1.ref,
+    reason: { text: 'W4 换个做法', sources: [], affectedTaskIds: ['W4'] },
+    draft: plPlanChangeDraft(v1, workflow.goal, { planId: 'g8b2-plan-p0', tasks: [...v1.tasks, g8b2Work('W4', 'W4 换个做法')],
+      obligations: v1.obligations.map(entry => entry.obligationId === 'o-main'
+        ? { ...entry, taskIds: [...entry.taskIds, 'W4'] } : entry),
+      assignments: [...(v1.assignments ?? []), { taskId: 'W4', role: ROLE, instruction: 'W4 换个做法' }] }),
+    label: 'g8b2-fix-p0' });
   await workflow.world.scripted.script(reviewer, [{ kind: 'calls', calls: [{ callId: 'g8b2-fix-review',
     name: 'submit_plan_review', args: { verdict: 'fix', findings: [{ taskId: 'W3', text: '人要彻底去掉 sub' }] } }] }]);
   await performOne(workflow, 'g8b2-fix-review', 'send_system_round');
@@ -149,7 +154,7 @@ it('人的原话（消息路径）：人给参谋发「彻底移除 sub」，参
   const adviser = await createPLAdviserLine(workflow.world, 'g8b2-msg-adviser');
   await workflow.world.scripted.script(adviser, [adviserPlan('g8b2-msg-plan', v1)]);
   const message = committed<SessionMessage>(await workflow.world.post('messages/send', graphWrite(S6A_SCOPE, {
-    recipient: adviser.ref, text: PERSON_WORDS, intent: 'action_request', needsReply: true, goalRef: workflow.goal,
+    recipient: adviser.ref, text: PERSON_WORDS, entry: 'person_intervention', needsReply: true, goalRef: workflow.goal,
   }, 'g8b2-msg-send')), '人的消息');
   await expectAdviserCard(workflow, message.ref, standardChange(ADVISER_REASON, adviser.ref, PERSON_WORDS));
 }, 240_000);

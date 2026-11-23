@@ -107,7 +107,7 @@ describe('L-routes: messages/forward and waits/dispose over the real Host', () =
     const disposedTo = await sessionOf(world,
       await createS6BLine(main, { label: 'l-routes-wait-disposed', role: S6A_WORK_ROLE }));
     world.scriptReplies([{ kind: 'calls', calls: [{ callId: 'l-routes-wait-send', name: 'send_session_message',
-      args: { recipient: waitRecipient.ref, text: 'L-routes wait question', intent: 'inquiry',
+      args: { recipient: waitRecipient.ref, text: 'L-routes wait question',
         needsReply: true, waitAfterSend: true } }] }, { kind: 'text', text: 'L-routes wait answered' }]);
     const receipts: WorkflowStepReceipt[] = [];
     await driveWorkflow(world.ag2b, { schemaVersion: 1, goalRef: world.goals.first, flowId: 'l-routes-wait',

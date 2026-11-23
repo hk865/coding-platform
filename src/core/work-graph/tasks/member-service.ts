@@ -1012,7 +1012,7 @@ export function createMemberService(deps: MemberServiceDependenciesV1): MemberSe
       // before `done`: only `creating` resumes, so a crash in between resends instead of losing it. A changed
       // adviser on recovery meets the first notice's identity (`idempotency_conflict`): the first notice stands.
       const notice = await deps.messages.sendMessage(systemContext(ctx), {
-        input: { recipient: plainSessionRef(adviserToNotify), intent: 'notify',
+        input: { recipient: plainSessionRef(adviserToNotify), wake: false,
           text: `秘书新建了执行线：任务 ${operation.action.input.scope.task.taskId}，执行线 ${line.session.sessionId}。` },
         meta: { requestId: `member:${operation.ref.operationId}`, expected: [] },
       });

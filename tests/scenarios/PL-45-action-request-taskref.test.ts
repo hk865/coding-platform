@@ -6,15 +6,15 @@
  * printable ASCII (under the agent sender's 16 KiB bound), the `expected` basis is the public read just before and
  * the real `messages/release` lets the Host consume it. The row reuses PL-05's W world and reads.
  *
- * Today the message is quoted as an ordinary agent `action_request`, so the handler falls into the `taskRef ??
- * latestWork` claim block (or is stopped by W's own claim) and no planning Query opens: the red is the claim
- * increment and/or the missing Query. The named mutation restores that block.
+ * Frozen 2.3 (§2.3, design-frozen:206): a line that yielded waiting only queues the message; it opens no planning
+ * round while it waits. The test asserts the queue and the absence of a Query and of a second claim.
  */
 import { afterEach, describe, expect, it } from 'vitest';
 import type { S6AHostWorld } from '../helpers/S6A-host-fixture.js';
 import {
-  heartbeatUntil, lineFacts, readBody, readPlanningQuery, sessionExecutions, settleHost,
+  heartbeat, heartbeatUntil, lineFacts, readBody, readPlanningQuery, sessionExecutions, settleHost,
 } from '../helpers/IV-host-fixture.js';
+import { readS7BMessage } from '../helpers/S7B-fixture.js';
 import {
   openPLConsumptionWorld, seedPLActionWorld, sendPLActionWait,
 } from '../helpers/PL-consumption-fixture.js';
@@ -25,7 +25,7 @@ afterEach(async () => {
 });
 
 describe('PL-45: an executor action_request with taskRef on the adviser line', () => {
-  it('PL-45 the 15 KiB action_request opens a planning Query and claims no Work', async () => {
+  it('PL-45 the yielded line queues the 15 KiB action_request and claims no Work', async () => {
     const world = await openPLConsumptionWorld({ label: 'pl45' });
     worlds.push(world);
     await settleHost(world);
@@ -45,11 +45,15 @@ describe('PL-45: an executor action_request with taskRef on the adviser line', (
       recipient: seeded.adviser.ref, text, taskRef: seeded.adviserTask, label: 'pl45' });
     expect(await readBody(world, sent.message.ref, 'message'), 'the whole body is saved').toBe(text);
 
-    const query = await heartbeatUntil(world, () => readPlanningQuery(world, sent.message.ref),
-      value => value !== null, 16);
+    // §2.3: a line that yielded waiting only queues the message; it does not open a planning round.
+    for (let pass = 0; pass < 4; pass += 1) await heartbeat(world);
+    const query = await readPlanningQuery(world, sent.message.ref);
+    const queuedMessage = await readS7BMessage(world, sent.message.ref);
     const after = await sessionExecutions(world, seeded.adviser);
 
     expect(after.length - before.length, 'the adviser is not made to claim W again').toBe(0);
-    expect(query, 'the executor message opens a planning Query').not.toBeNull();
+    expect(query, 'the executor message opens no planning Query on the yielded line').toBeNull();
+    expect(queuedMessage.acceptedInputs ?? [], 'the message is only queued').toEqual([]);
+    expect(queuedMessage.status, 'the message stays unread until the line resumes').toBe('pending');
   }, 120_000);
 });

@@ -10,7 +10,6 @@ import { afterEach, expect, it } from 'vitest';
 import type { WorkflowAdvanceInput } from '../../src/business/workflow/contracts.js';
 import type { PlanProposal } from '../../src/core/work-graph/model/plan-contracts.js';
 import { driveWorkflow } from '../helpers/A2-restart-fixture.js';
-import { graphWrite } from '../helpers/AG2b-collaboration-fixture.js';
 import { heartbeatUntil, heartbeatUntilModel, readProposal } from '../helpers/IV-host-fixture.js';
 import { checkConfiguration, ready, sessionOf, setS7AAutonomy } from '../helpers/S7A-fixture.js';
 import { OPERATOR, S6A_SCOPE, S6A_WORK_ROLE } from '../helpers/S6A-request-fixture.js';
@@ -20,6 +19,7 @@ import {
   plSystemRoundRef, satisfyPLTask, verdictOf, type PLWorkflowWorld,
 } from '../helpers/PL-workflow-fixture.js';
 import { startGoalDriver, waitDriver } from '../helpers/DRV-fixture.js';
+import { proposePLCandidateFromIntervention } from '../helpers/PL-forms-fixture.js';
 
 let opened: PLWorkflowWorld | null = null;
 afterEach(async () => { await opened?.close(); opened = null; });
@@ -40,12 +40,13 @@ it('PL-44: busy keeps the candidate, and the Run ending wakes the driver to adop
     { stopBefore: 'open_checks' });
   let candidate: PlanProposal;
   try {
-    const proposed = (await workflow.main.post('plans/propose', graphWrite(S6A_SCOPE, {
-      goalRef: workflow.goal, basedOn: skeleton.plan.ref, draft: plSupersedeDraft(skeleton.plan, workflow.goal, 'pl-44'),
-      reason: { text: 'PL-44 supersede A with A2', sources: [], affectedTaskIds: ['pl-a'] },
-    }, 'pl-44-propose'))) as { status: string; value: PlanProposal };
-    expect(proposed.status, JSON.stringify(proposed)).toBe('committed');
-    candidate = proposed.value;
+    // P2 A13 (`p2-frozen.md:208`): an author that cannot be read leaves the candidate on its card before any review,
+    // so the replacement names its real source; its author is not a secretary, so touching A still goes on to the
+    // review and the automatic adoption (user 11-23, `cp2f7-rulings.md` P-A 1).
+    const written = await proposePLCandidateFromIntervention({ world: workflow.world, goal: workflow.goal,
+      basedOn: skeleton.plan.ref, draft: plSupersedeDraft(skeleton.plan, workflow.goal, 'pl-44'),
+      reason: { text: 'PL-44 supersede A with A2', sources: [], affectedTaskIds: ['pl-a'] }, label: 'pl-44' });
+    candidate = await readProposal(workflow.world, written.ref);
 
     const reviewer = await createPLReviewerLine(workflow.world, workflow.main, 'pl-44-reviewer');
     await workflow.world.scripted.script(reviewer,
@@ -93,12 +94,14 @@ it('PL-44: busy does not hold other work: B runs first, and the wait carries bus
   const held = await holdPLTaskRequest(workflow.world, workflow.goal, 'pl-a', lineA, 'pl44o',
     { stopBefore: 'open_checks' });
   try {
-    const proposed = (await workflow.main.post('plans/propose', graphWrite(S6A_SCOPE, {
-      goalRef: workflow.goal, basedOn: skeleton.plan.ref,
+    // P2 A13 (`p2-frozen.md:208`): an author that cannot be read leaves the candidate on its card before any review,
+    // so the replacement names its real source; its author is not a secretary, so touching A still goes on to the
+    // review and the automatic adoption (user 11-23, `cp2f7-rulings.md` P-A 1).
+    const proposed = { value: await readProposal(workflow.world, (await proposePLCandidateFromIntervention({
+      world: workflow.world, goal: workflow.goal, basedOn: skeleton.plan.ref,
       draft: plSupersedeDraft(skeleton.plan, workflow.goal, 'pl-44-other'),
-      reason: { text: 'PL-44 supersede A with A2', sources: [], affectedTaskIds: ['pl-a'] },
-    }, 'pl-44-other-propose'))) as { status: string; value: PlanProposal };
-    expect(proposed.status, JSON.stringify(proposed)).toBe('committed');
+      reason: { text: 'PL-44 supersede A with A2', sources: [], affectedTaskIds: ['pl-a'] }, label: 'pl-44-other',
+    })).ref) };
     const reviewer = await createPLReviewerLine(workflow.world, workflow.main, 'pl-44-other-reviewer');
     await workflow.world.scripted.script(reviewer,
       [{ kind: 'text', text: '{"schemaVersion":1,"kind":"plan_review","verdict":"pass","findings":[]}' }]);

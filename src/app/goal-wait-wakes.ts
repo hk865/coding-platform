@@ -18,16 +18,16 @@ import type { WorkspaceScope } from '../contracts/core/identity.js';
 import { canonicalKey } from '../contracts/fingerprint.js';
 import type { ReadResult } from '../contracts/core/results.js';
 import { compareCursors, type AggregateRef, type GoalRef } from '../contracts/ledger.js';
-import { interventionPlanningQueryRefs, type QueryRunRef } from '../contracts/query-job.js';
+import type { QueryRunRef } from '../contracts/query-job.js';
 import type { SessionMailboxPort } from '../core/work-graph/model/communication-contracts.js';
-import type { MessageReleasedActionsPort } from '../core/work-graph/model/decision-contracts.js';
-import type { PlanTaskPort } from '../core/work-graph/model/plan-contracts.js';
+import type { PlanProposal, PlanTaskPort } from '../core/work-graph/model/plan-contracts.js';
 import type { SessionFactsPort } from '../core/work-graph/model/session-facts-contracts.js';
 import type { SessionDirectoryPort } from '../core/work-graph/model/session-contracts.js';
 import type { QueryJobPort } from '../core/work-graph/queries/contracts.js';
+import type { UnknownCallReviewReadPort } from '../core/work-graph/model/unknown-call-review-contracts.js';
 import { plainSessionRefKey } from '../core/work-graph/sessions/session-record-codecs.js';
 import { waitFactsOfRecord, waitStateOf } from '../core/work-graph/state/message-machine.js';
-import { hostContextIn, planSourceLineageOf } from '../core/work-graph/tasks/plan-lineage.js';
+import { candidateReplyTargetOf, hostContextIn } from '../core/work-graph/tasks/plan-lineage.js';
 import type { PlanReaders } from '../core/work-graph/tasks/plan-readers.js';
 import { notReady, type QueueHandler } from './wake-loop.js';
 
@@ -44,6 +44,9 @@ export const GOAL_WAIT_WAKE_AGGREGATE_TYPES: readonly AggregateRef['aggregateTyp
   'CoreOperation',
   'NoteHead',
   'NoteVersion', 'CurrentPointer', 'ModuleOverlapGate',
+  // 2.5: a dispatch request's receipt/approval/settlement, a claim hold's release and the dispatch counter's increment
+  // all change whether this Goal's wait can advance; the goal loop's own waits name these same types.
+  'DispatchCounter', 'ActionRequest', 'TaskClaimHold',
   // Node-level review (121-45): a node's review fact releases an `every_step` Goal's next node, and a TaskReduction
   // commit is when a node becomes pending (NR-17); both wake this queue, not the lifecycle one.
   'TaskNodeCommit', 'TaskReduction',
@@ -69,6 +72,8 @@ export type GoalWaitWakes = {
   takeDrainBatch(goalRefs: readonly GoalRef[]): void;
   /** A start-up registration is queued at once (nothing was "seen" in this fresh registry). */
   queueAll(): void;
+  /** Queue exactly this registered Goal for the next drain, without waiting for a commit cursor. */
+  enqueue(goalRef: GoalRef): void;
 };
 
 export function createGoalWaitWakes(): GoalWaitWakes {
@@ -145,6 +150,12 @@ export function createGoalWaitWakes(): GoalWaitWakes {
     queueAll() {
       for (const key of registrations.keys()) marked.add(key);
     },
+
+    enqueue(goalRef) {
+      const key = canonicalKey(goalRef);
+      // A Goal with no registration has no wait to start: `register` is the caller's own step.
+      if (registrations.has(key)) marked.add(key);
+    },
   };
 }
 
@@ -159,34 +170,50 @@ export type GoalWaitRebuildDependencies = {
   ctx(scope: WorkspaceScope): CoreCallContext;
   sessions: Pick<SessionDirectoryPort, 'findSessions'>;
   facts: Pick<SessionFactsPort, 'readSessionFacts'>;
-  released: Pick<MessageReleasedActionsPort, 'readReleasedActions'>;
   /** The Goal's own pending restart interruption, read through its display; `ask`/`off` hold such a Goal. */
   held(ctx: CoreCallContext, goalRef: GoalRef): Promise<boolean>;
   /** The goal loop's candidate read (`createPlanReaders(...).planCandidates`); the same facts step 3b uses. */
   planCandidates: PlanReaders['planCandidates'];
   /** Every accepted candidate of one Goal (`createPlanReaders(...).acceptedCandidatesOf`). */
   acceptedCandidatesOf: PlanReaders['acceptedCandidatesOf'];
+  /**
+   * A12: the Goal's abandoned chain tails (`createPlanReaders(...).abandonedCandidateTailsOf`), whose M the goal
+   * loop replies with the tail's Answer. Required: the rebuild always reads this arm; a failed read fails it.
+   */
+  abandonedCandidateTailsOf: PlanReaders['abandonedCandidateTailsOf'];
+  /**
+   * A12: the workspace's COMPLETED Goals (`createPlanReaders(...).completedGoalsOf`): one still owing an abandoned
+   * chain's M is registered too, because its goal loop settles that reply before it reports completion. Required:
+   * the rebuild always reads completed Goals; a failed read fails it.
+   */
+  completedGoalsOf: PlanReaders['completedGoalsOf'];
   /** The source-lineage reads (slice-PL-SPEC §6.3.1) the accepted-candidate arm walks the chain with. */
   messages: Pick<SessionMailboxPort, 'readMessage' | 'readMessageBody'>;
   queries: Pick<QueryJobPort, 'readQueryJob'>;
   plans: Pick<PlanTaskPort, 'readPlanProposal'>;
+  /** The existing `UnknownCallReview` read: an `unknown_call` round's formally carried Task is the named record's. */
+  readReview?: UnknownCallReviewReadPort['readReview'];
 };
 
 /**
- * The restart composition: the three published reads that rebuild a fresh registry after a Host start.
+ * The restart composition: the two published halves that rebuild a fresh registry after a Host start.
  *
  * The wait half walks every Session of the scope (archived included) page by page and registers each
  * wait's own `originalRun.goalId` at the facts read's cursor; a wait with no Work Run is a secretary
- * round's, which R's reply round answers, so it wakes no Goal. The released half walks 7A's released,
- * unprocessed action requests page by page and registers each page's Goals at that page's read-through
- * cursor. The candidate half reads the goal loop's own candidate facts and registers only the Goals
+ * round's, which R's reply round answers, so it wakes no Goal. The candidate half reads the goal loop's
+ * own candidate facts and registers only the Goals
  * that still have something to continue: a pending candidate, an unanswered question group, a fully
  * answered group whose `planresume:` was never created, or an accepted candidate whose source message
- * is still an open wait. It never registers a Goal merely because it is active, writes no recovery
- * record, and does not read completed/cancelled Goals (the read returns active ones only). All halves
+ * is still an open wait, or an abandoned chain tail whose M is still an open wait with no reply (A12: the goal
+ * loop replies it; a message may have no deadline, so an unregistered Goal would leave M unanswered for good).
+ * It never registers a Goal merely because it is active and writes no recovery
+ * record. The candidate read returns active Goals only, so a required completed-Goal read below also
+ * covers a completed Goal still owing an abandoned chain's M; cancelled Goals are not read. All halves
  * may name the same Goal; `register` merges them, so it is woken once. A Goal with a pending restart
  * interruption is held, because in `ask`/`off` only a person continues it (decision 97-9). A read that
- * is not `ready` is the failure, never an empty result.
+ * is not `ready` is the failure, never an empty result, except one accepted or abandoned candidate's own reads:
+ * that candidate cannot be judged this time, the others still are, and the Goal is registered so its next pass
+ * (the goal loop's accepted- or abandoned-candidate recovery) retries it.
  */
 export function createGoalWaitRebuild(deps: GoalWaitRebuildDependencies):
   (scope: WorkspaceScope, registry: GoalWaitWakes) => Promise<void> {
@@ -216,19 +243,6 @@ export function createGoalWaitRebuild(deps: GoalWaitRebuildDependencies):
       }
       if (page.value.nextCursor === null) break;
     }
-    let after: string | null = null;
-    do {
-      const page = await deps.released.readReleasedActions(ctx, { scope, after, limit: 100 });
-      if (page.status !== 'ready') throw notReady('the released-action read', page);
-      for (const goal of page.value.goals) {
-        if (await deps.held(ctx, { aggregateType: 'Goal', projectId: scope.projectId, goalId: goal.goalId })) continue;
-        registry.register({
-          projectId: scope.projectId, goalId: goal.goalId,
-          recordKinds: GOAL_WAIT_WAKE_AGGREGATE_TYPES, reasons: ['released_action'],
-        }, page.value.readThrough);
-      }
-      after = page.value.nextCursor;
-    } while (after !== null);
     await rebuildCandidateWaits(ctx, scope, registry);
   };
 
@@ -256,39 +270,85 @@ export function createGoalWaitRebuild(deps: GoalWaitRebuildDependencies):
       } else if (goal.questionGroups.some(group => group.allAnswered && !group.resumeMessageExists)) {
         basis = { projectId: scope.projectId, goalId: goalRef.goalId,
           recordKinds: GOAL_WAIT_WAKE_AGGREGATE_TYPES, reasons: ['restart'] };
-      } else if (await hasUnansweredAcceptedCandidate(ctx, goalRef)) {
-        basis = { projectId: scope.projectId, goalId: goalRef.goalId,
-          recordKinds: GOAL_WAIT_WAKE_AGGREGATE_TYPES, reasons: ['restart'] };
+      } else {
+        const accepted = await acceptedCandidateWaitOf(ctx, goalRef);
+        if (accepted !== 'none') {
+          basis = { projectId: scope.projectId, goalId: goalRef.goalId, recordKinds: GOAL_WAIT_WAKE_AGGREGATE_TYPES,
+            reasons: accepted === 'open' ? ['restart'] : ['restart', 'accepted_candidate_undetermined'] };
+        } else {
+          const abandoned = await abandonedCandidateWaitOf(ctx, goalRef);
+          if (abandoned !== 'none') {
+            basis = { projectId: scope.projectId, goalId: goalRef.goalId, recordKinds: GOAL_WAIT_WAKE_AGGREGATE_TYPES,
+              reasons: abandoned === 'open' ? ['restart', 'abandoned_candidate_reply_open']
+                : ['restart', 'abandoned_candidate_undetermined'] };
+          }
+        }
       }
       if (basis === null) continue;
       registry.register(basis, goal.readThrough!);
     }
+    // A12: the candidate read above skips COMPLETED Goals; one still owing an abandoned chain's M is registered here,
+    // by the same per-Goal judgment, so a restart cannot leave that M unanswered for good.
+    const completed = await deps.completedGoalsOf(scope);
+    if (completed.status !== 'ready') throw notReady('the completed-Goal read', completed);
+    for (const goal of completed.value) {
+      if (await deps.held(ctx, goal.goalRef)) continue;
+      const abandoned = await abandonedCandidateWaitOf(ctx, goal.goalRef);
+      if (abandoned === 'none') continue;
+      registry.register({ projectId: scope.projectId, goalId: goal.goalRef.goalId,
+        recordKinds: GOAL_WAIT_WAKE_AGGREGATE_TYPES,
+        reasons: abandoned === 'open' ? ['restart', 'abandoned_candidate_reply_open']
+          : ['restart', 'abandoned_candidate_undetermined'] }, goal.readThrough!);
+    }
   }
 
   /**
-   * (d): every accepted candidate of this Goal, not only the active Plan's version. The candidate's
-   * source is the start of the §6.3.1 chain; its planned executor message is the original
-   * deterministic Query's `repliesToMessageRef`, else the chain root (a `planresume:` Query froze
-   * that same `repliesToMessageRef ?? rootMessage` when it was created).
+   * (d): every accepted candidate of this Goal, not only the active Plan's version. Its planned executor
+   * message is read through the Workflow's own `candidateReplyTargetOf`: the original deterministic
+   * Query's `repliesToMessageRef` first, the §6.3.1 chain root only without one (a `planresume:` Query
+   * froze that same `repliesToMessageRef ?? rootMessage` when it was created). `open`: one such message
+   * is still an open wait. `undetermined`: none is open, but one candidate's own reads failed, so it
+   * cannot be judged this time; the other candidates are still read (B3-03's rule for one candidate).
    */
-  async function hasUnansweredAcceptedCandidate(ctx: CoreCallContext, goalRef: GoalRef): Promise<boolean> {
+  async function acceptedCandidateWaitOf(ctx: CoreCallContext, goalRef: GoalRef):
+    Promise<'open' | 'none' | 'undetermined'> {
     const accepted = await deps.acceptedCandidatesOf(goalRef);
     if (accepted.status !== 'ready') throw notReady('the accepted-candidate read', accepted);
-    for (const proposal of accepted.value) {
+    return candidateReplyWaitOf(ctx, accepted.value);
+  }
+
+  /**
+   * (e) A12: the Goal's abandoned chain tails, judged by the same per-candidate rule as (d). A failed list read is
+   * the whole rebuild's failure; a candidate whose source could not be read makes the Goal `undetermined` when no
+   * tail's M is found open, so the Goal is still registered.
+   */
+  async function abandonedCandidateWaitOf(ctx: CoreCallContext, goalRef: GoalRef):
+    Promise<'open' | 'none' | 'undetermined'> {
+    const abandoned = await deps.abandonedCandidateTailsOf(goalRef);
+    if (abandoned.status !== 'ready') throw notReady('the abandoned-candidate read', abandoned);
+    const found = await candidateReplyWaitOf(ctx, abandoned.value.tails);
+    return found === 'none' && abandoned.value.incomplete.length > 0 ? 'undetermined' : found;
+  }
+
+  /**
+   * One candidate list's planned executor messages, each read through `candidateReplyTargetOf`: `open` when one is
+   * still an open wait with no reply, `undetermined` when none is but one candidate's own reads failed.
+   */
+  async function candidateReplyWaitOf(ctx: CoreCallContext, proposals: readonly PlanProposal[]):
+    Promise<'open' | 'none' | 'undetermined'> {
+    let undetermined = false;
+    for (const proposal of proposals) {
       if (proposal.sourceMessageRef === null) continue;
       // `ctx` is the Goal's workspace, where its candidates and Queries live; each message is read where it lives.
-      const lineage = await planSourceLineageOf(ctx, deps, proposal.sourceMessageRef);
-      if (lineage.status !== 'ready') throw notReady('the accepted candidate source lineage', lineage);
-      const query = await deps.queries.readQueryJob(ctx,
-        interventionPlanningQueryRefs(proposal.sourceMessageRef, proposal.ref.workspaceId).queryJobRef);
-      if (query.status !== 'ready') throw notReady('the accepted candidate planning Query', query);
-      const waitRef = query.value.job.job.intent.execution.repliesToMessageRef ?? lineage.value.rootMessage;
-      const message = await deps.messages.readMessage(hostContextIn(ctx, waitRef.workspaceId), waitRef);
-      if (message.status !== 'ready') throw notReady('the accepted candidate wait message', message);
+      const waitRef = await candidateReplyTargetOf(ctx, deps, proposal.sourceMessageRef, proposal.sourcePart,
+        proposal.ref.workspaceId);
+      if (waitRef.status !== 'ready') { undetermined = true; continue; }
+      const message = await deps.messages.readMessage(hostContextIn(ctx, waitRef.value.workspaceId), waitRef.value);
+      if (message.status !== 'ready') { undetermined = true; continue; }
       if (message.value.response === null
-        && waitStateOf(message.value, waitFactsOfRecord(message.value)).state === 'open') return true;
+        && waitStateOf(message.value, waitFactsOfRecord(message.value)).state === 'open') return 'open';
     }
-    return false;
+    return undetermined ? 'undetermined' : 'none';
   }
 }
 

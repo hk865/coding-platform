@@ -214,6 +214,13 @@ export async function p0ToolNames(w: G8BWorld, line: S6ASession, index: number):
 export const P0_REVIEWER_TOOLS = ['read', 'list_files', 'search', 'symbols', 'code_index', 'project_source',
   'python_index', 'cpp_index', 'source_excerpt', 'look_graph', 'find_graph', 'check_links', 'web_search', 'web_fetch',
   'run_readonly_command'];
+/**
+ * P2 的审阅者计划审阅轮和批检查轮（参谋、审阅者同一范围，S7）在 P0 名单外多出的五个：任（`query_task_graph`、
+ * `query_ready_tasks`）、发（只发不要回复的）、撤、告（设计 §6 第 610、617 行；`p2-frozen.md:224`、`:230`）。箱、回、副、
+ * 问、答、记、派、返、建照旧不挂。
+ */
+export const P2_REVIEW_ROUND_TOOLS = ['query_task_graph', 'query_ready_tasks', 'send_session_message',
+  'withdraw_session_message', 'notify_person'];
 /** B15（P0）的同一句：工具结果的 message 和输出的 reason（Q2）。 */
 export const P0_B15 = 'a plan review or check review round cannot read execution history or evidence (B15)';
 

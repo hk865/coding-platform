@@ -37,7 +37,9 @@ import {
   architectureSample, secretaryInputText, selectIdeaInputText,
   type SampleEarlierEntry, type SampleRound, type SecretaryInputSample,
 } from '../helpers/S6A-prompt-samples.js';
-import { S6A_GOAL_1, S6A_SCOPE, S6A_WORK_ROLE, type S6ASession } from '../helpers/S6A-request-fixture.js';
+import {
+  PREPARED_SECRETARY_TOOLS, S6A_GOAL_1, S6A_SCOPE, S6A_WORK_ROLE, type S6ASession,
+} from '../helpers/S6A-request-fixture.js';
 import type { PlanRevisionDraft } from '../../src/contracts/plan.js';
 import { canonicalJson, type JsonValue } from '../../src/contracts/fingerprint.js';
 import { plToolPlanOf } from '../helpers/PL-workflow-fixture.js';
@@ -116,7 +118,8 @@ async function seeded(world: S6AHostWorld): Promise<S6AMemory> {
  * `takesSessionHistory` is a fact of the round that runs: true when its Session
  * already held a completed round before this one.
  */
-function baseSample(memory: S6AMemory, takesSessionHistory: boolean, tools: readonly string[] = ['read']):
+function baseSample(memory: S6AMemory, takesSessionHistory: boolean,
+  tools: readonly string[] = PREPARED_SECRETARY_TOOLS):
 Omit<SecretaryInputSample, 'round' | 'batched' | 'earlier'> {
   const goal = memory.goals.find(entry => entry.goalId === S6A_GOAL_1.goalId);
   if (goal === undefined) throw new Error('S6A history: the goal read did not list goal 1');

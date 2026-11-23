@@ -513,6 +513,18 @@ button.bq-ref:hover { color: var(--text); }
             </sc-if>
           </sc-for>
 
+          <!-- §2.8/T37: the original request's own feedback (the Tasks it touched, the holds/dispatches/stops it left, the plan revision), not only the round answers -->
+          <sc-if value="{{fb.show}}" hint-placeholder-val="{{ false }}">
+            <section class="plan" aria-label="请求的处理">
+              <div class="plan-head">
+                <span class="ttl">{{fb.title}}</span>
+              </div>
+              <dl class="dc-facts">
+                <sc-for list="{{fb.rows}}" as="f" hint-placeholder-count="2"><dt>{{f.k}}</dt><dd>{{f.v}}</dd></sc-for>
+              </dl>
+            </section>
+          </sc-if>
+
             <!-- plan versions: round 1 always, round 2 after one iteration -->
             <sc-for list="{{plans}}" as="p" hint-placeholder-count="1">
               <sc-if value="{{p.isRound2}}" hint-placeholder-val="{{ false }}">
@@ -1004,7 +1016,7 @@ button.bq-ref:hover { color: var(--text); }
                 <sc-if value="{{e.icCheck}}" hint-placeholder-val="{{ true }}"><svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="M6.75 4.25h6.5M6.75 8h6.5M6.75 11.75h6.5"></path><path d="m2.5 4.25.9.9 1.6-1.65M2.5 8l.9.9L5 7.25M2.75 11.75h1.5"></path></svg></sc-if>
                 <sc-if value="{{e.icAsk}}" hint-placeholder-val="{{ false }}"><svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><circle cx="4.5" cy="3.75" r="1.5"></circle><circle cx="4.5" cy="12.25" r="1.5"></circle><circle cx="11.5" cy="4.75" r="1.5"></circle><path d="M4.5 5.25v5.5M11.5 6.25c0 3-7 2-7 4.5"></path></svg></sc-if>
                 <sc-if value="{{e.icTalk}}" hint-placeholder-val="{{ false }}"><svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.75 3.25h10.5v7.25H8l-3 2.5v-2.5H2.75Z"></path></svg></sc-if>
-                <span class="lv-rt">{{e.head}}<sc-if value="{{e.hasWord}}" hint-placeholder-val="{{ true }}"><span class="lv-dot" aria-hidden="true">·</span><span class="{{e.wordCls}}">{{e.word}}</span></sc-if></span>
+                <span class="lv-rt">{{e.head}}<sc-if value="{{e.hasWord}}" hint-placeholder-val="{{ true }}"><span class="lv-dot" aria-hidden="true">·</span><span class="{{e.wordCls}}">{{e.word}}</span></sc-if><sc-if value="{{e.hasWake}}" hint-placeholder-val="{{ false }}"><span class="lv-dot" aria-hidden="true">·</span><span class="lv-w tx-plain">{{e.wakeWord}}</span></sc-if></span>
                 <span class="t">{{e.time}}</span>
               </div>
             </sc-if>
@@ -2566,6 +2578,9 @@ class Component extends DCLogic {
   cardBase(n, path, agent, sem) {
     return { show: true, name: n.name, path: path, hasPath: !!path, agent: agent, sem: sem || '', hasSem: !!sem, tasks: [], hasTasks: false, more: '', hasMore: false };
   }
+  /* §2.8: the mini card's status line adds the read hold / dispatch / stop state;
+     a Task without that read adds nothing. */
+  taskNote(n) { return n && n.statusNote ? ' · ' + n.statusNote : ''; }
   taskCard(goal, n) {
     const W = this.words(); const tree = this.taskModel(goal);
     /* Main B (lead 11-12, T-B10): a wired task's `graph/hover` module follows its 归属 */
@@ -2577,7 +2592,7 @@ class Component extends DCLogic {
       return Object.assign(c, { sq: 'sq z10 s-' + st, word: this.goalWord(goal), tx: 'tx-' + st, why: ' · ' + this.cardCount(n, 'task'), agent: this.goalAgent(goal) });
     }
     if (!n.kids.length) {
-      return Object.assign(c, { sq: 'sq z10 s-' + n.st, word: W[n.st] + (n.gate ? '（验收）' : ''), tx: 'tx-' + n.st, why: n.why ? '：' + n.why : '',
+      return Object.assign(c, { sq: 'sq z10 s-' + n.st, word: W[n.st] + (n.gate ? '（验收）' : ''), tx: 'tx-' + n.st, why: (n.why ? '：' + n.why : '') + this.taskNote(n),
         agent: this.ownerOf(goal, n) });
     }
     return Object.assign(c, { sq: 'sq z10 ' + this.taskSq(n, 'collapsed', goal), word: this.cardCount(n, 'task'), tx: 'tx-plain', why: '', agent: this.ownerOf(goal, n) });
@@ -3114,7 +3129,12 @@ class Component extends DCLogic {
     this.auxCounts(tree, aux && aux.task ? aux.task.counts : {});
     tree.tasks = []; const w = (n) => { if (n.kind === 'task') tree.tasks.push(n); (n.kids || []).forEach(w); }; w(tree.root);
     const mods = aux && aux.task && aux.task.taskModules ? aux.task.taskModules : {};
-    tree.tasks.forEach((t) => { t.next = []; t.att = t.att || 1; t.gate = !!t.gate; t.sem = t.sem || ''; t.why = t.why || ''; t.module = mods[t.id] || ''; });
+    /* §2.8: the right panel's detail read is the only source of hold / dispatch /
+       stop state; the selected task's mini card adds that line. */
+    const detail = aux && aux.task ? aux.task.detail : null;
+    const detailFor = aux && aux.task ? aux.task.detailFor : null;
+    tree.tasks.forEach((t) => { t.next = []; t.att = t.att || 1; t.gate = !!t.gate; t.sem = t.sem || ''; t.why = t.why || ''; t.module = mods[t.id] || '';
+      t.statusNote = detail && detailFor === t.id ? detail.cardStatus || '' : ''; });
     tree.tasks.forEach((t) => (t.deps || []).forEach((d) => { if (tree.byId[d]) tree.byId[d].next.push(t.id); }));
     Object.assign(tree, { key: 'aux' + version, goal: '', big: false });
     this._auxTm = { version: version, tree: tree };
@@ -3462,6 +3482,14 @@ class Component extends DCLogic {
       }
     };
     const track = (data.track || []).map((row) => ({ at: row.at, type: row.type, id: row.id, summary: row.summary }));
+    /* §2.8/T37: the request surface's own feedback; the adapter already wrote
+       the Chinese sentences, the board only draws them. */
+    const rf = data.requestFeedback && roots.has(data.requestFeedback.root) ? data.requestFeedback : null;
+    const fb = rf === null ? { show: false, title: '', rows: [] } : {
+      show: Array.isArray(rf.rows) && rf.rows.length > 0,
+      title: rf.title || '',
+      rows: (rf.rows || []).map((row) => ({ k: row.k, v: row.v }))
+    };
 
     /* MF6(4): the newest answer's ideas become one plan card; 采用 goes through
        requests/select-idea, iterating stays unconnected. */
@@ -3531,8 +3559,8 @@ class Component extends DCLogic {
       const same = decideRows.filter((r) => r.level === row.level);
       const k = same.indexOf(row);
       const stepPrimary = v !== null && v.primary !== null && v.primary.key !== 'answer';
-      const isChoice = !!v && v.options.length > 0;
-      const needsPick = !!v && v.options.length > 0 && s.picked === null;
+      const isChoice = !!v && !v.readOnly && v.options.length > 0;
+      const needsPick = isChoice && s.picked === null;
       const opts = (v ? v.options : []).map((o) => {
         const on = s.picked === o.id;
         return { title: o.label, how: '', on: on, cls: 'opt' + (on ? ' is-on' : ''), pick: () => set({ picked: o.id }) };
@@ -3615,7 +3643,7 @@ class Component extends DCLogic {
     return Object.assign({}, base, {
       isG1: false, isG2: false, isG3: false,
       inbox: inbox, goals: goals, rail: rail, lvr: lvr, gb: gb, dc: dc,
-      log: log, track: track, plans: plans, older: older,
+      log: log, track: track, plans: plans, older: older, fb: fb,
       composerOpen: !dc.show && !s.confirmCancel,
       hasAsk: !!s.askRef, askRef: s.askRef || '', askSq: s.askSq || 'sq z8 s-pending',
       clearAsk: () => set({ askRef: '', askSq: '', askCardKey: '' }),
@@ -7512,6 +7540,7 @@ class Component extends DCLogic {
 
     /* ---- the record as the conversation's rows */
     const B = { isDay: false, isSep: false, isSys: false, isMark: false, isBrief: false, isRun: false, isRow: false, isAsk: false, isAct: false, quotes: [],
+      hasWake: false, wakeWord: '',
       noGo: true, goBtn: false, goLink: false, go: noop, goTip: '', noteOnly: true, noteGo: false, noteLink: false, noteA: '', noteB: '' };
     /* 「需要你决定」 of a line that waits for your decision (final fix 2026-10-07): the record's newest 需要你决定 mark and the held
        message's words take you there — a button to the item (o.decide), or a link to Main (o.decideHref) — as the rail's
@@ -7545,7 +7574,8 @@ class Component extends DCLogic {
         steps: this.lvSteps(o2.steps, o2.live, showThink, full), hasNote: !!o2.note, note: o2.note || '' });
     };
     const flat = (e, kind, head, word, tx) => Object.assign({}, B, { isRow: true, icCheck: kind === 'check', icAsk: kind === 'query', icTalk: kind === 'talk',
-      head: head, hasWord: !!word, word: word || '', wordCls: 'lv-w ' + (tx || 'tx-plain'), time: e.time });
+      head: head, hasWord: !!word, word: word || '', wordCls: 'lv-w ' + (tx || 'tx-plain'),
+      hasWake: !!e.wakeWord, wakeWord: e.wakeWord || '', time: e.time });
     const items = [];
     const segWhy = {}; (R.segs || []).forEach((x) => { segWhy[x.seg] = x.why; });
     let day = ''; let seg = (R.segs && R.segs[0] ? R.segs[0].seg : 1); let lastAtt = null;
@@ -7558,11 +7588,12 @@ class Component extends DCLogic {
       const words = ['已排队', '已送达', a.res === 'rejected' ? '被拒绝' : '已生效'];
       const note = S === 0 ? '等下一个安全点送达' : S === 1 ? '已送达，等它处理'
         : a.res === 'rejected' ? (a.why ? '原因：' + a.why : '被拒绝') : a.why || '已生效：它按你说的调整了接下来的做法';
+      const msgFlags = [a.replyWord, a.wakeWord].filter(Boolean).join(' · ');
       return Object.assign({}, B, { isAct: true, text: a.text, t: a.time,
         track: words.slice(0, S + 1).map((w, j) => ({ word: w, sep: j > 0, cls: j === S ? 'on' : '' })),
         canAdv: false, noAdv: true, advance: noop, dvCls: 'deliv' + (S === 2 && a.res === 'rejected' ? ' is-rejected' : ''),
         dvLabel: '消息状态：' + words[S],
-        note: note, hasReply: S === 2 && !!a.reply, reply: S === 2 ? a.reply || '' : '' });
+        note: note + (msgFlags ? ' · ' + msgFlags : ''), hasReply: S === 2 && !!a.reply, reply: S === 2 ? a.reply || '' : '' });
     };
     const actsBefore = (start) => { while (acts.length && (start === null || acts[0].start < start)) { const a = acts.shift(); dayRow(a.day); items.push(recAct(a)); } };
     R.entries.forEach((e, i) => {
@@ -7594,7 +7625,7 @@ class Component extends DCLogic {
         return;
       }
       if (e.kind === 'query') { items.push(flat(e, 'query', e.label || '咨询（只读副本）', e.word, e.tx)); return; }
-      items.push(flat(e, 'talk', e.label || '对话回合', '', ''));
+      items.push(flat(e, 'talk', e.label || '对话回合', e.word || '', e.tx || ''));
     });
     actsBefore(null);
     /* what you did in this view, after the record, on the board's clock */

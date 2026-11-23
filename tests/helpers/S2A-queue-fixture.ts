@@ -58,7 +58,7 @@ export async function sendMemberMessage(
 ): Promise<SessionMessage> {
   const mailbox = realOwners(f, ['adviser']).mailbox;
   return committed(await mailbox.sendMessage(ctx, {
-    input: { recipient, text: `member-to-member message ${String(index)}`, intent: 'notify' },
+    input: { recipient, text: `member-to-member message ${String(index)}`, wake: false },
     meta: { requestId, expected: [] },
   })).value;
 }

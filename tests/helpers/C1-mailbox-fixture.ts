@@ -18,6 +18,7 @@ import { createMaterialService } from '../../src/core/work-graph/materials/mater
 import { encodeSessionRecord, plainSessionRefToAggregate, sessionAggregateRefKey } from '../../src/core/work-graph/sessions/session-record-codecs.js';
 import { SESSION_MESSAGE_LOOKUP_INDEXES, SESSION_MESSAGE_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/message-record-codecs.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
+import { createQueryRoundResolver } from '../../src/core/work-graph/tasks/query-round.js';
 import { createSessionDirectory } from '../../src/core/work-graph/sessions/session-directory.js';
 import { unknownSessionDuty } from './session-duty-double.js';
 import { createRecipientExecutions } from '../../src/core/work-graph/sessions/recipient-executions.js';
@@ -202,6 +203,7 @@ export async function createC1Harness(kind: ClaimFixtureKind): Promise<C1Harness
       ...(runtimeAdmission === null ? {} : { runtimeAdmission }),
       ...(openExecutions === null ? {} : { recipientExecutions: openExecutions }),
       ...(dispatchBasis === undefined || dispatchBasis === null ? {} : { dispatchBasis }),
+      queryRounds: createQueryRoundResolver({ records, duties: unknownSessionDuty, bodies }),
       now, newId: () => `c1-message-${++eventSeq}` };
   }
   function makeMailbox(records: C1Records = backend.records, materialPort = materials,

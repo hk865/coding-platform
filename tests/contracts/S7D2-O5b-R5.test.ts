@@ -23,9 +23,9 @@ const bytesOf = (path: string): Promise<Buffer> => readFile(new URL(path, ROOT))
 const fileOf = (id: string): string => `resources/prompts/platform/templates/${id}.txt`;
 
 // The brief's literal sentences (the two O5b-2 briefs carry them word for word).
-const ADVISER_SPLIT = '- 你负责的范围太大、照这样做下去会太慢或上下文太长时，用 `propose_role_split` 把其中一部分交给一条新的同职责线：`move` 只列你现在负责的目标或区域，必须比你现有的少（至少留一项），不能列项目；平台当场核对、当场回答，被拒时照它给的原因改。';
+const ADVISER_SPLIT = '- 范围太大、照做太慢或上下文太长时，用 `propose_role_split` 把一部分交给新的同职责线：`move` 只列你现在负责的目标或区域，必须比现有的少（至少留一项），不能列项目；平台当场核对并回答，被拒照原因改。';
 const REVIEWER_READ_ONLY = '- 你只读：不改文件、不写注记；要记下的事实写进审阅结论，交给参谋或书记去记。';
-const WORK_INQUIRY = '- 读到别的线写的注记有疑问，可以按注记的来源用 `send_session_message` 发只读问询（`inquiry`）问写它的那条线；回答你的是它的只读副本，不打断它，也不替它改主意。';
+const WORK_INQUIRY = '- 读到别的线的注记有疑问，可用 `ask_copy` 问写它的线；回答你的是只读副本，不打断它，也不替它改主意。';
 const L1 = '- 要改着试（改代码再构建、跑测试），先 `cp -r /workspace /tmp/w`，在 `/tmp/w` 里改和跑。';
 const L2 = '- 只写“为什么”：原因、约定、坑、取舍和还没有答案的问题；不写“改了什么”，改了哪些文件，平台在 Run 的活动记录里自己记。';
 /** The reviewer line's tools (the construction brief's item 1); both of its templates render with them. */
@@ -35,7 +35,7 @@ describe('O5b-R5: the pack closure and digests of the three changed Skill templa
   /* Named mutation: leave `pack.json`'s adviser entry at version 9 (and regenerate) -> the adviser row's manifest
    * `toEqual` is red; edit the adviser file without regenerating -> its text `toBe` is red. */
   it.each([
-    ['skill-platform-adviser', 17], ['skill-platform-reviewer', 5], ['skill-platform-work', 14],
+    ['skill-platform-adviser', 18], ['skill-platform-reviewer', 6], ['skill-platform-work', 15],
   ] as const)('R5-1 %s: the generated text is the file, at version %i, with no tool mention', async (id, version) => {
     expect(PACK.templates[id]).toBe((await bytesOf(fileOf(id))).toString('utf8'));
     expect(PACK.manifest.templates[id]).toEqual({ file: `templates/${id}.txt`, version, mentionsTools: [] });
@@ -70,10 +70,10 @@ describe('O5b-R5: the pack closure and digests of the three changed Skill templa
     }
   });
 
-  /* Named mutation: drop the inquiry sentence from the work template's `send_session_message` block -> the
+  /* Named mutation: drop the inquiry sentence from the work template's `ask_copy` block -> the
    * `toContain` is red; leave it outside the block -> the `[]` render's `not.toContain` is red. */
-  it('R5-3c work: the inquiry sentence renders only with send_session_message', () => {
-    expect(renderTemplate(PACK, 'skill-platform-work', {}, ['send_session_message']).text).toContain(WORK_INQUIRY);
+  it('R5-3c work: the inquiry sentence renders only with ask_copy', () => {
+    expect(renderTemplate(PACK, 'skill-platform-work', {}, ['ask_copy']).text).toContain(WORK_INQUIRY);
     expect(renderTemplate(PACK, 'skill-platform-work', {}, []).text).not.toContain(WORK_INQUIRY);
   });
 

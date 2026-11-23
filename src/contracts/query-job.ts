@@ -148,8 +148,8 @@ export type QueryJobAnswerRef = {
  * Two outer retries therefore address the same
  * persisted pair; no generic dedupe layer exists.
  */
-export function consultationQueryRefs(messageRef: SessionMessageRef, part: 'message' | 'response' = 'message'): { queryJobRef: QueryJobRef; queryRunRef: QueryRunRef } {
-    const hash = sha256Hex(canonicalJson((part === 'message' ? messageRef : { messageRef, part }) as unknown as JsonValue));
+export function consultationQueryRefs(messageRef: SessionMessageRef): { queryJobRef: QueryJobRef; queryRunRef: QueryRunRef } {
+    const hash = sha256Hex(canonicalJson(messageRef as unknown as JsonValue));
     const queryJobId = `consultation-${hash}`;
     return {
         queryJobRef: { aggregateType: "QueryJob", projectId: messageRef.projectId, workspaceId: messageRef.workspaceId, queryJobId },
@@ -164,10 +164,14 @@ export function consultationQueryRefs(messageRef: SessionMessageRef, part: 'mess
  * The pair lives in the workspace of the Goal the message names, which may be
  * another workspace of the project than the message's own (a joined
  * workspace's round to a main-workspace line); the default is the message's.
+ * A card-answer round freezes `part: 'decision_answer'`, so its deterministic key is the complete message ref plus
+ * that part and never collides with the round opened from the same message as a plain source.
  */
 export function interventionPlanningQueryRefs(messageRef: SessionMessageRef,
-    queryWorkspaceId: string = messageRef.workspaceId): { queryJobRef: QueryJobRef; queryRunRef: QueryRunRef } {
-    const hash = sha256Hex(canonicalJson(messageRef as unknown as JsonValue));
+    queryWorkspaceId: string = messageRef.workspaceId,
+    part: 'message' | 'decision_answer' = 'message'): { queryJobRef: QueryJobRef; queryRunRef: QueryRunRef } {
+    const hash = sha256Hex(canonicalJson(
+        (part === 'message' ? messageRef : { messageRef, part }) as unknown as JsonValue));
     const queryJobId = `intervention-planning-${hash}`;
     return {
         queryJobRef: queryJobRefFor(messageRef.projectId, queryWorkspaceId, queryJobId),
@@ -330,13 +334,12 @@ export type QueryJobIntentV1 = {
         roleBinding: RoleBindingRefV1;
         runtimeBudget: import('./runtime-budget.js').RuntimeBudget;
         /**
-         * A saved mailbox source for a read-only semantic Query. Inquiry answers
-         * attach to the original message; part=response processes that saved
-         * response in the sender Session without replacing the original answer.
+         * A saved copy question for a read-only semantic Query (§2.3/§3.10): the
+         * question's own text under its frozen derivation, answered on the original
+         * message. A reply is never a consultation source.
          */
         consultation?: {
             messageRef: SessionMessageRef;
-            part?: 'response';
             recipient: SessionRef;
             /** 7B-3: the create operation of a consultation copy; CS's writer sets it, Q reads the frozen payload by it. */
             operation?: OperationRef;
@@ -358,6 +361,17 @@ export type QueryJobIntentV1 = {
         /** L11: the planning Query starts from a real message; required on `intervention_planning`, absent on every other kind. */
         sourceMessageRef?: SessionMessageRef;
         /**
+         * The frozen part of the source message this planning Query was opened from. Only a card-answer round carries
+         * `decision_answer`; an ordinary source round omits it. The deterministic Query key is computed from it.
+         */
+        sourcePart?: 'decision_answer';
+        /**
+         * The sender facts frozen with the source message when this planning Query was opened: the person, the
+         * platform, or the sending line. The prompt's source line names it; it is never re-derived from the
+         * message body. Only `intervention_planning` carries it, and old intents omit it.
+         */
+        sourceSender?: { kind: 'person' } | { kind: 'platform' } | { kind: 'line'; sessionId: string };
+        /**
          * The submit-tool shape frozen when the platform creates the Query; only
          * `intervention_planning` carries it, and only platform code writes it.
          */
@@ -367,6 +381,12 @@ export type QueryJobIntentV1 = {
          * `intervention_planning` carries it (spec #8, ruling DR-P1-04).
          */
         repliesToMessageRef?: SessionMessageRef;
+        /**
+         * The verified proof that this `intervention_planning` round was opened by a module-overlap gate's saved
+         * `noteRequest.messageRef`. The gate owner freezes it when it builds the Query; preparation, execution and
+         * the note owner admit the gate's text round by this flag, never by the sender's identity.
+         */
+        overlapNote?: true;
         implementationAuthorization?: {
             requestId: string;
             writeScope: [
@@ -400,16 +420,14 @@ function validConsultationBinding(value: unknown): boolean {
     if (!isRecord(value))
         return false;
     const keys = Object.keys(value);
-    if (!(keys.length >= 2 && keys.length <= 5) || !keys.includes('messageRef') || !keys.includes('recipient'))
+    if (!(keys.length >= 2 && keys.length <= 4) || !keys.includes('messageRef') || !keys.includes('recipient'))
         return false;
-    if (keys.some(key => !['messageRef', 'recipient', 'derivation', 'part', 'operation'].includes(key)))
+    if (keys.some(key => !['messageRef', 'recipient', 'derivation', 'operation'].includes(key)))
         return false;
     if (!validSessionMessageRef(value['messageRef']))
         return false;
     if (!validPlainSessionRef(value['recipient']))
         return false;
-    if (value['part'] !== undefined && value['part'] !== 'response') return false;
-    if (value['part'] === 'response' && value['derivation'] !== undefined) return false;
     const derivation = value['derivation'];
     if (derivation !== undefined) {
         if (!isRecord(derivation))
@@ -429,6 +447,15 @@ function validConsultationBinding(value: unknown): boolean {
     }
     return true;
 }
+/** The frozen sender facts of one planning source: a closed three-way shape, no extra keys. */
+function validSourceSender(value: unknown): boolean {
+    if (!isRecord(value))
+        return false;
+    const kind = value['kind'];
+    if (kind === 'person' || kind === 'platform') return Object.keys(value).length === 1;
+    return kind === 'line' && Object.keys(value).length === 2
+        && typeof value['sessionId'] === 'string' && value['sessionId'].length > 0;
+}
 export function validQueryExecution(value: QueryJobIntentV1['execution']): boolean {
     if (value === undefined)
         return true;
@@ -440,9 +467,21 @@ export function validQueryExecution(value: QueryJobIntentV1['execution']): boole
             return false;
     } else if (value.sourceMessageRef !== undefined)
         return false;
+    // The frozen source part belongs to intervention_planning only, and only the card-answer value exists.
+    if (value.sourcePart !== undefined
+        && (value.kind !== 'intervention_planning' || value.sourcePart !== 'decision_answer'))
+        return false;
+    // The frozen source sender facts belong to intervention_planning only; old intents omit them.
+    if (value.sourceSender !== undefined
+        && (value.kind !== 'intervention_planning' || !validSourceSender(value.sourceSender)))
+        return false;
     // Ruling DR-P1-04: the reply ref belongs to intervention_planning only.
     if (value.repliesToMessageRef !== undefined
         && (value.kind !== 'intervention_planning' || !validSessionMessageRef(value.repliesToMessageRef)))
+        return false;
+    // The gate-note proof is the literal `true` and belongs to intervention_planning only.
+    if (value.overlapNote !== undefined
+        && (value.kind !== 'intervention_planning' || value.overlapNote !== true))
         return false;
     // §5.2.7: answerShape belongs to intervention_planning only, from the seven planning values.
     if (value.answerShape !== undefined

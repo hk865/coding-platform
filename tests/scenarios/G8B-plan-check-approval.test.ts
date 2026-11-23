@@ -34,6 +34,8 @@
  * P0 守护行的演示（冻结补裁第 3 条）：在共用的读名单 `src/app/host.ts:464` 临时加 `query_task_graph`。审阅者名单
  * 的期望是 15 个读名再加提交工具（16 个），实测变成 16 个读名再加提交工具（17 个）；D4、D4b 的计划审阅和批检查
  * 四条名单断言都红在 `toEqual`，差集只有 `query_task_graph`。恢复后 `git diff -- src` 为空。
+ * P2 起这两种轮按设计 §6 第 610、617 行再挂任、发、撤、告（`P2_REVIEW_ROUND_TOOLS`，`p2-frozen.md:224`、`:230`），名单仍逐个
+ * 比全等。
  */
 import { afterEach, describe, expect, it } from 'vitest';
 import type { SessionMessageRef } from '../../src/contracts/core/session-message.js';
@@ -43,7 +45,7 @@ import { graphWrite } from '../helpers/AG2b-collaboration-fixture.js';
 import { g8Check, g8PlanForm } from '../helpers/G8-world.js';
 import {
   expectB15, expectNoteRead, G8B_ROLE, G8B_TEMPLATE, g8bCheckReview, g8bSubjectOf, openG8BWorld, p0History,
-  p0Lookup, p0PersonNote, P0_REVIEWER_TOOLS, p0ToolNames, type G8BWorld,
+  p0Lookup, p0PersonNote, P0_REVIEWER_TOOLS, p0ToolNames, P2_REVIEW_ROUND_TOOLS, type G8BWorld,
 } from '../helpers/G8B-world.js';
 import { adviserToolResult } from '../helpers/K3L3-adviser-world.js';
 import { proposalRefOf } from '../helpers/IV-host-fixture.js';
@@ -134,7 +136,7 @@ describe('G8B-1a: an adviser\'s plan that the platform adopts by itself brings a
         'g8b-d4-review-history', reviewer, w.scope);
       expectB15(reviewHistory, `${row}: the plan review`);
       expect.soft([...(await p0ToolNames(w, reviewer, beforeReview))].sort(), `${row}: the plan review tool list`)
-        .toEqual([...P0_REVIEWER_TOOLS, 'submit_plan_review'].sort());
+        .toEqual([...P0_REVIEWER_TOOLS, ...P2_REVIEW_ROUND_TOOLS, 'submit_plan_review'].sort());
 
       // 采用之前请批：下一个系统轮是给审阅线的 `checkreview:`，参谋（作者）收不到。
       const beforeCheck = (await w.world.scripted.requests(reviewer, w.scope)).length;
@@ -153,7 +155,7 @@ describe('G8B-1a: an adviser\'s plan that the platform adopts by itself brings a
         'g8b-d4-approval-history', reviewer, w.scope);
       expectB15(checkHistory, `${row}: the check review`);
       expect.soft([...(await p0ToolNames(w, reviewer, beforeCheck))].sort(), `${row}: the check review tool list`)
-        .toEqual([...P0_REVIEWER_TOOLS, 'submit_check_review'].sort());
+        .toEqual([...P0_REVIEWER_TOOLS, ...P2_REVIEW_ROUND_TOOLS, 'submit_check_review'].sort());
       expect(await w.planRevision(goal)).toBe(2);
       const entry = await w.steps.settingsEntry();
       expect(entry.checks?.find(item => item.checkId === 'g8b-d4-check')).toMatchObject(check);
@@ -187,7 +189,7 @@ describe('G8B-1a: an author outside the approval table (Q4)', () => {
       await w.world.scripted.script(executor, [{ kind: 'calls', calls: [p0Lookup('g8b-d7-mem')] },
         { kind: 'text', text: JSON.stringify({ ...plan, checks: [check] }) }], w.scope);
       const person = committed<{ ref: SessionMessageRef }>(await w.world.post('messages/send', graphWrite(w.scope, {
-        recipient: executor.ref, text: 'G8B D7：再加一项工作', intent: 'action_request', needsReply: true, goalRef: goal,
+        recipient: executor.ref, text: 'G8B D7：再加一项工作', entry: 'person_intervention', needsReply: true, goalRef: goal,
       }, 'g8b-d7-person')), 'the D7 person message').ref;
       expect(await w.interventionReached(person, 'awaiting_decision'), 'D7: stage 11 did not leave it to the person')
         .toContain('awaiting_decision');

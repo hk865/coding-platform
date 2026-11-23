@@ -101,7 +101,7 @@ export async function readDisconnectFacts(
       const archivePosition = origin.value.since;
       const recipient: SessionRef | null = 'kind' in message.recipient ? null : message.recipient as SessionRef;
       const parties: { side: DisconnectSideV1; ref: SessionRef }[] = [];
-      if (isWaitMessage(message) && message.release === 'released') {
+      if (isWaitMessage(message)) {
         const state = waitStateOf(message, waitFactsOfRecord(message));
         if (state.state === 'open' || state.state === 'answered' || state.state === 'expired') {
           const waiting = messageSenderSessionOf(message);
@@ -111,7 +111,8 @@ export async function readDisconnectFacts(
       }
       // A Host system `notify` asks for nothing: its non-delivery is information, not a new disconnect fact.
       if (recipient !== null && (message.acceptedInputs ?? []).every(i => i.part !== 'message')
-        && !(message.intent === 'notify' && message.sender.kind === 'host' && message.sender.actor.kind === 'system')) {
+        && !(message.wake === false && message.needsReply !== true
+          && message.sender.kind === 'host' && message.sender.actor.kind === 'system')) {
         parties.push({ side: 'recipient', ref: recipient });   // an undelivered message to a gone line
       }
       let copyGoalPin: { ref: GoalRef; revision: number } | null | undefined;

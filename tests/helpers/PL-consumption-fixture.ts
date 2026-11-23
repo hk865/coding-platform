@@ -37,16 +37,18 @@ import { AG2B_CONSUMER_ID, AG2B_QUERY_BUDGET, AG2B_RUNTIME_BUDGET, ag2bPlanDraft
   './AG2b-collaboration-fixture.js';
 import { driveWorkflow } from './A2-restart-fixture.js';
 import { s6aCardsWorkspace } from './S6A-cards-fixture.js';
-import type { S6AHostWorld } from './S6A-host-fixture.js';
+import { ensureProjectPointers, type S6AHostWorld } from './S6A-host-fixture.js';
 import { openConsumeHostWorld } from './S7B2-consumable-sessions.js';
 import { assignGoalAdviserLine } from './S7C-handoff-fixture.js';
 import { withConfiguredHost } from './S7C-member-fixture.js';
 import type { TrustedCheckConfiguration } from '../../src/contracts/verification.js';
 import { checkConfiguration } from './S7A-fixture.js';
-import { OPERATOR, S6A_SCOPE, S6A_WORK_ROLE, type S6AExtraBinding, type S6ASession } from './S6A-request-fixture.js';
-import { adoptS6BPlan, createS6BLine, governS6B } from './S6B1-fixture.js';
+import {
+  OPERATOR, P2_COORDINATION_TOOL_NAMES, S6A_SCOPE, S6A_SECRETARY_ROLE, S6A_WORK_ROLE,
+  type S6AExtraBinding, type S6ASession,
+} from './S6A-request-fixture.js';
+import { adoptS6BPlan, createS6BLine } from './S6B1-fixture.js';
 import { sendS7BWaitingInquiry } from './S7B-fixture.js';
-import { approveS7A2Message, readS7A2DispatchBasis } from './S7A2-fixture.js';
 import { claimQuery, prepareAttempt, start } from './request-claim-steps.js';
 import { rememberHostStore } from './KLS1B-host-store.js';
 import { gitIn } from '../scenarios/support/git-workspace.js';
@@ -62,7 +64,7 @@ export const PL_ADVISER_PROFILE_ID = 'pl-adviser-profile';
 const ADVISER_GUIDANCE = 'PL trusted adviser guidance';
 
 const ADVISER_BINDING: S6AExtraBinding = {
-  binding: bindingOf('pl-adviser-binding', PL_ADVISER_ROLE, ADVISER_GUIDANCE, ['read', 'send_session_message']),
+  binding: bindingOf('pl-adviser-binding', PL_ADVISER_ROLE, ADVISER_GUIDANCE, [...P2_COORDINATION_TOOL_NAMES]),
   workflow: { workspace: S6A_SCOPE, sessionRole: PL_ADVISER_ROLE, roleBinding: PL_ADVISER_ROLE_BINDING,
     budget: { tokenBudget: 1_000_000, deadline: null } },
   queryProfile: {
@@ -139,6 +141,12 @@ function adviserBindingOf(contextWindowTokens: number | undefined): S6AExtraBind
   const profile = binding.queryProfile!;
   return { ...binding, queryProfile: { ...profile, runtimeBudget: { ...profile.runtimeBudget, contextWindowTokens } } };
 }
+
+/** The base secretary binding's P2 coordination families (the adjudicating/action rounds of T27/T28/T33/T34). */
+const SECRETARY_TOOLS: S6AExtraBinding = {
+  binding: bindingOf('s6a-secretary-binding', S6A_SECRETARY_ROLE, 'S6A trusted secretary guidance', ['read']),
+  mergeTools: P2_COORDINATION_TOOL_NAMES,
+};
 
 /** The Work binding's tool merge a sender Run needs (send and continue on a reply). */
 const WORK_TOOLS: S6AExtraBinding = {
@@ -218,7 +226,7 @@ export async function openPLConsumptionWorld(options: {
   const label = options.label ?? 'pl';
   const openWorld = () => openConsumeHostWorld({
     backend: options.backend ?? 'memory',
-    extraBindings: [adviserBindingOf(options.contextWindowTokens), WORK_TOOLS],
+    extraBindings: [adviserBindingOf(options.contextWindowTokens), SECRETARY_TOOLS, WORK_TOOLS],
     extraHostOptions: { ...(options.checks === undefined || options.checks === false ? {}
       : { checks: options.checks === true ? checkConfiguration({ ...OPERATOR, kind: 'human' }) : options.checks }),
       inputConsumers: [{ scope: S6A_SCOPE,
@@ -231,7 +239,7 @@ export async function openPLConsumptionWorld(options: {
     : options.write === true ? await withConfiguredHost(openWorld, original => writeWorkHostFactory(original))
       : await openWorld();
   try {
-    await governS6B(world, s6aCardsWorkspace(world, S6A_SCOPE), world.goals);
+    await ensureProjectPointers(world);
     return world;
   } catch (error) {
     await world.close().catch(() => undefined);
@@ -299,7 +307,7 @@ async function runAdviserWork(world: S6AHostWorld, input: {
   const peer = await world.createUnprofiledSecretary(`${input.label}-peer`);
   await sendS7BWaitingInquiry(world, { goal: input.goal, session: adviser, taskId: input.adviserTask.taskId,
     label: `${input.label}-w`, body: { recipient: peer.ref, text: `PL ${input.label} W lets go`,
-      intent: 'inquiry', needsReply: true, waitAfterSend: true } });
+      needsReply: true, waitAfterSend: true } });
   return { adviser, peer };
 }
 
@@ -442,22 +450,20 @@ export async function sendPLActionWait(world: S6AHostWorld, input: {
   goal: GoalRef; session: S6ASession; sessionTaskId: string; recipient: SessionRef; text: string;
   taskRef?: TaskTriple; label: string;
 }): Promise<{ message: SessionMessage; run: RunRef }> {
-  const expected = await readS7A2DispatchBasis(world, input.goal);
   await world.scripted.script(input.session, [{ kind: 'calls', calls: [{
     callId: `pl-send-${input.label}`, name: 'send_session_message',
-    args: { recipient: input.recipient, text: input.text, intent: 'action_request', needsReply: true,
-      waitAfterSend: true, expected, ...(input.taskRef === undefined ? {} : { taskRef: input.taskRef }) },
+    args: { recipient: input.recipient, text: input.text, needsReply: true,
+      waitAfterSend: true, ...(input.taskRef === undefined ? {} : { taskRef: input.taskRef }) },
   }] }]);
   await driveWorkflow(world.ag2b, { schemaVersion: 1, goalRef: input.goal, flowId: `pl-send-${input.label}`,
     sessionHint: input.session.ref, kind: 'select_work', taskId: input.sessionTaskId });
   const outbox = ready<{ items: SessionMessage[] }>(await world.post('messages/outbox',
     plain(S6A_SCOPE, { senderSession: input.session.ref, page: { limit: 50 } })), `the ${input.label} outbox`);
   const saved = outbox.items.filter(item => item.sender.kind === 'work_run'
-    && item.intent === 'action_request' && item.waitAfterSend === true).at(-1);
+    && item.needsReply === true && item.waitAfterSend === true).at(-1);
   if (saved === undefined) throw new Error(`PL: the ${input.label} action request is not in its outbox`);
-  let message = ready<SessionMessage>(await world.post('messages/read', plain(S6A_SCOPE, saved.ref)),
+  const message = ready<SessionMessage>(await world.post('messages/read', plain(S6A_SCOPE, saved.ref)),
     `the ${input.label} action request`);
-  if (message.release === 'awaiting') message = await approveS7A2Message(world, message, input.label);
   const facts = ready<{ latestWork: { runRef: RunRef } | null }>(
     await world.post('sessions/facts', plain(S6A_SCOPE, input.session.ref)), `the facts of ${input.label}`);
   if (facts.latestWork === null) throw new Error(`PL: the ${input.label} sender has no Work claim`);

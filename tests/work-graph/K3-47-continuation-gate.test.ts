@@ -141,7 +141,7 @@ describe.each(['memory', 'sqlite'] as const)(
         const yieldTools = ['send_session_message'];
         const yieldModel = createScriptedModel([
           { kind: 'calls', calls: [{ callId: 'k3-47-continuation-send', name: 'send_session_message',
-            args: { recipient: replySession, text: 'Which file should this work use?', intent: 'inquiry', needsReply: true, waitAfterSend: true } }] },
+            args: { recipient: replySession, text: 'Which file should this work use?', needsReply: true, waitAfterSend: true } }] },
           { kind: 'text', text: 'the inquiry is durably saved' },
         ]);
         const yieldRuntime = createK3_35Runtime(world, {

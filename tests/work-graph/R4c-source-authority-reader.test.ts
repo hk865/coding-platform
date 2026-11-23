@@ -22,8 +22,10 @@ import { createMaterialRecordReaders } from '../../src/core/work-graph/materials
 import type { SourceCanonicalRef } from '../../src/core/work-graph/source-authority-ports.js';
 import { createSourceAuthorityReader } from '../../src/core/work-graph/source-authority-reader.js';
 import { createTaskClaimService } from '../../src/core/work-graph/tasks/claim-service.js';
-import { createRoleConfigurationService } from '../../src/core/work-graph/configuration/role-memory-service.js';
 import { createQueryJobService } from '../../src/core/work-graph/queries/query-job-service.js';
+import { createRunSupport } from '../helpers/S2C-L-runs-support.js';
+import { planSourceRootOf } from '../helpers/task-claim-fixture.js';
+import { createRoleConfigurationService } from '../../src/core/work-graph/configuration/role-memory-service.js';
 import { QUERY_JOB_RECORD_SCHEMAS } from '../../src/core/work-graph/queries/query-record-codecs.js';
 import { createProjectBootstrapServices } from '../../src/core/work-graph/configuration/project-bootstrap-service.js';
 import { PROJECT_BOOTSTRAP_RECORD_SCHEMAS } from '../../src/core/work-graph/configuration/project-bootstrap-record-codecs.js';
@@ -85,6 +87,8 @@ async function realRun(fixture: TaskClaimFixture, options: RealRunOptions = {}):
   let calls = 0;
   const service = fixed === undefined ? fixture.service : createTaskClaimService({
     records: fixture.records,
+    planSourceRoot: planSourceRootOf({ messages: createRunSupport(fixture).mailbox(), plans: fixture.plans,
+      queries: createQueryJobService({ records: fixture.records, now: () => CLAIM_FIXTURE_AT, eventId: () => 'r4c-claim-query' }) }),
     roles: createRoleConfigurationService({ records: fixture.records, now: () => CLAIM_FIXTURE_AT,
       eventId: () => `source-role-event-${++claimSequence}` }),
     now: () => CLAIM_FIXTURE_AT,

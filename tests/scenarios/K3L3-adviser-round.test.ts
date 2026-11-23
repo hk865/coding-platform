@@ -34,7 +34,8 @@ import { graphWrite, plain } from '../helpers/AG2b-collaboration-fixture.js';
 import { heartbeatUntil, readBody, readPlanningQuery, readQueryAnswer } from '../helpers/IV-host-fixture.js';
 import { shellSeam } from '../helpers/K3-tool-seams.js';
 import {
-  adviserManifestOf, adviserNoticesOf, adviserRoundsOf, adviserToolResult, advanceK3L3, answerK3L3Round,
+  adviserManifestOf, adviserNoticesOf, adviserRoundEndingOf, adviserRoundsOf, adviserToolResult, advanceK3L3,
+  answerK3L3Round,
   controlK3L3Goal, crashK3L3Command, k3l3CardOf, k3l3Queue, openK3L3World, reachK3L3, readK3L3Review, selectK3L3,
   type K3L3World,
 } from '../helpers/K3L3-adviser-world.js';
@@ -115,7 +116,7 @@ describe('R1 the adviser round end to end (E1-E4, N3)', () => {
     const rounds = await adviserRoundsOf(w);
     expect(rounds).toHaveLength(1);
     const { message: round, text } = rounds[0]!;
-    expect(round).toMatchObject({ intent: 'action_request', taskRef: w.task });
+    expect(round).toMatchObject({ taskRef: w.task });
     const head = text.split('\n')[0]!;
     expect(head).toMatch(new RegExp(`^ucr:${runRef.runId}:2:disposition:[0-9a-f]{64}$`));
     const { source } = await answerK3L3Round(w, round, [
@@ -128,7 +129,7 @@ describe('R1 the adviser round end to end (E1-E4, N3)', () => {
     // ③ E1 and ④ E4: the frozen tools and the prepared question.
     const manifest = await adviserManifestOf(w, round);
     expect(manifest.promptSet.toolNames).toEqual(expect.arrayContaining(['submit_unknown_call_advice', 'read_execution_history']));
-    for (const name of ['edit', 'shell', 'write', 'record_note', 'submit_plan_round', 'send_session_message', 'create_member']) {
+    for (const name of ['edit', 'shell', 'write', 'record_note', 'submit_plan_round', 'create_member']) {
       expect(manifest.promptSet.toolNames).not.toContain(name);
     }
     expect(manifest.input).toContain('## 结果未知的调用：请你定怎么继续');
@@ -272,11 +273,11 @@ describe('R5 the adviser round fails, or the adviser escalates', () => {
       scripted = [{ kind: 'text', text }];
     }
     const ended = await answerK3L3Round(w, round, scripted);
-    const { source } = ended;
     const applied = await advanceK3L3(w, selectK3L3(w, `k3l3r5${cell}-b`));
     const record = await readK3L3Review(w, runRef);
     if (cell === 'a') {
-      expect(source.withdrawnAt).not.toBeNull();
+      // P2 (`p2-frozen.md:165/:168`): the formal `no_answer` ends the round; the adviser's message is not withdrawn.
+      expect(await adviserRoundEndingOf(w, round)).toBe('no_answer');
       expect(kinds(applied.receipts)).toContain('escalate_review');
       expect(record).toMatchObject({ status: 'needs_decision', escalation: { cause: 'adviser_failed' } });
     } else if (cell === 'c') {
@@ -284,8 +285,8 @@ describe('R5 the adviser round fails, or the adviser escalates', () => {
       expect(ended.query.job.job.answerRefs).toEqual([]);
       // ② No advice was applied: the gate escalates the record to the person.
       expect(record).toMatchObject({ status: 'needs_decision', escalation: { cause: 'adviser_failed' } });
-      // ③ The source is withdrawn (the Host's `no_answer` path).
-      expect(source.withdrawnAt).not.toBeNull();
+      // ③ The formal `no_answer` ends the round; the adviser's own message stays (P2).
+      expect(await adviserRoundEndingOf(w, round)).toBe('no_answer');
     } else {
       expect(await readBody(w.world, round.ref, 'response')).toBe('参谋已答复：要不要换数据库得你定');
       expect(record).toMatchObject({ status: 'needs_decision', escalation: { cause: 'adviser_escalated',

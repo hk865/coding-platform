@@ -40,7 +40,7 @@ describe('B-intervention (memory)', () => {
     expect(claim.task).toEqual(facts.wait!.task);
     const inbox = ready<{ items: SessionMessage[] }>(await world.post('messages/inbox',
       plain(S6A_SCOPE, { recipient: wait.waitingSession, page: { limit: 20 } })), 'the intervention inbox');
-    const sent = inbox.items.find(message => message.intent === 'action_request')!;
+    const sent = inbox.items.find(message => message.entry === 'person_intervention')!;
     const started = ready<{ run: RunSnapshot }>(await world.post('executions/read',
       plain(S6A_SCOPE, run)), 'the intervention execution');
     expect(started.run.task).toEqual(claim.task);
@@ -53,7 +53,7 @@ describe('B-intervention (memory)', () => {
     const wait = await runS7BWait(world, { label: 'intervention-no-task' });
     // The recipient line was opened without a Task and has no latest Work Task.
     const sent = committed<SessionMessage>(await world.post('messages/send', graphWrite(S6A_SCOPE, {
-      recipient: wait.recipient.ref, text: 'S7B intervene with no unfinished Task', intent: 'action_request',
+      recipient: wait.recipient.ref, text: 'S7B intervene with no unfinished Task', entry: 'person_intervention',
       goalRef: wait.goal,
     }, 's7b-intervention-no-task-send')), 'the no-task intervention message');
     expect(sent.recipient).toEqual({ projectId: wait.recipient.ref.projectId, sessionId: wait.recipient.ref.sessionId });
@@ -81,7 +81,7 @@ describe('B-intervention (SQLite only: the Host restart)', () => {
     expect(display.display.causes).toContainEqual(expect.objectContaining({ code: 'interrupted_pending_resume' }));
 
     const sent = committed<SessionMessage>(await world.post('messages/send', graphWrite(S6A_SCOPE, {
-      recipient: wait.sender.ref, text: 'S7B intervene after the restart', intent: 'action_request',
+      recipient: wait.sender.ref, text: 'S7B intervene after the restart', entry: 'person_intervention',
       goalRef: wait.goal, taskRef: wait.tasks[0],
     }, 's7b-intervention-restart-send')), 'the post-restart intervention message');
 

@@ -10,7 +10,7 @@
  * definition.
  *
  * `mailboxToolSeam` does the same for the ONE non-process, `platform`-kind tool
- * (`send_user_message`, L3 row 4): it is registered through the production
+ * (`notify_person`, L3 row 4; `send_user_message` was retired by P2 §2.6): it is registered through the production
  * `createSessionMailboxTools` factory the test replaces with `vi.mock`, and its
  * handler blocks. The Kernel records the real unresolved call; the production
  * classifier/draft then builds a `platform` item. The seam is an injected
@@ -165,8 +165,8 @@ class BlockingToolSeam {
   }
 }
 
-/** L3 row 4 `platform` tool: the deleted B2-01 platform-only public-path case. */
-export const mailboxToolSeam = new BlockingToolSeam('send_user_message', 'workspace_write');
+/** L3 row 4 `platform` tool: the B2-01 platform-only public-path case; `notify_person` is the P2 §2.6 replacement. */
+export const mailboxToolSeam = new BlockingToolSeam('notify_person', 'workspace_write');
 
 /**
  * L3 row 1 `read_only` tool: an unresolved Kernel `read` call. The draft reader

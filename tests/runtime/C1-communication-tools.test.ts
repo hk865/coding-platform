@@ -6,7 +6,7 @@
  * executes their handlers directly with trusted Kernel-shaped `ToolCall`s. The
  * strict schemas, the trusted closure, the requestId derivation and the effect
  * classes are exercised against a recording mailbox; the real end-to-end flow
- * (send -> inbox -> body -> ack -> response -> sender read) uses the REAL
+ * (send -> inbox -> body -> response -> sender read) uses the REAL
  * SessionMailbox over the REAL Memory/SQLite Store and MaterialPort.
  *
  * The Stage 1 mailbox skeleton genuinely returns `unsupported`, so the
@@ -54,9 +54,9 @@ function fakeMessage(recipient: SessionRef, text: string): SessionMessage {
     recipient, bodyRef: { kind: 'artifact', contentType: SESSION_MESSAGE_CONTENT_TYPE, digest: 'a'.repeat(64), sizeBytes: 1, source },
     sourceRef: source, createdAt: AT, status: 'pending', readAt: null, response: null,
     goalRef: null, taskRef: null, requestRoot: null, followupOf: null, deadline: null, deadlineMs: null,
-    release: null, delivery: 'queued', deliveryEvidence: null, expiredAt: null, withdrawnAt: null,
-    waitCancelledAt: null, transferredTo: null, originalRef: null, appliedAt: null, rejectedAt: null,
-    approvedAt: null, approvalRevision: null, applicationProof: null, pins: null,
+    wake: true, answeredBy: 'line', delivery: 'queued', deliveryEvidence: null, expiredAt: null,
+    withdrawnAt: null, waitCancelledAt: null, transferredTo: null, originalRef: null, appliedAt: null,
+    rejectedAt: null, applicationProof: null,
   };
 }
 
@@ -65,7 +65,6 @@ type RecordedWrite = { ctx: CoreCallContext; request: { input: unknown; meta: { 
 
 function recordingMailbox(results: { send?: SendRejectionV1 } = {}) {
   const sends: RecordedSend[] = [];
-  const acks: RecordedWrite[] = [];
   const responds: RecordedWrite[] = [];
   let seq = 0;
   const cursor = () => `c${String(++seq).padStart(10, '0')}` as CommitCursor;
@@ -76,14 +75,12 @@ function recordingMailbox(results: { send?: SendRejectionV1 } = {}) {
       return { status: 'committed', sendStatus: 'sent', value: fakeMessage(request.input.recipient, request.input.text), replayed: false, cursor: cursor() };
     },
     async readMessage() { return { status: 'not_found' }; },
+    async readDecisionAnswerTaken() { return { status: 'ready', value: false }; },
+    async readQueryRound() { return { status: 'ready', value: null }; },
     async readMessageBody() { return { status: 'not_found' }; },
     async readInbox() { return { status: 'ready', value: { items: [], nextCursor: null, sourceCursor: cursor(), cursors: [] } }; },
     async readHostSystemOutbox() { return { status: 'ready', value: { items: [], next: null } }; },
     async appendHostSystemOutbox() { throw new Error('the C1 stand-in never appends to the Host system outbox'); },
-    async ackMessage(ctx, request) {
-      acks.push({ ctx, request: request as unknown as RecordedWrite['request'] });
-      return { status: 'committed', value: fakeMessage({ projectId: request.input.messageRef.projectId, sessionId: 'recipient' }, 'ack'), replayed: false, cursor: cursor() };
-    },
     async respondMessage(ctx, request) {
       responds.push({ ctx, request: request as unknown as RecordedWrite['request'] });
       return { status: 'committed', value: fakeMessage({ projectId: request.input.messageRef.projectId, sessionId: 'recipient' }, 'respond'), replayed: false, cursor: cursor() };
@@ -91,13 +88,10 @@ function recordingMailbox(results: { send?: SendRejectionV1 } = {}) {
     async withdrawMessage() {
       return { status: 'committed', value: fakeMessage(recipient, 'withdraw'), replayed: false, cursor: cursor() };
     },
-    async releaseMessage() {
-      return { status: 'committed', value: fakeMessage(recipient, 'release'), replayed: false, cursor: cursor() };
-    },
     async readMessageView() { return { status: 'not_found' }; },
     async readInboxView() { return { status: 'ready', value: { items: [], nextCursor: null, sourceCursor: cursor() } }; },
   };
-  return { port, sends, acks, responds };
+  return { port, sends, responds };
 }
 
 const hostCtx = (projectId: string, workspaceId: string): CoreCallContext => ({
@@ -157,20 +151,17 @@ describe('C1 SessionMailbox tool adapter', () => {
     const { port, sends } = recordingMailbox();
     const { byName } = buildTools(port);
     const definition = byName('send_session_message');
-    const expected = { planRevision: 2, pointerRevision: 'none' as const, dispatchSequence: 7 };
-    const firstArgs: Record<string, unknown> = { recipient: { ...recipient }, text: 'snapshot', expected };
+    const firstArgs: Record<string, unknown> = { recipient: { ...recipient }, text: 'snapshot' };
     const firstCall = toolCall('send_session_message', 'call-stable', firstArgs);
     const pending = definition.handler.execute(firstCall, { signal: signal() });
     // Mutating the caller's argument object after acceptance must not change it.
     (firstArgs['recipient'] as Record<string, unknown>)['sessionId'] = 'mutated';
     firstArgs['text'] = 'mutated';
-    expected.planRevision = 9;
     await pending;
     expect(sends[0]?.request.meta.requestId).toBe('c1:call-stable');
     expect(sends[0]?.request.meta.expected).toEqual([]);
     expect(sends[0]?.request.input.recipient).toEqual(recipient);
     expect(sends[0]?.request.input.text).toBe('snapshot');
-    expect(sends[0]?.request.input.expected).toEqual({ planRevision: 2, pointerRevision: 'none', dispatchSequence: 7 });
 
     await definition.handler.execute(toolCall('send_session_message', 'call-stable', { recipient, text: 'again' }), { signal: signal() });
     await definition.handler.execute(toolCall('send_session_message', 'call-other', { recipient, text: 'again' }), { signal: signal() });
@@ -178,22 +169,13 @@ describe('C1 SessionMailbox tool adapter', () => {
     expect(sends[2]?.request.meta.requestId).toBe('c1:call-other');
   });
 
-  it('builds exactly one message pin for ack/respond and never accepts a model expected', async () => {
-    const { port, acks, responds } = recordingMailbox();
+  it('builds exactly one message pin for respond and never accepts a model expected', async () => {
+    const { port, responds } = recordingMailbox();
     const { byName } = buildTools(port);
-    const ack = await byName('ack_session_message').handler.execute(
-      toolCall('ack_session_message', 'call-ack', { messageRef, expectedRevision: 3 }), { signal: signal() });
-    expect(ack).toMatchObject({ status: 'success' });
-    expect(acks[0]?.request.meta.expected).toEqual([{ ref: messageRef, revision: 3 }]);
-
     const respond = await byName('respond_session_message').handler.execute(
       toolCall('respond_session_message', 'call-respond', { messageRef, expectedRevision: 2, text: 'done' }), { signal: signal() });
     expect(respond).toMatchObject({ status: 'success' });
     expect(responds[0]?.request.meta.expected).toEqual([{ ref: messageRef, revision: 2 }]);
-
-    const withExtraExpected = await byName('ack_session_message').handler.execute(
-      toolCall('ack_session_message', 'call-extra', { messageRef, expectedRevision: 3, expected: [] }), { signal: signal() });
-    expect(withExtraExpected).toMatchObject({ status: 'error', error: { code: 'invalid_arguments' } });
   });
 
   it('never falls back to a Host or a silent success on cancel, rejection or a failed binding', async () => {
@@ -219,7 +201,7 @@ describe('C1 SessionMailbox tool adapter', () => {
       .find(candidate => candidate.name === 'send_session_message')!
       .handler.execute(toolCall('send_session_message', 'call-nobind', { recipient, text: 'x' }), { signal: signal() });
     expect(failed).toMatchObject({ status: 'error', error: { code: 'execution_failed' } });
-    expect(throwing.definitions).toHaveLength(7);
+    expect(throwing.definitions).toHaveLength(6);
   });
 });
 
@@ -229,20 +211,19 @@ describe('C1 SessionMailbox tool adapter', () => {
 // --------------------------------------------------------------------------
 
 const OTHER_MESSAGE_REF: SessionMessageRef = { ...messageRef, messageId: 'm-2' };
-const EXPECTED = { planRevision: 2, pointerRevision: 'none' as const, dispatchSequence: 7 };
 const TASK_REF = { projectId: HOST_PROJECT, goalId: 'goal-1', taskId: 'task-1' };
 
 describe('the tool adapter hands the owner the one built command', () => {
-  it('send forwards the four optional fields with the empty meta pin list', async () => {
+  it('send forwards the send facts and the three optional fields with the empty meta pin list', async () => {
     const recorded = recordingMailbox();
     const args = {
-      recipient, text: 'question', expected: EXPECTED, taskRef: TASK_REF, followupOf: messageRef,
-      deadlineMs: 2500,
+      recipient, text: 'question', needsReply: true, wake: false,
+      taskRef: TASK_REF, followupOf: messageRef, deadlineMs: 2500,
     };
     await buildTools(recorded.port).byName('send_session_message')
       .handler.execute(toolCall('send_session_message', 's7a-send-service', args), { signal: signal() });
     expect(recorded.sends[0]?.request).toStrictEqual({
-      input: { recipient, text: 'question', expected: EXPECTED, taskRef: TASK_REF,
+      input: { recipient, text: 'question', needsReply: true, wake: false, taskRef: TASK_REF,
         followupOf: messageRef, deadlineMs: 2500 },
       meta: { requestId: 'c1:s7a-send-service', expected: [] },
     });
@@ -295,12 +276,12 @@ afterEach(async () => {
 });
 
 describe.each(KINDS)('C1 SessionMailbox tools against the real %s mailbox', kind => {
-  it('drives send -> inbox -> body -> ack -> response -> sender read and only reports committed writes', async () => {
+  it('drives send -> inbox -> body -> response -> sender read and only reports committed writes', async () => {
     const h = await openReal(kind);
     const tools = buildTools(h.mailbox, h.ctxWork, h.busySession);
 
     const sent = await tools.byName('send_session_message').handler.execute(
-      toolCall('send_session_message', 'call-send', { recipient: h.busySession, text: 'tool message' }), { signal: signal() });
+      toolCall('send_session_message', 'call-send', { recipient: h.busySession, text: 'tool message', needsReply: true }), { signal: signal() });
     expect(sent).toMatchObject({ status: 'success' });
     const receipt = outputValue(sent) as { value: SessionMessage; replayed: boolean; cursor: CommitCursor } | undefined;
     expect(receipt).toMatchObject({replayed:false});
@@ -318,12 +299,8 @@ describe.each(KINDS)('C1 SessionMailbox tools against the real %s mailbox', kind
     expect(body).toMatchObject({ status: 'success' });
     expect(outputValue(body)).toMatchObject({ text: 'tool message', usage: 'message' });
 
-    const acked = await tools.byName('ack_session_message').handler.execute(
-      toolCall('ack_session_message', 'call-ack', { messageRef: sentValue.ref, expectedRevision: sentValue.revision }), { signal: signal() });
-    expect(acked).toMatchObject({ status: 'success' });
-
     const responded = await tools.byName('respond_session_message').handler.execute(
-      toolCall('respond_session_message', 'call-respond', { messageRef: sentValue.ref, expectedRevision: 2, text: 'done' }), { signal: signal() });
+      toolCall('respond_session_message', 'call-respond', { messageRef: sentValue.ref, expectedRevision: sentValue.revision, text: 'done' }), { signal: signal() });
     expect(responded).toMatchObject({ status: 'success' });
 
     const senderRead = await tools.byName('read_session_message').handler.execute(

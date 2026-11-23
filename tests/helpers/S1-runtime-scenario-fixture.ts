@@ -14,7 +14,7 @@ import type { RoleConfigurationRef, SessionRef, SessionWorkLinkRef, WorkLinkTarg
 import { canonicalJson, type JsonValue } from '../../src/contracts/fingerprint.js';
 import { createTaskClaimFixture } from './task-claim-fixture.js';
 import { withBackendOrderedLookup } from './ordered-lookup-forward.js';
-import { createScriptedModel, type ScriptedReply } from './B2-runtime-fixture.js';
+import { createScriptedModel, deliveryFactsForFixture, type ScriptedReply } from './B2-runtime-fixture.js';
 import { B2_HOST } from './B2-execution-fixture.js';
 import { EXECUTION_ENTRY_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/execution-entry-codecs.js';
 import { MODEL_REQUEST_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/model-request-codecs.js';
@@ -43,6 +43,7 @@ import { createSessionDirectory } from '../../src/core/work-graph/sessions/sessi
 import { unknownSessionDuty } from './session-duty-double.js';
 import { createSessionMailbox } from '../../src/core/work-graph/communication/mailbox-service.js';
 import { createSessionFactsService } from '../../src/core/work-graph/tasks/session-facts.js';
+import { createQueryRoundResolver } from '../../src/core/work-graph/tasks/query-round.js';
 import { createSessionLifecycleService } from '../../src/core/work-graph/sessions/session-lifecycle.js';
 import { createSessionResponsibilityService } from '../../src/core/work-graph/sessions/session-responsibility-service.js';
 import { createSessionResponsibilityBasisReader, readTaskClosure } from '../../src/core/work-graph/tasks/plan-readers.js';
@@ -248,6 +249,7 @@ export async function openS1RuntimeFixture(options: {
   const controls = createRunControlService({ records, reads, authority: materialReads.authority, now, eventId: newId });
   const messages = createSessionMailbox({ records, sessions, executions: reads, roles, materials,
     defaultInquiryDeadlineMs: 86_400_000,
+    queryRounds: createQueryRoundResolver({ records, duties: unknownSessionDuty, bodies }),
     runtimeAdmission: { bodies, authorizeConfiguration }, systemActor: { kind: 'system', id: 's1-mailbox' }, now, newId });
   const sessionFacts = createSessionFactsService({ records });
   const lifecycle = createSessionLifecycleService({ records,
@@ -280,6 +282,7 @@ export async function openS1RuntimeFixture(options: {
   const deps: RuntimeExecutionDependencies = { claims, executions: reads, entry, modelRequests, roles, plans: base.plans,
     sessions, messages, materials, bodies, controls, kernelStores, workspaceHost, host, kernel, now, newId,
     unknownCallReviews,
+    deliveryFacts: deliveryFactsForFixture,
     readTaskClosure: async (_ctx: CoreCallContext, task: { projectId: string; goalId: string; taskId: string }) =>
       readTaskClosure(records, { aggregateType: 'Goal', projectId: task.projectId, goalId: task.goalId }, task.taskId),
     runReconcile: createRunReconcileService({ records, reads, bodies, hostInstance, now, eventId: newId }),

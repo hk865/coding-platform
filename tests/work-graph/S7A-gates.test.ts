@@ -5,6 +5,7 @@
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createMailboxInputSupply } from '../../src/core/agent-runtime/execution-inputs.js';
+import { ACTION_TOOL_NAMES } from '../../src/core/agent-runtime/communication-tools.js';
 import { PLATFORM_PROMPT_PACK_V1 } from '../../src/contracts/prompts/platform-pack.generated.js';
 import { createC1Harness, type C1Harness } from '../helpers/C1-mailbox-fixture.js';
 import { consultationQueryRefs } from '../../src/contracts/query-job.js';
@@ -15,6 +16,9 @@ import type { GoalRef } from '../../src/contracts/ledger.js';
 import type { WorkflowStepReceipt } from '../../src/business/workflow/contracts.js';
 import type { WriteResult } from '../../src/contracts/core/results.js';
 import { createSessionMailbox } from '../../src/core/work-graph/communication/mailbox-service.js';
+import { createQueryRoundResolver } from '../../src/core/work-graph/tasks/query-round.js';
+import { RawArtifactBodyStore } from '../../src/core/record-store/body-store.js';
+import { unknownSessionDuty } from '../helpers/session-duty-double.js';
 import { createDispatchBasisReader } from '../../src/core/work-graph/tasks/dispatch-basis.js';
 import { createGoalPointerFacts } from '../../src/core/work-graph/views/pointer-facts.js';
 import { createRecipientExecutions } from '../../src/core/work-graph/sessions/recipient-executions.js';
@@ -24,9 +28,12 @@ import {
   AG2B_WORKSPACE_REF, AG2B_WORK_TASK_ID, graphWrite, plain, startBusyQuery,
 } from '../helpers/AG2b-collaboration-fixture.js';
 import { driveWorkflow, readExecution, readGoal, workRow } from '../helpers/A2-restart-fixture.js';
+import { deliveryFactsForFixture } from '../helpers/B2-runtime-fixture.js';
 import { s6aCardsWorkspace } from '../helpers/S6A-cards-fixture.js';
 import { adoptS6BPlan } from '../helpers/S6B1-fixture.js';
-import { replyS7AMessage, setS7AAutonomy, S7A_REPLY_TOOLS } from '../helpers/S7A-fixture.js';
+import {
+  holdS7AQueryRound, replyS7AMessage, seedS7AGoalPlan, setS7AAutonomy, S7A_REPLY_TOOLS,
+} from '../helpers/S7A-fixture.js';
 import { openS6AHostWorld, type S6AHostWorld } from '../helpers/S6A-host-fixture.js';
 import { interventionDeliveryText } from '../helpers/S7B-delivery-samples.js';
 import {
@@ -63,11 +70,11 @@ describe('SR8 service gates (reachable release: null)', () => {
     const h = await openHarness();
     const sent = await h.mailbox.sendMessage(h.ctxHost, { input: { recipient: h.busySession, text: 'offerable message' },
       meta: { requestId: 'gates-offerable', expected: [] } });
-    expect(sent).toMatchObject({ status: 'committed', value: { release: null, withdrawnAt: null } });
+    expect(sent).toMatchObject({ status: 'committed', value: { withdrawnAt: null } });
     if (sent.status !== 'committed') return;
     const supply = createMailboxInputSupply({
-      messages: h.mailbox, context: () => h.ctxWork, sessionRef: h.busySession, runRef: h.claim.runRef,
-      texts: PLATFORM_PROMPT_PACK_V1, toolNames: [],
+      messages: h.mailbox, context: () => h.ctxWork, sessionRef: h.busySession,
+      texts: PLATFORM_PROMPT_PACK_V1, toolNames: [], deliveryFacts: deliveryFactsForFixture,
     });
     expect((await supply(inputPoint(h), { signal: new AbortController().signal })).map(item => item.text))
       .toEqual([interventionDeliveryText({ messageId: sent.value.ref.messageId, body: 'offerable message' })]);
@@ -97,8 +104,8 @@ describe('SR8 service gates (reachable release: null)', () => {
       lookup(input) { reads++; return h.fixture.records.lookup(input); },
     });
     const supply = createMailboxInputSupply({
-      messages: mailbox, context: () => h.ctxWork, sessionRef: h.busySession, runRef: h.claim.runRef,
-      texts: PLATFORM_PROMPT_PACK_V1, toolNames: [],
+      messages: mailbox, context: () => h.ctxWork, sessionRef: h.busySession,
+      texts: PLATFORM_PROMPT_PACK_V1, toolNames: [], deliveryFacts: deliveryFactsForFixture,
     });
     expect((await supply(inputPoint(h), { signal: new AbortController().signal })).map(item => item.text))
       .toEqual([interventionDeliveryText({ messageId: counted.value.ref.messageId, body: 'counted read' })]);
@@ -122,8 +129,22 @@ function waMailbox(world: S6AHostWorld, backend: InMemoryRecordBackend) {
   const { records } = backend; const { sessions, executions, materials, sessionFacts } = world.platform;
   return createSessionMailbox({ records, sessions, executions, materials, now, newId,
     roles: createRoleConfigurationService({ records, now, eventId: newId }),
+    queryRounds: createQueryRoundResolver({ records, duties: unknownSessionDuty, bodies: new RawArtifactBodyStore() }),
     defaultInquiryDeadlineMs: 86_400_000, systemActor: { kind: 'system', id: 'wa-gates-mailbox' },
     recipientExecutions: createRecipientExecutions({ sessions: sessionFacts, executions, records }) });
+}
+/** The published messages plus the internal card-answer read the supply checks (the ONE real mailbox over the same ledger). */
+function supplyMessages(world: S6AHostWorld) {
+  let sequence = 0; const now = () => world.clock.now();
+  const { records } = world.platform.disconnect;
+  const mailbox = createSessionMailbox({ records, sessions: world.platform.sessions,
+    executions: world.platform.executions,
+    roles: createRoleConfigurationService({ records, now, eventId: () => `s7a-gates-role-${++sequence}` }),
+    materials: world.platform.materials,
+    queryRounds: createQueryRoundResolver({ records, duties: unknownSessionDuty, bodies: new RawArtifactBodyStore() }),
+    defaultInquiryDeadlineMs: 86_400_000, systemActor: { kind: 'system', id: 's7a-gates-supply' }, now,
+    newId: () => `s7a-gates-supply-${++sequence}` });
+  return { ...world.platform.messages, readDecisionAnswerTaken: mailbox.readDecisionAnswerTaken };
 }
 /** A real memory Host world, a person's inquiry on a new work line and (unless `submit` is false) its pending Query. */
 async function waWorld(label: string, submit = true) {
@@ -132,17 +153,30 @@ async function waWorld(label: string, submit = true) {
   waClosers.push(() => world.close().catch(() => undefined));
   const ledger = capturedLedger(counted.created.slice(opening));
   const recipient = await world.createWorkSession(`wa-${label}`);
+  const card = await world.readSession(recipient.ref);
   const sent = (await world.post('messages/send', graphWrite(S6A_SCOPE, { recipient: recipient.ref, text: WA_TEXT,
-    intent: 'inquiry', needsReply: true }, `wa-${label}-send`, []))).body as WriteResult<{ ref: SessionMessageRef }>;
+    needsReply: true, answeredBy: 'copy', wake: false }, `wa-${label}-send`, []))).body as WriteResult<{ ref: SessionMessageRef }>;
   if (sent.status !== 'committed') throw new Error(`the inquiry did not commit: ${JSON.stringify(sent)}`);
   const messageRef = sent.value.ref;
   const { queryJobRef, queryRunRef } = consultationQueryRefs(messageRef);
   if (submit) {
+    // The Query admission compares the question's stored fixed derivation with the declaration.
+    const saved = readyCellValue<SessionMessage>(await world.post('messages/read', plain(S6A_SCOPE, messageRef)),
+      'the wa inquiry');
+    if (saved.consultationDerivation !== undefined) throw new Error('the wa inquiry already carries a derivation');
+    const derived = await waMailbox(world, ledger).recordConsultationDerivation!(world.humanContext(), {
+      meta: { requestId: `wa-${label}-derivation`, expected: [{ ref: messageRef, revision: saved.revision }] },
+      input: { messageRef, derivation: { childSessionRef: { projectId: card.record.ref.projectId,
+        sessionId: card.record.ref.sessionId }, sourceSessionRef: recipient.ref,
+        sourceKernel: { adapterId: card.record.kernel.adapterId, kernelSessionId: card.record.kernel.kernelSessionId },
+        throughPosition: null } } });
+    if (derived.status !== 'committed' || derived.value.consultationDerivation === undefined) {
+      throw new Error(`the wa inquiry recorded no derivation: ${JSON.stringify(derived)}`);
+    }
     const submitted = (await world.post('queries/submit', await submitBody(world, messageRef, recipient, label)))
       .body as WriteResult<unknown>;
     if (submitted.status !== 'committed') throw new Error(`the consultation Query did not submit: ${JSON.stringify(submitted)}`);
   }
-  const card = await world.readSession(recipient.ref);
   return { world, ledger, pending: { messageRef, queryJobRef, queryRunRef,
     sessionRef: card.record.ref, sessionRevision: card.record.revision } };
 }
@@ -222,27 +256,9 @@ it('WA-05: a withdrawn message saves its running consultation Answer and replays
   expect({ commits: counted.commits, calls: world.model.calls() }).toEqual(saved);
 });
 
-// The gate cells: the one rule at every X-produced state, made by the public commands only — a Work Run's
-// send at `awaiting` (`every_step`), the person's allow/deny, the person's withdraw. One table and one
-// `it.each`; the two Host rows share one world per state, and every cell asserts on its own.
-const gateFacts = (h: C1Harness) => createDispatchBasisReader({ records: h.backend.records,
-  pointer: createGoalPointerFacts({ records: h.backend.records }) });
+// P2 §6 (S7A-gates:66): dispatch and stop raise an `action_release` card; an inquiry raises none. The card is read
+// through `decisions/queue` and answered through `decisions/answer`, never through `messages/release`.
 type OpenState = 'awaiting' | 'approved' | 'denied' | 'withdrawn';
-/** `readMessagePart`'s four cells: the C1 harness's own Work context sends, the person decides. */
-async function openCellState(h: C1Harness, state: OpenState) {
-  await h.setGoalAutonomy('every_step');
-  const mailbox = h.makeMailbox(h.backend.records, h.materials, undefined, undefined, gateFacts(h));
-  const sent = await mailbox.sendMessage(h.ctxWork, { input: { recipient: h.idleSession, text: `open cell ${state}`,
-    intent: 'action_request', needsReply: true, expected: { planRevision: 1, pointerRevision: 'none', dispatchSequence: 0 } },
-    meta: { requestId: `open-cell-send-${state}`, expected: [] } });
-  if (sent.status !== 'committed' || sent.value.release !== 'awaiting') throw new Error(`no awaiting message: ${JSON.stringify(sent)}`);
-  const meta = { requestId: `open-cell-decide-${state}`, expected: [] };
-  const decided = state === 'awaiting' ? sent : state === 'withdrawn'
-    ? await mailbox.withdrawMessage(h.ctxHost, { input: { messageRef: sent.value.ref }, meta })
-    : await mailbox.releaseMessage(h.ctxHost, { input: { messageRef: sent.value.ref, allow: state === 'approved' }, meta });
-  if (decided.status !== 'committed') throw new Error(`no ${state} message: ${JSON.stringify(decided)}`);
-  return mailbox;
-}
 
 const cellWorlds: Array<() => Promise<unknown>> = [];
 afterEach(async () => { for (const close of cellWorlds.splice(0)) await close(); counted.created.length = 0; });
@@ -296,13 +312,16 @@ async function submitBody(world: S6AHostWorld, messageRef: SessionMessageRef, re
   const goal = await readGoal(world.ag2b);
   const body = readyCellValue<{ text: string }>(
     await world.post('messages/body', plain(S6A_SCOPE, { messageRef, part: 'message' })), 'waiting body');
+  const saved = readyCellValue<SessionMessage>(await world.post('messages/read', plain(S6A_SCOPE, messageRef)),
+    'the submitted message');
   const refs = consultationQueryRefs(messageRef);
   return graphWrite(S6A_SCOPE, { queryJobId: refs.queryJobRef.queryJobId, runId: refs.queryRunRef.runId,
     intent: { schemaVersion: 1, intentId: refs.queryJobRef.queryJobId, projectId: S6A_SCOPE.projectId,
       workspaceId: S6A_SCOPE.workspaceId, goalId: S6A_GOAL_1.goalId, question: body.text, focusTaskRefs: [],
       budget: AG2B_QUERY_BUDGET, multiTurn: { maxRounds: 1 }, correlationId: `gate-${label}`,
       execution: { kind: 'semantic_query', roleBinding: AG2B_WORK_ROLE_BINDING, runtimeBudget: AG2B_RUNTIME_BUDGET,
-        consultation: { messageRef, recipient: recipient.ref } } } },
+        consultation: { messageRef, recipient: recipient.ref,
+          ...(saved.consultationDerivation === undefined ? {} : { derivation: saved.consultationDerivation }) } } } },
   `gate-submit-${label}`, [{ ref: AG2B_PROJECT_REF, revision: registration.value.project.revision },
     { ref: AG2B_WORKSPACE_REF, revision: registration.value.workspace.revision },
     { ref: S6A_GOAL_1, revision: goal.revision },
@@ -330,8 +349,9 @@ async function replyInputs(cell: WaitingCell, label: string): Promise<string[]> 
   const ctx: CoreCallContext = { projectId: S6A_SCOPE.projectId, workspaceId: S6A_SCOPE.workspaceId,
     principal: { kind: 'work_run', runRef: cell.senderRun, roleBinding: execution.run.roleBinding },
     materialReader: { kind: 'run', requester: cell.senderRun }, signal: new AbortController().signal };
-  const supply = createMailboxInputSupply({ messages: cell.world.platform.messages, context: () => ctx,
-    sessionRef: cell.session.ref, runRef: cell.senderRun, texts: PLATFORM_PROMPT_PACK_V1, toolNames: [] });
+  const supply = createMailboxInputSupply({ messages: supplyMessages(cell.world), context: () => ctx,
+    sessionRef: cell.session.ref, texts: PLATFORM_PROMPT_PACK_V1, toolNames: [],
+    deliveryFacts: cell.world.platform.workflow });
   const items = await supply({ sessionId: cell.session.ref.sessionId, runId: cell.senderRun.runId,
     turnId: `gate-${label}`, afterEventSequence: 0, acceptedInputIds: [] },
   { signal: new AbortController().signal });
@@ -373,27 +393,48 @@ async function runWaitingState(state: OpenState, expectedCode: 'busy' | 'invalid
   expect(await replyInputs(cell, state)).toEqual([]);
 }
 
-type GateRow =
-  | readonly [OpenState, 'readMessagePart', 'none']
-  | readonly ['awaiting' | 'withdrawn', 'waiting', 'busy' | 'invalid'];
-const gateCells: readonly GateRow[] = [
-  ['awaiting', 'readMessagePart', 'none'],
-  ['approved', 'readMessagePart', 'none'],
-  ['denied', 'readMessagePart', 'none'],
-  ['withdrawn', 'readMessagePart', 'none'],
-  ['awaiting', 'waiting', 'invalid'],
-  ['withdrawn', 'waiting', 'invalid'],
-];
-
-it.each(gateCells)('the gate cells at %s (%s): no consumer reads a message the rule refuses', async (state, consumer, expectedCode) => {
-  if (consumer === 'waiting') {
-    await runWaitingState(state, expectedCode);
-    return;
+type ActionReleaseCard = { cardKey: string; source: { kind?: string; pins: unknown[] }; state: string };
+async function actionReleaseCards(world: S6AHostWorld, goal: GoalRef): Promise<ActionReleaseCard[]> {
+  const answer = await world.post('decisions/queue', plain(S6A_SCOPE, {
+    workspace: S6A_SCOPE, goalRef: goal, sections: ['waiting_answer'], page: { limit: 20 },
+  }));
+  const body = answer.body as {
+    status?: string; value?: { waitingAnswer?: ActionReleaseCard[] };
+  };
+  if (body.status !== 'ready' || body.value === undefined) {
+    throw new Error(`S7A-gates: decisions/queue is not ready: ${JSON.stringify(answer)}`);
   }
-  const h = await openHarness();
-  const mailbox = await openCellState(h, state);
-  const supply = createMailboxInputSupply({ messages: mailbox, context: () => h.ctxHost, sessionRef: h.idleSession,
-    runRef: h.claim.runRef, texts: PLATFORM_PROMPT_PACK_V1, toolNames: [] });
-  // A supplier refuses silently.
-  expect((await supply(inputPoint(h), { signal: new AbortController().signal })).map(item => item.text)).toEqual([]);
+  return (body.value.waitingAnswer ?? []).filter(card => card.source.kind === 'action_release');
+}
+
+it('a dispatch request raises one action_release card, an inquiry none', async () => {
+  // P2 §2.6/§2.8: the request round's frozen manifest must grant `dispatch_task`; the base world grants only `read`.
+  const world = await openS6AHostWorld({ backend: 'memory', secretaryTools: ['read', ...ACTION_TOOL_NAMES] });
+  cellWorlds.push(() => world.close().catch(() => undefined));
+  const { goal, plan } = await seedS7AGoalPlan(world, { pointer: 'gate-card' });
+  const line = await world.createWorkSession('s7a-gates-inquiry');
+  await setS7AAutonomy(world, goal, 'every_step');
+  const task = plan.tasks.find(candidate => candidate.taskKind === 'work');
+  if (task === undefined) throw new Error('S7A-gates: the seeded plan has no work task');
+  const requested = await holdS7AQueryRound(world, { label: 'gate-card', goalId: goal.goalId },
+    async context => world.platform.actionRequests.requestDispatch(context, {
+      input: { taskRef: { projectId: goal.projectId, goalId: goal.goalId, taskId: task.taskId },
+        reason: 'the person decides this dispatch' },
+      meta: { requestId: 'gate-card-dispatch', expected: [] },
+    }));
+  expect(requested).toMatchObject({ status: 'needs_decision' });
+  // The person's card: one `action_release` item. Today no producer enqueues one (G2), so the row stops here.
+  const cards = await actionReleaseCards(world, goal);
+  expect(cards).toHaveLength(1);
+  // An inquiry is not an action: the queue's action cards do not grow.
+  const inquiry = await world.post('messages/send', graphWrite(S6A_SCOPE, {
+    recipient: line.ref, text: 'a question, not an action', needsReply: true,
+  }, 'gate-card-inquiry'));
+  expect(inquiry.body).toMatchObject({ status: 'committed' });
+  expect(await actionReleaseCards(world, goal)).toHaveLength(1);
+  const answered = await world.post('decisions/answer', graphWrite(S6A_SCOPE, {
+    source: cards[0]!.source, selection: { kind: 'option', optionId: 'approve' }, text: '', annotations: [],
+  }, 'gate-card-answer', cards[0]!.source.pins));
+  // `decisions/answer` answers with the resolve read (`ResolveDecisionReadV1`), its answer committed.
+  expect(answered.body).toMatchObject({ status: 'ready', value: { answer: { status: 'committed' } } });
 });

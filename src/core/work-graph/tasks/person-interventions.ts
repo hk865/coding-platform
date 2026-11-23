@@ -1,9 +1,9 @@
 /**
  * 一个 Goal 里人的直接干预，执行审阅包只在这里读一次（slice-9 SPEC :187-200）。
  *
- * 直接干预 = 人发、`action_request`、已被这个 Goal 的某个 Work Run 收下的消息；排队中的、被干预规划 Query 收下的
- * 都不列，因为还没有工作照它做。读法：翻这个 Goal 的公开执行列表拿到线和 Task，再翻每条线的公开收件箱；读失败
- * 原样返回，绝不当成“没有干预”。
+ * 直接干预 = 人发、存下的 `entry: 'person_intervention'`、已被这个 Goal 的某个 Work Run 收下的消息；排队中的、
+ * 被干预规划 Query 收下的都不列，因为还没有工作照它做。读法：翻这个 Goal 的公开执行列表拿到线和 Task，再翻每条线
+ * 的公开收件箱；读失败原样返回，绝不当成“没有干预”。
  */
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { SessionRef } from '../../../contracts/core/identity.js';
@@ -36,11 +36,11 @@ type AcceptedIntervention = Omit<GoalPersonInterventionV1, 'text'>;
 
 function acceptedByHuman(message: SessionMessage): boolean {
   const sender = message.sender;
-  return sender.kind === 'host' && sender.actor.kind === 'human' && message.intent === 'action_request';
+  return sender.kind === 'host' && sender.actor.kind === 'human' && message.entry === 'person_intervention';
 }
 
 /**
- * 读这个 Goal 里人的直接干预：所有被收下的 `action_request`，按 `acceptedAt` 取最后
+ * 读这个 Goal 里人的直接干预：所有被收下的 `entry: 'person_intervention'` 消息，按 `acceptedAt` 取最后
  * `GOAL_PERSON_INTERVENTIONS_MAX` 条（保留的里面最早的在前），带人的原话；`omitted` 是更早没列出的条数。
  */
 export async function readGoalPersonInterventions(ctx: CoreCallContext, deps: {

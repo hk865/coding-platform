@@ -42,11 +42,11 @@ async function rowOf(h: S7D2RoleLineWorld, line: SessionRef): Promise<RoleLineRe
 
 /** The line's inbox messages whose saved body (`messages/body`) starts with the reminder marker. */
 async function remindersOf(h: S7D2RoleLineWorld, line: SessionRef) {
-  const found: { sender: string; intent: unknown; text: string }[] = [];
+  const found: { sender: string; needsReply: boolean | undefined; text: string }[] = [];
   for (const message of await inboxOf(h.world, line)) {
     const { text } = ready<{ text: string }>(await h.world.post('messages/body',
       plain(S6A_SCOPE, { messageRef: message.ref, part: 'message' })), `the body of ${message.ref.messageId}`);
-    if (text.startsWith('书记提醒：')) found.push({ sender: message.sender.kind, intent: message.intent, text });
+    if (text.startsWith('书记提醒：')) found.push({ sender: message.sender.kind, needsReply: message.needsReply, text });
   }
   return found;
 }
@@ -129,7 +129,8 @@ describe('O5b-R6: the same scope\'s note, count and reminder reach the same goal
     await period(2);
     const atSg = await remindersOf(h, Sg);
     expect(atSg).toHaveLength(1);
-    expect(atSg[0]).toMatchObject({ sender: 'host', intent: 'notify' });
+    expect(atSg[0]).toMatchObject({ sender: 'host' });
+    expect(atSg[0]!.needsReply).not.toBe(true);
     expect(atSg[0]!.text).toContain('待审 0 条');
     expect(await remindersOf(h, Sp)).toEqual([]);
     // Checks B and C ended: the same bucket at the same cursor is not sent again.

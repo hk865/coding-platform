@@ -1,21 +1,19 @@
 /**
- * Hand-written expected delivery texts: the ten delivery-set template ids in
- * the order a preparation freezes them after its used templates, the ten
+ * Hand-written expected delivery texts: the eight delivery-set template ids in
+ * the order a preparation freezes them after its used templates, the eight
  * platform template files byte for byte, and one formatter per delivery
  * template that fills its slots by plain concatenation. Every literal is copied
  * by hand from the frozen template rules; nothing here imports production code
  * or calls production rendering. Hand-written packs and frozen template lists
- * spread the ids and texts from here instead of writing the ten entries again.
+ * spread the ids and texts from here instead of writing the eight entries again.
  */
 
 /**
- * The six delivery templates in the platform pack's order, then the decision response. The Python syntax input,
+ * The four delivery templates in the platform pack's order, then the decision response. The Python syntax input,
  * then the context-summary request (slice-K2-SPEC L18), are last.
  */
 export const DELIVERY_SET_IDS = [
-  'action-request-delivery',
-  'inquiry-delivery',
-  'notify-delivery',
+  'message-delivery',
   'wait-reply-delivery',
   'wait-expiry-delivery',
   'intervention-delivery',
@@ -25,11 +23,10 @@ export const DELIVERY_SET_IDS = [
   'context-summary-request',
 ] as const;
 
-/** The committed platform template files, byte for byte, with no trailing newline. */
+/** The committed platform template files, byte for byte (only `message-delivery` ends with a newline). */
 export const DELIVERY_SET_TEXTS = {
-  'action-request-delivery': '请处理这条动作请求（消息 {{messageId}}，来自 {{sender}}）：\n{{body}}',
-  'inquiry-delivery': '请回答这条询问（消息 {{messageId}}，来自 {{sender}}，截止 {{deadline}}）：\n{{body}}',
-  'notify-delivery': '通知（消息 {{messageId}}，来自 {{sender}}）：\n{{body}}',
+  'message-delivery':
+    '消息 {{messageId}}，来自 {{sender}}，要回复：{{needsReply}}，叫醒你：{{wake}}{{deadline}}\n{{body}}\n',
   'wait-reply-delivery': '你的问题有了回复（消息 {{messageId}}）。\n你的问题：\n{{question}}\n回复：\n{{body}}',
   'wait-expiry-delivery':
     '你的问题到截止时间还没有回复（消息 {{messageId}}，截止 {{deadline}}，第 {{expiryCount}} 次到期）。\n你的问题：\n{{question}}',
@@ -69,16 +66,11 @@ export const DELIVERY_SET_TEXTS = {
 // One formatter per delivery template: its platform text above with every slot
 // value inserted verbatim, by concatenation only; `expiryCount` reads as its digit.
 
-export function actionRequestDeliveryText(s: { messageId: string; sender: string; body: string }): string {
-  return '请处理这条动作请求（消息 ' + s.messageId + '，来自 ' + s.sender + '）：\n' + s.body;
-}
-
-export function inquiryDeliveryText(s: { messageId: string; sender: string; body: string; deadline: string }): string {
-  return '请回答这条询问（消息 ' + s.messageId + '，来自 ' + s.sender + '，截止 ' + s.deadline + '）：\n' + s.body;
-}
-
-export function notifyDeliveryText(s: { messageId: string; sender: string; body: string }): string {
-  return '通知（消息 ' + s.messageId + '，来自 ' + s.sender + '）：\n' + s.body;
+export function messageDeliveryText(s: {
+  messageId: string; sender: string; body: string; needsReply: boolean; wake: boolean; deadline?: string;
+}): string {
+  return '消息 ' + s.messageId + '，来自 ' + s.sender + '，要回复：' + (s.needsReply ? '是' : '否')
+    + '，叫醒你：' + (s.wake ? '会' : '不会') + (s.deadline ?? '') + '\n' + s.body + '\n';
 }
 
 export function waitReplyDeliveryText(s: { messageId: string; question: string; body: string }): string {

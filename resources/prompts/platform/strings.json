@@ -282,7 +282,7 @@
   "brief.checks.outputStderrLead": "stderr 末尾：",
   "brief.checks.outputStdoutLead": "stderr 是空的；stdout 末尾：",
   "brief.checks.outputEmpty": "stderr 和 stdout 都是空的。",
-  "brief.checks.outputHint": "- 上面的检查输出和你读到的文件对不上时，可能是检查本身写错了：给这个目标的参谋（没有参谋就是秘书）发 action_request（needsReply 为真），附检查名和这段输出；不要只复跑一份副本就当它通过。",
+  "brief.checks.outputHint": "- 上面的检查输出和你读到的文件对不上时，可能是检查本身写错了：给这个目标的参谋（没有参谋就是秘书）发一条要回复的信（`needsReply` 为真），附检查名和这段输出；不要只复跑一份副本就当它通过。",
   "brief.section.requeue": "重新入队",
   "brief.requeue.reasonLead": "- 原因（",
   "brief.requeue.reasonMiddle": "）：",

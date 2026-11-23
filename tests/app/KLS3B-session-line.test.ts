@@ -73,8 +73,8 @@ describe('KLS-3b a Session made for work on a line is made on that line', () => 
     const { h, folder } = await openJoinedLineScenario({ script: { queryReplies: [textReply('kls3b-14 the marker is LINE')] } });
     const { projectId, sessionId } = (await lineSession(h, 'kls3b-14-recipient', AG2B_QUERY_ROLE, folder)).ref;
     const sent = await h.post<WriteResult<SessionMessage>>('messages/send', graphWrite(AG2B_SCOPE, {
-      recipient: { projectId, sessionId }, text: 'KLS3B: which marker does src/marker.ts export?', intent: 'inquiry',
-      needsReply: true, goalRef: null }, 'kls3b-14-ask'));
+      recipient: { projectId, sessionId }, text: 'KLS3B: which marker does src/marker.ts export?',
+      needsReply: true, goalRef: null, answeredBy: 'copy' }, 'kls3b-14-ask'));
     if (sent.status !== 'committed') throw new Error(`messages/send: ${JSON.stringify(sent)}`);
     expect(await consult(h, sent.value.ref)).toMatchObject({ status: 'ready', value: { state: 'responded' } });
     const message = await h.post<ReadResult<SessionMessage>>('messages/read', plain(AG2B_SCOPE, sent.value.ref));

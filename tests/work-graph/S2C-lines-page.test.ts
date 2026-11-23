@@ -336,7 +336,7 @@ describe.each(['memory', 'sqlite'] as const)('2C-18 line page sections (%s)', (k
     const { p, e1 } = await buildExecutionsLine(f);
     const mailbox = f.runs.mailbox();
     const sent = await mailbox.sendMessage(f.ctx, { input: { recipient: p, text: 'S2C-L hello',
-      intent: 'inquiry', needsReply: true }, meta: { requestId: 's2c-l-msg-1', expected: [] } });
+      needsReply: true }, meta: { requestId: 's2c-l-msg-1', expected: [] } });
     if (sent.status !== 'committed') throw new Error(`send failed: ${JSON.stringify(sent)}`);
     const messageRef = sent.value.ref;
     const readOne = async () => {

@@ -127,9 +127,17 @@ async function advance(handle: S7D2ProjectWorld, label: string): Promise<void> {
     flowId: `s7d2-rl13-${label}`, sessionHint: null, kind: 'select_work' });
 }
 
-/** "Wait for L3's successor": one advance, then `sessions/successors` of L3 until it names one. */
+/**
+ * "Wait for L3's successor": one advance, then one Host heartbeat, then `sessions/successors` of L3 until it names
+ * one. P2 removed the Host release pass (p2-frozen.md:243), whose system-actor advances used to run the page in the
+ * background; a `too_long` handoff admits only the trusted Host system (`state/session-handoff.ts:62-63`), so the
+ * page that hands L3 off is the Host heartbeat's own, as in RL-13 C below.
+ */
 async function l3Successor(handle: S7D2ProjectWorld, label: string): Promise<SessionRecord> {
   await advance(handle, `${label}-l3`);
+  const settled = handle.world.consumeBarrier();
+  handle.world.clock.advance(25);
+  await settled;
   const l3 = handle.tooLong.line.ref;
   const [successor] = await waitFor(() => successorsOf(handle, l3), items => items.length > 0, 'the successor of L3');
   expect(successor!.provenance).toEqual({ schemaVersion: 1, kind: 'handoff', from: l3 });

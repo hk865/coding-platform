@@ -43,6 +43,8 @@ import { createGoalSettingsService } from '../../src/core/work-graph/tasks/goal-
 import { createPlanService } from '../../src/core/work-graph/tasks/plan-service.js';
 import { createQueryJobService } from '../../src/core/work-graph/queries/query-job-service.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
+import { createQueryRoundResolver } from '../../src/core/work-graph/tasks/query-round.js';
+import { planSourceRootOf } from '../helpers/task-claim-fixture.js';
 import { createDecisionReadModel } from '../../src/core/work-graph/views/decision-read-model.js';
 import { createGoalConflictAssembler } from '../../src/core/work-graph/views/goal-conflicts.js';
 import { createNoticeDisplayToken } from '../../src/core/work-graph/views/notice-display-token.js';
@@ -157,6 +159,8 @@ async function control(x: Ctx, ref: GoalRef, revision: number, action: 'pause' |
 }
 function claimService(x: Ctx, records: S5Records = x.f.records) {
   return createTaskClaimService({ records, now: x.f.now, newId: x.f.newId,
+    planSourceRoot: planSourceRootOf({ messages: mailboxFor(x).mailbox, plans: plans(x),
+      queries: createQueryJobService({ records, now: x.f.now, eventId: x.f.newId }) }),
     roles: createRoleConfigurationService({ records, now: x.f.now, eventId: x.f.newId }) });
 }
 const FREE_TASK = 'b-free-work';
@@ -302,6 +306,7 @@ function mailboxFor(x: Ctx) {
       knowledge: f.knowledge, lookups: f.records, duty: unknownSessionDuty }),
     executions: createRunStateReader({ records: f.records }),
     roles: createRoleConfigurationService({ records: f.records, now: f.now, eventId: f.newId }),
+    queryRounds: createQueryRoundResolver({ records: f.records, duties: unknownSessionDuty, bodies: f.bodies }),
     materials, systemActor: f.operatorActor, now: f.now, newId: f.newId };
   return { deps, mailbox: createSessionMailbox(deps), materials };
 }

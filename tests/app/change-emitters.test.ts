@@ -3,7 +3,7 @@
  * to poll:
  *   - the collaboration driver announces only a moved `read` projection: start,
  *     each further step of a multi-step advance, a Run it only observes, a
- *     consultation wait before the (possibly long) consultation, the loop's final
+ *     reply wait read from the sender Run's outbox (no copy consulted), the loop's final
  *     state, a yielded wait, stop and stopped. A blocked wait keeps ticking
  *     without a notice, and closing the driver announces nothing.
  *   - a real Kernel command handle announces `stopping` (once, before the abort)
@@ -220,18 +220,24 @@ describe('collaboration driver change notices', () => {
     }
   });
 
-  it('announces a consultation wait before the consultation runs', async () => {
+  it('announces a reply wait from the sender outbox and consults no copy', async () => {
+    // P2 §2.3 (`p2-frozen.md:133`): the driver's old branch that asked a copy for an ordinary inquiry is deleted; a
+    // copy question is consumed by the Host by its question identity. The pump only projects the sender Run's outbox
+    // (§2.2 `p2-frozen.md:117`: a wait is `waitAfterSend && needsReply`), so it reads no recipient card.
     const inquiry = {
       ref: { projectId: scope.projectId, messageId: 'emit-inquiry' }, revision: 1, status: 'pending',
       sender: { kind: 'work_run', run: runRef }, recipient: { projectId: scope.projectId, sessionId: 'emit-recipient' },
-      intent: 'inquiry', waitAfterSend: true,
+      needsReply: true, waitAfterSend: true,
     };
     let finish: (result: WorkflowAdvanceResult) => void = () => undefined;
     let cardReads = 0;
-    let releaseCard: () => void = () => undefined;
+    let consultations = 0;
     const noCard = { status: 'rejected', code: 'not_found', reason: 'no recipient card' };
     const { driver, recorder } = driverWith(() => new Promise(resolve => { finish = resolve; }), {
-      workflow: { consumeConsultation: async () => { throw new Error('not reached: the card read is rejected'); } },
+      workflow: { consumeConsultation: async () => {
+        consultations += 1;
+        throw new Error('the driver never consults a copy');
+      } },
       // A fresh start of this Goal's Run, so the consultation pump runs beside the advance.
       executions: { readExecution: async () => ({ status: 'ready', value: {
         run: { ref: runRef, task: { goalId: goalRef.goalId }, status: 'running', outcome: null, startedSince: null },
@@ -241,19 +247,18 @@ describe('collaboration driver change notices', () => {
         readOutbox: async () => ({ status: 'ready', value: { items: [inquiry], nextCursor: null } }),
         readMessage: async () => ({ status: 'ready', value: { status: 'pending', response: null } }),
       },
-      // The first consultation blocks in its first port call (the recipient card).
       sessions: { readSession: () => {
         cardReads += 1;
-        return cardReads === 1 ? new Promise(resolve => { releaseCard = () => resolve(noCard); }) : Promise.resolve(noCard);
+        return Promise.resolve(noCard);
       } },
     });
     try {
       await driver.start(context(), startRunInput);
       await until(() => recorder.notices.length >= 2);
-      expect(cardReads).toBe(1);
       expect(await recorder.reads[1]).toMatchObject({ state: 'waiting_for_reply', messages: [{ ref: inquiry.ref }] });
+      expect(cardReads).toBe(0);
+      expect(consultations).toBe(0);
     } finally {
-      releaseCard();
       finish(completed);
       await driver.close();
     }

@@ -9,7 +9,7 @@
  * production loop runs).
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { QueryJobAnswerSnapshot } from '../../src/contracts/query-job.js';
+import type { QueryJobAnswerSnapshot, QueryRunRef } from '../../src/contracts/query-job.js';
 import type { CollaborationSnapshot } from '../../src/app/collaboration-driver.js';
 import type { PlanProposal } from '../../src/core/work-graph/model/plan-contracts.js';
 import type { QueryJobRecord } from '../../src/core/work-graph/queries/contracts.js';
@@ -27,7 +27,6 @@ import { initializeProject } from '../helpers/S6A-history-fixture.js';
 import { holdS6BRequestRound, createS6BLine } from '../helpers/S6B1-fixture.js';
 import { S7C1_CREATE_ROLE } from '../helpers/S7C-member-fixture.js';
 import { ready } from '../helpers/S7A-fixture.js';
-import { listed } from '../helpers/S7B-fixture.js';
 import { captureQueryContexts } from '../helpers/query-context-capture.js';
 import { commitBarrier } from '../helpers/S6A-commit-barrier.js';
 import { toolOutputJson } from '../scenarios/support/common.js';
@@ -283,8 +282,8 @@ describe('G-05: the planning bounds and the note variants through the real Host'
       expect(replied.response).not.toBeNull();
       expect(await readBody(notes.world, refineRef.value, 'response')).toBe(SHORT_TEXT);
 
-      // The secretary request round still succeeds, keeps its shape and has no
-      // mail tools; the planning note admission did not widen its tool table.
+      // The secretary request round still succeeds and keeps its shape; P2
+      // grants it the mailbox families (frozen §2.6, design §6 request row).
       await initializeProject(notes.world);
       const held = await holdS6BRequestRound(notes.world,
         { label: 'g05-secretary', goalId: null },
@@ -297,8 +296,8 @@ describe('G-05: the planning bounds and the note variants through the real Host'
       expect(roundRecord.job.job.answerRefs).toHaveLength(1);
       const secretaryRequests = await notes.world.scripted.requests(held.value.secretary);
       const secretaryTools = secretaryRequests[0]?.tools.map(tool => tool.name) ?? [];
-      expect(secretaryTools).not.toContain('send_session_message');
-      expect(secretaryTools).not.toContain('respond_session_message');
+      expect(secretaryTools).toContain('send_session_message');
+      expect(secretaryTools).toContain('respond_session_message');
       expect(secretaryTools).not.toContain('create_member');
     } finally {
       capture.restore();
@@ -343,12 +342,19 @@ describe('G-05: the planning bounds and the note variants through the real Host'
         select(overlap, 'g05-overlap-b-start', overlap.world.tasks[1]!.taskId), { receipts });
       await overlap.script(overlap.adviser, [{ kind: 'text', text: FIXED_TEXT }]);
       await heartbeatUntilModel(overlap.world.world, gate);
-      const request = (await listed(overlap.world.world, 'inbox', overlap.adviser))
-        .find(message => message.intent === 'action_request');
-      expect(request).toBeDefined();
-      if (request === undefined) throw new Error('G-05: the overlap request is missing');
+      const gateReceipt = receipts.find(receipt => receipt.kind === 'open_overlap_gate');
+      if (gateReceipt === undefined || gateReceipt.kind !== 'open_overlap_gate'
+        || gateReceipt.result.status !== 'opened') {
+        throw new Error('G-05: the overlap gate did not open: ' + JSON.stringify(gateReceipt));
+      }
+      const noteMessageRef = gateReceipt.result.gate.noteRequest?.messageRef;
+      if (noteMessageRef === undefined) throw new Error('G-05: the overlap gate recorded no note request');
       const ctx = overlapCapture.latest();
-      const sourceFault = commitBarrier.failReads(canonicalRefKey(request.ref), 'throw-once');
+      const source = ctx.principal as { kind: string; queryRunRef?: QueryRunRef };
+      if (source.kind !== 'query_run' || source.queryRunRef === undefined) {
+        throw new Error('G-05: the overlap text round has no QueryRun source');
+      }
+      const sourceFault = commitBarrier.failReads(canonicalRefKey(source.queryRunRef), 'throw-once');
       const unavailable = await overlap.world.world.platform.notes.writeNote(ctx, {
         commandId: 'g05-overlap-source-read',
         note: { ...CONVENTION_NOTE, anchor: { kind: 'goal', goalId: overlap.world.goal.goalId } },
@@ -358,9 +364,9 @@ describe('G-05: the planning bounds and the note variants through the real Host'
       expect(sourceFault.calls()).toBeGreaterThan(0);
       sourceFault.release();
       gate.release();
-      const replied = await waitForResponse(overlap.world.world, request.ref);
+      const replied = await waitForResponse(overlap.world.world, noteMessageRef);
       expect(replied.response).not.toBeNull();
-      expect(await readBody(overlap.world.world, request.ref, 'response')).toBe(FIXED_TEXT);
+      expect(await readBody(overlap.world.world, noteMessageRef, 'response')).toBe(FIXED_TEXT);
     } finally {
       overlapCapture.restore();
       await overlap.close();

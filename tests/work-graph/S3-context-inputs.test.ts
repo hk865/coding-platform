@@ -75,6 +75,8 @@ import {
 } from '../../src/core/work-graph/tasks/context-input-service.js';
 import { MODEL_REQUEST_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/model-request-codecs.js';
 import { createPlanService } from '../../src/core/work-graph/tasks/plan-service.js';
+import { createRunSupport } from '../helpers/S2C-L-runs-support.js';
+import { planSourceRootOf } from '../helpers/task-claim-fixture.js';
 import { createInitializationBindingReader } from '../../src/core/work-graph/tasks/goal-confirm-service.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
 import { SESSION_ANOMALY_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/session-anomaly-codecs.js';
@@ -510,6 +512,8 @@ async function createInputFixture(
   let claimExtra = 0;
   const claimRoles = createRoleConfigurationService({ records: backend.records, now: () => AT, eventId });
   const claimService = createTaskClaimService({ records: backend.records, roles: claimRoles, now: () => AT,
+    planSourceRoot: planSourceRootOf({ messages: createRunSupport(base).mailbox(), plans,
+      queries: createQueryJobService({ records: backend.records, now: () => AT, eventId }) }),
     newId: () => claimIds.shift() ?? `s3-claim-id-${++claimExtra}` });
   /** One real claim through the public TaskClaimPort for the named goal/plan/task/session. */
   async function claimOn(params: {
@@ -630,7 +634,7 @@ async function createInputFixture(
     replies: [{ kind: 'text', text: 'S3 run A completed' }] });
   await Promise.race([handleA.entered, handleA.settled]);
   const sent = await mailbox.sendMessage(workRunCtx(runA), {
-    input: { recipient: sessionB.ref, text: 'S3 decision request', intent: 'inquiry', needsReply: true },
+    input: { recipient: sessionB.ref, text: 'S3 decision request', needsReply: true },
     meta: { requestId: DECISION_SEND_REQUEST_ID, expected: [] } });
   if (sent.status !== 'committed') throw new Error(`S3 fixture decision send failed: ${JSON.stringify(sent)}`);
   // The literal is only the frozen Plan label and this check (R-8); the reply,

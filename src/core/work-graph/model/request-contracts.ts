@@ -131,7 +131,7 @@ export type RequestCoreViewV1 = {
   processing: boolean;
   assignment: 'assigned' | 'unassigned';
   waitReason: 'secretary_open_cap' | 'owner_archived' | null;
-  reasons: ('round' | 'reply' | 'release' | 'candidate')[];
+  reasons: ('round' | 'reply' | 'candidate')[];
   rounds: RequestRoundViewV1[];
   candidate: { proposalRef: PlanProposalRef; state: string; stale: boolean } | null;
   /** G6F F4: present only on an `intervention_new_goal` request: the completed Goal and the message it came from. */

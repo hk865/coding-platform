@@ -31,6 +31,8 @@ import { readGoalPhase } from '../../src/core/work-graph/tasks/plan-readers.js';
 import { createPlanService, createRequestCandidateService } from '../../src/core/work-graph/tasks/plan-service.js';
 import { createPlanningQuestionReader } from '../../src/core/work-graph/tasks/planning-question-reader.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
+import { createQueryRoundResolver } from '../../src/core/work-graph/tasks/query-round.js';
+import { planSourceRootOf } from './task-claim-fixture.js';
 import { createAutomaticReworkNoticeSource } from '../../src/core/work-graph/views/automatic-rework-notices.js';
 import { createDecisionReadModel, createGoalCauseCardSource, createPlanningQuestionCardSource } from '../../src/core/work-graph/views/decision-read-model.js';
 import { createGoalConflictAssembler } from '../../src/core/work-graph/views/goal-conflicts.js';
@@ -97,6 +99,7 @@ export function owners(f: S5DecisionFixture, records: S5Records = f.records, bod
     records, sessions: createSessionDirectory({ records,
       knowledge: knowledgeLinesOver(records), lookups: records, duty: unknownSessionDuty }),
     executions: createRunStateReader({ records }), roles, materials, systemActor: { ...OPERATOR },
+    queryRounds: createQueryRoundResolver({ records, duties: unknownSessionDuty, bodies }),
     now: f.now, newId: f.newId,
     duties: ({
       async readMessageDutiesFacts(_ctx, input) {
@@ -151,7 +154,8 @@ export function owners(f: S5DecisionFixture, records: S5Records = f.records, bod
     positions: createNoticePositionComparator(), displayTokens: createNoticeDisplayToken(new Uint8Array(32)),
     lineage: { messages: mailbox, queries: queryJobs, plans },
   });
-  return { decisions, plans, causes, reads,
+  return { decisions, plans, causes, reads, mailbox, queryJobs,
+    planSourceRoot: planSourceRootOf({ messages: mailbox, queries: queryJobs, plans }),
     settings: createGoalSettingsService({ records, now: f.now, newId: f.newId, operatorActor: { ...OPERATOR } }),
     requests: createRequestCandidateService(planDeps),
   };

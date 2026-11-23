@@ -39,7 +39,7 @@ afterEach(async () => {
 
 async function memberInboxOf(target: S7C1World): Promise<SessionMessageRef> {
   const inbox = await inboxOf(target.world, target.lines.module.ref);
-  const input = inbox.find(message => message.sender.kind === 'host' && message.intent === 'inquiry');
+  const input = inbox.find(message => message.sender.kind === 'host');
   if (input === undefined) throw new Error(`S7C: no input message: ${JSON.stringify(inbox)}`);
   return input.ref;
 }

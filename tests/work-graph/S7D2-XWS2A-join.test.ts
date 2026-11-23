@@ -123,7 +123,7 @@ describe('XWS2A: the second workspace joins the project', () => {
     const world = await opened();
     await world.waitCoarseAnswered();
     const inbox = await world.inbox(world.adviser);
-    const action = inbox.filter(message => message.intent === 'action_request');
+    const action = inbox.filter(message => message.needsReply === true);
     expect(action).toHaveLength(1);
     expect((action[0]!.recipient as SessionRef).sessionId).toBe(world.adviser.ref.sessionId);
     expect(action[0]!.ref.workspaceId).toBe(S6A_SCOPE.workspaceId);

@@ -64,7 +64,7 @@ async function undeliveredWorld(): Promise<NonNullable<typeof p11>> {
       { label: 'e3d-clkb-p11-recipient', role: S6A_WORK_ROLE }));
     const sent = await sendS7BWaitingInquiry(made.world, { goal, session: sender, taskId: tasks[0]!.taskId,
       label: 'e3d-clkb-p11', trailingText: false, body: { recipient: recipient.ref, text: 'CLKB P11 question',
-        intent: 'inquiry', needsReply: true, waitAfterSend: true } });
+        needsReply: true, waitAfterSend: true } });
     await answerS7BWait(made.world, { goal, recipient, message: sent.ref, task: tasks[1]!, label: 'e3d-clkb-p11' });
     await retireS7BSender(made.world, { goal, sender, task: tasks[0]!, label: 'e3d-clkb-p11' });
     await seePlanAdoptionsVia((route, body) => made.world.post(route, body), S6A_SCOPE, 'e3d-clkb-p11');

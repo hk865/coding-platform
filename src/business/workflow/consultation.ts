@@ -1,9 +1,8 @@
 /**
  * One saved mailbox input -> one deterministic read-only Query.
- * Inquiry uses its fixed A′ source boundary; ordinary input and a late response
- * use the original recipient/sender Session. Existing Query/Answer facts are
- * reused. Response processing never replaces the original respondent's Answer
- * and never restarts the sender's Work.
+ * Ordinary input uses the original recipient Session. Existing Query/Answer
+ * facts are reused; a saved Answer never replaces the original respondent's
+ * Answer and never restarts the sender's Work.
  */
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { SessionAggregateRef, SessionRef, VersionPin } from '../../contracts/core/identity.js';
@@ -16,8 +15,6 @@ import { consultationQueryRefs } from '../../contracts/query-job.js';
 import { canonicalJson, sameJson as sameCanonical, sha256Hex, type JsonValue } from '../../contracts/fingerprint.js';
 import type { GoalRef } from '../../contracts/ledger.js';
 import { isRecord, nonEmpty } from '../../contracts/validation/common.js';
-import { PLATFORM_PROMPT_PACK_V1 } from '../../contracts/prompts/platform-pack.generated.js';
-import { renderTemplate } from '../../contracts/prompts/render-template.js';
 import type { SessionMessage } from '../../core/work-graph/model/communication-contracts.js';
 import { deliveryEligibility, type DeliveryFactsV1 } from '../../core/work-graph/state/message-machine.js';
 import type { QueryJobRecord } from '../../core/work-graph/queries/contracts.js';
@@ -63,11 +60,10 @@ function isolateInput(input: unknown): IsolatedInput {
   let cloned: unknown;
   try { cloned = structuredClone(input); } catch { return { ok: false, rejection: reject('invalid', 'the consultation input cannot be isolated from the caller') }; }
   if (!isRecord(cloned)) return { ok: false, rejection: reject('invalid', 'consumeConsultation requires an input object') };
-  if (Object.keys(cloned).some((key) => !['schemaVersion', 'messageRef', 'goalRef', 'roleBinding', 'runtimeBudget', 'budget', 'consumerId', 'part'].includes(key))) {
+  if (Object.keys(cloned).some((key) => !['schemaVersion', 'messageRef', 'goalRef', 'roleBinding', 'runtimeBudget', 'budget', 'consumerId'].includes(key))) {
     return { ok: false, rejection: reject('invalid', 'consumeConsultation does not accept extra fields') };
   }
   if (cloned['schemaVersion'] !== 1) return { ok: false, rejection: reject('invalid', 'consumeConsultation requires schemaVersion 1') };
-  if (cloned['part'] !== undefined && cloned['part'] !== 'response') return { ok: false, rejection: reject('invalid', 'invalid consultation part') };
   const messageRef = cloned['messageRef'];
   if (!isRecord(messageRef) || messageRef['aggregateType'] !== 'SessionMessage'
     || !nonEmpty(messageRef['projectId']) || !nonEmpty(messageRef['workspaceId']) || !nonEmpty(messageRef['messageId'])) {
@@ -122,7 +118,7 @@ export type ConsultationConsumerDeps = {
    * stay compatible.
    */
   sessionArchive?: SessionArchivePort & Partial<InternalSessionArchivePort>;
-  deliveryFacts?: (owned: Owned, message: SessionMessage, part: 'message' | 'response',
+  deliveryFacts?: (owned: Owned, message: SessionMessage, part: 'message',
     goalRef: GoalRef | null, target: SessionRef | null) => Promise<DeliveryFactsV1 | CoreRejection>;
 };
 export function createConsultationConsumer(deps: ConsultationConsumerDeps):
@@ -143,24 +139,26 @@ export function createConsultationConsumer(deps: ConsultationConsumerDeps):
     answer: QueryJobAnswerSnapshot | null, reason: string): ConsultationResult =>
     ({ status: 'ready', value: { state: 'ended', message, query, answer, reason } });
 
-  async function deliveryProblem(owned: Owned, message: SessionMessage, part: 'message' | 'response',
+  async function deliveryProblem(owned: Owned, message: SessionMessage,
     goalRef: GoalRef | null, target: SessionRef | null): Promise<CoreRejection | null> {
     if (deps.deliveryFacts === undefined) return reject('unsupported', 'the consultation requires the delivery facts');
-    const facts = await deps.deliveryFacts(owned, message, part, goalRef, target);
+    const facts = await deps.deliveryFacts(owned, message, 'message', goalRef, target);
     if ('status' in facts) return facts;
-    const eligibility = deliveryEligibility(facts);
+    // The copy question's message part is consumed by this copy identity, never by the original line. The stored
+    // `answeredBy:'copy'` is the fact the Query owner re-verifies against the frozen derivation before it commits.
+    const eligibility = deliveryEligibility(facts,
+      { copyConsumerVerified: message.answeredBy === 'copy' });
     return eligibility.offerable ? null : reject('invalid', `delivery_${eligibility.reason}`);
   }
 
   /** Attach the already-saved official answer; never calls a model. */
   async function attach(owned: Owned, message: SessionMessage, query: QueryJobRecord | null,
     answer: QueryJobAnswerSnapshot): Promise<ConsultationResult> {
-    const part = query?.job.job.intent.execution.consultation?.part ?? 'message';
-    const asksReply = part !== 'response' && ( message.intent === 'inquiry' || message.needsReply === true);
+    const asksReply = message.needsReply === true;
     if (!asksReply) {
       const current = await deps.consultations.messages.readMessage(owned.ctx, message.ref);
       if (current.status !== 'ready') return waiting(message, query, answer, 'the original input is not readable');
-      const accepted = (current.value.acceptedInputs ?? []).some(entry => entry.part === part
+      const accepted = (current.value.acceptedInputs ?? []).some(entry => entry.part === 'message'
         && entry.executionRef.aggregateType === 'QueryRun' && query !== null
         && sameCanonical(entry.executionRef, query.run.ref));
       if (!accepted) return waiting(current.value, query, answer, 'the formal answer exists but original input acceptance is not confirmed');
@@ -200,8 +198,8 @@ export function createConsultationConsumer(deps: ConsultationConsumerDeps):
 
   async function claim(owned: Owned, messageRef: SessionMessageRef, queryRunRef: QueryRunRef,
     sessionRef: SessionAggregateRef,
-    sessionRevision: number, part?: 'response'): Promise<{ kind: 'ok'; record: QueryJobRecord } | { kind: 'fail'; reason: string }> {
-    const refs = consultationQueryRefs(messageRef, part);
+    sessionRevision: number): Promise<{ kind: 'ok'; record: QueryJobRecord } | { kind: 'fail'; reason: string }> {
+    const refs = consultationQueryRefs(messageRef);
     const expected: VersionPin[] = [
       { ref: refs.queryJobRef, revision: 1 },
       { ref: refs.queryRunRef, revision: 1 },
@@ -273,11 +271,11 @@ export function createConsultationConsumer(deps: ConsultationConsumerDeps):
     if (!sameCanonical(consultation.messageRef, message.ref)) {
       return reject('forbidden', 'the existing consultation Query belongs to another message');
     }
-    const target = input.part === 'response' && message.sender.kind === 'work_run' ? message.sender.sessionRef : sessionRecipient;
-    if (consultation.part !== input.part || !sameCanonical(consultation.recipient, { projectId: target.projectId, sessionId: target.sessionId })) {
+    const target = sessionRecipient;
+    if (!sameCanonical(consultation.recipient, { projectId: target.projectId, sessionId: target.sessionId })) {
       return reject('forbidden', 'the existing consultation Query recipient is not the original message recipient');
     }
-    const refs = consultationQueryRefs(message.ref, input.part);
+    const refs = consultationQueryRefs(message.ref);
     if (refs.queryJobRef.queryJobId !== job.job.queryJobId || refs.queryRunRef.runId !== run.run.runId) {
       return reject('forbidden', 'the existing Query is not the deterministic identity of its message');
     }
@@ -300,7 +298,7 @@ export function createConsultationConsumer(deps: ConsultationConsumerDeps):
     // were reported above and are never re-run.
     const phase = run.run.executionState?.phase;
     if (phase === undefined || phase === 'claimed' || phase === 'prepared') {
-      const problem = await deliveryProblem(owned, message, input.part ?? 'message', message.goalRef, target);
+      const problem = await deliveryProblem(owned, message, message.goalRef, target);
       if (problem !== null) return reject(problem.code, problem.reason);
     }
     const configMatches = (input.goalRef === null ? job.job.intent.goalId === null
@@ -331,7 +329,7 @@ export function createConsultationConsumer(deps: ConsultationConsumerDeps):
     if (card.record.lifecycle !== 'active' || card.availability !== 'idle' || card.record.occupancy !== null) {
       return waiting(message, record, null, `the target Session is ${card.record.lifecycle !== 'active' ? 'archived' : 'busy or unavailable'}`);
     }
-    const claimed = await claim(owned, message.ref, run.ref, card.record.ref, card.record.revision, input.part);
+    const claimed = await claim(owned, message.ref, run.ref, card.record.ref, card.record.revision);
     if (claimed.kind === 'fail') return waiting(message, record, null, claimed.reason);
     return driveAccepted(owned, message, input.consumerId, claimed.record);
   }
@@ -357,6 +355,11 @@ export function createConsultationConsumer(deps: ConsultationConsumerDeps):
     if (message.ref.projectId !== owned.projectId || message.ref.workspaceId !== owned.workspaceId) {
       return reject('forbidden', 'the consultation message is outside the bound project/workspace');
     }
+    // §2.3/§3.10: only a copy question (`answeredBy:'copy'`) is consumed by this read-only copy identity. A line
+    // question opens its own round on its line and is never turned into a consultation Query here.
+    if (message.answeredBy !== 'copy') {
+      return reject('invalid', 'the consultation message is not a copy question');
+    }
     // §4.6 last paragraph: the widened `MessageRecipient` union explicitly
     // rejects the user recipient here; it is never turned into a Query or a
     // `readSession`, and the ordinary Session consultation flow is unchanged.
@@ -368,7 +371,7 @@ export function createConsultationConsumer(deps: ConsultationConsumerDeps):
     // Read the existing deterministic Query/Answer BEFORE any Session
     // busy/archive judgment: a saved Answer is an original fact and stays valid
     // even if the recipient is later occupied or archived.
-    const refs = consultationQueryRefs(messageRef, value.part);
+    const refs = consultationQueryRefs(messageRef);
     const existing = await deps.consultations.queries.readQueryJob(owned.ctx, refs.queryJobRef);
     if (existing.status === 'ready') return continueExisting(owned, value, message, existing.value);
     if (existing.status !== 'not_found') return existing;
@@ -376,13 +379,13 @@ export function createConsultationConsumer(deps: ConsultationConsumerDeps):
     // The shared consumption rule runs before a NEW consultation is derived, so
     // an unreleased or withdrawn message is never turned into a Query/model run;
     // an already saved Query/Answer still replays above.
-    const target = value.part === 'response' && message.sender.kind === 'work_run' ? message.sender.sessionRef : sessionRecipient;
-    const consumption = await deliveryProblem(owned, message, value.part ?? 'message', message.goalRef, target);
+    const target = sessionRecipient;
+    const consumption = await deliveryProblem(owned, message, message.goalRef, target);
     if (consumption !== null) return reject(consumption.code, consumption.reason);
-    if (value.part === 'response' ? (message.response === null || message.sender.kind !== 'work_run') : message.status === 'responded') {
+    if (message.status === 'responded') {
       return reject('invalid', 'the original message already has a response');
     }
-    const questionRead = await deps.consultations.messages.readMessageBody(owned.ctx, { messageRef, part: value.part ?? 'message' });
+    const questionRead = await deps.consultations.messages.readMessageBody(owned.ctx, { messageRef, part: 'message' });
     if (questionRead.status === 'not_found') return { status: 'not_found' };
     if (questionRead.status !== 'ready') return questionRead;
     const question = questionRead.value.text;
@@ -394,13 +397,13 @@ export function createConsultationConsumer(deps: ConsultationConsumerDeps):
     // it, so a source that advanced after a failed submit can never move the child
     // or the boundary. A null throughPosition is the explicit empty baseline,
     // distinct from a non-empty inherited prefix.
-    const isolatedInquiry = value.part !== 'response' && message.intent === 'inquiry';
-    let derivation = value.part === 'response' ? undefined : message.consultationDerivation;
+    const storedDerivation = message.consultationDerivation;
+    let derivation: NonNullable<SessionMessage['consultationDerivation']>;
     // §3.15 item 3: the create operation's stable identity is also the Query's
     // pointer to the frozen payload; both sides derive it with this one formula.
     const stable = stableSessionCreationIdentity(owned.actor, owned.projectId,
       `consultation-child:${hashOf(messageRef)}`);
-    if (isolatedInquiry && derivation === undefined) {
+    if (storedDerivation === undefined) {
       const recordDerivation = deps.consultations.messages.recordConsultationDerivation;
       if (recordDerivation === undefined) {
         return waiting(message, null, null, 'the mailbox does not expose the formal consultation-derivation writer');
@@ -465,9 +468,11 @@ export function createConsultationConsumer(deps: ConsultationConsumerDeps):
         return waiting(message, null, null, `recording the fixed A′ derivation failed: ${rejectionReason(recorded)}`);
       }
       derivation = recorded.value.consultationDerivation;
+    } else {
+      derivation = storedDerivation;
     }
     const fixedDerivation = derivation;
-    const childCardRead = await deps.sessions.readSession(owned.ctx, fixedDerivation?.childSessionRef ?? target);
+    const childCardRead = await deps.sessions.readSession(owned.ctx, fixedDerivation.childSessionRef);
     if (childCardRead.status !== 'ready') {
       return waiting(message, null, null, asRejection(childCardRead, 'the derived child Session').reason);
     }
@@ -496,9 +501,7 @@ export function createConsultationConsumer(deps: ConsultationConsumerDeps):
       projectId: owned.projectId,
       workspaceId: owned.workspaceId,
       goalId: value.goalRef === null ? null : value.goalRef.goalId,
-      question: isolatedInquiry || value.part === 'response' ? question : renderTemplate(PLATFORM_PROMPT_PACK_V1,
-        'consultation-received-input',
-        { messageId: message.ref.messageId, sourceJson: JSON.stringify(message.sourceRef) }, []).text,
+      question,
       focusTaskRefs: [],
       budget: { maxTokens: value.budget.maxTokens, deadline: value.budget.deadline },
       multiTurn: { maxRounds: 1 },
@@ -507,11 +510,10 @@ export function createConsultationConsumer(deps: ConsultationConsumerDeps):
         kind: 'semantic_query', roleBinding: value.roleBinding, runtimeBudget: value.runtimeBudget,
         consultation: {
           messageRef: { ...messageRef },
-          ...(value.part === undefined ? {} : { part: value.part }),
           recipient: { projectId: target.projectId, sessionId: target.sessionId },
           // §3.15 item 3/L24: Q reads the frozen payload from the create operation.
-          ...(isolatedInquiry && deps.consultationFacts !== undefined ? { operation: stable.operationRef } : {}),
-          ...(fixedDerivation === undefined ? {} : { derivation: fixedDerivation }),
+          ...(deps.consultationFacts === undefined ? {} : { operation: stable.operationRef }),
+          derivation: fixedDerivation,
         },
       },
     };
@@ -533,7 +535,7 @@ export function createConsultationConsumer(deps: ConsultationConsumerDeps):
       return waiting(message, null, null, `submitting the consultation Query failed: ${rejectionReason(submitted)}`);
     }
     const record: QueryJobRecord = { job: submitted.value.job, run: submitted.value.run };
-    const claimed = await claim(owned, messageRef, refs.queryRunRef, childCard.record.ref, childCard.record.revision, value.part);
+    const claimed = await claim(owned, messageRef, refs.queryRunRef, childCard.record.ref, childCard.record.revision);
     if (claimed.kind === 'fail') return waiting(message, record, null, claimed.reason);
     return driveAccepted(owned, message, value.consumerId, claimed.record);
   };

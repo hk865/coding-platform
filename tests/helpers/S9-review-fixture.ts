@@ -30,6 +30,7 @@ import type { GoalRef } from '../../src/contracts/ledger.js';
 import type { CompletionPolicyContentV1 } from '../../src/contracts/governance.js';
 import type { PlanRevisionDraft } from '../../src/contracts/plan.js';
 import type { SessionMessageRef } from '../../src/contracts/core/session-message.js';
+import type { SessionMessage } from '../../src/core/work-graph/model/communication-contracts.js';
 import type { PreparedQueryManifestV1 } from '../../src/contracts/core/prepared-execution.js';
 import type { QueryJobRef, QueryRunRef } from '../../src/contracts/query-job.js';
 import type { VerificationRoundRef } from '../../src/contracts/verification.js';
@@ -287,13 +288,23 @@ export async function answerS9Review(review: S9ReviewWorld, reply: S9ReviewReply
     throw new Error(`S9: the review Query of ${query.messageRef.messageId} did not end`);
   }
   if (options.settle !== false) {
-    const source = await heartbeatUntil(world, () => readS7BMessage(world, query.messageRef),
-      message => message.response !== null || message.withdrawnAt !== null, 16);
-    if (source.response === null && source.withdrawnAt === null) {
-      throw new Error(`S9: the Host did not close the review message ${query.messageRef.messageId}`);
-    }
+    const settled = await heartbeatUntil(world, () => readS9ReviewSourceSettled(world, query.messageRef),
+      value => value, 16);
+    if (!settled) throw new Error(`S9: the Host did not close the review message ${query.messageRef.messageId}`);
   }
   return query;
+}
+
+/**
+ * The review source is settled when the Host replied or withdrew it, or (P2, `p2-frozen.md:165/:168`) when the
+ * committed formal `no_answer` notice ended the round without a reply: the agent's message is then not withdrawn.
+ */
+export async function readS9ReviewSourceSettled(world: S6AHostWorld, messageRef: SessionMessageRef):
+Promise<boolean> {
+  const view = ready<{ message: SessionMessage; roundEnding?: { kind: string } }>(
+    await world.post('messages/view', plain(S6A_SCOPE, messageRef)), `the review source ${messageRef.messageId}`);
+  return view.message.response !== null || view.message.withdrawnAt !== null
+    || view.roundEnding?.kind === 'no_answer';
 }
 
 /** `W-booked`: the platform's one public `recordReviewEvidence` (the round executor is the Host's HTTP actor). */

@@ -17,7 +17,7 @@ import { openS7B2RoundWorld } from './S7B2-secretary-rounds.js';
 export type R04World = {
   world: S6AHostWorld;
   secretary: S6ASession;
-  /** A real `messages/send` with `intent: 'notify'`, `needsReply: false`; returns the message ref. */
+  /** A real `messages/send` with `needsReply: false` and `wake: false`; returns the message ref. */
   notify(text: string): Promise<SessionMessage['ref']>;
   /** A real `requests/submit` assigned to `secretary`; returns the queued root and round. */
   submitRound(commandId: string, text: string): Promise<{ requestRoot: QueryJobRef; round: QueryJobRef }>;
@@ -45,7 +45,7 @@ export async function openR04World(options?: { at?: string }): Promise<R04World>
       // through the system-context path the accepted round uses.
       const saved = committed<SessionMessage>(await world.dispatch('messages/send', world.systemContext(),
         graphWrite(S6A_SCOPE, {
-          recipient: secretary.ref, text, intent: 'notify', needsReply: false, goalRef: world.goals.first,
+          recipient: secretary.ref, text, needsReply: false, wake: false, goalRef: world.goals.first,
         }, 's7b2-r04-notify')), 'the R04 notify message');
       return saved.ref;
     },

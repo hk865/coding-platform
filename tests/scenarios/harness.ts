@@ -79,7 +79,8 @@ import { createScriptedModel, type ScriptedModel, type ScriptedReply } from '../
 import { limitHold } from '../helpers/hold-limit.js';
 import {
   AG2B_CHECK_COMMAND, AG2B_CONSUMER_ID, AG2B_GOAL_REF, AG2B_QUERY_INSTRUCTION, AG2B_RUNTIME_BUDGET, AG2B_SCOPE, AG2B_WORK_INSTRUCTION,
-  AG2B_WORK_ROLE, AG2B_WORK_ROLE_BINDING, AG2B_WORK_TASK_ID, ag2bChecksConfiguration, cleanupAG2b, permissionRevision, plain,
+  AG2B_WORK_ROLE, AG2B_WORK_ROLE_BINDING, AG2B_WORK_TASK_ID, AG2B_WORK_TOOLS, ag2bChecksConfiguration, cleanupAG2b,
+  permissionRevision, plain,
   seedAG2bWorkGraph, seedAG2bWorkGraphThrough, settleAutoCapture, settleStartLines, startAG2bHost, writeAG2bWorkspace,
   type AG2bHost,
 } from '../helpers/AG2b-collaboration-fixture.js';
@@ -780,8 +781,13 @@ export function ag2bWorkspaceBindings(root: string, revision: { value: number },
   };
 }
 
-/** The AG2b work binding's tools (the Host's startup grant). */
-export const AG2B_WORK_TOOLS: readonly string[] = ['read', 'write', 'find_related_sessions', 'read_session_card', 'send_session_message'];
+/**
+ * The AG2b work binding's tools. The one definition lives beside the binding it fills
+ * (`tests/helpers/AG2b-collaboration-fixture.ts`, mirroring `localWorkbenchGrant` in `src/app/host.ts:585`); it is
+ * re-exported here for platform mode and the `support/*-work-root.ts` bases. Importing it the other way would make
+ * the fixture depend back on this module.
+ */
+export { AG2B_WORK_TOOLS };
 
 /**
  * The AG2b work binding's grant over a scripted client (the Host builds the same from its startup file). `tools`

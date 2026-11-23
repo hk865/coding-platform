@@ -21,14 +21,16 @@ import type { TaskExecutionRecord } from '../../src/core/work-graph/model/execut
 import type { PlanProposal, PlanProposalRef } from '../../src/core/work-graph/model/plan-contracts.js';
 import { platformRoleProfile } from '../../src/core/agent-runtime/role-profiles.js';
 import { parsePlanReviewAnswer } from '../../src/contracts/plan-review.js';
+import { SYSTEM_ROUND_ACTOR } from '../../src/contracts/plan-round.js';
 import { advanceUntil, driveWorkflow, readExecution, type AdvanceValue } from './A2-restart-fixture.js';
 import { graphWrite, plain } from './AG2b-collaboration-fixture.js';
 import { s6aCardsWorkspace, type S6ACardsWorkspace } from './S6A-cards-fixture.js';
 import { openS6AHostWorld, type S6AHostWorld, type S6AReply, type S6AUsage } from './S6A-host-fixture.js';
-import { awaitPlanningAnswer, heartbeatUntil, heartbeatUntilModel, readBody as readSavedBody, readProposal, readQueryAnswer, waitForResponse } from './IV-host-fixture.js';
+import { awaitPlanningAnswer, awaitProposal, heartbeatUntil, heartbeatUntilModel, proposalRefOf, readBody as readSavedBody, readProposal, readQueryAnswer, waitForResponse } from './IV-host-fixture.js';
+import { sendS7A2PersonMessage } from './S7A2-fixture.js';
 import { listed } from './S7B-fixture.js';
 import {
-  OPERATOR, S6A_SCOPE, S6A_WORK_ROLE, type S6AExtraBinding, type S6ASession,
+  OPERATOR, S6A_SCOPE, S6A_SECRETARY_ROLE, S6A_WORK_ROLE, type S6AExtraBinding, type S6ASession,
 } from './S6A-request-fixture.js';
 import { createS6BLine, governS6B } from './S6B1-fixture.js';
 import { bindingOf, checkConfiguration, claimedRunOf, committed, ready, sessionOf, setS7AAutonomy } from './S7A-fixture.js';
@@ -199,10 +201,19 @@ export const PL_PROPOSE_FUTURE_TOOLS: S6AExtraBinding = {
 };
 
 /** The real Host world: memory by default, governance seeded, one existing Goal. The caller closes it. */
-const PL_ROLE_BINDINGS: readonly S6AExtraBinding[] = [
-  lineBinding('pl-workflow-adviser-binding', platformRoleProfile('adviser').template, 'PL workflow adviser'),
-  lineBinding('pl-workflow-reviewer-binding', platformRoleProfile('reviewer').template, 'PL workflow reviewer'),
-];
+function roleBindings(tools?: readonly string[]): readonly S6AExtraBinding[] {
+  const adviser = lineBinding('pl-workflow-adviser-binding', platformRoleProfile('adviser').template,
+    'PL workflow adviser', tools);
+  const reviewer = lineBinding('pl-workflow-reviewer-binding', platformRoleProfile('reviewer').template,
+    'PL workflow reviewer', tools);
+  if (tools === undefined) return [adviser, reviewer];
+  // The base S6A secretary/work bindings are not line bindings; a caller that needs the P2 families merges them in.
+  return [adviser, reviewer,
+    { binding: bindingOf('s6a-secretary-binding', S6A_SECRETARY_ROLE, 'S6A trusted secretary guidance', ['read']),
+      mergeTools: tools },
+    { binding: bindingOf('s6a-work-binding', S6A_WORK_ROLE, 'S6A trusted work guidance', ['read']),
+      mergeTools: tools }];
+}
 
 /** The Host input consumers the two PL lines need so a `refine:`/`planreview:` round is served promptly. */
 const PL_ROLE_CONSUMERS = ['pl-workflow-adviser-binding', 'pl-workflow-reviewer-binding'].map(id => ({
@@ -218,11 +229,13 @@ export async function openPLWorkflowWorld(options: {
   extraBindings?: readonly S6AExtraBinding[];
   /** G8B1a：主工作区的写和命令授权，原样交给基础世界。 */
   workspaceGrants?: { writePrefixes?: string[]; allowCommands?: boolean };
+  /** P2 coordination families added to the adviser/reviewer/secretary/work bindings (absent keeps today's grants). */
+  tools?: readonly string[];
 } = {}): Promise<PLWorkflowWorld> {
   const label = options.label ?? 'pl';
   const world = await openS6AHostWorld({ backend: options.backend ?? 'memory',
     ...(options.workspaceGrants === undefined ? {} : { workspaceGrants: options.workspaceGrants }),
-    extraBindings: [...PL_ROLE_BINDINGS, ...(options.extraBindings ?? [])],
+    extraBindings: [...roleBindings(options.tools), ...(options.extraBindings ?? [])],
     extraHostOptions: { inputConsumers: PL_ROLE_CONSUMERS, ...(options.extraHostOptions ?? {}) } });
   try {
     const main = s6aCardsWorkspace(world, S6A_SCOPE);
@@ -471,11 +484,15 @@ export async function plSystemRoundRef(workflow: PLWorkflowWorld, line: S6ASessi
   return found;
 }
 
-/** Every Host system-round head in one line's inbox, in inbox order. */
+/**
+ * Every Host system-round head in one line's inbox, in inbox order. A system round is known by its one fixed sender
+ * (`p2-frozen.md:130` ②); since P2 a closing notice is a Host system message too (`:132`, design 4.1), so the sender
+ * kind alone would count it.
+ */
 export async function requestHeads(workflow: PLWorkflowWorld,
   line: Parameters<typeof listed>[2]): Promise<string[]> {
   const messages = (await listed(workflow.world, 'inbox', line)).filter(message =>
-    message.sender.kind === 'host' && message.sender.actor.kind === 'system');
+    message.sender.kind === 'host' && message.sender.actor.id === SYSTEM_ROUND_ACTOR.id);
   return await Promise.all(messages.map(async message =>
     (await readSavedBody(workflow.world, message.ref, 'message')).split('\n')[0] ?? ''));
 }
@@ -733,4 +750,63 @@ export async function runPLEveryStepChain(label: string,
   }
   return { workflow: opened.workflow, skeleton: opened.skeleton, line: opened.line,
     adviser: opened.adviser, reviewer: opened.reviewer, candidate: opened.candidate, reviewRef: opened.reviewRef };
+}
+
+export type PLPendingCandidateWorld = {
+  readonly workflow: PLWorkflowWorld;
+  readonly plan: PlanRevisionSnapshot;
+  readonly adviser: S6ASession;
+  readonly work: S6ASession;
+  readonly messageRef: SessionMessageRef;
+  readonly candidate: PlanProposal;
+};
+
+/**
+ * One adopted single-stage Plan whose active work Tasks are already satisfied, and one pending agent candidate
+ * written by the secretary line's real B20 planning answer to the person's open message M. Nothing adopts, reviews
+ * or abandons the candidate, so the Goal can complete while the chain still names M. The line is the secretary's,
+ * not the adviser's: B20 is unchanged (design 2.3/4.1), so a person's message to an adviser line plans only and its
+ * candidate close-out replies it at once (only an executor's open wait defers M, `p2-frozen.md:167`); on a secretary
+ * line the candidate waits for the person (`awaiting_decision`) and M keeps no reply until the chain ends.
+ */
+export async function openPLPendingCandidateWorld(input: { label: string; taskIds?: readonly string[] }):
+Promise<PLPendingCandidateWorld> {
+  const label = input.label;
+  const workflow = await openPLWorkflowWorld({ label,
+    extraHostOptions: { checks: checkConfiguration({ kind: 'human', id: OPERATOR.id }) } });
+  try {
+    const goal = workflow.goal;
+    const taskIds = input.taskIds ?? ['pl-owe-a', 'pl-owe-b'];
+    const firstTaskId = taskIds[0];
+    if (firstTaskId === undefined) throw new Error('PL pending: the Plan needs one work Task');
+    const plan = await adoptPLPlanDraft(workflow.main, goal,
+      plSingleStageDraft(goal, { label, taskIds, goalGate: true }), label);
+    const adviser = await createPLAdviserLine(workflow.world, `${label}-adviser`);
+    const work = await sessionOf(workflow.world, await createS6BLine(workflow.main, {
+      label: `${label}-work`, role: S6A_WORK_ROLE,
+      tasks: plan.tasks.filter(task => task.taskKind === 'work' && task.disposition === 'active')
+        .map(task => ({ projectId: goal.projectId, goalId: goal.goalId, taskId: task.taskId })),
+    }));
+    const draft = plPlanChangeDraft(plan, goal, {
+      planId: `pl-plan-${label}-candidate`,
+      tasks: plan.tasks.map(task => task.taskId === firstTaskId
+        ? { ...task, title: `PL ${label} candidate title` } : task),
+      assignments: plan.assignments ?? [], obligations: plan.obligations,
+    });
+    for (const taskId of taskIds) await satisfyPLTask(workflow.world, goal, taskId, work, label);
+    const secretary = await workflow.world.createSecretary(`${label}-secretary`);
+    await workflow.world.scripted.script(secretary, [{ kind: 'calls', calls: [{
+      callId: `${label}-candidate`, name: 'submit_plan_round', args: {
+        answerKind: 'plan', summary: `PL ${label} candidate`, plan: plToolPlanOf(draft),
+        reason: { text: `PL ${label} candidate`, affectedTaskIds: [firstTaskId] },
+      },
+    }] }]);
+    const message = await sendS7A2PersonMessage(workflow.world, { label, recipient: secretary.ref, goal });
+    const read = await awaitProposal(workflow.world, proposalRefOf(message.ref, goal));
+    if (read.status !== 'ready') throw new Error(`PL pending: the candidate is ${JSON.stringify(read)}`);
+    return { workflow, plan, adviser, work, messageRef: message.ref, candidate: read.value };
+  } catch (error) {
+    await workflow.close().catch(() => undefined);
+    throw error;
+  }
 }

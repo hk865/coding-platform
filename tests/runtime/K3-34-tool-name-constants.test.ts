@@ -20,18 +20,16 @@ import { containedByHostStop, kernelToolNameOf, unknownCallKindOf } from '../../
 
 const READ_ONLY_MAILBOX = ['read_session_inbox', 'read_session_message', 'read_session_message_body'];
 const READ_ONLY_GRAPH = ['look_graph', 'find_graph'];
-const READ_ONLY_DISCOVERY = ['find_related_sessions', 'read_session_card'];
 
 describe('K3-34 tool-name constants', () => {
   it('K3-34 maps every cooperation constant name that is in the table to its kind', () => {
     for (const name of READ_ONLY_MAILBOX) expect([name, unknownCallKindOf(name)]).toEqual([name, 'read_only']);
-    for (const name of READ_ONLY_DISCOVERY) expect([name, unknownCallKindOf(name)]).toEqual([name, 'read_only']);
     for (const name of READ_ONLY_GRAPH) expect([name, unknownCallKindOf(name)]).toEqual([name, 'read_only']);
     for (const name of LINK_CHECK_TOOL_NAMES) expect([name, unknownCallKindOf(name)]).toEqual([name, 'read_only']);
     expect(unknownCallKindOf('read_user_decision')).toBe('read_only');
     expect(unknownCallKindOf('query_task_graph')).toBe('read_only');
     expect(unknownCallKindOf('query_ready_tasks')).toBe('read_only');
-    for (const name of ['send_session_message', 'ack_session_message', 'respond_session_message', 'send_user_message',
+    for (const name of ['send_session_message', 'respond_session_message',
       'record_decision_application', 'propose_future_plan', 'record_note']) {
       expect([name, unknownCallKindOf(name), containedByHostStop(name)]).toEqual([name, 'platform', true]);
     }

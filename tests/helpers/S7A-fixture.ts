@@ -44,7 +44,8 @@ import { AG2B_RUNTIME_BUDGET, ag2bPlanDraft, graphWrite, permissionRevision, pla
 import { driveWorkflow, advanceUntil } from './A2-restart-fixture.js';
 import { s6aCardsWorkspace, type S6ACardsWorkspace } from './S6A-cards-fixture.js';
 import { commitBarrier, type CommitHold, type CommitMatch } from './S6A-commit-barrier.js';
-import { openS6AHostWorld, type S6AHostWorld } from './S6A-host-fixture.js';
+import { ACTION_TOOL_NAMES } from '../../src/core/agent-runtime/communication-tools.js';
+import { openS6AHostWorld, type S6AHostWorld, type S6AHostWorldOptions } from './S6A-host-fixture.js';
 import {
   S6A_SCRIBE_ROLE, S6A_SCOPE, S6A_SECRETARY_ROLE, S6A_WORK_ROLE,
   type S6AExtraBinding, type S6ARequestWorld, type S6ASession, type S6AWorldOptions,
@@ -141,7 +142,8 @@ const S7A_EXTRA_BINDINGS: readonly S6AExtraBinding[] = [
     mergeTools: ['send_session_message'] },
   { binding: bindingOf('s6a-scribe-binding', S6A_SCRIBE_ROLE, 'S6A trusted scribe guidance', ['read', 'record_note']),
     mergeTools: ['send_session_message'] },
-  { binding: bindingOf('s6a-secretary-binding', S6A_SECRETARY_ROLE, 'S6A trusted secretary guidance', ['read']),
+  { binding: bindingOf('s6a-secretary-binding', S6A_SECRETARY_ROLE, 'S6A trusted secretary guidance',
+    ['read', ...ACTION_TOOL_NAMES]),
     mergeTools: ['look_graph'] },
 ];
 
@@ -359,7 +361,7 @@ async function sendFrom(world: S6AHostWorld, input: {
 }): Promise<Sender> {
   await world.scripted.script(input.line, [
     { kind: 'calls', calls: [{ callId: `s7a-send-${input.label}`, name: 'send_session_message',
-      args: { recipient: input.recipient, text: `S7A message from ${input.label}`, intent: 'inquiry', needsReply: true,
+      args: { recipient: input.recipient, text: `S7A message from ${input.label}`, needsReply: true,
         ...(input.waitAfterSend ? { waitAfterSend: true } : {}) } }] },
     { kind: 'text', text: `S7A ${input.label} answered` },
   ]);
@@ -449,7 +451,7 @@ export async function sendS7ASecretaryMessage(world: S6AHostWorld,
     async (toolContext, round) => {
       const recipient = 'ref' in to ? to.ref : to;
       const saved = await world.platform.messages.sendMessage(toolContext, {
-        input: { recipient, text, intent: 'inquiry' as const, needsReply: true },
+        input: { recipient, text, needsReply: true },
         meta: { requestId: `s7a-secretary-send-${input.label}`, expected: [] },
       });
       if (saved.status !== 'committed') {
@@ -551,7 +553,7 @@ export async function transferS7ASession(world: S6AHostWorld, from: S6ASession |
 export async function seedS7AHostSystemSender(world: S6AHostWorld) {
   const recipient = await world.createWorkSession('s7a-system-recipient');
   const value = committed<SessionMessage>(await world.dispatch('messages/send', world.systemContext(),
-    graphWrite(S6A_SCOPE, { recipient: recipient.ref, text: 'S7A system message', intent: 'inquiry', needsReply: true },
+    graphWrite(S6A_SCOPE, { recipient: recipient.ref, text: 'S7A system message', needsReply: true },
       's7a-system-send')), 'the system send');
   const message = ready<SessionMessage>(await world.post('messages/read', plain(S6A_SCOPE, value.ref)),
     'the saved system message');
@@ -651,4 +653,96 @@ export async function openS7AWorkSetup(options: S6AWorldOptions) {
     await world.close().catch(() => undefined);
     throw error;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Appended exports (7D2 CP2T5 rework R6): the P2 action grant and the in-round after hook
+// ---------------------------------------------------------------------------
+
+/**
+ * `requestWorldOptions` plus the secretary round's P2 action grant: a request round may dispatch, hold, release
+ * and ask for a stop; the round filter still drops whatever this duty does not get. `look_graph` stays in the
+ * binding's existing grant. Appended so the frozen existing worlds keep their exact behaviour.
+ */
+export function requestWorldOptionsWithActions(options: S6AWorldOptions): S6AHostWorldOptions {
+  return { ...requestWorldOptions(options), secretaryTools: ['read', 'look_graph', ...ACTION_TOOL_NAMES] };
+}
+
+/** `openS7AQueryWorld` with `requestWorldOptionsWithActions`: the same real read-only copy, action-capable round. */
+export async function openS7AQueryWorldWithActions(options: S6AWorldOptions) {
+  const world = await openS6AHostWorld(requestWorldOptionsWithActions(options));
+  try {
+    const source = await world.createWorkSession('s7a-copy-source');
+    const copy = await world.makeReadonlyCopy(source, 's7a-copy');
+    const card = await world.readSession(copy.copy);
+    if (card.record.provenance.kind !== 'readonly_copy') {
+      throw new Error(`S7A: the copy is not a read-only copy: ${JSON.stringify(card.record.provenance)}`);
+    }
+    return { world, goal: world.goals.first, session: copy.copy, query: copy.query };
+  } catch (error) {
+    await world.close().catch(() => undefined);
+    throw error;
+  }
+}
+
+/** `openS7AWorkWorld` with `requestWorldOptionsWithActions`: the same real Work line, action-capable request round. */
+export async function openS7AWorkWorldWithActions(options: S6AWorldOptions) {
+  const world = await openS6AHostWorld(requestWorldOptionsWithActions(options));
+  try {
+    const main = s6aCardsWorkspace(world, S6A_SCOPE);
+    await world.setResumeOnStartup(false);
+    await ensureGovernance(world, main);
+    const goal = (await main.createGoal('s7a-goal', 'S7A work goal')).ref;
+    const { plan, tasks } = await adoptS6BPlan(main, goal, { label: 's7a-work',
+      taskIds: ['s7a-run-1', 's7a-run-2'], role: S6A_WORK_ROLE.templateId });
+    const line = await sessionOf(world, await createS6BLine(main, { label: 's7a-line', role: S6A_WORK_ROLE, tasks }));
+    await world.scripted.script(line, [{ kind: 'text', text: 'S7A first Work answer' }]);
+    const claimInput = await advanceUntil(world.ag2b, { schemaVersion: 1 as const, goalRef: goal, flowId: 's7a-first',
+      sessionHint: line.ref, kind: 'select_work' as const, taskId: tasks[0]!.taskId }, 'claim_task');
+    const receipts: WorkflowStepReceipt[] = [];
+    await driveWorkflow(world.ag2b, claimInput, { stopBefore: 'claim_task', receipts });
+    const { run } = claimedRunOf(receipts, 'the first Task');
+    ready(await world.post('executions/read', plain(S6A_SCOPE, run)), 'the first Task Run');
+    const completed = receiptOf(receipts, 'complete_task');
+    if (completed === undefined || completed.result.status !== 'committed') throw new Error(
+      'S7A: the first Task did not complete');
+    await assertTaskCompleted(world, goal, tasks[0]!.taskId);
+    return { world, goal, plan, line, run };
+  } catch (error) {
+    await world.close().catch(() => undefined);
+    throw error;
+  }
+}
+
+/**
+ * `sendS7ASecretaryMessage` plus an `after` hook that runs in the same held round once the send has been read
+ * back, so an action the round also owns (a dispatch request) attaches to this send's request root.
+ */
+export async function sendS7ASecretaryMessageAfter(world: S6AHostWorld,
+  input: { label: string; goalId: string | null }, to: S6ASession | SessionRef, text: string,
+  after: (context: CoreCallContext, round: S6BHeldRound, message: SessionMessage) => Promise<void>) {
+  const held = await holdS7AQueryRound(world, { label: `s7a-${input.label}`, goalId: input.goalId },
+    async (toolContext, round) => {
+      const recipient = 'ref' in to ? to.ref : to;
+      const saved = await world.platform.messages.sendMessage(toolContext, {
+        input: { recipient, text, needsReply: true },
+        meta: { requestId: `s7a-secretary-send-${input.label}`, expected: [] },
+      });
+      if (saved.status !== 'committed') {
+        throw new Error(`S7A_SECRETARY_SEND_UNAVAILABLE: the mailbox refused the secretary send: ${JSON.stringify(saved)}`);
+      }
+      const message = ready<SessionMessage>(await world.post('messages/read', plain(S6A_SCOPE, saved.value.ref)),
+        'the saved secretary message');
+      const sender = message.sender as MessageSender | MessageSecretaryRoundSender;
+      if (sender.kind !== 'secretary_round' || !sameSession(sender.sessionRef, round.secretary.ref)
+        || !sameQueryRun(sender.queryRunRef, round.prepared.queryRunRef)
+        || !sameQueryJob(sender.requestRoot, round.request.requestRoot)) throw new Error(
+        `S7A: the secretary message is not this round's: ${JSON.stringify(message.sender)}`);
+      const body = ready<{ text: string }>(await world.post('messages/body',
+        plain(S6A_SCOPE, { messageRef: message.ref, part: 'message' })), 'the secretary message body');
+      if (body.text !== text) throw new Error('S7A: the saved secretary message does not read back');
+      await after(toolContext, round, message);
+      return { round, message, context: toolContext };
+    });
+  return held;
 }

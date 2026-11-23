@@ -99,7 +99,7 @@ describe('XWS2A: the join survives a restart and a main-workspace line works the
     world.base.world.clock.advance(10);
     const scribe = world.base.lines.scribe;
     const reminders = await waitFor(async () => (await world.inbox(scribe)).filter(message =>
-      message.intent === 'notify' && message.sender.kind === 'host'),
+      message.wake === false && message.sender.kind === 'host'),
     messages => messages.length > 0, 'the scribe reminder');
     const bodies = await Promise.all(reminders.map(message => world.messageText(message)));
     const index = bodies.findIndex(body => body.includes('书记提醒：'));
@@ -137,7 +137,7 @@ describe('XWS2A: the join survives a restart and a main-workspace line works the
     const scribe = world.base.lines.scribe;
     const { line } = await world.workRun({ label: 'xa15', replies: [
       { kind: 'calls', calls: [{ callId: 'xa15-send', name: 'send_session_message',
-        args: { recipient: scribe.ref, intent: 'notify', text: 'XA-15 跨工作区通知' } }] },
+        args: { recipient: scribe.ref, text: 'XA-15 跨工作区通知', needsReply: false, wake: false } }] },
       { kind: 'text', text: 'XA-15 done' },
     ] });
     const sent = jsonOf(await world.base.world.scripted.requests(line), 'xa15-send') as { status: string };
@@ -147,7 +147,7 @@ describe('XWS2A: the join survives a restart and a main-workspace line works the
     const index = bodies.indexOf('XA-15 跨工作区通知');
     expect(index).toBeGreaterThanOrEqual(0);
     const message = inbox[index]!;
-    expect(message.intent).toBe('notify');
+    expect(message.wake).toBe(false);
     expect(message.ref.workspaceId).toBe(S6A_SCOPE.workspaceId);
     expect(message.sender.kind).toBe('work_run');
     if (message.sender.kind !== 'work_run') throw new Error('XA-15: the message sender is not a Work Run');
@@ -244,7 +244,7 @@ describe('XWS2A: the join survives a restart and a main-workspace line works the
     // A second ws1 line with a queued inquiry: the page's other candidate.
     const other = await world.base.world.createWorkSession('xa17-other');
     const sent = await world.base.world.post('messages/send', graphWrite(S6A_SCOPE, {
-      recipient: other.ref, text: 'XA-17 queued inquiry', intent: 'inquiry', needsReply: true,
+      recipient: other.ref, text: 'XA-17 queued inquiry', entry: 'person_intervention', needsReply: true,
     }, 'xa17-message', []));
     expect((sent.body as { status?: string }).status).toBe('committed');
     // Hold the main adviser's ws2 Run at its model request: its ws1 line is occupied while the Run is in ws2.
@@ -270,7 +270,7 @@ describe('XWS2A: the join survives a restart and a main-workspace line works the
     await world.waitCoarseAnswered();
     const adviser = world.base.lines.adviser;
     const sent = await world.base.world.post('messages/send', graphWrite(S6A_SCOPE, {
-      recipient: adviser.ref, text: 'XA-18 letter to the line', intent: 'notify',
+      recipient: adviser.ref, text: 'XA-18 letter to the line', needsReply: false, wake: false,
     }, 'xa18-letter', []));
     const letter = valueOf<SessionMessage>(sent.body, 'committed', 'the XA-18 letter');
     const { line } = await world.workRun({ label: 'xa18', replies: [
@@ -300,7 +300,7 @@ describe('XWS2A: the join survives a restart and a main-workspace line works the
       { label: 'xa19-recipient', role: PL_ADVISER_ROLE, tasks: replyPlan.tasks }));
     const { run, task } = await world.workRun({ label: 'xa19', replies: [
       { kind: 'calls', calls: [{ callId: 'xa19-send', name: 'send_session_message',
-        args: { recipient: recipient.ref, text: 'XA-19 question', intent: 'inquiry',
+        args: { recipient: recipient.ref, text: 'XA-19 question',
           needsReply: true, waitAfterSend: true } }] },
     ] });
     const yielded = await waitFor(async () => await readRun(world, run),
@@ -348,7 +348,7 @@ describe('XWS2A: the join survives a restart and a main-workspace line works the
       commit.records.some(record => record.schemaId === 'SessionMessage@1'), 'XA-20: after the send');
     const running = world.workRun({ label: 'xa20', replies: [
       { kind: 'calls', calls: [{ callId: 'xa20-send', name: 'send_session_message',
-        args: { recipient: receiver.ref, text: 'XA-20 withdraw me', intent: 'notify' } }] },
+        args: { recipient: receiver.ref, text: 'XA-20 withdraw me', needsReply: false, wake: false } }] },
     ] });
     await sentHold.reached;
     const letter = (await world.inbox(receiver)).find(message =>
@@ -388,7 +388,7 @@ describe('XWS2A: the join survives a restart and a main-workspace line works the
       commit.records.some(record => record.schemaId === 'SessionMessage@1'), 'XA-21: after the inquiry');
     const running = world.workRun({ label: 'xa21', replies: [
       { kind: 'calls', calls: [{ callId: 'xa21-send', name: 'send_session_message',
-        args: { recipient: recipient.ref, text: 'XA-21 question', intent: 'inquiry', needsReply: true,
+        args: { recipient: recipient.ref, text: 'XA-21 question', needsReply: true,
           waitAfterSend: false } }] },
     ] });
     await sentHold.reached;
@@ -427,7 +427,7 @@ describe('XWS2A: the join survives a restart and a main-workspace line works the
     try {
       // A sender in the line's own workspace sends to the busy line and withdraws its own letter.
       const sent = await world.base.world.post('messages/send', graphWrite(S6A_SCOPE, {
-        recipient: adviser.ref, text: 'XA-22 letter to the busy line', intent: 'notify',
+        recipient: adviser.ref, text: 'XA-22 letter to the busy line', needsReply: false, wake: false,
       }, 'xa22-send', []));
       const letter = valueOf<SessionMessage>(sent.body, 'committed', 'the XA-22 letter');
       const withdrawn = await world.base.world.post('messages/withdraw',
@@ -444,4 +444,79 @@ describe('XWS2A: the join survives a restart and a main-workspace line works the
       await running;
     }
   });
+
+  /**
+   * XA-23 (cp2fq, Codex cp2fq "第 10 条"): XA-19's wait across a Host restart. A ws1 line runs the ws2 Goal's Task and
+   * waits in ws1, so the ws1 goal-wait rebuild meets a wait whose Goal is in ws2. It reads that Goal's recorded
+   * interruption in the Goal's own workspace (`goalHeldByRestart`), never with the ws1 context. The ws1 rebuild is
+   * observed through a ws1 Goal the person starts after the restart: its driver parks on its own wait and drains the
+   * ws1 goal waits, which a failed rebuild would fail. `ask` keeps the ws2 Goal's interruption until the person starts
+   * it; then the reply arrives and the ws2 Run continues. `auto` records none. Its reply path is not asserted here: the
+   * restart's re-drive runs the recipient's Work Run, whose reply tool refuses the question as that round's source and
+   * writes no reply; that is the same on `cp2fr-base`, before this check, and is reported to the lead separately.
+   */
+  it.each([['auto', true], ['ask', false]] as const)(
+    'XA-23 %s restart: a ws1 wait of a ws2 Run keeps the ws1 goal-wait rebuild, and the wait continues',
+    async (mode, auto) => {
+      const world = await opened({ backend: 'sqlite' });
+      await world.waitCoarseAnswered();
+      const main = world.base.main;
+      const host = world.base.world;
+      const replyGoal = (await main.createGoal(`xa23-${mode}-reply-goal`, 'XA-23 reply goal')).ref;
+      const replyPlan = await adoptS6BPlan(main, replyGoal,
+        { label: `xa23-${mode}-reply`, taskIds: [`xa23-${mode}-reply-task`], role: PL_ADVISER_ROLE.templateId });
+      const recipient = await sessionOf(host, await createS6BLine(main,
+        { label: `xa23-${mode}-recipient`, role: PL_ADVISER_ROLE, tasks: replyPlan.tasks }));
+      const { run, task } = await world.workRun({ label: `xa23-${mode}`, replies: [
+        { kind: 'calls', calls: [{ callId: `xa23-${mode}-send`, name: 'send_session_message',
+          args: { recipient: recipient.ref, text: 'XA-23 question', needsReply: true, waitAfterSend: true } }] },
+      ] });
+      const yielded = await waitFor(async () => await readRun(world, run),
+        record => record.run.outcome !== null, 'the XA-23 yielded Run');
+      expect(yielded.run.outcome).toBe('yielded');
+      const questionRef = yielded.run.continuation?.messageRef;
+      if (questionRef === undefined) throw new Error('XA-23: the yielded Run carries no wait message');
+      const question = valueOf<SessionMessage>(await main.route('messages/read', questionRef), 'ready',
+        'the XA-23 question');
+      // Scripted before the restart, as XA-19: the recipient's Work Run answers through the reply tool, the yielded
+      // Run's continuation ends with a text. Under `auto` the restart's own re-drive runs both lines.
+      await host.scripted.script(recipient, [
+        { kind: 'calls', calls: [{ callId: `xa23-${mode}-reply`, name: 'respond_session_message',
+          args: { messageRef: questionRef, expectedRevision: question.revision, text: 'XA-23 reply' } }] },
+        { kind: 'text', text: 'XA-23 reply saved' },
+      ]);
+      await host.scripted.script(world.base.lines.adviser, [{ kind: 'text', text: 'XA-23 continuation done' }]);
+      if (auto) await host.setResumeOnStartup(true);
+      await host.crash();
+
+      const probe = (await main.createGoal(`xa23-${mode}-probe`, 'XA-23 ws1 probe goal')).ref;
+      expect(await main.route('workflow/driver-start', { advance: { schemaVersion: 1, goalRef: probe,
+        flowId: `xa23-${mode}-probe`, sessionHint: null, kind: 'select_work' }, queryProfileIds: [] }))
+        .toMatchObject({ status: 'ready' });
+      const parked = await waitFor(async () => valueOf<{ state: string; reason: string | null }>(
+        await main.route('workflow/driver-read', { goalRef: probe }), 'ready', 'the ws1 probe driver'),
+      driver => driver.state !== 'running', 'the ws1 probe driver to park');
+      expect(parked, 'the ws1 goal waits rebuilt').toMatchObject({ state: 'waiting_for_reply' });
+      const display = valueOf<{ display: { causes: object[] } }>(await world.second.workspace.route('goals/display',
+        { goalRef: world.second.goal }), 'ready', 'the ws2 Goal display');
+      expect(display.display.causes.some(cause => 'interruption' in cause), 'the ws2 Goal interruption').toBe(!auto);
+      if (auto) return;
+      // `ask`: the person continues both Goals, the ws2 Goal by its driver start and the ws1 reply Goal by its advance;
+      // the reply arrives and the yielded ws2 Run continues on the same ws1 line.
+      expect(await world.second.workspace.route('workflow/driver-start', { advance: { schemaVersion: 1,
+        goalRef: world.second.goal, flowId: `xa23-${mode}-ws2-start`, sessionHint: null, kind: 'select_work' },
+      queryProfileIds: [] })).toMatchObject({ status: 'ready' });
+      await driveWorkflow(host.ag2b, { schemaVersion: 1, goalRef: replyGoal, flowId: `xa23-${mode}-reply`,
+        sessionHint: recipient.ref, kind: 'select_work', taskId: replyPlan.tasks[0]!.taskId },
+      { stopBefore: 'open_checks' });
+      const replied = await waitFor(async () => valueOf<SessionMessage>(
+        await main.route('messages/read', questionRef), 'ready', 'the XA-23 question'),
+      message => message.response !== null, 'the XA-23 reply');
+      expect(replied.response).not.toBeNull();
+      const resumedRef = await waitFor(async () => await world.second.workspace.taskRun(world.second.goal, task.taskId),
+        ref => ref !== null && ref.runId !== run.runId, 'the XA-23 continued Run');
+      const resumed = valueOf<TaskExecutionRecord>(
+        await world.second.workspace.route('executions/read', resumedRef!), 'ready', 'the XA-23 continued Run');
+      expect(resumed.run.previousRun?.runId).toBe(run.runId);
+    }, 240_000);
 });

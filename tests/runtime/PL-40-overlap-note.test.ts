@@ -67,12 +67,13 @@ describe('PL-40: the idle adviser receives the overlap-note request', () => {
     expect(before).toEqual({ status: 'ready', value: { status: 'not_satisfied' } });
     expect(await notesOnModule(target)).toHaveLength(0);
 
-    // The real consume loop offers the one action_request to the idle adviser line.
+    // The real consume loop offers the one system round to the idle adviser line.
     const inbox = await listed(target.world.world, 'inbox', target.adviser);
-    const request = inbox.find(message => message.intent === 'action_request' && message.sender.kind === 'host');
+    const request = inbox.find(message => message.needsReply === true && message.sender.kind === 'host'
+      && message.sender.actor.kind === 'system');
     expect(request).toBeDefined();
     if (request === undefined) return;
-    expect(request.intent, 'the system request is an action_request, not a notify').toBe('action_request');
+    expect(request.needsReply, 'the system request needs a reply, not a notify').toBe(true);
     expect(request.sender).toMatchObject({ kind: 'host', actor: { kind: 'system', id: 'workflow:auto-rework' } });
     expect(await readBody(target.world.world, request.ref, 'message'))
       .toBe('模块被占用，请为这个模块写一条接口注记：s6a-core');

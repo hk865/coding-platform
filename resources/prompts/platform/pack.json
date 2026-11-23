@@ -18,18 +18,8 @@
       "version": 1,
       "mentionsTools": []
     },
-    "action-request-delivery": {
-      "file": "templates/action-request-delivery.txt",
-      "version": 1,
-      "mentionsTools": []
-    },
-    "inquiry-delivery": {
-      "file": "templates/inquiry-delivery.txt",
-      "version": 1,
-      "mentionsTools": []
-    },
-    "notify-delivery": {
-      "file": "templates/notify-delivery.txt",
+    "message-delivery": {
+      "file": "templates/message-delivery.txt",
       "version": 1,
       "mentionsTools": []
     },
@@ -65,7 +55,7 @@
     },
     "intervention-planning": {
       "file": "templates/intervention-planning.txt",
-      "version": 1,
+      "version": 2,
       "mentionsTools": []
     },
     "plan-review-input": {
@@ -186,27 +176,27 @@
     },
     "skill-platform-work": {
       "file": "templates/skill-platform-work.txt",
-      "version": 14,
+      "version": 15,
       "mentionsTools": []
     },
     "skill-platform-secretary": {
       "file": "templates/skill-platform-secretary.txt",
-      "version": 13,
+      "version": 14,
       "mentionsTools": []
     },
     "skill-platform-adviser": {
       "file": "templates/skill-platform-adviser.txt",
-      "version": 17,
+      "version": 18,
       "mentionsTools": []
     },
     "skill-platform-scribe": {
       "file": "templates/skill-platform-scribe.txt",
-      "version": 9,
+      "version": 10,
       "mentionsTools": []
     },
     "skill-platform-reviewer": {
       "file": "templates/skill-platform-reviewer.txt",
-      "version": 5,
+      "version": 6,
       "mentionsTools": []
     }
   },
@@ -218,6 +208,10 @@
     "create_member": "tools/create_member.json",
     "assign_module_maintainer": "tools/assign_module_maintainer.json",
     "withdraw_session_message": "tools/withdraw_session_message.json",
+    "dispatch_task": "tools/dispatch_task.json",
+    "hold_claim": "tools/hold_claim.json",
+    "release_hold": "tools/release_hold.json",
+    "request_stop": "tools/request_stop.json",
     "read_requests": "tools/read_requests.json",
     "request_rework": "tools/request_rework.json",
     "request_recheck": "tools/request_recheck.json",
@@ -236,12 +230,13 @@
     "run_readonly_command": "tools/run_readonly_command.json",
     "request_command_rerun": "tools/request_command_rerun.json",
     "send_session_message": "tools/send_session_message.json",
+    "ask_copy": "tools/ask_copy.json",
     "read_session_inbox": "tools/read_session_inbox.json",
     "read_session_message": "tools/read_session_message.json",
     "read_session_message_body": "tools/read_session_message_body.json",
-    "ack_session_message": "tools/ack_session_message.json",
     "respond_session_message": "tools/respond_session_message.json",
-    "send_user_message": "tools/send_user_message.json",
+    "notify_person": "tools/notify_person.json",
+    "ask_person": "tools/ask_person.json",
     "read_user_decision": "tools/read_user_decision.json",
     "record_decision_application": "tools/record_decision_application.json",
     "look_graph": "tools/look_graph.json",
@@ -255,8 +250,6 @@
     "check_links": "tools/check_links.json",
     "web_search": "tools/web_search.json",
     "web_fetch": "tools/web_fetch.json",
-    "find_related_sessions": "tools/find_related_sessions.json",
-    "read_session_card": "tools/read_session_card.json",
     "record_unknown_call_review": "tools/record_unknown_call_review.json",
     "propose_safer_method": "tools/propose_safer_method.json",
     "submit_secretary_answer": "tools/submit_secretary_answer.json",

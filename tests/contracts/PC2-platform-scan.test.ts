@@ -13,7 +13,10 @@ import { PLATFORM_PROMPT_PACK_V1 } from '../../src/contracts/prompts/platform-pa
 import {
     parseTemplateV1, type TemplateNodeV1,
 } from '../../src/contracts/prompts/render-template.js';
-import { SESSION_MAILBOX_TOOL_NAMES, USER_DECISION_TOOL_NAMES } from '../../src/core/agent-runtime/communication-tools.js';
+import {
+    ACTION_TOOL_NAMES, ASK_COPY_TOOL_NAME, PERSON_MESSAGE_TOOL_NAMES,
+    SESSION_MAILBOX_TOOL_NAMES, USER_DECISION_TOOL_NAMES,
+} from '../../src/core/agent-runtime/communication-tools.js';
 import { REQUEST_COMMAND_RERUN_TOOL_NAMES } from '../../src/core/agent-runtime/command-rerun-tools.js';
 import { EXECUTION_HISTORY_TOOL_NAMES, GRAPH_TOOL_NAMES } from '../../src/core/agent-runtime/graph-tools.js';
 import { LINK_CHECK_TOOL_NAMES } from '../../src/core/agent-runtime/link-check-tool.js';
@@ -27,7 +30,6 @@ import { READONLY_COMMAND_TOOL_NAME } from '../../src/core/agent-runtime/readonl
 import { READ_REQUESTS_TOOL_NAMES } from '../../src/core/agent-runtime/request-read-tools.js';
 import { REWORK_TOOL_NAMES } from '../../src/core/agent-runtime/rework-tools.js';
 import { PROPOSE_ROLE_SPLIT_TOOL_NAME } from '../../src/core/agent-runtime/role-split-tool.js';
-import { SESSION_DISCOVERY_TOOL_NAMES } from '../../src/core/agent-runtime/session-discovery-tools.js';
 import { RESERVED_TOOL_NAMES } from '../../src/core/agent-runtime/tool-group-assembly.js';
 import {
     PROPOSE_SAFER_METHOD_TOOL_NAMES, RECORD_UNKNOWN_CALL_REVIEW_TOOL_NAMES,
@@ -41,8 +43,10 @@ const EVERY_TOOL_NAME: ReadonlySet<string> = new Set<string>([
     ...RESERVED_TOOL_NAMES,
     ...SESSION_MAILBOX_TOOL_NAMES,
     ...USER_DECISION_TOOL_NAMES,
+    ...ACTION_TOOL_NAMES,
+    ...PERSON_MESSAGE_TOOL_NAMES,
+    ASK_COPY_TOOL_NAME,
     ...WHITEBOARD_TOOL_NAMES,
-    ...SESSION_DISCOVERY_TOOL_NAMES,
     ...GRAPH_TOOL_NAMES,
     ...EXECUTION_HISTORY_TOOL_NAMES,
     ...LINK_CHECK_TOOL_NAMES,
@@ -73,16 +77,8 @@ type ExemptionV1 = { templateId: string; word: string; line: number; reason: str
  * is not a whole-name match for `check`. The list holds the hits that remain.
  */
 const EXEMPTIONS: readonly ExemptionV1[] = [
-    { templateId: 'initial-planning-answer', word: 'read', line: 10, reason: "planning answer's witness paragraph (read-only, files that must be read)" },
-    { templateId: 'initial-planning-answer', word: 'check', line: 17, reason: "planning answer's checks field sentence" },
-    { templateId: 'initial-planning-answer', word: 'check', line: 18, reason: "planning answer's plain 'check' (what to propose)" },
-    { templateId: 'initial-planning-answer', word: 'check', line: 27, reason: "planning answer's plain 'check' (shape sample disclaimer)" },
-    { templateId: 'initial-planning-answer', word: 'check', line: 61, reason: "planning answer's plain 'check' (sample verification text)" },
-    { templateId: 'initial-planning-answer', word: 'check', line: 91, reason: "planning answer's checks sample field" },
-    { templateId: 'skill-platform-work', word: 'check', line: 59, reason: 'record_note receipt field, not the reserved Kernel tool' },
-    { templateId: 'skill-platform-secretary', word: 'check', line: 54, reason: 'record_note receipt field, not the reserved Kernel tool' },
-    { templateId: 'skill-platform-adviser', word: 'check', line: 71, reason: 'record_note receipt field, not the reserved Kernel tool' },
-    { templateId: 'skill-platform-scribe', word: 'check', line: 35, reason: 'record_note receipt field, not the reserved Kernel tool' },
+    // The compressed templates no longer name a tool outside its blocks, so no
+    // exemption is needed; the list stays so a new hit has one named home.
 ];
 
 /** The literal text the model would see if every tool were absent: text nodes outside any tool block. */
@@ -117,7 +113,8 @@ function wholeNamePattern(name: string): RegExp {
 describe('PC-19 platform tool-name scan (ruling 18)', () => {
     it('scans every builtin, reserved and extension tool name the platform can register', () => {
         expect(EVERY_TOOL_NAME.size).toBe(RESERVED_TOOL_NAMES.size + SESSION_MAILBOX_TOOL_NAMES.length
-            + USER_DECISION_TOOL_NAMES.length + WHITEBOARD_TOOL_NAMES.length + SESSION_DISCOVERY_TOOL_NAMES.length
+            + USER_DECISION_TOOL_NAMES.length + ACTION_TOOL_NAMES.length + PERSON_MESSAGE_TOOL_NAMES.length + 1
+            + WHITEBOARD_TOOL_NAMES.length
             + GRAPH_TOOL_NAMES.length + EXECUTION_HISTORY_TOOL_NAMES.length + LINK_CHECK_TOOL_NAMES.length + WEB_LOOKUP_TOOL_NAMES.length + NOTE_TOOL_NAMES.length + RECORD_UNKNOWN_CALL_REVIEW_TOOL_NAMES.length
             + PROPOSE_SAFER_METHOD_TOOL_NAMES.length + REQUEST_COMMAND_RERUN_TOOL_NAMES.length
             + ANSWER_TOOL_NAMES.length + READ_REQUESTS_TOOL_NAMES.length + 1

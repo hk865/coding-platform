@@ -15,6 +15,10 @@
  *   - a reopened Host only reads the original messages/Query/history and another
  *     scope can never read/stop this driver.
  *
+ * P2 (p2-frozen.md:133; design-frozen.md:210, :262): the driver no longer asks a copy of B for an ordinary wait
+ * question. A's question wakes B's own line once B is idle (the Host's idle consumption, run here on a short
+ * heartbeat), and that round's closing writes the reply; no child A′ is derived.
+ *
  * Production publishes no driver route and no wait branch yet, so every
  * scenario's FIRST red is the REAL HTTP boundary (404 unpublished route
  * `workflow/driver-start` / `workflow/driver-read`), never a missing import or
@@ -137,6 +141,12 @@ const startBody = {
 const isQueryRole = (card: { record: { role: unknown } }): boolean =>
   JSON.stringify(card.record.role) === JSON.stringify(AG2B_QUERY_ROLE);
 
+/** The Host's idle consumption on a short heartbeat (design-frozen.md:210): only the period is read
+ *  (`host.ts:4122-4123`); every Session of the workspace is consumed, not this entry's Session. */
+const HOST_HEARTBEAT = { inputConsumers: [{ scope: AG2B_SCOPE,
+  sessionRef: { projectId: AG2B_SCOPE.projectId, sessionId: 'ag2b-heartbeat' },
+  goalRef: AG2B_GOAL_REF, queryProfileId: AG2B_QUERY_PROFILE_ID, heartbeatMs: 25 }] };
+
 describe('AG2b continuous communication over the real Host HTTP', () => {
   // ------------------------------------------------------------------
   // 1. The normal loop: B is first occupied by a real Query, A waits with no
@@ -144,7 +154,8 @@ describe('AG2b continuous communication over the real Host HTTP', () => {
   //    A writes the isolated project and the formal Task/Goal complete.
   // ------------------------------------------------------------------
   it('releases a busy B, runs two wait rounds and completes the real Task/Goal', async () => {
-    const busyQuestion = 'AG2b busy release query one';
+    // The occupying Query's own question (`claimBusyQuery(..., 'normal')` asks `AG2b busy release query normal`).
+    const busyQuestion = 'AG2b busy release query normal';
     const busyReleaseAnswer = 'AG2b busy query release answer';
     const firstQuestion = 'AG2b round one: who owns the isolated module?';
     const firstAnswer = 'AG2b round-one saved companion answer';
@@ -157,12 +168,10 @@ describe('AG2b continuous communication over the real Host HTTP', () => {
     let round2Run: RunRef | undefined;
     let round2Session: SessionRef | undefined;
     const replies: ScriptedReply[] = [
-      { kind: 'calls', calls: [{ callId: 'ag2b-find', name: 'find_related_sessions', args: { target: {}, page: { limit: 10 } } }] },
-      { kind: 'calls', calls: [{ callId: 'ag2b-card', name: 'read_session_card', args: { sessionRef: {} } }] },
       { kind: 'calls', calls: [{ callId: 'ag2b-send-1', name: 'send_session_message',
-        args: { recipient: {}, text: firstQuestion, intent: 'inquiry', needsReply: true, waitAfterSend: true } }] },
+        args: { recipient: {}, text: firstQuestion, needsReply: true, waitAfterSend: true } }] },
       { kind: 'calls', calls: [{ callId: 'ag2b-send-2', name: 'send_session_message',
-        args: { recipient: {}, text: secondQuestion, intent: 'inquiry', needsReply: true, waitAfterSend: true } }] },
+        args: { recipient: {}, text: secondQuestion, needsReply: true, waitAfterSend: true } }] },
       { kind: 'calls', calls: [{ callId: 'ag2b-edit', name: 'edit',
         args: { mode: 'create', path: AG2B_RESULT_FILE, newText: AG2B_RESULT_TEXT } }] },
       { kind: 'text', text: 'AG2b work complete' },
@@ -173,63 +182,46 @@ describe('AG2b continuous communication over the real Host HTTP', () => {
       { kind: 'text', text: busyReleaseAnswer },
     ];
     const started = await startAG2bHost(publicDir, {
+      hostOptions: HOST_HEARTBEAT,
       replies,
       queryReplies,
       beforeReply: async (request, index) => {
         if (index === 0) {
           const args = callArgs(replies[0]);
-          if (args !== undefined && workTarget !== undefined) args['target'] = structuredClone(workTarget);
+          if (args !== undefined && bSession !== undefined) args['recipient'] = { projectId: bSession.projectId, sessionId: bSession.sessionId };
         }
         if (index === 1) {
-          const found = toolJson(request, 'ag2b-find') as
-            { status?: string; value?: { items?: Array<{ record: { ref: SessionRef }; availability: string }> } } | undefined;
-          expect(found, 'find_related_sessions must return the real directory page').toMatchObject({ status: 'ready' });
-          const items = found?.value?.items ?? [];
-          const selected = items.find(item => item.record.ref.sessionId === bSession?.sessionId) ?? items[0];
-          expect(selected, 'the formal work link must expose B even while busy').toBeDefined();
-          const args = callArgs(replies[1]);
-          if (args !== undefined && selected !== undefined) {
-            args['sessionRef'] = { projectId: selected.record.ref.projectId, sessionId: selected.record.ref.sessionId };
-          }
-        }
-        if (index === 2) {
-          const card = toolJson(request, 'ag2b-card') as
-            { status?: string; value?: { record?: { ref?: SessionRef } } } | undefined;
-          expect(card, 'read_session_card must return the selected Session').toMatchObject({ status: 'ready' });
-          const ref = card?.value?.record?.ref;
-          expect(ref).toBeDefined();
-          const args = callArgs(replies[2]);
-          if (args !== undefined && ref !== undefined) args['recipient'] = { projectId: ref.projectId, sessionId: ref.sessionId };
-        }
-        if (index === 3) {
           expect(JSON.stringify(request.messages), 'the first reply must be the consumed continuation input').toContain(firstAnswer);
           const result = waitResult(request, 'ag2b-send-1');
           expect(result?.response, 'the yielded tool result must not hold a reply').toBeNull();
           const sender = result?.message.sender;
           expect(sender).toMatchObject({ kind: 'work_run' });
           if (sender?.kind === 'work_run') { round1Run = sender.runRef; round1Session = sender.sessionRef; }
-          const args = callArgs(replies[3]);
+          const args = callArgs(replies[1]);
           if (args !== undefined && bSession !== undefined) args['recipient'] = { projectId: bSession.projectId, sessionId: bSession.sessionId };
         }
-        if (index === 4) {
+        if (index === 2) {
           expect(JSON.stringify(request.messages), 'the second reply must be the consumed continuation input').toContain(secondAnswer);
           const result = waitResult(request, 'ag2b-send-2');
           expect(result?.response, 'the yielded tool result must not hold a reply').toBeNull();
           const sender = result?.message.sender;
           if (sender?.kind === 'work_run') { round2Run = sender.runRef; round2Session = sender.sessionRef; }
         }
-        if (index === 5) {
+        if (index === 3) {
           expect(JSON.stringify(request.messages)).toContain(firstAnswer);
           expect(JSON.stringify(request.messages)).toContain(secondAnswer);
         }
       },
       queryBeforeReply: async (request, index, signal) => {
         // Independent Query executions may interleave; route by the current
-        // formal question, never by a global model-call position.
-        const current = [...request.messages].reverse().find(message => message.role === 'user');
+        // formal question, never by a global model-call position. P2 (design-frozen.md:203): B's woken round also
+        // takes ordinary platform mail (its earlier round's closing notice) after its source, so the current question
+        // is the latest user message that carries one.
+        const questions = [[firstQuestion, firstAnswer], [secondQuestion, secondAnswer], [busyQuestion, busyReleaseAnswer]];
+        const current = [...request.messages].reverse().find(message => message.role === 'user'
+          && questions.some(([question]) => String(message.content).includes(question!)));
         const text = current?.role === 'user' ? current.content : '';
-        const matches = [[firstQuestion, firstAnswer], [secondQuestion, secondAnswer], [busyQuestion, busyReleaseAnswer]]
-          .filter(([question]) => text.includes(question!));
+        const matches = questions.filter(([question]) => text.includes(question!));
         expect(matches, 'one actual formal Query question selects the controlled answer').toHaveLength(1);
         queryReplies[index] = { kind: 'text', text: matches[0]![1]! };
         if (!text.includes(busyQuestion)) {
@@ -275,22 +267,17 @@ describe('AG2b continuous communication over the real Host HTTP', () => {
       // A's first wait must confirm that busy B got NO consultation call.
       const waiting = await waitForDriver(started, snapshot => snapshot.state === 'waiting_for_reply');
       expect(waiting.state).toBe('waiting_for_reply');
-      expect(started.scripted.calls(), 'A find/card/send only; B is never called while busy').toBe(3);
-      // `waiting_for_reply` is projected when the pump SEES the wait message; the
-      // consultation consumer derives A′ asynchronously right after it.
-      await expect.poll(() => sessionCount(started), { timeout: 10_000, interval: 50,
-        message: 'the A line plus its derived child A′' }).toBe(sessionsBefore + 2);
-      const cardsWhileBusy = await listSessions(started);
-      const querySessionsWhileBusy = cardsWhileBusy.filter(isQueryRole);
-      // B stays the occupied SOURCE; the consultation runs in its own derived child.
-      expect(querySessionsWhileBusy, 'B plus its isolated child A′').toHaveLength(2);
-      expect(querySessionsWhileBusy.some(card => card.record.ref.sessionId === createdB.sessionRef.sessionId)).toBe(true);
-      expect(querySessionsWhileBusy.some(card => card.record.ref.sessionId !== createdB.sessionRef.sessionId)).toBe(true);
+      expect(started.scripted.calls(), 'A send only; B is never called while busy').toBe(1);
+      // P2: no copy is derived for the ordinary wait question; it waits in busy B's inbox.
+      expect(await sessionCount(started), 'the A line only').toBe(sessionsBefore + 1);
+      const querySessionsWhileBusy = (await listSessions(started)).filter(isQueryRole);
+      expect(querySessionsWhileBusy.map(card => card.record.ref.sessionId), 'B alone, no isolated child')
+        .toEqual([createdB.sessionRef.sessionId]);
 
       // Release the real occupancy through the existing Query prepare/start.
       await startBusyQuery(started, busy, 'normal');
 
-      // The driver auto-consults B and the two wait rounds run to completion.
+      // Idle B is woken on each wait question and the two wait rounds run to completion.
       const completedSnapshot = await waitForDriver(started, snapshot => snapshot.state === 'completed' || snapshot.state === 'failed');
       expect(completedSnapshot, JSON.stringify(completedSnapshot)).toMatchObject({ state: 'completed', reason: 'the Goal was formally completed' });
       // Repeating start/read adds no model call and reuses the one handle.
@@ -298,7 +285,7 @@ describe('AG2b continuous communication over the real Host HTTP', () => {
       expect(replayStart.status).toBe(200);
       expect(await replayStart.json()).toMatchObject({ status: 'ready', value: { flowId } });
       const callsAtCompletion = started.scripted.calls();
-      expect(await sessionCount(started), 'each wait message derives its own child A′').toBe(sessionsBefore + 3);
+      expect(await sessionCount(started), 'B\'s own line answers both questions; no child is derived').toBe(sessionsBefore + 1);
       const readAgain = await readDriver(started);
       expect(readAgain).toMatchObject({ status: 'ready', value: { state: 'completed', flowId } });
       expect(started.scripted.calls(), 'replay/read must add no model call').toBe(callsAtCompletion);
@@ -320,16 +307,16 @@ describe('AG2b continuous communication over the real Host HTTP', () => {
       }
 
       // B's original Session holds the two real saved replies and the untouched
-      // ordinary notification; the reply sender is the derived Query Answer.
+      // ordinary notification; the reply sender is the round B's own line ran.
       const inbox = await inboxOf(started, bSession);
       const responded = inbox.filter(message => message.status === 'responded');
       expect(responded).toHaveLength(2);
       for (const message of responded) {
-        // A′ answers from its own derived child Session, not from the busy source.
+        // design-frozen.md:262: the woken round's closing writes the reply from B's own line.
         expect(message.response).toMatchObject({ sender: { kind: 'query_run' } });
         const responseSender = (message.response as { sender: { sessionRef: SessionRef } }).sender;
         expect(responseSender.sessionRef.projectId).toBe(bSession.projectId);
-        expect(responseSender.sessionRef.sessionId).not.toBe(bSession.sessionId);
+        expect(responseSender.sessionRef.sessionId).toBe(bSession.sessionId);
         const responseBody = await corePost(started.base, 'messages/body', started.token,
           plain(AG2B_SCOPE, { messageRef: message.ref, part: 'response' }));
         const body = await responseBody.json() as ReadResult<{ text: string; part: string }>;
@@ -337,7 +324,9 @@ describe('AG2b continuous communication over the real Host HTTP', () => {
         if (body.status === 'ready') expect([firstAnswer, secondAnswer]).toContain(body.value.text);
       }
       // The ordinary notification is still pending and was never auto-consumed.
-      expect(inbox.some(message => message.status === 'pending')).toBe(true);
+      if (notify.status === 'committed') {
+        expect(inbox.find(message => message.ref.messageId === notify.value.ref.messageId)?.status).toBe('pending');
+      }
 
       // A really wrote the isolated project. The required registered read-only
       // check asserts these exact bytes before formal completion can succeed.
@@ -381,33 +370,15 @@ describe('AG2b continuous communication over the real Host HTTP', () => {
     let bSession: SessionRef | undefined;
     let workTarget: WorkLinkTarget | undefined;
     const replies: ScriptedReply[] = [
-      { kind: 'calls', calls: [{ callId: 'ag2b-busy-find', name: 'find_related_sessions', args: { target: {}, page: { limit: 10 } } }] },
-      { kind: 'calls', calls: [{ callId: 'ag2b-busy-card', name: 'read_session_card', args: { sessionRef: {} } }] },
       { kind: 'calls', calls: [{ callId: 'ag2b-busy-send', name: 'send_session_message',
-        args: { recipient: {}, text: question, intent: 'inquiry', needsReply: true, waitAfterSend: true } }] },
+        args: { recipient: {}, text: question, needsReply: true, waitAfterSend: true } }] },
     ];
     const started = await startAG2bHost(publicDir, {
       replies,
       beforeReply: async (request, index) => {
         if (index === 0) {
           const args = callArgs(replies[0]);
-          if (args !== undefined && workTarget !== undefined) args['target'] = structuredClone(workTarget);
-        }
-        if (index === 1) {
-          const found = toolJson(request, 'ag2b-busy-find') as
-            { status?: string; value?: { items?: Array<{ record: { ref: SessionRef } }> } } | undefined;
-          expect(found).toMatchObject({ status: 'ready' });
-          const ref = found?.value?.items?.find(item => item.record.ref.sessionId === bSession?.sessionId)?.record.ref;
-          expect(ref, 'the real directory must include the linked B Session').toBeDefined();
-          const args = callArgs(replies[1]);
-          if (args !== undefined && ref !== undefined) args['sessionRef'] = { projectId: ref.projectId, sessionId: ref.sessionId };
-        }
-        if (index === 2) {
-          const card = toolJson(request, 'ag2b-busy-card') as
-            { status?: string; value?: { record?: { ref?: SessionRef } } } | undefined;
-          const ref = card?.value?.record?.ref;
-          const args = callArgs(replies[2]);
-          if (args !== undefined && ref !== undefined) args['recipient'] = { projectId: ref.projectId, sessionId: ref.sessionId };
+          if (args !== undefined && bSession !== undefined) args['recipient'] = { projectId: bSession.projectId, sessionId: bSession.sessionId };
         }
       },
     });
@@ -430,21 +401,19 @@ describe('AG2b continuous communication over the real Host HTTP', () => {
       const waiting = await waitForDriver(started, snapshot => snapshot.state === 'waiting_for_reply');
       expect(waiting.state).toBe('waiting_for_reply');
       // B was never consulted.
-      expect(started.scripted.calls()).toBe(3);
-      await expect.poll(() => sessionCount(started), { timeout: 10_000, interval: 50,
-        message: 'A plus its derived child are created next to the occupied B' }).toBe(sessionsBefore + 2);
-      const cards = await listSessions(started);
-      const querySessions = cards.filter(isQueryRole);
-      expect(querySessions, 'B plus its isolated child A′').toHaveLength(2);
-      expect(querySessions.some(card => card.record.ref.sessionId === createdB.sessionRef.sessionId)).toBe(true);
-      expect(querySessions.some(card => card.record.ref.sessionId !== createdB.sessionRef.sessionId)).toBe(true);
+      expect(started.scripted.calls()).toBe(1);
+      // P2 (p2-frozen.md:133): no copy is derived for the ordinary wait question next to the occupied B.
+      expect(await sessionCount(started), 'the A line only').toBe(sessionsBefore + 1);
+      const querySessions = (await listSessions(started)).filter(isQueryRole);
+      expect(querySessions.map(card => card.record.ref.sessionId), 'B alone, no isolated child')
+        .toEqual([createdB.sessionRef.sessionId]);
 
       const stopResponse = await corePost(started.base, 'workflow/driver-stop', started.token, plain(AG2B_SCOPE, { goalRef: AG2B_GOAL_REF }));
       expect(stopResponse.status).toBe(200);
       const stopped = await waitForDriver(started, snapshot => snapshot.state === 'stopped');
       expect(stopped).toMatchObject({ state: 'stopped' });
       // The wait was released and the next step was not advanced.
-      expect(started.scripted.calls()).toBe(3);
+      expect(started.scripted.calls()).toBe(1);
 
       // The stop is confirmed by the ORIGINAL yielded Run facts plus its formal
       // wait-window control, never by a driver flag. The Run really yielded (its
@@ -479,37 +448,21 @@ describe('AG2b continuous communication over the real Host HTTP', () => {
     const question = 'AG2b reopen question';
     const answer = 'AG2b reopen saved answer';
     const replies: ScriptedReply[] = [
-      { kind: 'calls', calls: [{ callId: 'ag2b-reopen-find', name: 'find_related_sessions', args: { target: {}, page: { limit: 10 } } }] },
-      { kind: 'calls', calls: [{ callId: 'ag2b-reopen-card', name: 'read_session_card', args: { sessionRef: {} } }] },
       { kind: 'calls', calls: [{ callId: 'ag2b-reopen-send', name: 'send_session_message',
-        args: { recipient: {}, text: question, intent: 'inquiry', needsReply: true, waitAfterSend: true } }] },
+        args: { recipient: {}, text: question, needsReply: true, waitAfterSend: true } }] },
       { kind: 'calls', calls: [{ callId: 'ag2b-reopen-edit', name: 'edit',
         args: { mode: 'create', path: AG2B_RESULT_FILE, newText: AG2B_RESULT_TEXT } }] },
       { kind: 'text', text: 'AG2b reopen work complete' },
     ];
     const queryReplies: ScriptedReply[] = [{ kind: 'text', text: answer }];
     const started = await startAG2bHost(publicDir, {
+      hostOptions: HOST_HEARTBEAT,
       replies,
       queryReplies,
       beforeReply: async (request, index) => {
         if (index === 0) {
           const args = callArgs(replies[0]);
-          if (args !== undefined && workTarget !== undefined) args['target'] = structuredClone(workTarget);
-        }
-        if (index === 1) {
-          const found = toolJson(request, 'ag2b-reopen-find') as
-            { value?: { items?: Array<{ record: { ref: SessionRef } }> } } | undefined;
-          const ref = found?.value?.items?.find(item => item.record.ref.sessionId === bSession?.sessionId)?.record.ref;
-          expect(ref, 'the real directory must include the linked B Session').toBeDefined();
-          const args = callArgs(replies[1]);
-          if (args !== undefined && ref !== undefined) args['sessionRef'] = { projectId: ref.projectId, sessionId: ref.sessionId };
-        }
-        if (index === 2) {
-          const card = toolJson(request, 'ag2b-reopen-card') as
-            { value?: { record?: { ref?: SessionRef } } } | undefined;
-          const ref = card?.value?.record?.ref;
-          const args = callArgs(replies[2]);
-          if (args !== undefined && ref !== undefined) args['recipient'] = { projectId: ref.projectId, sessionId: ref.sessionId };
+          if (args !== undefined && bSession !== undefined) args['recipient'] = { projectId: bSession.projectId, sessionId: bSession.sessionId };
         }
       },
     });
@@ -525,8 +478,9 @@ describe('AG2b continuous communication over the real Host HTTP', () => {
       expect(startResponse.status).toBe(200);
       const completed = await waitForDriver(started, snapshot => snapshot.state === 'completed' || snapshot.state === 'failed');
       expect(completed.state, 'the original run must really complete before the reopen').toBe('completed');
+      // B's inbox also holds the platform's closing notice of its round; the question is A's Work message.
       const inbox = await inboxOf(started, bSession);
-      messageRef = inbox[0]?.ref;
+      messageRef = inbox.find(message => message.sender.kind === 'work_run')?.ref;
     } finally {
       await started.host.close();
     }

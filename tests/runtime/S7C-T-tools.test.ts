@@ -6,7 +6,7 @@
  * with it the owner answers `needs_decision`/`created`; the next Run of the
  * same Session after the grant narrows is `forbidden`.
  *
- * T-tool-sets (L20/L18): each duty's offered set carries ack/respond, `hand_off`
+ * T-tool-sets (L20/L18): each duty's offered set carries respond, `hand_off`
  * only for executor/adviser, and `withdraw_session_message` only where
  * `send_session_message` is granted; a Work sender withdraws its own message
  * and a foreign one is refused. The real started manifest read is T+L2 (C28),
@@ -37,7 +37,7 @@ const EXECUTOR_ROLE = platformRoleProfile('executor').template;
 const WORK_TOOL_INPUT: Omit<FinalToolListInputV1, 'callKind' | 'selected'> = {
   noteAdmission: { class: 'none' }, reviewPhase: null, hasBlockedCommands: false,
   reviewSource: false, frozenSource: false, materialTools: false,
-  owners: { mailbox: true, decisionMessages: true, applicationReceipt: true, sessions: true,
+  owners: { mailbox: true, decisionMessages: true, applicationReceipt: true,
     plans: true, graph: true, notes: true, unknownCallReviews: true, commandRerunRequests: true,
     memberCreation: true, reworkRequests: true, recheckRequests: true },
   readonlyCommand: { requested: false, access: undefined, allowsReadWholeWorkspace: false },
@@ -125,19 +125,19 @@ describe('T-member-work: the fixed worker and the create_member grant', () => {
 });
 
 describe('T-tool-sets: the duty offered sets', () => {
-  const executorGrant = ['hand_off', 'send_session_message', 'ack_session_message',
+  const executorGrant = ['hand_off', 'send_session_message',
     'respond_session_message', 'withdraw_session_message'];
-  const adviserGrant = ['hand_off', 'ack_session_message', 'respond_session_message'];
-  const scribeGrant = ['ack_session_message', 'respond_session_message'];
+  const adviserGrant = ['hand_off', 'respond_session_message'];
+  const scribeGrant = ['respond_session_message'];
   const cases: ReadonlyArray<readonly [string, readonly string[]]> = [
     ['executor', executorGrant],
     ['adviser', adviserGrant],
     ['scribe', scribeGrant],
   ];
 
-  it.each(cases)('assembles the %s offered set with ack/respond and withdraw only with send', (_duty, grant) => {
+  it.each(cases)('assembles the %s offered set with respond and withdraw only with send', (_duty, grant) => {
     const names = finalNames('work', grant);
-    expect(names).toEqual(expect.arrayContaining(['ack_session_message', 'respond_session_message']));
+    expect(names).toEqual(expect.arrayContaining(['respond_session_message']));
     expect(names.includes('withdraw_session_message')).toBe(names.includes('send_session_message'));
   });
 
@@ -157,7 +157,7 @@ describe('T-tool-sets: the duty offered sets', () => {
         operation: { aggregateType: 'CoreOperation', projectId: 's7c-t-project', operationId: 'op-t02' } });
       const select = (handoffs: HandoffRequestPort | undefined, duty: 'executor' | 'adviser' | undefined) =>
         selectWorkToolGroup({ selected: ['hand_off'], mailbox: undefined,
-          sessions: opened.world.platform.sessions, plans: opened.world.platform.plans, context,
+          plans: opened.world.platform.plans, context,
           sessionRef: opened.line.ref, runRef: started.run, goalRef: opened.goal,
           requestIdForCall: () => 'trusted-command-1',
           ...(handoffs === undefined ? {} : { handoffs }), ...(duty === undefined ? {} : { duty }) });
@@ -189,7 +189,8 @@ describe('T-tool-sets: the Work withdraw grant', () => {
       const foreign = await seedS7ASenders(world.world);
       const recipient = (await world.world.createWorkSession('s7c-t-withdraw-recipient')).ref;
       await world.world.scripted.script(world.line, [{ kind: 'calls', calls: [{ callId: 't-withdraw-send',
-        name: 'send_session_message', args: { recipient, text: 'S7C T withdraw me', intent: 'notify' } }] },
+        name: 'send_session_message', args: { recipient, text: 'S7C T withdraw me',
+          needsReply: false, wake: false } }] },
       { kind: 'text', text: 'S7C T send answer' }]);
       const sent = await world.start();
       const sentValue = rlJsonPart(sent.result ?? undefined) as { status?: string; value?: SessionMessage } | undefined;

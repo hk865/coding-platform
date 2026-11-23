@@ -279,7 +279,7 @@ it('RT07 messages/send keeps the old SessionRef binding and never enters sendUse
   reset();
   const sent = committed({ ref: { aggregateType: 'SessionMessage', projectId: P, workspaceId: WORKSPACE_SCOPE.workspaceId, messageId: 'rt07' }, revision: 1 });
   respond('messages.sendMessage', sent);
-  const request = { input: { recipient: SESSION, text: 'old session message', intent: 'inquiry', needsReply: true, waitAfterSend: true }, meta: { requestId: 's5-rt07', expected: [] } };
+  const request = { input: { recipient: SESSION, text: 'old session message', needsReply: true, waitAfterSend: true }, meta: { requestId: 's5-rt07', expected: [] } };
   const result = await dispatch('messages/send', { scope: WORKSPACE_SCOPE, request });
   expect(result).toBe(sent);
   expect(argAt(callsTo('messages.sendMessage')[0], 1)).toEqual(request); // old binding/response shape

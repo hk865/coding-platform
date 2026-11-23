@@ -18,6 +18,7 @@ import type { CoreRejection, ReadResult, WriteResult } from '../../../contracts/
 import type { MessageRecipient, SessionMessageRef, DecisionApplicationReceiptV1,
   DecisionApplicationV1, UserMessageResponseV1, DecisionHostSenderV1,
   DecisionMessageMetadataV1 } from '../../../contracts/core/session-message.js';
+import { isUserMessageRecipient } from '../../../contracts/core/session-message.js';
 import type { DecisionAnnotationV1, DecisionObjectV1, DecisionOptionV1,
   DecisionSelectionV1, DecisionSourceV1, UserDecisionBodyV1 } from '../../../contracts/goal-decisions.js';
 import { canonicalJson, canonicalOf, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
@@ -33,7 +34,7 @@ import type { SessionMessageEventV1 } from '../model/communication-contracts.js'
 import { decodeRun } from '../materials/run-snapshot-decoder.js';
 import { decodeDispatchOutboxEntry, dispatchOutboxRefKey } from '../tasks/claim-record-codecs.js';
 import {
-  bindMessageResponseCursor, createSyntheticDecisionAnswerRecord, messageMachineStateOf,
+  bindMessageResponseCursor, createSyntheticDecisionAnswerRecord, isMessageAgentSender, messageMachineStateOf,
   nextSessionMessageRecord, transitionMessage, type MessageEvent, type MessageGuardContext,
   type MessageTransition, type SessionMessageRecord,
 } from '../state/message-machine.js';
@@ -454,9 +455,18 @@ export function createDecisionMessageService(
     return { ok: true, value: linked.value.claim.sessionRef };
   }
 
-  async function callerReaderSession(owned: Owned): Promise<SessionOutcome> {
+  async function callerReaderSession(owned: Owned, ctx: CoreCallContext): Promise<SessionOutcome> {
     if (owned.principal.kind === 'work_run') return readRunSession(owned, owned.principal.runRef);
-    return { ok: true, value: null };
+    if (owned.principal.kind !== 'query_run') return { ok: true, value: null };
+    // The caller's real Session comes from the mailbox's ONE trusted round
+    // resolver (a secretary request round included), never from input. A Query
+    // round asks it only for its own-card read in `resolveAuthorizedAnswerMessage`.
+    const read = readOutcome(await deps.messages.readQueryRound(ctx));
+    if (!read.ok) return read;
+    const round = read.value;
+    return { ok: true, value: round === null ? null : {
+      projectId: round.session.projectId, sessionId: round.session.sessionId,
+    } };
   }
 
   /**
@@ -491,7 +501,7 @@ export function createDecisionMessageService(
    * nothing; every other kind keeps the slice-5 rule. B3 adds its kind here.
    */
   const OPTION_REQUIRED_SOURCE_KINDS: ReadonlySet<DecisionSourceV1['kind']> =
-    new Set<DecisionSourceV1['kind']>(['unknown_call_review', 'member_creation', 'rework_request',
+    new Set<DecisionSourceV1['kind']>(['action_release', 'unknown_call_review', 'member_creation', 'rework_request',
       'handoff_approval', 'adviser_creation', 'module_maintainer_assignment', 'repair_approval',
       'structural_proposal', 'role_capacity', 'role_line_change']);
 
@@ -548,6 +558,53 @@ export function createDecisionMessageService(
       return rejectedWithCurrent('invalid', 'the accepted decision pins are not exactly the captured source pins');
     }
     return null;
+  }
+
+  /**
+   * §2.8: an `action_release` answer is checked against the card it answered first — `expected` must be exactly the
+   * card's source pins — then the card's objects must still be the current source's objects, and only then are all
+   * versions compared. An object that moved after the card was read (the request or its Goal) is `revision_conflict`
+   * with that object's real current pin, never a generic invalid pin set.
+   */
+  function actionReleasePinsProblem(owned: Owned, source: DecisionSourceV1, expected: readonly VersionPin[],
+    facts: SourceFacts): CoreRejection | null {
+    // `answerDecision` is a public entry: the caller's card source must carry its pin list.
+    if (!Array.isArray(source.pins)) return rejectedWithCurrent('invalid', 'the decision source carries no pin list');
+    const cardProblem = exactPinSet(expected, source.pins, owned);
+    if (cardProblem !== null) return cardProblem;
+    const cardPins = new Map<string, VersionPin>();
+    for (const pin of source.pins) {
+      const refKey = canonicalOf(pin.ref);
+      if (refKey !== null) cardPins.set(refKey, pin);
+    }
+    const currentPins = new Map<string, VersionPin>();
+    for (const pin of facts.source.pins) {
+      const refKey = canonicalOf(pin.ref);
+      if (refKey !== null) currentPins.set(refKey, pin);
+    }
+    // The card and the current source must name exactly the same objects. An object the current source does not
+    // name is old pins pieced onto this source (T12: `invalid`); `current` only ever carries pins the formal facts
+    // read. An object the current source added is a real change, reported with its real current pin.
+    for (const refKey of cardPins.keys()) {
+      if (!currentPins.has(refKey)) {
+        return rejectedWithCurrent('invalid', 'the card names an object the current decision source does not');
+      }
+    }
+    for (const [refKey, pin] of currentPins) {
+      if (!cardPins.has(refKey)) {
+        return rejectedWithCurrent('revision_conflict', 'the decision source changed since that revision',
+          [structuredClone(pin)]);
+      }
+    }
+    const changed = [...currentPins].flatMap(([refKey, currentPin]) => {
+      const cardPin = cardPins.get(refKey)!;
+      return cardPin.revision === currentPin.revision ? [] : [structuredClone(currentPin)];
+    });
+    if (changed.length === 0) return null;
+    const requestChanged = changed.some((pin) => pin.ref.aggregateType === 'ActionRequest');
+    return rejectedWithCurrent('revision_conflict',
+      requestChanged ? 'the action request changed since that revision'
+        : 'the decision source changed since that revision', changed);
   }
 
   /** §3.3 line 625: an application accepts exactly one pin — the original message pin. */
@@ -741,7 +798,10 @@ export function createDecisionMessageService(
     const loaded = readOutcome(await loadMessage(owned, identity.messageRef));
     if (!loaded.ok) return loaded.rejection;
     const message = loaded.value;
-    if (message.decision === undefined || message.decision.syntheticAnswer || message.intent !== 'decision_request') {
+    // The card is recognized by its formal metadata and the saved `decision`
+    // (decision-source/message.ts), never by the deleted message intent.
+    if (message.decision === undefined || message.decision.syntheticAnswer
+      || !isUserMessageRecipient(message.recipient)) {
       return rejectedWithCurrent('invalid', 'the decision source message is not an answerable user decision card');
     }
     // §3.3 line 625: the message card accepts exactly its own current pin plus
@@ -795,7 +855,9 @@ export function createDecisionMessageService(
       return rejectedWithCurrent('invalid', 'an annotation names an object outside the card');
     }
     // §3.3 line 625: a non-message card accepts exactly its canonical source pins.
-    const pinProblem = exactPinSet(expected, facts.source.pins, owned);
+    const pinProblem = source.kind === 'action_release'
+      ? actionReleasePinsProblem(owned, source, expected, facts)
+      : exactPinSet(expected, facts.source.pins, owned);
     if (pinProblem !== null) return pinProblem;
     const answerLookup = await findAnswerForSource(owned, source);
     if (!answerLookup.ok) return answerLookup.rejection;
@@ -902,8 +964,9 @@ export function createDecisionMessageService(
     const identity = messageIdentityOf(source);
     // §4.6 line 915: the bound scope and the formal allowed reader are checked
     // BEFORE any saved answer is returned. A Host user reader is always allowed;
-    // an agent caller (work_run) is allowed only when the canonical
-    // source names a formal reader Session. §4.6/N6: when an answer was already
+    // a query_run caller only for an `ask_person` card its own line sent; a
+    // work_run caller only when the canonical source names a formal reader
+    // Session. §4.6/N6: when an answer was already
     // saved, the reader is proven from the historical facts saved with it (the
     // captured source and its formal proposer/request Session facts), not from
     // the live answerability of the source, so the asking Session can still read
@@ -911,7 +974,27 @@ export function createDecisionMessageService(
     // list means no formal proposer/secretary fact, so the agent gets
     // `forbidden` while the user Host can still read.
     let saved: SessionMessage | null | undefined;
-    if (owned.principal.kind !== 'host') {
+    if (owned.principal.kind === 'query_run') {
+      // design-frozen.md:149,436,628: a Query round reads only the answer of a formal `ask_person` card its own line
+      // sent. Its real Session comes from the one Query resolver, and the card's stored sending Session authorizes
+      // it; a platform or synthetic card (a candidate, a planning question) is never a Query round's to read.
+      const notOwnCard = 'a query round reads only the answer of an ask_person card its own line sent';
+      if (identity === null) return rejectedWithCurrent('forbidden', notOwnCard);
+      if (identity.messageRef.projectId !== owned.projectId || identity.messageRef.workspaceId !== owned.workspaceId) {
+        return rejectedWithCurrent('forbidden', 'the decision source message belongs to another workspace');
+      }
+      const callerSession = await callerReaderSession(owned, ctx);
+      if (!callerSession.ok) return callerSession.rejection;
+      const loaded = readOutcome(await loadMessage(owned, identity.messageRef));
+      if (!loaded.ok) return loaded.rejection;
+      const card = loaded.value;
+      if (callerSession.value === null || card === null || card.decision === undefined
+        || !isUserMessageRecipient(card.recipient) || !isMessageAgentSender(card.sender)
+        || !sameSession(card.sender.sessionRef, callerSession.value)) {
+        return rejectedWithCurrent('forbidden', notOwnCard);
+      }
+      saved = card;
+    } else if (owned.principal.kind !== 'host') {
       if (identity !== null) {
         if (identity.messageRef.projectId !== owned.projectId || identity.messageRef.workspaceId !== owned.workspaceId) {
           return rejectedWithCurrent('forbidden', 'the decision source message belongs to another workspace');
@@ -937,7 +1020,7 @@ export function createDecisionMessageService(
         if (!factsRead.ok) return factsRead.rejection;
         allowed = factsRead.value.allowedReaderSessionRefs;
       }
-      const callerSession = await callerReaderSession(owned);
+      const callerSession = await callerReaderSession(owned, ctx);
       if (!callerSession.ok) return callerSession.rejection;
       // §4.6: membership in the formal reader list, not merely a non-empty list.
       if (allowed.length === 0 || callerSession.value === null

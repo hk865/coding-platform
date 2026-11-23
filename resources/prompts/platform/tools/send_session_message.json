@@ -1,4 +1,22 @@
 {
-  "description": "Session mailbox: send_session_message. An action_request about a Goal needs expected: copy the Goal card's dispatchBasis from look_graph unchanged; a refusal names the current values in dispatchCurrent.",
-  "parameters": {}
+  "description": "发信：给另一条线发一条 Session 消息。谁能用：本轮挂了发信工具；审阅者只发不要回复的信（C23）。要回复时省略 wake 或填 true；只有不要回复的信才写 wake:false：要回复又写不叫醒会被拒——a message that needs a reply must wake the recipient; drop wake:false or set needsReply:false。什么时候用：向负责的参谋上报、请一条线定或做、交接事情；下一步真依赖对方才叫醒。不用消息代替叫停（消息不会暂缓），问副本用 ask_copy，不发确认。参数：needsReply 默认 false，只写 waitAfterSend:true 时按真处理；waitAfterSend 只有做事轮能为 true，问答轮不能等；deadlineMs 要回复且未填时用平台默认期限（现在 24 小时），显式期限优先，从发出时算；其余参数见下。回执：committed 表示存下了；要回复的信对方在下一轮或下一个安全点处理。写了 waitAfterSend:true 的回执是等待，不是普通 committed。",
+  "parameters": {
+    "recipient": "收件线引用；从 look_graph 的线节点上取。",
+    "recipient.projectId": "收件线所在的项目 id。",
+    "recipient.sessionId": "收件线的 Session id。",
+    "text": "信的内容；非空，写清事实、依据和你要什么。",
+    "needsReply": "要对方回一条；默认 false；只写 waitAfterSend:true 时按真处理。",
+    "waitAfterSend": "发完让出本次 Run 等回复；只有做事轮能为 true。",
+    "wake": "是否叫醒对方；默认 true；要回复的信必须叫醒。",
+    "taskRef": "这条消息所属的任务，可选；须是同一目标的任务。",
+    "taskRef.projectId": "任务的项目 id。",
+    "taskRef.goalId": "任务的目标 id。",
+    "taskRef.taskId": "任务 id。",
+    "followupOf": "接在哪条消息之后，可选；只接续，不另开请求根。",
+    "followupOf.aggregateType": "固定写 \"SessionMessage\"。",
+    "followupOf.projectId": "那条消息的项目 id。",
+    "followupOf.workspaceId": "那条消息的工作区 id。",
+    "followupOf.messageId": "那条消息的 id。",
+    "deadlineMs": "等回复的期限，可选；大于零的毫秒数；要回复且未填时用平台默认期限（现在 24 小时），显式期限优先；从发出时算。"
+  }
 }

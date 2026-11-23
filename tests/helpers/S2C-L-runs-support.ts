@@ -15,6 +15,8 @@
  * No record is written directly and no model is called.
  */
 import type { SessionMessageRef } from '../../src/contracts/core/session-message.js';
+import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
+import type { SessionMessage, SessionMailboxPort } from '../../src/core/work-graph/model/communication-contracts.js';
 import { withBackendOrderedLookup } from './ordered-lookup-forward.js';
 import type { SessionRef, VersionPin } from '../../src/contracts/core/identity.js';
 import type { TaskClaim } from '../../src/contracts/core/task-claim.js';
@@ -38,6 +40,8 @@ import { artifactBodyDigest } from '../../src/contracts/artifact.js';
 import { RawArtifactBodyStore } from '../../src/core/record-store/body-store.js';
 import { createRoleConfigurationService } from '../../src/core/work-graph/configuration/role-memory-service.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
+import { createQueryRoundResolver } from '../../src/core/work-graph/tasks/query-round.js';
+import { unknownSessionDuty } from './session-duty-double.js';
 import { createExecutionEntryService } from '../../src/core/work-graph/tasks/execution-entry-service.js';
 import { createRunControlService } from '../../src/core/work-graph/tasks/control-service.js';
 import { createMaterialRecordReaders } from '../../src/core/work-graph/materials/record-readers.js';
@@ -299,6 +303,7 @@ export function createRunSupport(base: TaskClaimFixture): RunSupport {
     const materials = createMaterialService({ bodies, authority: createMaterialRecordReaders(records).authority, now });
     return createSessionMailbox({ records, sessions: base.sessionsPort, executions: createRunStateReader({ records }),
       defaultInquiryDeadlineMs: 86_400_000,
+      queryRounds: createQueryRoundResolver({ records, duties: unknownSessionDuty, bodies }),
       roles: createRoleConfigurationService({ records, now, eventId }), materials,
       systemActor: { kind: 'system', id: 's2c-l-query' }, now, newId: eventId });
   }
@@ -307,10 +312,11 @@ export function createRunSupport(base: TaskClaimFixture): RunSupport {
     const materials = createMaterialService({ bodies, authority: createMaterialRecordReaders(records).authority, now });
     const mailbox = createSessionMailbox({ records, sessions: base.sessionsPort, executions: createRunStateReader({ records }),
       defaultInquiryDeadlineMs: 86_400_000,
+      queryRounds: createQueryRoundResolver({ records, duties: unknownSessionDuty, bodies }),
       roles: createRoleConfigurationService({ records, now, eventId }), materials,
       systemActor: { kind: 'system', id: 's2c-l-query' }, now, newId: eventId });
     const sent = await mailbox.sendMessage(base.ctx, { input: { recipient: asked,
-      text: `S2C-L consultation ${requestId}`, intent: 'inquiry', needsReply: true },
+      text: `S2C-L consultation ${requestId}`, needsReply: true, answeredBy: 'copy', wake: false },
       meta: { requestId: `s2c-l-send-${requestId}`, expected: [] } });
     if (sent.status !== 'committed') throw new Error(`S2C-L consultation send failed: ${JSON.stringify(sent)}`);
     const messageRef = sent.value.ref;
@@ -330,9 +336,13 @@ export function createRunSupport(base: TaskClaimFixture): RunSupport {
     const copy: SessionRef = { projectId: registered.value.ref.projectId, sessionId: registered.value.ref.sessionId };
     const sourceCard = await base.sessionsPort.readSession(base.ctx, asked);
     if (sourceCard.status !== 'ready') throw new Error('S2C-L consultation source read failed');
-    const derivation = { childSessionRef: copy, sourceSessionRef: asked,
+    // The Query admission re-reads the fixed derivation and refuses a question that never derived it.
+    const frozenDerivation = await recordConsultationCopy(mailbox, base.ctx, {
+      messageRef, source: asked,
       sourceKernel: { adapterId: sourceCard.value.record.kernel.adapterId,
-        kernelSessionId: sourceCard.value.record.kernel.kernelSessionId }, throughPosition: 1 };
+        kernelSessionId: sourceCard.value.record.kernel.kernelSessionId },
+      child: copy, throughPosition: 1, requestId: `s2c-l-derivation-${requestId}`,
+    });
 
     const { queryJobRef, queryRunRef } = consultationQueryRefs(messageRef);
     const runtimeBudget = { contextWindowTokens: 128000, inputTokens: null, outputTokens: null,
@@ -355,7 +365,7 @@ export function createRunSupport(base: TaskClaimFixture): RunSupport {
       question: `S2C-L consultation ${requestId}`, focusTaskRefs: [], budget: { maxTokens: null, deadline: null },
       multiTurn: { maxRounds: 1 }, correlationId: queryJobRef.queryJobId,
       execution: { kind: 'semantic_query', roleBinding: base.roleBinding, runtimeBudget,
-        consultation: { messageRef, recipient: asked, derivation } } };
+        consultation: { messageRef, recipient: asked, derivation: frozenDerivation } } };
     const submitted = await jobs.submitQueryJob(base.ctx, { input: { queryJobId: queryJobRef.queryJobId, runId: queryRunRef.runId, intent },
       meta: { requestId: `s2c-l-consult-submit-${requestId}`, expected: [
         { ref: base.projectRef, revision: 1 }, { ref: base.workspaceRef, revision: 1 },
@@ -484,4 +494,40 @@ export function crashedEvent(claim: TaskClaim, runIdSeed = '1'): RuntimeEventV1 
 
 export function runKey(ref: RunRef): string {
   return canonicalJson(ref as unknown as JsonValue);
+}
+
+/**
+ * The one consultation-derivation writer: read the question at its current revision, then record the fixed
+ * derivation that binds it to `child`. The archive, runs and notices fixtures all follow this read-then-record
+ * order, so it lives here once instead of three hand-copied blocks.
+ */
+export async function recordConsultationCopy(
+  mailbox: Pick<SessionMailboxPort, 'readMessage' | 'recordConsultationDerivation'>,
+  ctx: CoreCallContext,
+  input: {
+    messageRef: SessionMessageRef;
+    source: SessionRef;
+    sourceKernel: NonNullable<SessionMessage['consultationDerivation']>['sourceKernel'];
+    child: SessionRef;
+    throughPosition: number | null;
+    requestId: string;
+  },
+): Promise<NonNullable<SessionMessage['consultationDerivation']>> {
+  const current = await mailbox.readMessage(ctx, input.messageRef);
+  if (current.status !== 'ready') {
+    throw new Error(`the consultation message is not readable: ${JSON.stringify(current)}`);
+  }
+  if (mailbox.recordConsultationDerivation === undefined) {
+    throw new Error('the mailbox does not expose recordConsultationDerivation');
+  }
+  const derived = await mailbox.recordConsultationDerivation(ctx, {
+    meta: { requestId: input.requestId, expected: [{ ref: input.messageRef, revision: current.value.revision }] },
+    input: { messageRef: input.messageRef, derivation: {
+      childSessionRef: input.child, sourceSessionRef: input.source, sourceKernel: input.sourceKernel,
+      throughPosition: input.throughPosition } },
+  });
+  if (derived.status !== 'committed' || derived.value.consultationDerivation === undefined) {
+    throw new Error(`the consultation derivation failed: ${JSON.stringify(derived)}`);
+  }
+  return derived.value.consultationDerivation;
 }

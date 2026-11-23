@@ -69,7 +69,7 @@ describe('A-02: fix and pass-with-findings through the reviewer Host line', () =
     { label: 'fix', answer: FIX_ANSWER, reply: (id: string) => `审阅要求返修：1 条意见，见 Query ${id}` },
     { label: 'pass-with-findings', answer: PASS_FINDING_ANSWER, reply: () => '审阅通过' },
   ])('$label: the review answer and its reply', async ({ label, answer, reply }) => {
-    const opened = await openPLReviewCandidateWorld({ adviser: label === 'fix' });
+    const opened = await openPLReviewCandidateWorld({ adviser: label === 'fix', sourced: true });
     try {
       if (label === 'fix') {
         await opened.script([

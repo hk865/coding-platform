@@ -131,7 +131,7 @@ describe('WP2 undelivered-reply notices', () => {
     acceptEmptySourceRefs(f, { kind: 'workspace', refId: f.scope.workspaceId, revision: '1' });
     const target = await f.f.continuation();
     await f.f.enter();
-    const message = await f.f.send(f.f.b2.claim, target);
+    const message = await f.send(f.f.b2.claim, target, false, 'copy');
     await f.f.yieldWait(message);
     await f.f.retire(); // R first
     const q = await f.query(target, message);

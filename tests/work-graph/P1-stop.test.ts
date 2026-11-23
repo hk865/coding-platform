@@ -252,7 +252,13 @@ describe('rejects: C5, C6, X1, the stop card stays the one card', () => {
     const card = await p1.world.platform.actionRequests.requestStop(a.ctx,
       write({ taskRef: p1.task.tB, reason: 'P1 C5 stop' }, 'c5-stop'));
     expect(card).toMatchObject({ status: 'needs_decision' });
-    expect(await platformSettle(p1.world, actionRefOf(card), 'P1 C5 the task is done', 'c5-settle'))
+    // P2 §2.5: the caller that judged the cause passes it and the adopted Plan revision it read.
+    const plan = await p1.world.platform.plans.queryGoal(p1.world.humanContext(), p1.goal, { scope: 'project' });
+    if (plan.status !== 'ready' || plan.value.goal.activePlanRevision === null) {
+      throw new Error('P1: the settle Goal has no adopted Plan revision');
+    }
+    expect(await platformSettle(p1.world, actionRefOf(card), 'P1 C5 the task is done', 'c5-settle',
+      { kind: 'task_completed', planRevision: plan.value.goal.activePlanRevision }))
       .toMatchObject({ status: 'rejected', code: 'revision_conflict' });
     expect(await requestOf(p1, actionRefOf(card))).toMatchObject({ state: 'pending' });
     expect(pointerRef((await holdOf(p1, p1.task.tB))?.pendingStop)).toEqual(actionRefOf(card));
@@ -344,8 +350,14 @@ describe('rejects: M3-8–M3-10, a stop or dispatch request acted on by a wrong 
     const a = await p1.hold(p1.lines.A, 'm39-a');
     const open = actionRefOf(await p1.world.platform.actionRequests.requestDispatch(a.ctx,
       write({ taskRef: p1.task.tA, reason: 'P1 M3-9 dispatch' }, 'm39-dispatch')));
+    // `settle` now carries the owner's basis (P2 §2.5); the operator's refusal is the permission, not the input.
+    const plan = await p1.world.platform.plans.queryGoal(p1.world.humanContext(), p1.goal, { scope: 'project' });
+    if (plan.status !== 'ready' || plan.value.goal.activePlanRevision === null) {
+      throw new Error('P1: the settle Goal has no adopted Plan revision');
+    }
     expect(await p1.world.platform.actionRequests.settle(p1.world.humanContext(),
-      write({ request: open, reason: 'P1 M3-9 settle' }, 'm39-settle')))
+      write({ request: open, reason: 'P1 M3-9 settle',
+        basis: { kind: 'task_cancelled', planRevision: plan.value.goal.activePlanRevision } }, 'm39-settle')))
       .toMatchObject(refusedFor('only the platform automation may settle'));
     expect(await requestOf(p1, open)).toMatchObject({ state: 'open' });
     expect(pointerRef((await holdOf(p1, p1.task.tA))?.openDispatch)).toEqual(open);

@@ -108,16 +108,17 @@ describe('C2 mailbox fresh admission contract', () => {
       .toMatchObject({ status: 'ready', value: { text: 'historical statement' } });
   });
 
-  it.each(['ack', 'respond'] as const)('%s restores the concurrent winner after a receipt miss and before reading the changed message', async operation => {
+  it('respond restores the concurrent winner after a receipt miss and before reading the changed message', async () => {
     const h = await open();
-    const sent = await h.mailbox.sendMessage(h.ctxHost,
-      sendRequest(h.busySession, 'one message for concurrent receipt recovery', `c2-${operation}-race-send`));
+    const sent = await h.mailbox.sendMessage(h.ctxHost, { input: {
+      recipient: h.busySession, text: 'one message for concurrent receipt recovery', needsReply: true,
+    }, meta: { requestId: 'c2-respond-race-send', expected: [] } });
     expect(sent).toMatchObject({ status: 'committed', replayed: false });
     if (sent.status !== 'committed') throw Error('the real message must exist before the race');
     const messageRef = sent.value.ref;
     const messageKey = sessionMessageRefKey(messageRef);
     const request = { input: { messageRef, text: 'one durable response' },
-      meta: { requestId: `c2-${operation}-same-request`, expected: [{ ref: messageRef, revision: sent.value.revision }] } };
+      meta: { requestId: 'c2-respond-same-request', expected: [{ ref: messageRef, revision: sent.value.revision }] } };
     const initialLookups: { A: string[]; B: string[] } = { A: [], B: [] };
     const authorizations = { A: 0, B: 0 };
     let bodyWrites = 0;
@@ -164,9 +165,7 @@ describe('C2 mailbox fresh admission contract', () => {
     }
     const a = mailboxFor('A');
     const b = mailboxFor('B');
-    const invoke = (mailbox: C1Harness['mailbox']) => operation === 'ack'
-      ? mailbox.ackMessage(h.ctxWork, { input: { messageRef }, meta: request.meta })
-      : mailbox.respondMessage(h.ctxWork, request);
+    const invoke = (mailbox: C1Harness['mailbox']) => mailbox.respondMessage(h.ctxWork, request);
     const pendingB = invoke(b);
     try {
       await Promise.race([blocked, pendingB.then(result => {
@@ -184,22 +183,18 @@ describe('C2 mailbox fresh admission contract', () => {
 
       // Check the durable effects before asserting receipt recovery.
       expect(commitCalls).toBe(1);
-      expect(bodyWrites).toBe(operation === 'respond' ? 1 : 0);
+      expect(bodyWrites).toBe(1);
       const row = await h.fixture.records.readMany([messageKey]);
       expect(row.status).toBe('ready');
       if (row.status !== 'ready') throw Error('the committed message must remain readable');
       expect(row.value.readThrough).toBe(first.cursor);
       expect(row.value.records).toHaveLength(1);
       expect(JSON.parse(row.value.records[0]!.json)).toMatchObject({ revision: sent.value.revision + 1,
-        status: operation === 'ack' ? 'read' : 'responded' });
+        status: 'responded', readAt: expect.any(String) });
       const event = await h.fixture.records.eventAt(first.cursor);
-      expect(event).toMatchObject({ status: 'ready', value: { event: {
-        eventType: operation === 'ack' ? 'SessionMessageRead' : 'SessionMessageResponded',
-      } } });
-      if (operation === 'respond') {
-        expect(await h.mailbox.readMessageBody(h.ctxWork, { messageRef, part: 'response' }))
-          .toMatchObject({ status: 'ready', value: { text: request.input.text } });
-      }
+      expect(event).toMatchObject({ status: 'ready', value: { event: { eventType: 'SessionMessageResponded' } } });
+      expect(await h.mailbox.readMessageBody(h.ctxWork, { messageRef, part: 'response' }))
+        .toMatchObject({ status: 'ready', value: { text: request.input.text } });
       expect(second, JSON.stringify(second)).toEqual({ ...first, replayed: true });
     } finally {
       releaseB();

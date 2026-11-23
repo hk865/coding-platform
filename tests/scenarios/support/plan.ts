@@ -51,6 +51,14 @@ import type { WorkspaceHostBindings } from '../../../src/core/workspace/access.j
 import { VerificationWorkspaceReader } from '../../../src/core/workspace/verification-workspace-reader.js';
 import { createRoleConfigurationService } from '../../../src/core/work-graph/configuration/role-memory-service.js';
 import { createMaterialRecordReaders } from '../../../src/core/work-graph/materials/record-readers.js';
+import { createMaterialService } from '../../../src/core/work-graph/materials/material-service.js';
+import { createSessionMailbox } from '../../../src/core/work-graph/communication/mailbox-service.js';
+import { createSessionDirectory } from '../../../src/core/work-graph/sessions/session-directory.js';
+import { createQueryRoundResolver } from '../../../src/core/work-graph/tasks/query-round.js';
+import { createQueryJobService } from '../../../src/core/work-graph/queries/query-job-service.js';
+import { RawArtifactBodyStore } from '../../../src/core/record-store/body-store.js';
+import { unknownSessionDuty } from '../../helpers/session-duty-double.js';
+import { planSourceRootOf } from '../../helpers/task-claim-fixture.js';
 import { noProgressKey } from '../../../src/core/work-graph/state/no-progress.js';
 import type { GoalDisplayV1 } from '../../../src/core/work-graph/state/goal-machine.js';
 import type { TaskClaimPort } from '../../../src/core/work-graph/model/claim-contracts.js';
@@ -857,11 +865,23 @@ export function raceWindow(database: string, writer: RaceWriter, inside: () => P
     return { status: 'rejected', code: 'unsupported', reason: 'this race window reads no workspace' };
   } };
   const policy = (): TaskAutomationPolicyV1 => ({ ...DEFAULT_TASK_AUTOMATION_POLICY });
+  const plans = createPlanService({ records, bindings: createInitializationBindingReader({ records }),
+    knowledge: knowledgeLinesOver(records, workspace),
+    now: host.now, eventId: id, automationPolicy: policy });
+  const bodies = new RawArtifactBodyStore();
+  const roles = createRoleConfigurationService({ records, now: host.now, eventId: id });
+  const sessions = createSessionDirectory({ records,
+    knowledge: knowledgeLinesOver(records, workspace), lookups: records, duty: unknownSessionDuty });
+  const mailbox = createSessionMailbox({ records, sessions, executions: reads, roles,
+    materials: createMaterialService({ bodies, authority: createMaterialRecordReaders(records).authority, now: host.now }),
+    queryRounds: createQueryRoundResolver({ records, duties: unknownSessionDuty, bodies }),
+    defaultInquiryDeadlineMs: 86_400_000, systemActor: { kind: 'system', id: 'plan-race' },
+    now: host.now, newId: id });
   return {
-    plans: createPlanService({ records, bindings: createInitializationBindingReader({ records }),
-      knowledge: knowledgeLinesOver(records, workspace),
-      now: host.now, eventId: id, automationPolicy: policy }),
-    claims: createTaskClaimService({ records, roles: createRoleConfigurationService({ records, now: host.now, eventId: id }),
+    plans,
+    claims: createTaskClaimService({ records, roles,
+      planSourceRoot: planSourceRootOf({ messages: mailbox, plans,
+        queries: createQueryJobService({ records, now: host.now, eventId: id }) }),
       now: host.now, newId: id }),
     requeues: createTaskRequeueService({ records, reads, workspaceHost: workspace, source: new VerificationWorkspaceReader(),
       materials: {

@@ -4,7 +4,7 @@ import type { SessionMessage } from '../../src/core/work-graph/model/communicati
 import { graphWrite } from '../helpers/AG2b-collaboration-fixture.js';
 import { S6A_SCOPE } from '../helpers/S6A-request-fixture.js';
 import { committed } from '../helpers/S7A-fixture.js';
-import { notifyDeliveryText } from '../helpers/S7B-delivery-samples.js';
+import { messageDeliveryText } from '../helpers/S7B-delivery-samples.js';
 import { requestUserText } from '../helpers/S7B2-secretary-rounds.js';
 import { notifyOnlyS7B2Supply, openS7B2RoundWorld, runS7B2Round } from '../helpers/S7B2-secretary-rounds.js';
 
@@ -19,13 +19,13 @@ describe('S7B-2 R notify-only supply', () => {
     // The person's notify is a public send; it stays on the person list and the
     // notify-only supply skips that list, so it is never offered to the round.
     committed<SessionMessage>(await world.post('messages/send', graphWrite(S6A_SCOPE, {
-      recipient: sent.round.secretary.ref, text: `S7B2 person notify ${label}`, intent: 'notify',
+      recipient: sent.round.secretary.ref, text: `S7B2 person notify ${label}`, needsReply: false, wake: false,
     }, `s7b2-person-notify-${label}`)), 'the person notify');
     const supply = await notifyOnlyS7B2Supply(world, { sent, label });
     const input = requestUserText(supply.requests.at(-1)!);
 
-    expect(input.split(notifyDeliveryText({ messageId: supply.notify.ref.messageId,
-      sender: PLATFORM_SENDER, body: `S7B2 notify ${label}` }))).toHaveLength(2);
+    expect(input.split(messageDeliveryText({ messageId: supply.notify.ref.messageId,
+      sender: PLATFORM_SENDER, body: `S7B2 notify ${label}`, needsReply: false, wake: false }))).toHaveLength(2);
     expect(input).not.toContain(`S7B ${label}-late reply`);
     expect(input).not.toContain(`S7B2 person notify ${label}`);
   }, 180_000);

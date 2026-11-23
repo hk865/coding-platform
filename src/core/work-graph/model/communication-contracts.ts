@@ -20,16 +20,19 @@ import type { ActorRef, CommitCursor } from '../../../contracts/command-event.js
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { SessionRef, WorkspaceScope } from '../../../contracts/core/identity.js';
 import type { CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
-import type { MessageDeliveryStateV1, MessageReadDispositionV1, MessageReleaseV1, SendRejectionV1,
-  SessionMessageIntentFields, SessionMessageIntentV1, SessionMessageRef,
+import type { MessageDeliveryStateV1, MessageReadDispositionV1, SendRejectionV1,
+  MessageAnsweredByV1, MessageEntryV1, SessionMessageSendFields, SessionMessageRef,
   DecisionHostSenderV1 } from '../../../contracts/core/session-message.js';
+import { INTERVENTION_CLOSING_REASONS, interventionClosingNoticeRequestId, PLATFORM_NOTICE_ACTOR,
+  type InterventionClosingReasonV1 } from '../../../contracts/core/session-message.js';
 import type { ArchiveStepRefV1 } from '../../../contracts/core/session-archive.js';
 import type { RunRef, TaskTriple } from '../../../contracts/dispatch.js';
+import type { SystemRoundV1 } from '../../../contracts/plan-round.js';
 import type { MessageBody, SessionMessageReadPageV1, SessionMessageReadV1 } from '../../../contracts/mailbox.js';
 import type { QueryJobAnswerRef, QueryJobRef, QueryRunRef } from '../../../contracts/query-job.js';
-import type { DispatchBasisV1, GoalRef } from '../../../contracts/ledger.js';
+import type { GoalRef } from '../../../contracts/ledger.js';
 import type {
-  DecisionChangeProofV1, DecisionSourceV1, MessageReleaseBlockV1, NoticePositionV1,
+  DecisionSourceV1, NoticePositionV1,
 } from '../../../contracts/goal-decisions.js';
 import type { TaskRequeueRef } from '../../../contracts/task-requeue.js';
 import type { VerificationRoundRef } from '../../../contracts/verification.js';
@@ -43,7 +46,7 @@ import type { DispatchBasisFactsPort } from './dispatch-basis-contracts.js';
 import type { MaterialPort } from './material-contracts.js';
 import type { SessionDirectoryPort, SessionPage, SessionPageRequest } from './session-contracts.js';
 import type { GraphWrite } from './task-contracts.js';
-import type { QueryRoundPort } from './query-round-contracts.js';
+import type { QueryRoundPort, QueryRoundV1 } from './query-round-contracts.js';
 import type { SecretaryQueryRunPort } from './secretary-query-run-contracts.js';
 import type { RecipientExecutionsPort, DeliveryEligibilityFactsV1 } from './session-facts-contracts.js';
 import type { ExecutionEntryDependencies } from './execution-entry-contracts.js';
@@ -92,7 +95,7 @@ export function deriveSessionInputId(
  * this one copy; no caller restates the delivered/accepted or wait rules.
  */
 export function consultationFacts(message: SessionMessage, part: 'message' | 'response',
-  extra: DeliveryEligibilityFactsV1, target: SessionRef): DeliveryFactsV1 {
+  extra: DeliveryEligibilityFactsV1, target: SessionRef | null): DeliveryFactsV1 {
   const accepted = (id: string) => (message.acceptedInputs ?? []).some((entry) => entry.inputId === id);
   const base = { consumption: messageFactsOfRecord(message), ...extra };
   // A saved reply is the message's consumption fact too: an answered message stops being offered even when the
@@ -131,21 +134,34 @@ export type { SessionMessageStatus };
 export type SessionMessage = SessionMessageRecord;
 
 /**
- * R7A1-01: the derivation's input is its OWN structure, so `7a1-ports` typechecks before M-1 adds `release` and
- * `withdrawnAt` to the record. A `SessionMessage` is assignable to it; `MessageAcceptedInput` is the file's existing
- * type.
+ * R7A1-01: the derivation's input is its OWN structure, so `7a1-ports` typechecks before the record's delivery fields
+ * exist. A `SessionMessage` is assignable to it; `MessageAcceptedInput` is the file's existing type.
  */
 export type MessageDeliveryFactsV1 = {
   ref: SessionMessageRef;
   status: SessionMessageStatus;
   acceptedInputs?: readonly MessageAcceptedInput[];
-  release: MessageReleaseV1 | null;
   withdrawnAt: string | null;
+  /** The saved reply slot; a formal response blocks both delivery and withdrawal. */
+  response: SessionMessageRecord['response'];
+  /** `copy` marks a question consumed by its copy identity, never by the original line. */
+  answeredBy: MessageAnsweredByV1;
 };
-/** The ONE derivation's result: delivery and disposition always come from the same call (R7A1-09). */
+/**
+ * The ONE derivation's result: delivery and disposition always come from the same call (R7A1-09). Acceptance and a
+ * formal reply are separate facts, so neither is folded into the delivery state.
+ */
 export type MessageDeliveryDerivationV1 = {
   delivery: MessageDeliveryStateV1;
   disposition: MessageReadDispositionV1;
+  /** Kernel already accepted the message (an `acceptedInputs` message part). */
+  accepted: boolean;
+  /** A formal reply is already saved, whether or not Kernel accepted the original input. */
+  responded: boolean;
+  /** The original line may still deliver it: not withdrawn, neither accepted nor answered, and not a copy question. */
+  deliverable: boolean;
+  /** The sender may still withdraw it: not withdrawn, neither accepted nor answered (a copy question is still withdrawable). */
+  withdrawable: boolean;
 };
 
 /** The ONE derivation (M-2's body); the two view reads, the work line and the withdraw check take this result. */
@@ -153,18 +169,20 @@ export function deriveMessageDelivery(
   message: MessageDeliveryFactsV1,
   recipientLine: { archived: boolean; retired: boolean },
 ): MessageDeliveryDerivationV1 {
-  const accepted = message.acceptedInputs?.find((input) => input.part === 'message');
+  const acceptedInput = message.acceptedInputs?.find((input) => input.part === 'message');
+  const accepted = acceptedInput !== undefined;
+  const responded = message.response !== null;
+  const copyQuestion = message.answeredBy === 'copy';
+  const withdrawn = message.withdrawnAt !== null;
+  const deliverable = !withdrawn && !accepted && !responded && !copyQuestion;
+  const withdrawable = !withdrawn && !accepted && !responded;
   let delivery: MessageDeliveryStateV1;
-  if (accepted !== undefined) {
+  if (acceptedInput !== undefined) {
     delivery = {
       delivery: 'delivered',
-      deliveredTo: { executionRef: accepted.executionRef, acceptedAt: accepted.acceptedAt },
+      deliveredTo: { executionRef: acceptedInput.executionRef, acceptedAt: acceptedInput.acceptedAt },
       evidence: 'accepted',
       undeliveredReason: null,
-    };
-  } else if (message.status === 'read' || message.status === 'responded') {
-    delivery = {
-      delivery: 'delivered', deliveredTo: null, evidence: 'legacy_unknown', undeliveredReason: null,
     };
   } else if (recipientLine.archived || recipientLine.retired) {
     delivery = {
@@ -181,16 +199,69 @@ export function deriveMessageDelivery(
   let disposition: MessageReadDispositionV1;
   if (message.withdrawnAt !== null) {
     disposition = { kind: 'withdrawn' };
-  } else if (message.release !== null && message.release !== 'released') {
-    disposition = { kind: 'not_released', release: message.release };
   } else if (delivery.delivery === 'delivered') {
     disposition = { kind: 'delivered', evidence: delivery.evidence! };
   } else if (delivery.delivery === 'undelivered') {
     disposition = { kind: 'undelivered', reason: delivery.undeliveredReason! };
+  } else if (responded) {
+    disposition = { kind: 'answered' };
+  } else if (copyQuestion) {
+    disposition = { kind: 'copy' };
   } else {
     disposition = { kind: 'offerable' };
   }
-  return { delivery, disposition };
+  return { delivery, disposition, accepted, responded, deliverable, withdrawable };
+}
+
+/**
+ * One round's fixed closing notice, proved by the notice writer's own source-and-part identity. A round writes at
+ * most one reason, so the finite reason set (or the one `reason` a caller names) is one lookup keyed by the same
+ * request id the send used. The write goes out under the fixed platform identity on the source's workspace, so the
+ * receipt is read under that same identity and workspace — never the caller's operator actor or scan scope. This is
+ * the ONE receipt read; `plan-readers.ts`'s `roundSettled`, the two mailbox views and `workflow.closingNotice` all
+ * take it. Only the Host reads its own receipt; a non-Host context keeps `readHostSendMessageRef`'s own rejection.
+ */
+export async function readClosingNotice(
+  readHostSendMessageRef: HostSendMessageRefRead | undefined,
+  ctx: CoreCallContext,
+  input: {
+    sourceMessageRef: SessionMessageRef; part: 'message' | 'decision_answer';
+    reason?: InterventionClosingReasonV1;
+  },
+): Promise<ReadResult<boolean>> {
+  if (readHostSendMessageRef === undefined) return { status: 'ready', value: false };
+  const source = input.sourceMessageRef;
+  const noticeCtx: CoreCallContext = ctx.principal.kind !== 'host' ? ctx : {
+    ...ctx, projectId: source.projectId, workspaceId: source.workspaceId,
+    principal: { kind: 'host', actor: { ...PLATFORM_NOTICE_ACTOR } },
+    materialReader: { kind: 'host', projectId: source.projectId, workspaceId: source.workspaceId,
+      actor: { ...PLATFORM_NOTICE_ACTOR } },
+  };
+  const scope: WorkspaceScope = { projectId: source.projectId, workspaceId: source.workspaceId };
+  const reasons = input.reason === undefined ? INTERVENTION_CLOSING_REASONS : [input.reason];
+  for (const reason of reasons) {
+    const requestId = interventionClosingNoticeRequestId(source, reason, input.part);
+    const found = await readHostSendMessageRef(noticeCtx, { requestId, scope });
+    if (found.status === 'ready') return { status: 'ready', value: true };
+    if (found.status !== 'not_found') return found;
+  }
+  return { status: 'ready', value: false };
+}
+
+/**
+ * The mailbox read's `no_answer` slice of `readClosingNotice`: a message view may only carry the fact for the Host
+ * (the only principal that may read its own send receipt), so every other reader keeps its older view without the
+ * fact instead of failing the whole message read. The receipt rule itself is `readClosingNotice`'s one copy.
+ */
+export async function readNoAnswerClosingNotice(
+  readHostSendMessageRef: HostSendMessageRefRead | undefined,
+  ctx: CoreCallContext,
+  source: SessionMessageRef,
+  part: 'message' | 'decision_answer' = 'message',
+): Promise<ReadResult<boolean>> {
+  if (ctx.principal.kind !== 'host') return { status: 'ready', value: false };
+  return readClosingNotice(readHostSendMessageRef, ctx,
+    { sourceMessageRef: source, part, reason: 'no_answer' });
 }
 
 /** Slice 1 §2.5: a read-only source item for a reply that reached a retired line. */
@@ -222,7 +293,6 @@ type MessageSessionEventBaseV1 = {
 };
 
 export type SessionMessageSentEventV1 = MessageSessionEventBaseV1 & { eventType: 'SessionMessageSent' };
-export type SessionMessageReadEventV1 = MessageSessionEventBaseV1 & { eventType: 'SessionMessageRead' };
 export type SessionMessageConsultationDerivedEventV1 = MessageSessionEventBaseV1 & { eventType: 'SessionMessageConsultationDerived' };
 export type SessionMessageInputAcceptedEventV1 = MessageSessionEventBaseV1 & { eventType: 'SessionMessageInputAccepted' };
 export type SessionMessageRespondedEventV1 = Omit<MessageSessionEventBaseV1, 'actor'> & {
@@ -242,7 +312,6 @@ export type SessionMessageDecisionAppliedEventV1 = Omit<MessageSessionEventBaseV
 };
 export type SessionMessageEventV1 =
   | SessionMessageSentEventV1
-  | SessionMessageReadEventV1
   | SessionMessageRespondedEventV1
   | SessionMessageConsultationDerivedEventV1
   | SessionMessageInputAcceptedEventV1
@@ -252,17 +321,9 @@ export type SessionMessageEventV1 =
   | SessionMessageLifecycleEventV1;
 
 export type SessionMessageWithdrawnEventV1 = MessageSessionEventBaseV1 & { eventType: 'SessionMessageWithdrawn' };
-/** The release-decided event carries the proof; a direct `messages/release` writes the `null` arm. */
-export type SessionMessageReleaseDecidedEventV1 = MessageSessionEventBaseV1 & {
-  eventType: 'SessionMessageReleaseDecided';
-  proof: DecisionChangeProofV1 | null;
-};
-export type SessionMessageReleasedEventV1 = MessageSessionEventBaseV1 & { eventType: 'SessionMessageReleased' };
 export type SessionMessageAppliedEventV1 = MessageSessionEventBaseV1 & { eventType: 'SessionMessageApplied' };
 export type SessionMessageExpiredEventV1 = MessageSessionEventBaseV1 & { eventType: 'SessionMessageExpired' };
-export type SessionMessageLifecycleEventV1 =
-  | SessionMessageWithdrawnEventV1 | SessionMessageReleaseDecidedEventV1
-  | SessionMessageReleasedEventV1 | SessionMessageAppliedEventV1;
+export type SessionMessageLifecycleEventV1 = SessionMessageWithdrawnEventV1 | SessionMessageAppliedEventV1;
 
 /** One keyset page shared by the inbox and the sender-Run outbox. */
 export type SessionMessagePage = {
@@ -273,11 +334,8 @@ export type SessionMessagePage = {
   sourceCursor: CommitCursor;
 };
 
-/** The outbox keeps `items` as the record page and adds the block beside it, one entry per item in the same order;
- * `null` for a message that is not a candidate. */
-export type SessionMessageOutboxPageV1 = SessionMessagePage & {
-  releaseBlocks: (MessageReleaseBlockV1 | null)[];
-};
+/** The outbox keeps `items` as the record page; the page carries no per-item release block. */
+export type SessionMessageOutboxPageV1 = SessionMessagePage;
 
 export type SendMessageResultV1 =
   (Extract<WriteResult<SessionMessage>, { status: 'committed' }> & { sendStatus: 'sent' | 'awaiting_release' })
@@ -286,10 +344,14 @@ export type SendMessageResultV1 =
 export type SessionMessageSendInputV1 = GraphWrite<{
   recipient: SessionRef;
   text: string;
-  intent?: SessionMessageIntentV1;
   needsReply?: boolean;
   waitAfterSend?: boolean;
-  expected?: DispatchBasisV1;
+  /** The sender chooses; the owner writes `true` when the caller omits it. */
+  wake?: boolean;
+  /** `copy` only for the consultation question; the owner writes `line` otherwise. */
+  answeredBy?: MessageAnsweredByV1;
+  /** Only the direct-intervention Host entry supplies it; model input is never read. */
+  entry?: MessageEntryV1;
   taskRef?: TaskTriple;
   followupOf?: SessionMessageRef;
   deadlineMs?: number;
@@ -374,7 +436,7 @@ export type HostSystemOutboxRef = { aggregateType: 'HostSystemOutbox'; projectId
 export interface SessionMailboxPort {
   sendMessage(
     ctx: CoreCallContext,
-    request: GraphWrite<{ recipient: SessionRef; text: string } & SessionMessageIntentFields>,
+    request: GraphWrite<{ recipient: SessionRef; text: string } & SessionMessageSendFields>,
   ): Promise<WriteResult<SessionMessage>>;
   readMessage(ctx: CoreCallContext, ref: SessionMessageRef): Promise<ReadResult<SessionMessage>>;
   readMessageBody(
@@ -402,6 +464,13 @@ export interface SessionMailboxPort {
       page: { limit: number; cursor?: string; atLeastCursor?: CommitCursor };
     },
   ): Promise<ReadResult<SessionMessageOutboxPageV1>>;
+  /**
+   * The caller's own trusted `query_run` round, through the mailbox's ONE
+   * resolver (a secretary request round included); null for every other
+   * principal. The decision reader proves the caller's real Session with it and
+   * reads no message.
+   */
+  readQueryRound(ctx: CoreCallContext): Promise<ReadResult<QueryRoundV1 | null>>;
   /** Trusted Host only: the Host system sender's own outbox, in `since` order. No other principal is admitted. */
   readHostSystemOutbox(ctx: CoreCallContext, input: {
     workspace: WorkspaceScope; after: HostOutboxKeysetV1 | null; limit: number;
@@ -417,10 +486,6 @@ export interface SessionMailboxPort {
     ctx: CoreCallContext,
     request: GraphWrite<{ workspace: WorkspaceScope; item: HostOutboxStoredItemV1 }>,
   ): Promise<WriteResult<SessionMessageHostOutboxV1>>;
-  ackMessage(
-    ctx: CoreCallContext,
-    request: GraphWrite<{ messageRef: SessionMessageRef }>,
-  ): Promise<WriteResult<SessionMessage>>;
   /**
    * Host-only association of an ALREADY-SAVED formal Query Answer with the
    * original message's single response slot. It accepts no free text and no
@@ -461,14 +526,22 @@ export interface SessionMailboxPort {
   readUndeliveredReplies?(
     ctx: CoreCallContext, input: { sessionRef: SessionRef; page: SessionPageRequest },
   ): Promise<ReadResult<SessionPage<UndeliveredReplyV1>>>;
+  /**
+   * §2.3/1.2, trusted Host only: one keyset page of this workspace's copy questions with no reply and not withdrawn.
+   * `after` is the previous page's `next` (null from the start); a null `next` is the end of the set.
+   */
+  readPendingCopyQuestions?(ctx: CoreCallContext, input: {
+    workspace: WorkspaceScope; after: string | null; limit: number;
+  }): Promise<ReadResult<{ items: SessionMessage[]; next: string | null }>>;
   /** Slice 1 §2.5: the messages whose effective reply handler is this Session. */
   readRoutedReplies?(
     ctx: CoreCallContext, input: { handler: SessionRef; page: SessionPageRequest },
   ): Promise<ReadResult<SessionPage<SessionMessage>>>;
   /**
-   * K3 L4: the read-only committed-receipt lookup for the row-4 mailbox tools
-   * (`send_session_message`, `ack_session_message`, `respond_session_message`,
-   * `send_user_message`). It never writes and never reads a business fact.
+   * K3 L4: the read-only committed-receipt lookup for the mailbox tools
+   * (`send_session_message`, `respond_session_message`, `notify_person`,
+   * `ask_person`, `ask_copy`, `withdraw_session_message`). It never writes and
+   * never reads a business fact.
    */
   lookupToolCommit?: ToolCommitLookup;
   /** The Host send's own identity-only committed-receipt read (`send_session_message`); never the current recipient. */
@@ -478,12 +551,17 @@ export interface SessionMailboxPort {
 }
 /** The full command port; the historical `SessionMailboxPort` stays the narrow read/old-write port. */
 export interface SessionMessageCommandPort extends SessionMailboxPort {
+  /**
+   * Design 2.3 (an answer reaches the line once): whether an answered agent `ask_person` card's answer is already
+   * taken by its own card-answer round (the deterministic `decision_answer` Query exists). The Work safe-point and
+   * Query supplies skip such an answer; the acceptance commit guards the same Query key absent. The card is read with
+   * the caller's own read admission (`readMessage`); a message that is not an agent card is `false`.
+   */
+  readDecisionAnswerTaken(ctx: CoreCallContext, input: { messageRef: SessionMessageRef }): Promise<ReadResult<boolean>>;
   sendMessage(ctx: CoreCallContext, request: SessionMessageSendInputV1): Promise<SendMessageResultV1>;
   respondMessage(ctx: CoreCallContext, request: SessionMessageRespondInputV1): Promise<WriteResult<SessionMessage>>;
   withdrawMessage(ctx: CoreCallContext,
     request: GraphWrite<{ messageRef: SessionMessageRef }>): Promise<WriteResult<SessionMessage>>;
-  releaseMessage(ctx: CoreCallContext,
-    request: GraphWrite<{ messageRef: SessionMessageRef; allow: boolean }>): Promise<WriteResult<SessionMessage>>;
   /** One message with its derived delivery and disposition; never a second derivation. */
   readMessageView(ctx: CoreCallContext, ref: SessionMessageRef): Promise<ReadResult<SessionMessageReadV1>>;
   /** The inbox page with the same derived fields; `status` and the page keys are the record read's. */
@@ -538,9 +616,9 @@ export type SessionMailboxDependencies = {
   defaultInquiryDeadlineMs?: number;
   /** The one resolver; called only after a receipt miss; absent: a NEW secretary path is `unsupported`. */
   secretaryRounds?: SecretaryQueryRunPort;
-  /** 问答轮身份（`tasks/query-round.ts`）；`query_run` 调用方先经它：解析就绪且不是秘书请求轮的走问答轮自己的发件、读箱、
-   *  回复分支；没配、解析失败、请求轮照旧走秘书路径，原文不变。 */
-  queryRounds?: QueryRoundPort;
+  /** 问答轮身份（`tasks/query-round.ts`），`query_run` 调用方的唯一身份读：发信、回复、撤回收任何已进入的问答轮（请求轮
+   *  也算），读箱只收非请求轮、请求轮走秘书读者；发信解析不出就是解析器的拒绝，没有第二条路。 */
+  queryRounds: QueryRoundPort;
   /** The request's owner read (model's `RequestOwnerReadPort`, satisfied by `W/tasks/request-facts.ts`);
    * absent: a NEW secretary path is `unsupported`; the owner is never guessed from the sending secretary. */
   requestOwners?: RequestOwnerReadPort;
@@ -551,6 +629,20 @@ export type SessionMailboxDependencies = {
   dispatchBasis?: DispatchBasisFactsPort;
   /** The store object's identity-only commit read; absent: the Host-send receipt lookup is `undetermined`. */
   commitIdentities?: Pick<RecordCommitIdentityPort, 'readCommitByIdentity'>;
+  /** Design 5.1: the root's one `overlapNoteOf` read (the Query owner's `OverlapNoteReadPort`); a non-null value is the
+   *  gate whose saved `noteRequest.messageRef` is this message. Absent: no message is read as a gate note here. */
+  gateNotes?: { readGateNote(ctx: CoreCallContext, message: SessionMessage): Promise<ReadResult<object | null>> };
+  /** Design 2.2/2.6: the root's one trusted-system-round read; a `host:plan-round` letter keeps the system reply slot
+   *  only when it is the round's own sent message. Absent: the fixed sender alone decides, as before. */
+  systemRounds?: SystemRoundSourceReadPort;
+};
+
+/**
+ * Design 2.2/2.6 (`p2-frozen.md:150`): the root's one trusted-system-round read of a stored message
+ * (`tasks/plan-lineage.ts` `trustedSystemRoundOfMessage`); a non-null value is the round whose own source it is.
+ */
+export type SystemRoundSourceReadPort = {
+  readSystemRoundSource(ctx: CoreCallContext, message: SessionMessage): Promise<ReadResult<SystemRoundV1 | null>>;
 };
 
 /** `messages/forward` (L(3), `book-7b.md:942`); `copyGoalRef` is the copy branch (§3.9 item 1, B-03). */

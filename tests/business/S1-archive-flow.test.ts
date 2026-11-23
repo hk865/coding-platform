@@ -71,7 +71,7 @@ import { beginConsultation, unknownWork, retireSession, workflowForFixture } fro
 import { loadPreparedManifest } from '../../src/core/agent-runtime/execution-preparation.js';
 import type { PreparedTaskExecution, PreparedTaskManifestV1 } from '../../src/contracts/core/prepared-execution.js';
 import { createB2ExecutionFixture, type B2ExecutionFixture, type B2Records } from '../helpers/S1-workflow-archive-fixture.js';
-import { createRuntimeHostDouble, createScriptedModel } from '../helpers/B2-runtime-fixture.js';
+import { createRuntimeHostDouble, createScriptedModel, deliveryFactsForFixture } from '../helpers/B2-runtime-fixture.js';
 import { knowledgeLinesOver } from '../helpers/KLS2-knowledge-lines.js';
 
 const T0 = '2026-10-08T00:00:00.000Z';
@@ -259,6 +259,7 @@ async function open(kind: 'memory' | 'sqlite', options: OpenOptions = {}): Promi
       // Rework 10 package R: the REQUIRED Task-review reader is the real owner
       // over this fixture's one real records store and Run reader.
       unknownCallReviews: createUnknownCallReviewService({ records, reads, now, eventId }),
+      deliveryFacts: deliveryFactsForFixture,
       plans: base.plans,
       sessions: base.sessionsPort,
       materials,

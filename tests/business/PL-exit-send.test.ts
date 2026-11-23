@@ -54,7 +54,6 @@ describe.each(['memory', 'sqlite'] as const)('sendSystemRound over the real %s c
       arguments: {
         recipient: h.idleSession,
         text,
-        intent: 'action_request',
         needsReply: true,
         goalRef: round.goalRef,
       },
@@ -78,7 +77,6 @@ describe.each(['memory', 'sqlite'] as const)('sendSystemRound over the real %s c
     expect(message.value).toMatchObject({
       ref: ref.value,
       recipient: h.idleSession,
-      intent: 'action_request',
       needsReply: true,
       goalRef: round.goalRef,
       sender: { kind: 'host', actor: { kind: 'system', id: 'host:plan-round' } },

@@ -13,10 +13,9 @@
  * The listed Task is module `s6a-core` (`plSkeletonDraft`'s module work, the G-01 module cell); the unlisted Task is
  * a stage-1 Task of the same Plan.
  *
- * R12 follows A-01's world: `openPLReviewWorld` and the public steps of `openPLReviewCandidateWorld`
- * (PL-forms-fixture.ts:269–:345, whose candidate is fixed, so the steps are written here): governance, one adopted
- * Plan, one `plans/propose` candidate that changes its work Task only by adding `plannedFiles`, the goal driver's
- * `planreview:` round on the reviewer line, and the reviewer's model input read as A-01 `:73–:81` does.
+ * The planned-files case follows the frozen review-template world (`openPLReviewCandidateWorld` with the sourced
+ * candidate): governance, the adopted Plan, the adviser's real `refine:` answer that only adds `plannedFiles` to the base `plan_only` slot, the goal
+ * driver's `planreview:` round on the reviewer line, and the reviewer's model input read as the review input is.
  *
  * Expected literals are the spec's: §4 `context.task.plannedFiles` = `plannedFiles（预计要改的文件，只是提示，不是限制）: `
  * with the paths joined by `, ` (§3.3), right after the `module: ` row; the reviewer row `plannedFiles: <路径, 路径>`.
@@ -24,19 +23,16 @@
 import { describe, expect, it } from 'vitest';
 import { systemRoundRequestId } from '../../src/contracts/plan-round.js';
 import { systemRoundMessageRef } from '../helpers/system-round-ref.js';
-import type { PlanProposalRef } from '../../src/core/work-graph/model/plan-contracts.js';
 import type { ModelRequest } from '../../vendor/coding-agent/dist/public-api.js';
-import { graphWrite } from '../helpers/AG2b-collaboration-fixture.js';
 import { startGoalDriver } from '../helpers/DRV-fixture.js';
 import { awaitPlanningAnswer, heartbeatUntil } from '../helpers/IV-host-fixture.js';
-import { openPLReviewWorld } from '../helpers/PL-forms-fixture.js';
+import { openPLReviewCandidateWorld, PL_REVIEW_CHANGED_TASK_ID } from '../helpers/PL-forms-fixture.js';
 import {
   adoptPLPlanDraft, openPLWorkflowWorld, plSkeletonDraft, satisfyPLTask,
 } from '../helpers/PL-workflow-fixture.js';
-import { s6aCardsWorkspace } from '../helpers/S6A-cards-fixture.js';
 import { S6A_SCOPE, S6A_WORK_ROLE } from '../helpers/S6A-request-fixture.js';
-import { adoptS6BPlan, createS6BLine, governS6B } from '../helpers/S6B1-fixture.js';
-import { committed, sessionOf } from '../helpers/S7A-fixture.js';
+import { createS6BLine } from '../helpers/S6B1-fixture.js';
+import { sessionOf } from '../helpers/S7A-fixture.js';
 import { listed } from '../helpers/S7B-fixture.js';
 import { draftFrom } from '../scenarios/support/common.js';
 
@@ -94,28 +90,22 @@ describe('E38-R11: the executor task section', () => {
 
 describe('E38-R12: the reviewer candidate text', () => {
   it('carries the changed task’s plannedFiles row', async () => {
-    const opened = await openPLReviewWorld({ configuration: 'no_secretary' });
+    // A-13 (p2-frozen.md:208/210/345): the candidate is the adviser's real `refine:` answer, not a direct
+    // `plans/propose` (whose missing author is now the A13 `source_incomplete` card). It only adds `plannedFiles`
+    // to the base `plan_only` slot, the lead-approved filling exemption, so this round still reaches its review.
+    const opened = await openPLReviewCandidateWorld({ sourced: true, draft: base => draftFrom(base,
+      'e38-r12-candidate', candidate => ({ ...candidate,
+        tasks: candidate.tasks.map(task => task.taskId === PL_REVIEW_CHANGED_TASK_ID
+          ? { ...task, plannedFiles: [...PLANNED] } : task) })) });
     try {
       const { world, reviewer } = opened;
-      const main = s6aCardsWorkspace(world, S6A_SCOPE);
-      await governS6B(world, main, world.goals);
-      const goal = world.goals.first;
-      const { plan } = await adoptS6BPlan(main, goal, {
-        label: 'e38-r12', role: S6A_WORK_ROLE.templateId, taskIds: ['e38-r12-work'],
-      });
-      // The candidate changes only the work Task's list: a changed execution definition (plan-task-basis.ts:208–:212).
-      const draft = draftFrom(plan, 'e38-r12-candidate', candidate => ({ ...candidate,
-        tasks: candidate.tasks.map(task => task.taskId === 'e38-r12-work' ? { ...task, plannedFiles: [...PLANNED] } : task) }));
-      const proposed = committed<{ ref: PlanProposalRef; revision: number }>(await main.post('plans/propose',
-        graphWrite(S6A_SCOPE, { goalRef: goal, basedOn: plan.ref, draft, reason: { text: 'E38-R12 candidate', sources: [] } },
-          'e38-r12-candidate-propose')), 'the E38-R12 candidate');
       await opened.script([{ kind: 'calls', calls: [{
         callId: 'e38-r12-pass', name: 'submit_plan_review', args: { verdict: 'pass', findings: [] },
       }] }]);
-      await startGoalDriver(world, goal, 'e38-r12-flow');
+      await startGoalDriver(world, opened.goal, 'e38-r12-flow');
 
-      const requestId = systemRoundRequestId({ kind: 'planreview', goalRef: goal,
-        proposalId: proposed.ref.proposalId, proposalRevision: proposed.revision });
+      const requestId = systemRoundRequestId({ kind: 'planreview', goalRef: opened.goal,
+        proposalId: opened.candidate.ref.proposalId, proposalRevision: opened.candidate.revision });
       if (requestId.status !== 'ready') throw new Error('E38-R12: the review round has no request id');
       const messageRef = systemRoundMessageRef(S6A_SCOPE, requestId.value);
       if (messageRef.status !== 'ready') throw new Error('E38-R12: the review round has no message ref');

@@ -17,8 +17,8 @@ import type { SessionMessage } from '../../src/core/work-graph/model/communicati
 import type { RoleSpecContentV1 } from '../../src/contracts/role-spec.js';
 import { roleSpecContentDigest } from '../../src/contracts/role-spec.js';
 import {
-  claimSuccessorRun, createWP2Platform, decisionRequestArgs, observeStage, preparedBundle,
-  preparedBundleInput, requestText, type WP2PlatformFixture,
+  claimSuccessorRun, createWP2Platform, decisionOwnerRequest, decisionRequestArgs, observeStage, preparedBundle,
+  preparedBundleInput, requestText, WP2_ALL_TOOL_NAMES, type WP2PlatformFixture,
 } from '../helpers/WP2-platform-support.js';
 import { moveKernelAside, restoreKernel } from '../helpers/A2-restart-fixture.js';
 
@@ -103,7 +103,7 @@ async function openReplyWorld(label: string, options: Parameters<typeof createWP
     if (prepared.status !== 'ready') throw new Error(`${label} prepare S: ${JSON.stringify(prepared)}`);
     action = async () => {
       const result = await f.platform.messages.sendMessage(f.workCtx(), { input: { recipient: f.secondSessionRef!,
-        text: `${label} which file?`, intent: 'inquiry', needsReply: true, waitAfterSend: false },
+        text: `${label} which file?`, needsReply: true, waitAfterSend: false },
         meta: { requestId: `${label}-send`, expected: [] } });
       if (result.status !== 'committed') throw new Error(`${label} send: ${JSON.stringify(result)}`);
       sent = result.value;
@@ -190,12 +190,12 @@ async function activateSecondRoleRevision(f: WP2PlatformFixture): Promise<void> 
   if (activated.status !== 'committed') throw new Error(`WP2 role revision 2 activate: ${JSON.stringify(activated)}`);
 }
 
-it('F01 a real entered secretary Run calling send_user_message commits and leaves exactly one waiting decision card', async () => {
+it('F01 a real entered secretary Run calling ask_person commits and leaves exactly one waiting decision card', async () => {
   const f = await open({
     duty: 'secretary',
     scriptedReplies: [
-      { kind: 'calls', calls: [{ callId: 'f01-send', name: 'send_user_message',
-        args: decisionRequestArgs(GOAL, { text: '需要你决定：现在继续吗？',
+      { kind: 'calls', calls: [{ callId: 'f01-send', name: 'ask_person',
+        args: decisionRequestArgs('ask_person', { text: '需要你决定：现在继续吗？',
           options: [{ id: 'continue', label: '继续', effect: 'apply' }, { id: 'stop', label: '停止', effect: 'reject' }] }) }] },
       { kind: 'text', text: 'F01 asked the user to decide' },
     ],
@@ -230,10 +230,10 @@ it('F02 an executor and an ordinary reviewer Run may notify but a decision reque
       duty,
       scriptedReplies: [
         { kind: 'calls', calls: [
-          { callId: `${duty}-notify`, name: 'send_user_message',
-            args: decisionRequestArgs(GOAL, { intent: 'notify', text: '请知悉：工作已推进' }) },
-          { callId: `${duty}-decide`, name: 'send_user_message',
-            args: decisionRequestArgs(GOAL, { intent: 'decision_request', text: '请你决定：继续吗' }) },
+          { callId: `${duty}-notify`, name: 'notify_person',
+            args: decisionRequestArgs('notify_person', { text: '请知悉：工作已推进' }) },
+          { callId: `${duty}-decide`, name: 'ask_person',
+            args: decisionRequestArgs('ask_person', { text: '请你决定：继续吗' }) },
         ] },
         { kind: 'text', text: `${duty} finished the tool group` },
       ],
@@ -252,7 +252,7 @@ it('F02 an executor and an ordinary reviewer Run may notify but a decision reque
     // The permitted notify really committed; the refused decision did not.
     expect(notifyResult).toMatchObject({ status: 'success' });
     if (notifyResult?.status !== 'success') return;
-    expect(notifyResult.output[0]).toMatchObject({ kind: 'json', value: { waiting: false, message: { status: 'pending', intent: 'notify' } } });
+    expect(notifyResult.output[0]).toMatchObject({ kind: 'json', value: { status: 'committed', value: { status: 'pending', wake: false } } });
     expect(decideResult).toMatchObject({ status: 'error', error: { code: 'execution_failed' } });
     if (decideResult?.status !== 'error') return;
     expect(decideResult.output[0]).toMatchObject({ kind: 'json', value: { status: 'rejected', code: 'forbidden' } });
@@ -272,8 +272,8 @@ it('F03 a read-only copy Session is refused at the real claim admission and prod
     provenanceKind: 'readonly_copy',
     skipClaim: true,
     scriptedReplies: [
-      { kind: 'calls', calls: [{ callId: 'f03-send', name: 'send_user_message',
-        args: decisionRequestArgs(GOAL, { text: '只读副本不该发信' }) }] },
+      { kind: 'calls', calls: [{ callId: 'f03-send', name: 'ask_person',
+        args: decisionRequestArgs('ask_person', { text: '只读副本不该发信' }) }] },
       { kind: 'text', text: 'F03 finished' },
     ],
   });
@@ -289,12 +289,13 @@ it('F03 a read-only copy Session is refused at the real claim admission and prod
 });
 
 it('F04 after a successful tool request, broken role facts refuse the next request, the original request identity replays, and the card count is unchanged', async () => {
-  const originalArgs = decisionRequestArgs(GOAL, { text: '原始请求' });
+  const originalArgs = decisionRequestArgs('ask_person', { text: '原始请求' });
+  const originalOwnerInput = decisionOwnerRequest(GOAL, { text: '原始请求' });
   const f = await open({
     duty: 'secretary',
     secondWorld: true,
     scriptedReplies: [
-      { kind: 'calls', calls: [{ callId: 'f04-original', name: 'send_user_message', args: originalArgs }] },
+      { kind: 'calls', calls: [{ callId: 'f04-original', name: 'ask_person', args: originalArgs }] },
       { kind: 'text', text: 'F04 original done' },
       { kind: 'text', text: 'F04 second world should never run' },
     ],
@@ -312,9 +313,9 @@ it('F04 after a successful tool request, broken role facts refuse the next reque
   expect(original).toMatchObject({ status: 'success' });
   if (original?.status !== 'success') return;
   const originalValue = original.output[0];
-  expect(originalValue).toMatchObject({ kind: 'json', value: { message: { status: 'pending', revision: 1 } } });
+  expect(originalValue).toMatchObject({ kind: 'json', value: { status: 'committed', value: { status: 'pending', revision: 1 } } });
   if (originalValue?.kind !== 'json') return;
-  const message = (originalValue.value as { message: SessionMessage }).message;
+  const message = (originalValue.value as { value: SessionMessage }).value;
 
   // The active role facts now disagree with the Sessions' fixed pin.
   await activateSecondRoleRevision(f);
@@ -339,7 +340,7 @@ it('F04 after a successful tool request, broken role facts refuse the next reque
   expect(typeof originalRequestId).toBe('string');
   if (originalRequestId === undefined) return;
   const reissued = await f.platform.decisionMessages.sendUserMessage(f.workCtx(), {
-    input: originalArgs as never, meta: { requestId: originalRequestId, expected: [] } });
+    input: originalOwnerInput, meta: { requestId: originalRequestId, expected: [] } });
   expect(reissued).toMatchObject({ status: 'committed', replayed: true });
   expect((reissued as { value: SessionMessage }).value).toEqual(message);
 
@@ -621,7 +622,7 @@ it('F08 real Work preparation carries the installed extensions in the bound scop
   let sent: SessionMessage | null = null;
   const runtimeBudget: RuntimeBudget = { contextWindowTokens: 200000, inputTokens: null, outputTokens: null,
     maxRequests: 8, maxToolCalls: 8, timeoutMs: 30000, perResponseTokens: 512 };
-  const f = await open({ duty: 'secretary', ownedHost: true,
+  const f = await open({ duty: 'secretary', ownedHost: true, tools: [...WP2_ALL_TOOL_NAMES, 'ask_copy'],
     scriptedReplies: [{ kind: 'text', text: 'F08 work done' }],
     queryReplies: [{ kind: 'text', text: 'F08 query answer' }],
     beforeReply: async () => { const run = action; action = null; if (run !== null) await run(); } });
@@ -657,7 +658,7 @@ it('F08 real Work preparation carries the installed extensions in the bound scop
   if (preparedS.status !== 'ready') throw new Error(`F08 question prepare: ${JSON.stringify(preparedS)}`);
   action = async () => {
     const result = await f.platform.messages.sendMessage(f.workCtx(), { input: { recipient: recipientRef,
-      text: 'F08 which file?', intent: 'inquiry', needsReply: true, waitAfterSend: false },
+      text: 'F08 which file?', needsReply: true, waitAfterSend: false, answeredBy: 'copy', wake: false },
       meta: { requestId: 'f08-send', expected: [] } });
     if (result.status !== 'committed') throw new Error(`F08 send: ${JSON.stringify(result)}`);
     sent = result.value;
@@ -746,7 +747,7 @@ it.each(['memory', 'sqlite'] as const)('F11 [%s] marking one displayed notice le
 
   const send = async (label: string): Promise<SessionMessage> => {
     const result = await f.platform.messages.sendMessage(workS, { input: { recipient: secondSession,
-      text: `F11 ${label}`, intent: 'inquiry', needsReply: true, waitAfterSend: false },
+      text: `F11 ${label}`, needsReply: true, waitAfterSend: false },
       meta: { requestId: `f11-${kind}-send-${label}`, expected: [] } });
     if (result.status !== 'committed') throw new Error(`F11 send ${label}: ${JSON.stringify(result)}`);
     sent.push(result.value);
@@ -889,7 +890,7 @@ it.each(['memory', 'sqlite'] as const)('F11 [%s] marking one displayed notice le
 
 it.each(['memory'] as const)('F13 [%s] the real responsible link and wait transfer keep the notice; a successor execution accepting the reply removes it', async (kind) => {
   let action: (() => Promise<void>) | null = null;
-  const sendArgs: Record<string, unknown> = { recipient: {}, text: 'F13 which file?', intent: 'inquiry', needsReply: true, waitAfterSend: true };
+  const sendArgs: Record<string, unknown> = { recipient: {}, text: 'F13 which file?', needsReply: true, waitAfterSend: true };
   const f = await open({
     kind,
     duty: 'secretary',
@@ -1028,7 +1029,7 @@ it.each(['memory', 'sqlite'] as const)('F15 [%s] a failed reply or health commit
   if (preparedS.status !== 'ready') throw new Error(`F15 prepare S: ${JSON.stringify(preparedS)}`);
   action = async () => {
     const result = await f.platform.messages.sendMessage(f.workCtx(), { input: { recipient: f.secondSessionRef!,
-      text: 'F15 reply me', intent: 'inquiry', needsReply: true, waitAfterSend: false },
+      text: 'F15 reply me', needsReply: true, waitAfterSend: false },
       meta: { requestId: 'f15-send', expected: [] } });
     if (result.status !== 'committed') throw new Error(`F15 send: ${JSON.stringify(result)}`);
     sent = result.value;
@@ -1140,7 +1141,7 @@ it('F15 [sqlite] a committed reply whose receipt was lost recovers exactly once 
   if (preparedS.status !== 'ready') throw new Error(`F15-loss prepare S: ${JSON.stringify(preparedS)}`);
   action = async () => {
     const result = await f.platform.messages.sendMessage(f.workCtx(), { input: { recipient: f.secondSessionRef!,
-      text: 'F15-loss reply me', intent: 'inquiry', needsReply: true, waitAfterSend: false },
+      text: 'F15-loss reply me', needsReply: true, waitAfterSend: false },
       meta: { requestId: 'f15-loss-send', expected: [] } });
     if (result.status !== 'committed') throw new Error(`F15-loss send: ${JSON.stringify(result)}`);
     sent = result.value;
@@ -1164,7 +1165,10 @@ it('F15 [sqlite] a committed reply whose receipt was lost recovers exactly once 
   // An independent read of the committed business state (the message itself,
   // not the lost receipt) before the process boundary.
   const before = await f.platform.messages.readMessage(f.ctx, message.ref);
-  expect(before).toMatchObject({ status: 'ready', value: { status: 'responded', revision: message.revision + 1 } });
+  // §2.2 MSG-08: the reply accepted into the replier Run bumps the revision
+  // once for the reply and once for the accepted message part, so the read is
+  // the send's revision 1 + 2.
+  expect(before).toMatchObject({ status: 'ready', value: { status: 'responded', revision: message.revision + 2 } });
   if (before.status !== 'ready') return;
   const committedResponse = before.value.response;
 
@@ -1175,12 +1179,14 @@ it('F15 [sqlite] a committed reply whose receipt was lost recovers exactly once 
   const recovered = await f.platform.messages.respondMessage(workD, replyRequest);
   expect(recovered).toMatchObject({ status: 'committed', replayed: true });
   const after = await f.platform.messages.readMessage(f.ctx, message.ref);
-  expect(after).toMatchObject({ status: 'ready', value: { status: 'responded', revision: message.revision + 1 } });
+  expect(after).toMatchObject({ status: 'ready', value: { status: 'responded', revision: message.revision + 2 } });
   if (after.status !== 'ready') return;
   // Exactly one response: the replay changed nothing and the single response
   // slot is byte-identical to the independently-read committed value.
   expect(after.value.response).toEqual(committedResponse);
-  expect(after.value.acceptedInputs ?? []).toEqual([]);
+  // The only accepted input is the replier Run's message part; no response was
+  // ever accepted, so the formal answer is still the one unaccepted reply.
+  expect((after.value.acceptedInputs ?? []).filter(entry => entry.part === 'response')).toEqual([]);
 });
 
 it.each(['memory', 'sqlite'] as const)('F14 [%s] the Work reply position equals the reply receipt cursor and survives a retry and a reopen', async (kind) => {
@@ -1201,7 +1207,7 @@ it.each(['memory', 'sqlite'] as const)('F14 [%s] the Work reply position equals 
   if (preparedS.status !== 'ready') throw new Error(`F14 prepare S: ${JSON.stringify(preparedS)}`);
   action = async () => {
     const result = await f.platform.messages.sendMessage(f.workCtx(), { input: { recipient: f.secondSessionRef!,
-      text: 'F14 reply me', intent: 'inquiry', needsReply: true, waitAfterSend: false },
+      text: 'F14 reply me', needsReply: true, waitAfterSend: false },
       meta: { requestId: 'f14-send', expected: [] } });
     if (result.status !== 'committed') throw new Error(`F14 send: ${JSON.stringify(result)}`);
     sent = result.value;
@@ -1362,10 +1368,10 @@ it.each(['memory', 'sqlite'] as const)('F09 [%s] a reply saved after its Session
   expect(dto.value.items[0]).toMatchObject({ kind: 'retired_reply', hasContinuation: true, requiresUserRecipient: false });
 
   // No successor execution accepted the reply: the one response slot records no
-  // accepted input.
+  // accepted response (the replier Run's message part is a separate input).
   const repliedMessage = await f.platform.messages.readMessage(f.ctx, message.ref);
   if (repliedMessage.status !== 'ready') throw new Error(`F09 reply read: ${JSON.stringify(repliedMessage)}`);
-  expect(repliedMessage.value.acceptedInputs ?? []).toEqual([]);
+  expect((repliedMessage.value.acceptedInputs ?? []).filter(entry => entry.part === 'response')).toEqual([]);
 });
 
 it.each(['memory', 'sqlite'] as const)('F10 [%s] a reply saved before its Session becomes unavailable becomes a new unseen notice at the later health position', async (kind) => {
@@ -1407,7 +1413,7 @@ it.each(['memory', 'sqlite'] as const)('F10 [%s] (Work reconcile) the real recon
         // S: send the inquiry through the real mailbox owner, then stay in flight
         // so the Run is genuinely `running` when the Host reconciles it.
         const result = await f.platform.messages.sendMessage(f.workCtx(), { input: { recipient: f.secondSessionRef!,
-          text: 'F10r which file should S use?', intent: 'inquiry', needsReply: true, waitAfterSend: false },
+          text: 'F10r which file should S use?', needsReply: true, waitAfterSend: false },
           meta: { requestId: 'f10r-send', expected: [] } });
         if (result.status !== 'committed') throw new Error(`F10r send: ${JSON.stringify(result)}`);
         sent = result.value;
@@ -1669,6 +1675,7 @@ it.each(['memory', 'sqlite'] as const)('F14 [%s] (Query Answer) a consultation a
     duty: 'secretary',
     ownedHost: true,
     allowSourceRead: true,
+    tools: [...WP2_ALL_TOOL_NAMES, 'ask_copy'],
     scriptedReplies: [{ kind: 'text', text: 'F14q sender done' }],
     queryReplies: [{ kind: 'text', text: 'F14q consultation answer' }],
     beforeReply: async () => { const run = action; action = null; if (run !== null) await run(); },
@@ -1691,7 +1698,7 @@ it.each(['memory', 'sqlite'] as const)('F14 [%s] (Query Answer) a consultation a
   if (preparedS.status !== 'ready') throw new Error(`F14q prepare S: ${JSON.stringify(preparedS)}`);
   action = async () => {
     const result = await f.platform.messages.sendMessage(f.workCtx(), { input: { recipient: recipientRef,
-      text: 'F14q which file?', intent: 'inquiry', needsReply: true, waitAfterSend: false },
+      text: 'F14q which file?', needsReply: true, waitAfterSend: false, answeredBy: 'copy', wake: false },
       meta: { requestId: 'f14q-send', expected: [] } });
     if (result.status !== 'committed') throw new Error(`F14q send: ${JSON.stringify(result)}`);
     sent = result.value;
@@ -1835,6 +1842,7 @@ it.each(['memory', 'sqlite'] as const)('F10 [%s] (Query recovery) the real Query
     ownedHost: true,
     allowSourceRead: true,
     allowAnyRun: true,
+    tools: [...WP2_ALL_TOOL_NAMES, 'ask_copy'],
     scriptedReplies: [{ kind: 'text', text: 'F10q sender done' }],
     queryReplies: [{ kind: 'text', text: 'F10q query answer' }],
     beforeReply: async () => { const run = action; action = null; if (run !== null) await run(); },
@@ -1853,7 +1861,7 @@ it.each(['memory', 'sqlite'] as const)('F10 [%s] (Query recovery) the real Query
   if (preparedS.status !== 'ready') throw new Error(`F10q prepare S: ${JSON.stringify(preparedS)}`);
   action = async () => {
     const result = await f.platform.messages.sendMessage(f.workCtx(), { input: { recipient: f.sessionRef,
-      text: 'F10q which file?', intent: 'inquiry', needsReply: true, waitAfterSend: false },
+      text: 'F10q which file?', needsReply: true, waitAfterSend: false, answeredBy: 'copy', wake: false },
       meta: { requestId: 'f10q-send', expected: [] } });
     if (result.status !== 'committed') throw new Error(`F10q send: ${JSON.stringify(result)}`);
     sent = result.value;
@@ -1952,7 +1960,7 @@ it.each(['memory', 'sqlite'] as const)('F10 [%s] (Query recovery, positive) a st
   if (preparedS.status !== 'ready') throw new Error(`F10p prepare S: ${JSON.stringify(preparedS)}`);
   action = async () => {
     const result = await f.platform.messages.sendMessage(f.workCtx(), { input: { recipient: f.secondSessionRef!,
-      text: 'F10p which file?', intent: 'inquiry', needsReply: true, waitAfterSend: false },
+      text: 'F10p which file?', needsReply: true, waitAfterSend: false },
       meta: { requestId: 'f10p-send', expected: [] } });
     if (result.status !== 'committed') throw new Error(`F10p send: ${JSON.stringify(result)}`);
     sent = result.value;
@@ -2092,7 +2100,7 @@ it.each(['memory', 'sqlite'] as const)('F10 [%s] (Work recognition) attesting th
       const index = call++;
       if (index === 0) {
         const result = await f.platform.messages.sendMessage(f.workCtx(), { input: { recipient: f.secondSessionRef!,
-          text: 'F10n which file should S use?', intent: 'inquiry', needsReply: true, waitAfterSend: false },
+          text: 'F10n which file should S use?', needsReply: true, waitAfterSend: false },
           meta: { requestId: 'f10n-send', expected: [] } });
         if (result.status !== 'committed') throw new Error(`F10n send: ${JSON.stringify(result)}`);
         sent = result.value;

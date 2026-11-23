@@ -14,21 +14,24 @@
  *   and `holdS6BRequestRound` releases and awaits its own gate on every path.
  */
 import type { SessionRef, WorkspaceScope } from '../../src/contracts/core/identity.js';
+import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { DispatchBasisV1, GoalRef, GoalSnapshot } from '../../src/contracts/ledger.js';
 import type { ClaimTaskInput } from '../../src/core/work-graph/model/claim-contracts.js';
 import type { SessionMessage } from '../../src/core/work-graph/model/communication-contracts.js';
 import type { SessionFactsV1 } from '../../src/core/work-graph/model/session-facts-contracts.js';
 import type { GraphWrite } from '../../src/core/work-graph/model/task-contracts.js';
 import { graphWrite, plain } from './AG2b-collaboration-fixture.js';
-import { advanceUntil, type AdvanceValue } from './A2-restart-fixture.js';
+import { advanceUntil } from './A2-restart-fixture.js';
 import { callPublishedOwnerAsHost, type S6AHostWorld } from './S6A-host-fixture.js';
 import { S6A_SCOPE, type S6ASession } from './S6A-request-fixture.js';
 import type { ApplicationProofV1, DecisionApplicationReceiptV1 } from '../../src/contracts/core/session-message.js';
 import type { DecisionSourceV1 } from '../../src/contracts/goal-decisions.js';
 import type { DecisionCardV1, ResolveDecisionReadV1 } from '../../src/core/work-graph/model/decision-contracts.js';
+import { canonicalRefKey } from '../../src/core/work-graph/persistence/record-codecs.js';
 import { s6aCardsWorkspace } from './S6A-cards-fixture.js';
 import {
-  cancelS7AGoal, committed, holdS7AQueryRound, ready, runS7ASameSessionAgain, seedS7AGoalPlan, sendS7ASecretaryMessage,
+  cancelS7AGoal, committed, ready, runS7ASameSessionAgain, seedS7AGoalPlan, sendS7ASecretaryMessage,
+  sendS7ASecretaryMessageAfter,
 } from './S7A-fixture.js';
 
 // ---------------------------------------------------------------------------
@@ -57,38 +60,48 @@ export async function readS7A2DispatchBasis(world: S6AHostWorld, goal: GoalRef):
 }
 
 /**
- * A real secretary send in a held request round of `goal`. An `inquiry` is 7A-1's own step
- * `sendS7ASecretaryMessage(world, { label, goalId: goal.goalId }, recipient, text)` (which sends `needsReply: true`
- * with no `expected`), and this step returns its `message`. An `action_request` takes the path 7A-1 already proves:
- * `holdS7AQueryRound(world, { label, goalId: goal.goalId }, …)` uses the round's own `query_run` context, the send
- * calls `world.platform.messages.sendMessage` with `needsReply: true` and `expected` = the `readS7A2DispatchBasis`
- * read just before, then `messages/read`. The release follows the autonomy the test set with `setS7AAutonomy`.
+ * A real secretary send in a held request round of `goal`, through the shared secretary send step
+ * `sendS7ASecretaryMessage(world, { label, goalId: goal.goalId }, recipient, text)` (which sends `needsReply: true`);
+ * the step returns its `message`. The old `intent` parameter and its branch are gone: the message carries only
+ * `needsReply`/`wake` and the dispatch version lives in `dispatch_task`'s own `expected`, never on the message. The
+ * release follows the autonomy the test set with `setS7AAutonomy`.
  */
-export async function sendS7A2Request(world: S6AHostWorld, input: {
-  label: string; goal: GoalRef; recipient: SessionRef; intent: 'action_request' | 'inquiry';
-}): Promise<SessionMessage> {
+export async function sendS7A2Request(
+  world: S6AHostWorld, input: { label: string; goal: GoalRef; recipient: SessionRef }): Promise<SessionMessage> {
   const text = `S7A2 ${input.label} request`;
-  if (input.intent === 'inquiry') {
-    const sent = await sendS7ASecretaryMessage(world, { label: input.label, goalId: input.goal.goalId },
-      input.recipient, text);
-    return sent.message;
-  }
-  return holdS7AQueryRound(world, { label: input.label, goalId: input.goal.goalId }, async context => {
-    const expected = await readS7A2DispatchBasis(world, input.goal);
-    const saved = committed<SessionMessage>(await world.platform.messages.sendMessage(context, {
-      input: { recipient: input.recipient, text, intent: 'action_request', needsReply: true, expected },
-      meta: { requestId: `s7a2-send-${input.label}`, expected: [] },
-    }), 'the action request');
-    return ready<SessionMessage>(await world.post('messages/read', plain(S6A_SCOPE, saved.ref)),
-      'the saved action request');
-  });
+  const sent = await sendS7ASecretaryMessage(world, { label: input.label, goalId: input.goal.goalId },
+    input.recipient, text);
+  return sent.message;
 }
 
-/** `messages/release` with `allow: true` as the person, then `messages/read`. */
+/**
+ * The `action_release` card this message asked for, answered `approve` as the person, then `messages/read`. A Goal can
+ * hold several cards, so the step selects the one whose action request names this message as its `basis.sourceMessage`
+ * (read from the owner), never the queue's first card. The card source still comes from the queue read.
+ */
 export async function approveS7A2Message(world: S6AHostWorld, message: SessionMessage, label: string):
 Promise<SessionMessage> {
-  committed<SessionMessage>(await world.post('messages/release',
-    graphWrite(S6A_SCOPE, { messageRef: message.ref, allow: true }, `s7a2-release-${label}`)), `the ${label} approval`);
+  const goal = message.goalRef;
+  if (goal === null) throw new Error(`S7A2: the ${label} message has no Goal to answer a card for`);
+  const cards = s6aCardsWorkspace(world, S6A_SCOPE);
+  const listed = (await cards.readCards(goal))
+    .filter(card => card.source.kind === 'action_release' && card.state === 'waiting_answer');
+  let source: DecisionSourceV1 | null = null;
+  for (const card of listed) {
+    const ref = card.actionRelease?.ref;
+    if (ref === undefined) continue;
+    const read = await world.platform.actionRequests.readRequest(world.humanContext(), { ref });
+    if (read.status !== 'ready') continue;
+    const from = read.value.basis?.sourceMessage ?? null;
+    if (from !== null && canonicalRefKey(from) === canonicalRefKey(message.ref)) {
+      source = card.source;
+      break;
+    }
+  }
+  if (source === null) {
+    throw new Error(`S7A2: the ${label} message has no waiting action_release card`);
+  }
+  await answerS7A2Card(world, { source, optionId: 'approve', label });
   return ready<SessionMessage>(await world.post('messages/read', plain(S6A_SCOPE, message.ref)),
     `the ${label} approved message`);
 }
@@ -116,12 +129,13 @@ Promise<SessionMessage> {
  * message passes the source Goal; the claim row passes none.
  */
 export async function sendS7A2PersonMessage(world: S6AHostWorld, input: {
-  label: string; recipient: SessionRef; goal?: GoalRef;
+  label: string; recipient: SessionRef; goal?: GoalRef; answeredBy?: 'copy';
 }): Promise<SessionMessage> {
   const sent = committed<SessionMessage>(await world.post('messages/send', graphWrite(S6A_SCOPE, {
     recipient: input.recipient, text: `S7A2 ${input.label} message`,
-    intent: input.goal === undefined ? 'inquiry' : 'action_request',
+    ...(input.goal === undefined ? {} : { entry: 'person_intervention' as const }),
     needsReply: true, goalRef: input.goal ?? null,
+    ...(input.answeredBy === 'copy' ? { answeredBy: 'copy' as const, wake: false } : {}),
   }, `s7a2-person-${input.label}`)), `the ${input.label} person message`);
   return ready<SessionMessage>(await world.post('messages/read', plain(S6A_SCOPE, sent.ref)),
     `the ${input.label} person message`);
@@ -201,15 +215,16 @@ Promise<number> {
 // ---------------------------------------------------------------------------
 
 /**
- * The Goal's `message_release` card: `decisions/queue` lists it through the cards fixture's own all-pages read
+ * The Goal's frozen `action_release` card: `decisions/queue` lists it through the cards fixture's own all-pages read
  * (`tests/helpers/S6A-cards-fixture.ts:276–:291`) and `decisions/card` reads it with the queue's own source; no
- * `DecisionSourceV1` is built here (`tests/RULES.md:150` F1). The first `message_release` card of the queue wins.
+ * `DecisionSourceV1` is built here (`tests/RULES.md:150` F1). The first `action_release` card of the queue wins;
+ * its `cardKey` comes from that queue read, never from a hand-built source.
  */
 export async function readS7A2Card(world: S6AHostWorld, goal: GoalRef):
 Promise<{ card: DecisionCardV1; source: DecisionSourceV1 }> {
   const cards = s6aCardsWorkspace(world, S6A_SCOPE);
-  const listed = (await cards.readCards(goal)).find(card => card.source.kind === 'message_release');
-  if (listed === undefined) throw new Error(`S7A2: the ${goal.goalId} release card is not in the queue`);
+  const listed = (await cards.readCards(goal)).find(card => card.source.kind === 'action_release');
+  if (listed === undefined) throw new Error(`S7A2: the ${goal.goalId} action_release card is not in the queue`);
   const card = ready<DecisionCardV1>(await cards.route('decisions/card', { source: listed.source }),
     `the ${goal.goalId} release card`);
   return { card, source: listed.source };
@@ -228,21 +243,24 @@ export async function answerS7A2Card(world: S6AHostWorld, input: {
   }, `s7a2-answer-${input.label}`, input.source.pins)), `the ${input.label} decision answer`);
 }
 /**
- * One release driven by the Workflow explicitly: `advanceUntil` walks `select_work` to the `release_message` perform,
- * the step posts that perform, reads `messages/read` of the row's message and then `goals/dispatch-basis`. It never
- * calls the Host's arm entry and never reads the counter's store (`tests/RULES.md:170` F7).
+ * The message after the person's `action_release` card answer: `messages/read` plus `goals/dispatch-basis`, and a check
+ * that the card closed as `source_resolved` and is read-only. The old Workflow `release_message` step and
+ * `messages/release` queue are gone; the card answer is the one release. The step moves no fact and reads no counter
+ * store (`tests/RULES.md:170` F7).
  */
 export async function driveS7A2Release(world: S6AHostWorld, input: {
-  goal: GoalRef; messageRef: SessionMessage['ref']; label: string;
+  goal: GoalRef; messageRef: SessionMessage['ref']; label: string; source?: DecisionSourceV1;
 }): Promise<{ message: SessionMessage; basis: DispatchBasisV1 }> {
-  const perform = await advanceUntil(world.ag2b, { schemaVersion: 1 as const, goalRef: input.goal,
-    flowId: `s7a2-release-${input.label}`, sessionHint: null, kind: 'select_work' as const }, 'release_message');
-  const done = ready<AdvanceValue>(await world.post('workflow/advance', plain(S6A_SCOPE, perform)),
-    `the ${input.label} release step`);
-  if (done.state !== 'advance') throw new Error(`S7A2: the ${input.label} release step did not advance`);
   const message = ready<SessionMessage>(await world.post('messages/read', plain(S6A_SCOPE, input.messageRef)),
     `the ${input.label} released message`);
-  if (message.release !== 'released') throw new Error(`S7A2: the ${input.label} message is ${message.release}`);
+  // A settled dispatch card leaves the waiting queue (`views/decision-read-model.ts` filters `pending`), so its
+  // closed shape is read back by the queue's own source when the caller still has it.
+  const releasedCard = input.source === undefined ? await readS7A2Card(world, input.goal)
+    : { card: ready<DecisionCardV1>(await s6aCardsWorkspace(world, S6A_SCOPE).route('decisions/card',
+      { source: input.source }), `the ${input.label} release card`), source: input.source };
+  if (releasedCard.card.state !== 'closed' || releasedCard.card.closedReason !== 'source_resolved') {
+    throw new Error(`S7A2: the ${input.label} action_release card is not closed/source_resolved`);
+  }
   return { message, basis: await readS7A2DispatchBasis(world, input.goal) };
 }
 /**
@@ -259,4 +277,60 @@ export async function applyS7A2Message(world: S6AHostWorld, input: {
     { owner: 'messages.applyMessage', wave: '7a2-l', scope: S6A_SCOPE },
     graphWrite(S6A_SCOPE, { messageRef: input.message.ref, proof }, `s7a2-apply-${input.label}`).request),
   `the ${input.label} message application`);
+}
+
+// ---------------------------------------------------------------------------
+// Appended export (7D2 CP2T5 rework R6): the request send plus its dispatch request
+// ---------------------------------------------------------------------------
+
+/**
+ * `sendS7A2Request` plus one dispatch request in the same held round, through the public action owner
+ * (`platform.actionRequests.requestDispatch`, P2 §2.5/§2.8): that persisted request is what raises the
+ * `action_release` card (`views/decision-read-model.ts`), never the message. `taskId` picks the Task (default: the
+ * first one with no open dispatch and no Run yet); the world's secretary grant must carry `dispatch_task`
+ * (`openS7AQueryWorldWithActions`/`requestWorldOptionsWithActions` in `S7A-fixture.ts`). The request rides this
+ * send's request root, so the message's `requests/read` feedback names the dispatch.
+ */
+export async function sendS7A2RequestWithDispatch(
+  world: S6AHostWorld, input: { label: string; goal: GoalRef; recipient: SessionRef; taskId?: string }):
+Promise<SessionMessage> {
+  const text = `S7A2 ${input.label} request`;
+  const cards = s6aCardsWorkspace(world, S6A_SCOPE);
+  const run = async (context: CoreCallContext) => {
+    const plan = await cards.activePlan(input.goal);
+    if (plan === null) throw new Error(`S7A2_PRECONDITION: the Goal ${input.goal.goalId} has no adopted Plan`);
+    const work = plan.tasks.filter(task => task.taskKind === 'work');
+    if (work.length === 0) throw new Error(`S7A2_PRECONDITION: the Goal ${input.goal.goalId} has no work Task`);
+    const open = await world.platform.actionRequests.listOpenDispatches(context, { goalRef: input.goal });
+    if (open.status !== 'ready') throw new Error(`S7A2: the open dispatches are not readable: ${JSON.stringify(open)}`);
+    const requested = new Set(open.value.map(entry => entry.request.task.taskId));
+    const free: string[] = [];
+    for (const task of work) {
+      if (requested.has(task.taskId)) continue;
+      if (await cards.taskRun(input.goal, task.taskId) === null) free.push(task.taskId);
+    }
+    const taskId = input.taskId ?? free[0];
+    // Never fall back to a completed Task: the dispatch owner would refuse it (P2 §2.5, design §3.2), and the
+    // silent fallback hid that the world has no free Task for another request.
+    if (taskId === undefined) {
+      throw new Error(`S7A2_PRECONDITION: the Goal ${input.goal.goalId} has no free work Task for ${input.label}`
+        + ` (open dispatches: ${[...requested].join(', ') || 'none'})`);
+    }
+    const task = work.find(candidate => candidate.taskId === taskId);
+    if (task === undefined) throw new Error(`S7A2: the Goal ${input.goal.goalId} has no work Task ${taskId}`);
+    const dispatched = await world.platform.actionRequests.requestDispatch(context, {
+      input: { taskRef: { projectId: input.goal.projectId, goalId: input.goal.goalId, taskId },
+        reason: `S7A2 ${input.label} dispatch` },
+      meta: { requestId: `s7a2-dispatch-${input.label}`, expected: [] },
+    });
+    // A pending request is the person's card; an automatic one waits for the target loop. An already-open
+    // request for this Task is the same persisted request, so the caller's card read finds it too.
+    if (dispatched.status !== 'needs_decision' && dispatched.status !== 'requested'
+      && dispatched.status !== 'already_requested') {
+      throw new Error(`S7A2: the ${input.label} dispatch request was refused: ${JSON.stringify(dispatched)}`);
+    }
+  };
+  const sent = await sendS7ASecretaryMessageAfter(world, { label: input.label, goalId: input.goal.goalId },
+    input.recipient, text, async context => { await run(context); });
+  return sent.message;
 }

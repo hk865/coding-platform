@@ -1,10 +1,10 @@
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
-import type { SessionRef } from '../../../contracts/core/identity.js';
+import type { RoleConfigurationRef, SessionRef } from '../../../contracts/core/identity.js';
 import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
 import type { PreparedTaskManifestV1 } from '../../../contracts/core/prepared-execution.js';
 import type { CoreRejection, ReadResult } from '../../../contracts/core/results.js';
 import { rejectedWithCurrent as reject } from '../../../contracts/core/rejections.js';
-import type { ExecutionAuthorizationV2, RunSnapshot } from '../../../contracts/dispatch.js';
+import type { ExecutionAuthorizationV2, RoleBindingRefV1, RunSnapshot } from '../../../contracts/dispatch.js';
 import { canonicalOf } from '../../../contracts/fingerprint.js';
 import { planningReplyTextOf } from '../../../contracts/plan-round.js';
 import { isPos as isPositiveInt, isRecord as isObject, nonEmpty } from '../../../contracts/validation/common.js';
@@ -20,30 +20,41 @@ import { decodeQueryJobAnswerSnapshot, decodeQueryJobSnapshot, decodeQueryRunSna
 import { decodeRun } from '../materials/run-snapshot-decoder.js';
 import { mergeGuards } from '../persistence/record-guards.js';
 import { sessionStoreFailureToRejection } from '../persistence/read-result-failures.js';
-import type { DecodeResult, EncodedRecord, GoalRecordTransactionPort, RecordBatchRead, StoreResult } from '../../record-store/ports.js';
+import type { DecodeResult, EncodedRecord, GoalRecordTransactionPort, RecordBatchRead, RecordGuard, StoreResult } from '../../record-store/ports.js';
 import { decodeSessionRecord, plainSessionRefToAggregate, sessionAggregateRefKey } from '../sessions/session-record-codecs.js';
 import { SESSION_MESSAGE_MAX_TEXT_BYTES } from '../sessions/message-record-codecs.js';
 import { decodeDispatchOutboxEntry, dispatchOutboxRefKey } from '../tasks/claim-record-codecs.js';
 import { readStoredManifest, recheckHostRoleAdmission } from '../tasks/execution-entry-service.js';
 import { readBatch, readGoal } from '../tasks/plan-readers.js';
+import { readRequestRounds } from '../queries/request-rounds-read.js';
 import type { QueryAnswerBinding } from '../state/message-machine.js';
 import {
-  identityKeyOf, internalHostContext, isolatedContext, isUserRecipient, mapBatchFailure, mapReadResult, ownContext,
-  presenceOf, senderIdentityOf,
+  identityKeyOf, internalHostContext, isolatedContext, isUserRecipient, loadMessage, mapBatchFailure, mapReadResult,
+  ownContext, presenceOf, sameSessionRefAs, senderIdentityOf,
 } from './mailbox-common.js';
 import type {
   AuthOutcome, FactsOutcome, IdentityOutcome, MailboxContext, Owned, QueryAnswerFacts, QueryRecordRead, WorkRunPrincipal,
 } from './mailbox-types.js';
+
+type ConsultationBindingOutcome =
+  | { ok: true; binding: QueryAnswerBinding; answererSession: SessionRef | null }
+  | { ok: false; rejection: CoreRejection };
 
 /**
  * MSG-06's consultation binding in today's check order. A derived A′ answer is
  * answered by the CHILD Session, while the original message recipient (source
  * A) stays the formal source: the two are never conflated and the derivation
  * must name that exact source.
+ *
+ * A planresume/planfix Answer is written to the executor message M frozen on
+ * `repliesToMessageRef`, but M is not the line that claimed and answered the
+ * Query: R's recipient is. For that target the sender line is read once from R
+ * itself, and the shared claimed-Session guard still proves that line is the
+ * QueryRun's claim.
  */
-function consultationBindingOf(job: QueryJobSnapshot, run: QueryRunSnapshot, messageRef: SessionMessageRef, recipient: SessionRef): {
-  binding: QueryAnswerBinding; answererSession: SessionRef | null;
-} {
+async function consultationBindingOf(mailbox: MailboxContext, owned: Owned, job: QueryJobSnapshot, run: QueryRunSnapshot,
+  messageRef: SessionMessageRef, recipient: SessionRef, storedDerivation: SessionMessage['consultationDerivation']):
+Promise<ConsultationBindingOutcome> {
   const execution = job.job.intent.execution;
   // The intervention planning Query is the second Host-only answer association: it must name exactly this source
   // message or the executor message frozen on `repliesToMessageRef` (a planresume/planfix continuation), and exactly
@@ -52,34 +63,49 @@ function consultationBindingOf(job: QueryJobSnapshot, run: QueryRunSnapshot, mes
   if (execution.kind === 'intervention_planning') {
     const source = execution.sourceMessageRef as SessionMessageRef;
     const repliesTo = execution.repliesToMessageRef;
-    if (canonicalOf(source) !== canonicalOf(messageRef)
-      && (repliesTo === undefined || canonicalOf(repliesTo) !== canonicalOf(messageRef))) {
-      return { binding: 'other_message', answererSession: null };
+    const isSource = canonicalOf(source) === canonicalOf(messageRef);
+    if (!isSource && (repliesTo === undefined || canonicalOf(repliesTo) !== canonicalOf(messageRef))) {
+      return { ok: true, binding: 'other_message', answererSession: null };
     }
     const refs = interventionPlanningQueryRefs(source);
     if (refs.queryJobRef.queryJobId !== job.job.queryJobId || refs.queryRunRef.runId !== run.run.runId) {
-      return { binding: 'other_query_identity', answererSession: null };
+      return { ok: true, binding: 'other_query_identity', answererSession: null };
     }
-    return { binding: 'matches', answererSession: recipient };
+    if (isSource) return { ok: true, binding: 'matches', answererSession: recipient };
+    // M's reply is claimed by R's recipient line. Read R (the frozen source) once and use its receiving line as the
+    // Answer sender; a read failure is the caller's existing read failure. The claimed-Session guard compares this
+    // line with the QueryRun's claimed Session, so R's recipient and the formal claim are checked by that same guard.
+    const sourceRead = await loadMessage(mailbox, owned, source);
+    if (sourceRead.status !== 'ready') return { ok: false, rejection: mapReadResult(sourceRead) as CoreRejection };
+    const sourceRecipient = sourceRead.value.recipient;
+    if (isUserRecipient(sourceRecipient)) return { ok: true, binding: 'matches', answererSession: null };
+    return { ok: true, binding: 'matches',
+      answererSession: { projectId: sourceRecipient.projectId, sessionId: sourceRecipient.sessionId } };
   }
   const consultation = execution.consultation;
   if (execution.kind !== 'semantic_query' || consultation === undefined) {
-    return { binding: 'other_message', answererSession: null };
+    return { ok: true, binding: 'other_message', answererSession: null };
   }
-  if (canonicalOf(consultation.messageRef) !== canonicalOf(messageRef)) return { binding: 'other_message', answererSession: null };
-  if (canonicalOf(consultation.recipient) !== canonicalOf(recipient)) return { binding: 'other_recipient', answererSession: null };
+  if (canonicalOf(consultation.messageRef) !== canonicalOf(messageRef)) return { ok: true, binding: 'other_message', answererSession: null };
+  if (canonicalOf(consultation.recipient) !== canonicalOf(recipient)) return { ok: true, binding: 'other_recipient', answererSession: null };
   const derivation = consultation.derivation;
+  // The question's derivation was frozen when the copy first consumed it; the
+  // Answer side must name that same child line and history boundary, never a
+  // second derivation taken from the Query's declaration.
+  if (canonicalOf(derivation) !== canonicalOf(storedDerivation)) {
+    return { ok: true, binding: 'other_derivation_source', answererSession: null };
+  }
   if (derivation !== undefined && canonicalOf(derivation.sourceSessionRef) !== canonicalOf(recipient)) {
-    return { binding: 'other_derivation_source', answererSession: null };
+    return { ok: true, binding: 'other_derivation_source', answererSession: null };
   }
   const answererSession = derivation === undefined
     ? recipient
     : { projectId: derivation.childSessionRef.projectId, sessionId: derivation.childSessionRef.sessionId };
   const refs = consultationQueryRefs(consultation.messageRef);
   if (refs.queryJobRef.queryJobId !== job.job.queryJobId || refs.queryRunRef.runId !== run.run.runId) {
-    return { binding: 'other_query_identity', answererSession };
+    return { ok: true, binding: 'other_query_identity', answererSession };
   }
-  return { binding: 'matches', answererSession };
+  return { ok: true, binding: 'matches', answererSession };
 }
 
 // --------------------------------------------------------------------------
@@ -468,7 +494,8 @@ export async function loadQueryAnswer(mailbox: MailboxContext, owned: Owned, ref
  * MSG-06's facts, read in today's order: the Answer, its QueryJob and its
  * QueryRun (a failed read keeps today's rejection). The body and the
  * `query_run` sender come from the settled Answer/Job/Run, never from caller
- * text or caller identity.
+ * text or caller identity. When the message is the frozen `repliesToMessageRef`
+ * target, the sender line is R's recipient (read from R), not the target's.
  */
 export async function readQueryAnswerFacts(mailbox: MailboxContext, owned: Owned, message: SessionMessage, answerRef: QueryJobAnswerRef): Promise<
   { ok: true; facts: QueryAnswerFacts } | { ok: false; rejection: CoreRejection }> {
@@ -489,7 +516,10 @@ export async function readQueryAnswerFacts(mailbox: MailboxContext, owned: Owned
     return { ok: false, rejection: reject('invalid', 'a user-recipient message cannot be answered by a Query Answer association') };
   }
   const recipient = { projectId: messageRecipient.projectId, sessionId: messageRecipient.sessionId };
-  const { binding, answererSession } = consultationBindingOf(job, run, message.ref, recipient);
+  const bound = await consultationBindingOf(mailbox, owned, job, run, message.ref, recipient,
+    message.consultationDerivation);
+  if (!bound.ok) return bound;
+  const { binding, answererSession } = bound;
   const state = run.run.executionState;
   const settlement: QueryAnswerFacts['verdict']['run'] = state === undefined || state.phase !== 'settled' ? 'not_settled'
     : run.run.status !== 'answered' || run.run.outcome !== 'answered' ? 'not_answered' : 'settled_answered';
@@ -586,22 +616,124 @@ export async function secretaryReader(mailbox: MailboxContext, owned: Owned): Pr
 }
 
 /**
- * `query_run` 调用方的一处分流，发信、读箱、回复三个口共用：配了 `queryRounds`、解析就绪、又不是秘书请求轮的，
- * 交出这一轮，走问答轮自己的分支；其中职责读成 `unknown` 的拒（`forbidden`）：认不出职责就不知道这条线该有哪些
- * 能力，不给它邮箱；其余（没配、解析失败、请求轮）回 `round: null`，调用方照旧走秘书路径，原文不变。解析只认字面
- * principal 指名的 QueryRun，项目和工作区已由 `ownContext` 对过。
+ * A resolved secretary round's own commit guard set: the request root's complete current facts (every round's
+ * QueryJob and QueryRun, and the owner Session) plus the ownership check. The round must still own the request;
+ * a changed owner is the same `revision_conflict` the action owner returns, with the tail version it read.
  */
-export async function nonRequestQueryRound(mailbox: MailboxContext, owned: Owned): Promise<
+export async function requestRoundOwnership(mailbox: MailboxContext, owned: Owned,
+  round: Pick<SecretaryQueryRunV1, 'requestRoot' | 'session' | 'scope'>):
+Promise<{ ok: true; guards: readonly RecordGuard[] } | { ok: false; rejection: CoreRejection }> {
+  const requestCtx = { ...internalHostContext(mailbox, owned), workspaceId: round.scope.workspaceId };
+  let read;
+  try {
+    read = await readRequestRounds(mailbox.records, requestCtx, { requestRoot: round.requestRoot });
+  } catch {
+    return { ok: false, rejection: reject('unavailable', 'the request rounds could not be read') };
+  }
+  if (read.status === 'not_found') return { ok: false, rejection: reject('unavailable', 'the request root is not readable') };
+  if (read.status !== 'ready') return { ok: false, rejection: mapReadResult(read) as CoreRejection };
+  const facts = read.value;
+  if (facts.owner === null || !sameSessionRefAs(facts.owner, round.session)) {
+    return { ok: false, rejection: reject('revision_conflict', 'the request owner changed since that revision',
+      [{ ref: { ...facts.tail.ref }, revision: facts.tail.revision }]) };
+  }
+  return { ok: true, guards: [...facts.guards] };
+}
+
+/**
+ * `query_run` 调用方的一处分流，读箱、回复和决定读者共用：解析就绪、默认又不是秘书请求轮的，交出这一轮，走问答轮自己
+ * 的分支；请求轮在回复口和决定读者带 `allowRequestRound` 收，读箱照旧回 `round: null` 走秘书路径；解析失败也回
+ * `round: null`。解析只认字面 principal 指名的 QueryRun，项目和工作区已由 `ownContext` 对过。
+ */
+export async function nonRequestQueryRound(mailbox: MailboxContext, owned: Owned,
+  options: { allowRequestRound?: boolean } = {}): Promise<
   { ok: true; round: QueryRoundV1 | null } | { ok: false; rejection: CoreRejection }
 > {
-  if (owned.principal.kind !== 'query_run' || mailbox.deps.queryRounds === undefined) return { ok: true, round: null };
+  if (owned.principal.kind !== 'query_run') return { ok: true, round: null };
   const resolved = await mailbox.deps.queryRounds.resolveQueryRound(isolatedContext(owned));
-  if (resolved.status !== 'ready' || resolved.value.requestRound) return { ok: true, round: null };
-  if (resolved.value.duty === 'unknown') {
+  if (resolved.status !== 'ready'
+    || (resolved.value.requestRound && options.allowRequestRound !== true)) return { ok: true, round: null };
+  return knownDutyRound(resolved.value);
+}
+
+/**
+ * 发信、人件和撤回三个口的 `query_run` 调用方的这一轮（请求轮也算）：只经唯一解析器这一次，没有第二条路，解析不出
+ * 就是解析器自己的拒绝（读失败仍是读失败）。
+ */
+export async function requiredQueryRound(mailbox: MailboxContext, owned: Owned): Promise<
+  { ok: true; round: QueryRoundV1 } | { ok: false; rejection: CoreRejection }
+> {
+  const resolved = await mailbox.deps.queryRounds.resolveQueryRound(isolatedContext(owned));
+  if (resolved.status !== 'ready') return { ok: false, rejection: resolved };
+  return knownDutyRound(resolved.value);
+}
+
+/** 职责读成 `unknown` 的拒（`forbidden`）：认不出职责就不知道这条线该有哪些能力，不给它邮箱。 */
+function knownDutyRound(round: QueryRoundV1):
+{ ok: true; round: QueryRoundV1 } | { ok: false; rejection: CoreRejection } {
+  if (round.duty === 'unknown') {
     return { ok: false, rejection: reject('forbidden',
       'the duty of this query round\'s Session was not recognized (unknown), so the round has no mailbox access') };
   }
-  return { ok: true, round: resolved.value };
+  return { ok: true, round };
+}
+
+/**
+ * The caller's own trusted round through the ONE resolver, request rounds
+ * included; null for every other principal and when no resolver is bound. The
+ * decision reader uses it to prove the caller's real Session; it reads no
+ * message.
+ */
+export async function readQueryRound(mailbox: MailboxContext, ctx: CoreCallContext):
+Promise<ReadResult<QueryRoundV1 | null>> {
+  const owned = ownContext(ctx);
+  if (!owned.ok) return owned.rejection;
+  const routed = await nonRequestQueryRound(mailbox, owned, { allowRequestRound: true });
+  if (!routed.ok) return routed.rejection;
+  return { status: 'ready', value: routed.round };
+}
+
+/**
+ * The recipient line's own fixed role facts, read through the ONE duties
+ * adapter (the sender check uses the same seam). The adapter keys the read by
+ * the Session's fixed role, so a synthetic binding that names that exact role
+ * is enough; it is never a second duty rule. A read failure is the failure,
+ * never "not a reviewer".
+ */
+function roleBindingOfSessionRole(role: RoleConfigurationRef): RoleBindingRefV1 {
+  if (role.kind === 'role_spec') {
+    return {
+      schemaVersion: 1, bindingId: `session-duty:${role.pin.ref.roleId}`,
+      templateId: role.pin.ref.roleId, templateRevision: String(role.pin.ref.revision),
+      bindingVersion: 1, policyRevision: 'session-duty',
+    };
+  }
+  return {
+    schemaVersion: 1, bindingId: `session-duty:${role.templateId}`,
+    templateId: role.templateId, templateRevision: role.templateRevision,
+    bindingVersion: 1, policyRevision: 'session-duty',
+  };
+}
+
+/** Whether the addressed line is a reviewer line; the send owner refuses reply-asking mail to it. */
+export async function reviewerFactsOfLine(mailbox: MailboxContext, owned: Owned, input: {
+  sessionRef: SessionRef; role: RoleConfigurationRef; workspaceId: string;
+}): Promise<{ ok: true; reviewer: boolean } | { ok: false; rejection: CoreRejection }> {
+  const duties = mailbox.deps.duties;
+  if (duties === undefined) return { ok: true, reviewer: false };
+  if (owned.signal.aborted) return { ok: false, rejection: reject('cancelled', 'the recipient line duties read was cancelled') };
+  const lineCtx = { ...internalHostContext(mailbox, owned), workspaceId: input.workspaceId };
+  let read;
+  try {
+    read = await duties.readMessageDutiesFacts(lineCtx, {
+      sessionRef: input.sessionRef, roleBinding: roleBindingOfSessionRole(input.role),
+    });
+  } catch {
+    return { ok: false, rejection: reject('unavailable', 'the recipient line duties could not be read') };
+  }
+  if (read.status === 'rejected') return { ok: false, rejection: read };
+  if (read.status !== 'ready') return { ok: false, rejection: mapReadResult(read) as CoreRejection };
+  return { ok: true, reviewer: read.value.duties.includes('reviewer') };
 }
 
 /** 问答轮调用方读信时的读者、它的 QueryRun 和信所在的工作区。 */
@@ -626,6 +758,38 @@ export async function queryRunReader(mailbox: MailboxContext, owned: Owned): Pro
 }
 
 /**
+ * The workspace a message's intervention-planning Query lives in: the workspace of the Goal the message names, else
+ * the message's own. A Goal ref carries no workspace, so the Goal record is read by its key (the mailbox has no Goal
+ * port). Every read failure is the failure.
+ */
+export async function queryWorkspaceOfMessage(mailbox: MailboxContext, message: SessionMessage): Promise<
+  { ok: true; workspaceId: string } | { ok: false; rejection: CoreRejection }
+> {
+  const goalRef = interventionGoalRefOf(message);
+  if (goalRef === null) return { ok: true, workspaceId: message.ref.workspaceId };
+  const goal = await readGoal(mailbox.records, goalRef);
+  if (goal.status !== 'ready') {
+    return { ok: false, rejection: goal.status === 'rejected' ? goal : mapReadResult(goal) as CoreRejection };
+  }
+  return { ok: true, workspaceId: goal.goal.workspaceRef.workspaceId };
+}
+
+/**
+ * An answered agent `ask_person` card's own card-answer round (design 2.3): the deterministic `decision_answer`
+ * QueryJob in the workspace of the Goal the card names. A message that is not an agent card (a platform card, a plain
+ * reply) has none: `null`. The acceptance commit guards this key absent, and the supply skips an answer once it exists.
+ */
+export async function decisionAnswerQueryOf(mailbox: MailboxContext, message: SessionMessage): Promise<
+  { ok: true; queryJobRef: QueryJobRef | null } | { ok: false; rejection: CoreRejection }
+> {
+  if (message.decision === undefined || message.sender.kind === 'host') return { ok: true, queryJobRef: null };
+  const queryWorkspace = await queryWorkspaceOfMessage(mailbox, message);
+  if (!queryWorkspace.ok) return queryWorkspace;
+  const refs = interventionPlanningQueryRefs(message.ref, queryWorkspace.workspaceId, 'decision_answer');
+  return { ok: true, queryJobRef: refs.queryJobRef };
+}
+
+/**
  * The ONE narrow system-Host withdraw exception: the message must be the exact source of a formally ended
  * `intervention_planning` Query with no usable Answer, claimed on the very line the message is addressed to. Every
  * read failure is returned; a not-found or mismatched fact is not an exception.
@@ -633,15 +797,9 @@ export async function queryRunReader(mailbox: MailboxContext, owned: Owned): Pro
 export async function interventionSourceFormallyEnded(mailbox: MailboxContext, owned: Owned, message: SessionMessage):
 Promise<{ ok: true } | { ok: false; rejection?: CoreRejection }> {
   if (isUserRecipient(message.recipient)) return { ok: false };
-  // The Query lives in the workspace of the Goal the message names; a Goal ref carries no workspace, so the Goal
-  // record is read by its key (the mailbox has no Goal port).
-  const goalRef = interventionGoalRefOf(message);
-  let queryWorkspaceId = message.ref.workspaceId;
-  if (goalRef !== null) {
-    const goal = await readGoal(mailbox.records, goalRef);
-    if (goal.status !== 'ready') return { ok: false, rejection: goal };
-    queryWorkspaceId = goal.goal.workspaceRef.workspaceId;
-  }
+  const queryWorkspace = await queryWorkspaceOfMessage(mailbox, message);
+  if (!queryWorkspace.ok) return { ok: false, rejection: queryWorkspace.rejection };
+  const queryWorkspaceId = queryWorkspace.workspaceId;
   const refs = interventionPlanningQueryRefs(message.ref, queryWorkspaceId);
   const jobRead = await loadQueryJob(mailbox, owned, refs.queryJobRef);
   if (jobRead.status === 'not_found') return { ok: false };

@@ -12,6 +12,7 @@ import { NOTE_KINDS } from '../../contracts/note.js';
 import { rejected } from '../../contracts/core/rejections.js';
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { CoreRejection, ReadResult } from '../../contracts/core/results.js';
+import type { PlatformDutyV1 } from '../../contracts/graph-context.js';
 import type { SessionRef } from '../../contracts/core/identity.js';
 import type { RunRef } from '../../contracts/dispatch.js';
 import type { GoalRef } from '../../contracts/ledger.js';
@@ -19,14 +20,14 @@ import type {
   ToolCall, ToolDefinition, WorkspaceSandbox,
 } from '../../../vendor/coding-agent/dist/public-api.js';
 import {
-  createSessionMailboxTools, SECRETARY_QUERY_MAILBOX_TOOL_NAMES, SESSION_MAILBOX_TOOL_NAMES,
-  USER_DECISION_TOOL_NAMES,
+  ACTION_TOOL_NAMES, ASK_COPY_TOOL_NAME, createAskCopyTool, createPersonMessageTools,
+  createSessionMailboxTools, PERSON_MESSAGE_TOOL_NAMES,
+  SESSION_MAILBOX_TOOL_NAMES, USER_DECISION_TOOL_NAMES,
 } from './communication-tools.js';
 import { createMemberTools, CREATE_MEMBER_TOOL_NAME } from './member-tools.js';
 import { createHandoffTools, HANDOFF_TOOL_NAMES } from './handoff-tools.js';
 import { READ_REQUESTS_TOOL_NAME } from './request-read-tools.js';
 import { createWhiteboardTools, WHITEBOARD_TOOL_NAMES } from './whiteboard-tools.js';
-import { createSessionDiscoveryTools, SESSION_DISCOVERY_TOOL_NAMES } from './session-discovery-tools.js';
 import { answerReadToolNamesOf, createGraphTools, GRAPH_TOOL_NAMES } from './graph-tools.js';
 import { createLinkCheckTools, LINK_CHECK_TOOL_NAMES } from './link-check-tool.js';
 import { createWebLookupTools, WEB_LOOKUP_TOOL_NAMES, type WebLookupPort } from './web-lookup-tools.js';
@@ -43,7 +44,6 @@ import { READONLY_COMMAND_TOOL_NAME } from './readonly-command-tool.js';
 import { kernelToolNameOf } from '../work-graph/state/unknown-call-kinds.js';
 import { agentActorOf } from '../work-graph/model/tool-commit-arguments.js';
 import type { SessionMessageCommandPort, SessionMessage } from '../work-graph/model/communication-contracts.js';
-import type { SessionDirectoryPort } from '../work-graph/model/session-contracts.js';
 import type { GraphContextReadPort } from '../work-graph/model/graph-context-contracts.js';
 import type { NoteMemoryReadPort } from '../work-graph/model/note-contracts.js';
 import type { QueryNoteAdmissionV1 } from '../work-graph/model/secretary-note-contracts.js';
@@ -76,7 +76,9 @@ export const EXPLORATION_TOOL_NAMES = [
  * grants nothing: the real selection set is the manifest/Role/Host intersection
  * re-checked above. */
 const PLATFORM_COORDINATION_TOOL_NAMES = new Set<string>([
-  ...SESSION_MAILBOX_TOOL_NAMES, ...USER_DECISION_TOOL_NAMES, ...WHITEBOARD_TOOL_NAMES, ...SESSION_DISCOVERY_TOOL_NAMES,
+  ...SESSION_MAILBOX_TOOL_NAMES, ...USER_DECISION_TOOL_NAMES, ...ACTION_TOOL_NAMES,
+  ...PERSON_MESSAGE_TOOL_NAMES, ASK_COPY_TOOL_NAME,
+  ...WHITEBOARD_TOOL_NAMES,
   ...GRAPH_TOOL_NAMES, ...LINK_CHECK_TOOL_NAMES, ...WEB_LOOKUP_TOOL_NAMES, ...NOTE_TOOL_NAMES, ...HANDOFF_TOOL_NAMES,
   ...ARCHITECTURE_TOOL_NAMES,
   PROPOSE_ROLE_SPLIT_TOOL_NAME,
@@ -88,6 +90,137 @@ const EXPLORATION_TOOL_NAME_SET = new Set<string>(EXPLORATION_TOOL_NAMES);
 /** L19's two rework adapters. They are built by one factory whose config needs
  * both owners; a selected name without them stays `unsupported`, never dropped. */
 const REWORK_TOOL_NAME_SET = new Set<string>(REWORK_TOOL_NAMES);
+
+/** The three mailbox reads; the request/planning rounds get them, a formal review does not. */
+const QUERY_BOX_TOOL_NAMES: readonly string[] =
+  ['read_session_inbox', 'read_session_message', 'read_session_message_body'];
+const QUERY_SEND_TOOL_NAME = 'send_session_message';
+const QUERY_RESPOND_TOOL_NAME = 'respond_session_message';
+const QUERY_WITHDRAW_TOOL_NAME = 'withdraw_session_message';
+const QUERY_DECISION_READ_TOOL_NAME = 'read_user_decision';
+const QUERY_ASK_PERSON_TOOL_NAME = 'ask_person';
+const QUERY_NOTIFY_PERSON_TOOL_NAME = 'notify_person';
+
+/**
+ * The §2.6 round the existing frozen facts name. It is a pure projection:
+ * `duty` is the Session duty preparation/start already resolved,
+ * `noteAdmission.class` separates the secretary request round from a planning
+ * round, and `answerTools` is the frozen answer shape. No new stored field.
+ */
+export type QueryRoundKindV1 =
+  | 'copy' | 'exploration' | 'request'
+  | 'secretary_planning' | 'secretary_text'
+  | 'adviser_planning' | 'adviser_text' | 'adviser_advice'
+  | 'scribe_review' | 'scribe_text'
+  | 'executor_planning' | 'executor_text'
+  | 'reviewer_review' | 'reviewer_text'
+  | 'check_review' | 'unknown';
+
+export function queryRoundKindOf(input: {
+  duty: PlatformDutyV1 | 'unknown' | null;
+  noteClass: QueryNoteAdmissionV1['class'];
+  answerTools: AnswerToolKind | null;
+  explorationRound?: boolean;
+  readOnlyCopy?: boolean;
+}): QueryRoundKindV1 {
+  if (input.readOnlyCopy === true) return 'copy';
+  if (input.explorationRound === true) return 'exploration';
+  const shape: string | null = input.answerTools;
+  if (shape === 'check_review') return 'check_review';
+  if (shape === 'plan_review' || shape === 'exec_review') return 'reviewer_review';
+  if (shape === 'unknown_call_advice' || shape === 'command_rerun_advice') return 'adviser_advice';
+  if (shape === 'scribe_review') return 'scribe_review';
+  if (input.duty === 'secretary') {
+    if (input.noteClass === 'secretary') return 'request';
+    return shape === 'plan_round' ? 'secretary_planning' : 'secretary_text';
+  }
+  if (input.duty === 'adviser') {
+    if (shape === 'plan_round' || shape === 'initial') return 'adviser_planning';
+    return 'adviser_text';
+  }
+  if (input.duty === 'scribe') return 'scribe_text';
+  if (input.duty === 'executor') return shape === 'plan_round' ? 'executor_planning' : 'executor_text';
+  if (input.duty === 'reviewer') return 'reviewer_text';
+  return 'unknown';
+}
+
+/** The coordination-family names a §2.6 round may select; every other family is dropped by the ceiling and final list. */
+export function queryRoundCoordinationNames(kind: QueryRoundKindV1): ReadonlySet<string> {
+  const base = new Set<string>();
+  const addRoundNames = (...names: readonly string[]): void => { for (const name of names) base.add(name); };
+  const box = (): void => addRoundNames(...QUERY_BOX_TOOL_NAMES);
+  const addSendName = (): void => addRoundNames(QUERY_SEND_TOOL_NAME);
+  const respond = (): void => addRoundNames(QUERY_RESPOND_TOOL_NAME);
+  const addWithdrawName = (): void => addRoundNames(QUERY_WITHDRAW_TOOL_NAME);
+  const askCopy = (): void => addRoundNames(ASK_COPY_TOOL_NAME);
+  const addNotifyName = (): void => addRoundNames(QUERY_NOTIFY_PERSON_TOOL_NAME);
+  const askPerson = (): void => addRoundNames(QUERY_ASK_PERSON_TOOL_NAME);
+  const decisionRead = (): void => addRoundNames(QUERY_DECISION_READ_TOOL_NAME);
+  const actions = (): void => addRoundNames(...ACTION_TOOL_NAMES);
+  const notes = (): void => addRoundNames(...NOTE_TOOL_NAMES);
+  switch (kind) {
+    case 'request':
+      box(); addSendName(); respond(); addWithdrawName(); askCopy(); addNotifyName(); askPerson(); decisionRead(); actions(); notes();
+      addRoundNames(CREATE_MEMBER_TOOL_NAME, READ_REQUESTS_TOOL_NAME);
+      break;
+    case 'secretary_planning':
+    case 'secretary_text':
+      box(); addSendName(); respond(); addWithdrawName(); askCopy(); addNotifyName(); askPerson(); decisionRead(); actions(); notes();
+      break;
+    case 'adviser_planning':
+    case 'adviser_text':
+      box(); addSendName(); respond(); addWithdrawName(); askCopy(); addNotifyName(); askPerson(); decisionRead(); actions(); notes();
+      addRoundNames(CREATE_MEMBER_TOOL_NAME);
+      break;
+    case 'adviser_advice':
+      box(); addSendName(); respond(); addWithdrawName(); askCopy(); addNotifyName(); decisionRead();
+      break;
+    case 'scribe_review':
+      box(); addSendName(); respond(); addWithdrawName(); askCopy(); addNotifyName(); decisionRead(); notes();
+      break;
+    case 'scribe_text':
+      box(); addSendName(); respond(); addWithdrawName(); askCopy(); addNotifyName(); askPerson(); decisionRead(); notes();
+      break;
+    case 'executor_planning':
+    case 'executor_text':
+      box(); addSendName(); respond(); addWithdrawName(); askCopy(); addNotifyName(); decisionRead(); notes();
+      break;
+    case 'reviewer_review':
+    case 'check_review':
+      addSendName(); addWithdrawName(); addNotifyName();
+      break;
+    case 'reviewer_text':
+      box(); addSendName(); addWithdrawName(); addNotifyName();
+      break;
+    case 'exploration':
+      box(); addSendName(); respond(); addWithdrawName(); askCopy(); notes(); addRoundNames(READ_REQUESTS_TOOL_NAME);
+      break;
+    case 'copy':
+    case 'unknown':
+      break;
+  }
+  return base;
+}
+
+/**
+ * §2.6: keep the names `wanted` selects and the round's ceiling allows. A `null`
+ * ceiling is the Work path, which keeps every wanted name.
+ */
+export function roundWanted(
+  names: readonly string[],
+  wanted: ReadonlySet<string>,
+  allowed: ReadonlySet<string> | null,
+): string[] {
+  return names.filter(name => wanted.has(name) && (allowed === null || allowed.has(name)));
+}
+
+/** Every name the round selector may drop from a Query's Host grant; no other family is touched. */
+export const QUERY_ROUND_COORDINATION_NAMES: ReadonlySet<string> = new Set<string>([
+  ...SESSION_MAILBOX_TOOL_NAMES, ...PERSON_MESSAGE_TOOL_NAMES, ASK_COPY_TOOL_NAME,
+  ...USER_DECISION_TOOL_NAMES, ...ACTION_TOOL_NAMES, ...NOTE_TOOL_NAMES,
+  CREATE_MEMBER_TOOL_NAME, READ_REQUESTS_TOOL_NAME, ...REWORK_TOOL_NAMES,
+  ...HANDOFF_TOOL_NAMES, ASSIGN_MODULE_MAINTAINER_TOOL_NAME, PROPOSE_ROLE_SPLIT_TOOL_NAME,
+]);
 
 /** Builtin Kernel file/process tools. The platform coordination tools below are
  * extension tools and are never file/read/shell capabilities. */
@@ -206,7 +339,6 @@ export type WorkToolGroupInput = {
   claims?: TaskClaimPort;
   /** The `request_recheck` owner (`evidence.reverifyRound`); absent makes both rework names unregisterable. */
   evidence?: Pick<EvidencePort, 'reverifyRound'>;
-  sessions: SessionDirectoryPort;
   plans: PlanTaskPort;
   context: CoreCallContext;
   sessionRef: SessionRef;
@@ -248,8 +380,6 @@ export type WorkToolGroupInput = {
   extensionNames?: ReadonlySet<string>;
   /** The frozen tool texts every coordination factory reads. */
   texts?: Readonly<Record<string, ToolTextV1>>;
-  /** The project's main workspace, for `find_related_sessions`' module ids (kls-design §2.3.4). */
-  mainWorkspaceOf?: (projectId: string) => Promise<ReadResult<string | null>>;
 };
 
 /**
@@ -274,8 +404,9 @@ export function selectWorkToolGroup(input: WorkToolGroupInput): ToolGroupResult<
   const wanted = new Set(input.selected);
   const mailboxNames = SESSION_MAILBOX_TOOL_NAMES.filter(name => wanted.has(name));
   const decisionNames = USER_DECISION_TOOL_NAMES.filter(name => wanted.has(name));
+  const askCopyNames = wanted.has(ASK_COPY_TOOL_NAME) ? [ASK_COPY_TOOL_NAME] : [];
+  const personNames = PERSON_MESSAGE_TOOL_NAMES.filter(name => wanted.has(name));
   const whiteboardNames = WHITEBOARD_TOOL_NAMES.filter(name => wanted.has(name));
-  const discoveryNames = SESSION_DISCOVERY_TOOL_NAMES.filter(name => wanted.has(name));
   const graphNames = GRAPH_TOOL_NAMES.filter(name => wanted.has(name));
   const linkCheckNames = LINK_CHECK_TOOL_NAMES.filter(name => wanted.has(name));
   const webNames = WEB_LOOKUP_TOOL_NAMES.filter(name => wanted.has(name));
@@ -291,7 +422,8 @@ export function selectWorkToolGroup(input: WorkToolGroupInput): ToolGroupResult<
   const maintainers = input.maintainerAssignments;
   const reworkClaims = input.claims?.requeueTask;
   const reworkEvidence = input.evidence?.reverifyRound;
-  if (mailboxNames.length === 0 && decisionNames.length === 0 && whiteboardNames.length === 0 && discoveryNames.length === 0
+  if (mailboxNames.length === 0 && decisionNames.length === 0 && personNames.length === 0 && askCopyNames.length === 0
+    && whiteboardNames.length === 0
     && graphNames.length === 0 && linkCheckNames.length === 0 && webNames.length === 0 && noteNames.length === 0 && handoffNames.length === 0
     && architectureNames.length === 0
     && memberNames.length === 0 && maintainerNames.length === 0 && reworkNames.length === 0
@@ -300,6 +432,12 @@ export function selectWorkToolGroup(input: WorkToolGroupInput): ToolGroupResult<
   }
   if (decisionNames.length > 0 && input.decisionMessages === undefined) {
     return { ok: false, rejection: rejected('unsupported', `the Run selects user decision tools but no decisionMessages dependency is bound: ${decisionNames.join(', ')}`) };
+  }
+  if (personNames.length > 0 && input.decisionMessages === undefined) {
+    return { ok: false, rejection: rejected('unsupported', `the Run selects person message tools but no decisionMessages dependency is bound: ${personNames.join(', ')}`) };
+  }
+  if (askCopyNames.length > 0 && input.mailbox === undefined) {
+    return { ok: false, rejection: rejected('unsupported', `the Run selects ask_copy but no SessionMailbox dependency is bound: ${askCopyNames.join(', ')}`) };
   }
   if (memberNames.length > 0 && members === undefined) {
     return { ok: false, rejection: rejected('unsupported', `the Run selects create_member but no member-creation dependency is bound: ${memberNames.join(', ')}`) };
@@ -358,10 +496,22 @@ export function selectWorkToolGroup(input: WorkToolGroupInput): ToolGroupResult<
       ...(input.texts === undefined ? {} : { texts: input.texts }),
     }));
   }
-  if (discoveryNames.length > 0) {
-    handles.push(createSessionDiscoveryTools({ sessions: input.sessions, context: input.context,
+  if (personNames.length > 0 && input.decisionMessages !== undefined) {
+    handles.push(createPersonMessageTools({
+      decisionMessages: input.decisionMessages,
+      goalRef: input.goalRef,
+      context: input.context,
+      requestIdForCall: input.requestIdForCall,
       ...(input.texts === undefined ? {} : { texts: input.texts }),
-      ...(input.mainWorkspaceOf === undefined ? {} : { mainWorkspaceOf: input.mainWorkspaceOf }) }));
+    }));
+  }
+  if (askCopyNames.length > 0 && input.mailbox !== undefined) {
+    handles.push(createAskCopyTool({
+      mailbox: input.mailbox,
+      context: input.context,
+      requestIdForCall: input.requestIdForCall,
+      ...(input.texts === undefined ? {} : { texts: input.texts }),
+    }));
   }
   if (graphNames.length > 0) {
     const graphDeps = input.graph as NonNullable<typeof input.graph>;
@@ -479,7 +629,7 @@ export function selectWorkToolGroup(input: WorkToolGroupInput): ToolGroupResult<
       ...(input.texts === undefined ? {} : { texts: input.texts }),
     }));
   }
-  const names = [...mailboxNames, ...decisionNames, ...whiteboardNames, ...discoveryNames, ...graphNames, ...linkCheckNames,
+  const names = [...mailboxNames, ...decisionNames, ...personNames, ...askCopyNames, ...whiteboardNames, ...graphNames, ...linkCheckNames,
     ...webNames, ...noteNames,
     ...handoffNames, ...architectureNames, ...memberNames, ...maintainerNames, ...roleSplitNames, ...reworkNames];
   if (new Set(names).size !== names.length) {
@@ -678,6 +828,10 @@ export type FinalToolListInputV1 = {
   callKind: 'work' | 'query';
   /** A cold-start `role_exploration` Query; absent reads false (every Work call and every other Query). */
   explorationRound?: boolean;
+  /** A saved-message consultation Query: it runs as a read-only copy and gets no mailbox/person/action tools. */
+  readOnlyCopy?: boolean;
+  /** 121-114: the adviser's own intervention planning round (plan shape or Host-system text) may create a member. */
+  adviserMemberRound?: boolean;
   /**
    * What a Query round may write in this round. The Work branch never reads
    * it; a Query selects a note tool only when the value is `secretary`.
@@ -685,6 +839,13 @@ export type FinalToolListInputV1 = {
   noteAdmission: QueryNoteAdmissionV1;
   /** `manifest.permissions.tools`, already intersected with Host/Role/Query ceilings. */
   selected: readonly string[];
+  /**
+   * The round Session's formal duty, from the same `effectiveDuty` projection
+   * preparation and start already use. With `noteAdmission.class` (request vs
+   * planning) and `answerTools` (the frozen shape) it names the §2.6 round
+   * without a second round enum; Work never passes it.
+   */
+  duty?: PlatformDutyV1 | 'unknown';
   reviewPhase: 'review' | 'proposal' | null;
   hasBlockedCommands: boolean;
   /** `sourceTools.includeReadSource`: independent of the frozen project source. */
@@ -711,7 +872,7 @@ export type FinalToolListInputV1 = {
   answerPlanTool?: boolean;
   owners: {
     mailbox: boolean; decisionMessages: boolean; applicationReceipt: boolean;
-    sessions: boolean; plans: boolean; graph: boolean; notes: boolean;
+    plans: boolean; graph: boolean; notes: boolean;
     unknownCallReviews: boolean; commandRerunRequests: boolean;
     /** Optional so a preparation that freezes only the capability set keeps
      * compiling; the start passes the real member-owner fact. */
@@ -730,6 +891,10 @@ export type FinalToolListInputV1 = {
     linkCheck?: boolean;
     /** The bound model's web lookup port behind the two web tools; optional for the same reason. */
     webLookup?: boolean;
+    /** The P1 `platform.actionRequests` owner behind the §2.6 action tools. */
+    actionRequests?: boolean;
+    /** The P1 `platform.claimHolds` owner behind `hold_claim`/`release_hold`. */
+    claimHolds?: boolean;
   };
   readonlyCommand: {
     requested: boolean;
@@ -762,27 +927,43 @@ export function finalToolNamesOf(input: FinalToolListInputV1): ToolGroupResult<s
   if (reviewToolName !== null && !owners.unknownCallReviews) {
     return { ok: false, rejection: rejected('unsupported', 'the review Run requires the unknownCallReviews owner to register its review tool') };
   }
-  // A secretary request round builds the two mailbox tools; every other Query
-  // keeps them out of its final list. `create_member` follows `selected` only:
-  // which Query keeps it (the secretary's request round, the adviser's planning
-  // round) is decided once by `projectQueryConfiguration`.
-  const secretary = input.noteAdmission.class === 'secretary';
+  // §2.6 by round: `queryRoundKindOf` projects the frozen duty/note class/
+  // answer shape into one round, and the same family set drives both the
+  // preparation ceiling and this final list. A Work Run keeps its Host-grant
+  // intersection; no round filter is re-derived there.
+  const round = query
+    ? queryRoundKindOf({
+        duty: input.duty ?? 'unknown', noteClass: input.noteAdmission.class,
+        answerTools: input.answerTools ?? null, explorationRound: input.explorationRound === true,
+        readOnlyCopy: input.readOnlyCopy === true,
+      })
+    : null;
+  const roundAllowed = round === null ? null : queryRoundCoordinationNames(round);
   const mailboxNames = query
-    ? secretary ? SECRETARY_QUERY_MAILBOX_TOOL_NAMES.filter(name => wanted.has(name)) : []
+    ? roundWanted(SESSION_MAILBOX_TOOL_NAMES, wanted, roundAllowed)
     : SESSION_MAILBOX_TOOL_NAMES.filter(name => wanted.has(name));
+  const personNames = query && input.goalBound !== true ? [] : roundWanted(PERSON_MESSAGE_TOOL_NAMES, wanted, roundAllowed);
+  const askCopyNames = roundWanted([ASK_COPY_TOOL_NAME], wanted, roundAllowed);
+  const actionNames = query ? roundWanted(ACTION_TOOL_NAMES, wanted, roundAllowed) : [];
   const handoffNames = query ? [] : HANDOFF_TOOL_NAMES.filter(name => wanted.has(name));
-  const decisionNames = query ? [] : USER_DECISION_TOOL_NAMES.filter(name => wanted.has(name));
+  const decisionNames = query
+    ? roundWanted([QUERY_DECISION_READ_TOOL_NAME], wanted, roundAllowed)
+    : USER_DECISION_TOOL_NAMES.filter(name => wanted.has(name));
   // A Query builds the whiteboard names its ceiling left (the two reads) only with a Goal to read.
   const whiteboardNames = query && input.goalBound !== true ? [] : WHITEBOARD_TOOL_NAMES.filter(name => wanted.has(name));
-  const discoveryNames = query ? [] : SESSION_DISCOVERY_TOOL_NAMES.filter(name => wanted.has(name));
   const graphNames = GRAPH_TOOL_NAMES.filter(name => wanted.has(name));
   const linkCheckNames = LINK_CHECK_TOOL_NAMES.filter(name => wanted.has(name));
   const webNames = WEB_LOOKUP_TOOL_NAMES.filter(name => wanted.has(name));
-  const noteNames = NOTE_TOOL_NAMES.filter(name => wanted.has(name) && (input.callKind === 'work' ? true : input.noteAdmission.class !== 'none'));
+  const noteNames = NOTE_TOOL_NAMES.filter(name => wanted.has(name)
+    && (input.callKind === 'work' ? true : input.noteAdmission.class !== 'none')
+    && (roundAllowed === null || roundAllowed.has(name)));
   // Only the Work Runtime and an exploration Query build the proposal tool; no other Query reaches its factory.
   const architectureNames = query && input.explorationRound !== true ? []
     : ARCHITECTURE_TOOL_NAMES.filter(name => wanted.has(name));
-  const memberNames = wanted.has(CREATE_MEMBER_TOOL_NAME) ? [CREATE_MEMBER_TOOL_NAME] : [];
+  const memberNames = query
+    ? input.goalBound === true && (input.noteAdmission.class === 'secretary' || input.adviserMemberRound === true)
+      ? roundWanted([CREATE_MEMBER_TOOL_NAME], wanted, roundAllowed) : []
+    : wanted.has(CREATE_MEMBER_TOOL_NAME) ? [CREATE_MEMBER_TOOL_NAME] : [];
   // Only the Work Runtime builds the maintainer tool; the adviser's planning Query keeps only `create_member` (121-114).
   const maintainerNames = !query && wanted.has(ASSIGN_MODULE_MAINTAINER_TOOL_NAME)
     ? [ASSIGN_MODULE_MAINTAINER_TOOL_NAME] : [];
@@ -791,20 +972,20 @@ export function finalToolNamesOf(input: FinalToolListInputV1): ToolGroupResult<s
     ? [PROPOSE_ROLE_SPLIT_TOOL_NAME] : [];
   // Only the Work Runtime builds the rework tools; a Query's projection never reaches its factory.
   const reworkNames = query ? [] : REWORK_TOOL_NAMES.filter(name => wanted.has(name));
-  const requestNames = query && wanted.has(READ_REQUESTS_TOOL_NAME) ? [READ_REQUESTS_TOOL_NAME] : [];
-  // The Query mailbox names are built by the secretary Query branch, whose own
-  // build re-checks the real owner; the Work branch keeps the owner rejection.
-  if (!query && (mailboxNames.length > 0 || decisionNames.length > 0) && !owners.mailbox) {
-    return { ok: false, rejection: rejected('unsupported', `the Run selects communication tools but no SessionMailbox dependency is bound: ${[...mailboxNames, ...decisionNames].join(', ')}`) };
+  const requestNames = query ? roundWanted([READ_REQUESTS_TOOL_NAME], wanted, roundAllowed) : [];
+  // Every Query mailbox/person name is built by its own Query branch, which
+  // re-checks the real owner; the Work branch keeps the owner rejection.
+  if ((mailboxNames.length > 0 || askCopyNames.length > 0) && !owners.mailbox) {
+    return { ok: false, rejection: rejected('unsupported', `the Run selects communication tools but no SessionMailbox dependency is bound: ${[...mailboxNames, ...askCopyNames].join(', ')}`) };
   }
-  if (decisionNames.length > 0 && !owners.decisionMessages) {
-    return { ok: false, rejection: rejected('unsupported', `the Run selects user decision tools but no decisionMessages dependency is bound: ${decisionNames.join(', ')}`) };
+  if ((decisionNames.length > 0 || personNames.length > 0) && !owners.decisionMessages) {
+    return { ok: false, rejection: rejected('unsupported', `the Run selects user decision tools but no decisionMessages dependency is bound: ${[...decisionNames, ...personNames].join(', ')}`) };
+  }
+  if (actionNames.length > 0 && (owners.actionRequests === false || owners.claimHolds === false)) {
+    return { ok: false, rejection: rejected('unsupported', `the Run selects action tools but no action-request/claim-hold owner is bound: ${actionNames.join(', ')}`) };
   }
   if (whiteboardNames.length > 0 && !owners.plans) {
     return { ok: false, rejection: rejected('unsupported', `the Run selects plan tools but no plans dependency is bound: ${whiteboardNames.join(', ')}`) };
-  }
-  if (discoveryNames.length > 0 && !owners.sessions) {
-    return { ok: false, rejection: rejected('unsupported', `the Run selects Session discovery tools but no sessions dependency is bound: ${discoveryNames.join(', ')}`) };
   }
   if (graphNames.length > 0 && !owners.graph) {
     return { ok: false, rejection: rejected('unsupported', `the Run selects graph read tools but no graph read dependency is bound: ${graphNames.join(', ')}`) };
@@ -843,8 +1024,8 @@ export function finalToolNamesOf(input: FinalToolListInputV1): ToolGroupResult<s
   if (rerun && (!owners.commandRerunRequests || !owners.unknownCallReviews)) {
     return { ok: false, rejection: rejected('unsupported', 'the blocked Work Run requires the commandRerunRequests owner and the unknownCallReviews read port to register its request tool') };
   }
-  const coordinationNames = [...mailboxNames, ...handoffNames, ...decisionNames, ...whiteboardNames,
-    ...discoveryNames, ...graphNames, ...linkCheckNames, ...webNames, ...noteNames, ...architectureNames, ...memberNames, ...maintainerNames,
+  const coordinationNames = [...mailboxNames, ...decisionNames, ...personNames, ...askCopyNames, ...actionNames, ...handoffNames, ...whiteboardNames,
+    ...graphNames, ...linkCheckNames, ...webNames, ...noteNames, ...architectureNames, ...memberNames, ...maintainerNames,
     ...roleSplitNames, ...reworkNames, ...requestNames];
   if (new Set(coordinationNames).size !== coordinationNames.length) {
     return { ok: false, rejection: rejected('unsupported', 'the selected coordination tool names are duplicated') };

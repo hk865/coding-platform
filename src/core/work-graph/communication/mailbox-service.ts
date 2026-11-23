@@ -51,25 +51,26 @@ import type { SessionMailboxDependencies, SessionMessage } from '../model/commun
 import { sessionStoreFailureToRejection } from '../persistence/read-result-failures.js';
 import type { MessageCommandWritePort, SessionMessageCommitFragment, SessionMessageWriteCommandV1 } from '../model/decision-contracts.js';
 import type { EncodedDomainEvent, CommitCursorBinding, RecordGuard, UniqueClaimChange } from '../../record-store/ports.js';
-import { sessionMessageTextBound, encodeSessionMessageReadEvent, encodeSessionMessageRespondedEvent, encodeSessionMessageSentEvent, sessionMessageRefKey, encodeSessionMessageConsultationDerivedEvent, encodeSessionMessageInputAcceptedEvent, encodeSessionMessageDecisionAnsweredEvent, encodeSessionMessageDecisionAppliedEvent, encodeSessionMessageWithdrawnEvent, encodeSessionMessageReleaseDecidedEvent, encodeSessionMessageReleasedEvent, encodeSessionMessageAppliedEvent, encodeSessionMessageExpiredEvent, type SessionMessageEventV1 } from '../sessions/message-record-codecs.js';
-import { unreachable } from '../state/transition.js';
+import { sessionMessageTextBound, encodeSessionMessageRespondedEvent, encodeSessionMessageSentEvent, sessionMessageRefKey, encodeSessionMessageConsultationDerivedEvent, encodeSessionMessageInputAcceptedEvent, encodeSessionMessageDecisionAnsweredEvent, encodeSessionMessageDecisionAppliedEvent, encodeSessionMessageWithdrawnEvent, encodeSessionMessageAppliedEvent, encodeSessionMessageExpiredEvent, type SessionMessageEventV1 } from '../sessions/message-record-codecs.js';
 import { mapReadResult, recipientLineFacts, preservedNoticeOrigin, ownContext, normalizeMessageRef, scopeOfMessageRef, judge, refusalOf, readProgress, eventIdOf } from './mailbox-common.js';
 import type { MailboxContext, Unknown, Owned, SessionMailboxWithUserSend, MessageBodySender } from './mailbox-types.js';
-import { readCurrentWorkspaceSource, storeScopedMessageBody, replaySessionMessageReceipt, companionContributionOf, prepareSessionMessage, releaseDecidedChange, messageWriteResult, commitPreparedSessionMessage, releaseDecidedResult } from './mailbox-write.js';
-import { sameBasis, dispatchCurrentOf, basisPinsOf, releasedMessageCompanions, basisConflictCurrent } from './mailbox-basis.js';
+import { readCurrentWorkspaceSource, storeScopedMessageBody, replaySessionMessageReceipt, companionContributionOf, prepareSessionMessage, messageWriteResult, commitPreparedSessionMessage } from './mailbox-write.js';
+import { sameBasis, dispatchCurrentOf } from './mailbox-basis.js';
+import { unreachable } from '../state/transition.js';
 import { readMessage, readMessageBody, readMessageView } from './mailbox-access.js';
 import {
-  readInbox, readInboxView, readOutbox, readRoutedReplies, readUndeliveredReplies,
+  readInbox, readInboxView, readOutbox, readPendingCopyQuestions, readRoutedReplies, readUndeliveredReplies,
 } from './mailbox-pages.js';
 import {
-  ackMessage, respondMessage, respondFromQueryAnswer, recordConsultationDerivation, recordInputAccepted,
-  withdrawMessage, releaseMessage,
+  respondMessage, respondFromQueryAnswer, recordConsultationDerivation, recordInputAccepted,
+  withdrawMessage, readDecisionAnswerTaken,
 } from './mailbox-commands.js';
 import { disposeArchiveWait } from './mailbox-archive.js';
 import {
   readHostSystemOutbox, appendHostSystemOutbox, lookupToolCommit, lookupHostSendCommit, readHostSendMessageRef,
 } from './mailbox-host.js';
 import { sendMessage, sendUserMessage } from './mailbox-send.js';
+import { readQueryRound } from './mailbox-identity.js';
 
 export {
   mapReadResult, recipientLineFacts, readSessionMessageRecord, preservedNoticeOrigin,
@@ -78,8 +79,8 @@ export {
 export type {
   MailboxPrincipal, Owned, OwnedContext, SessionMailboxWithUserSend,
 } from './mailbox-types.js';
-export { messageVersionAgainstReceipt, releaseDecidedResult, releaseDecidedChange, messageWriteResult } from './mailbox-write.js';
-export { sameBasis, dispatchCurrentOf, basisPinsOf, releasedMessageCompanions, basisConflictCurrent } from './mailbox-basis.js';
+export { messageVersionAgainstReceipt, messageWriteResult } from './mailbox-write.js';
+export { sameBasis, dispatchCurrentOf } from './mailbox-basis.js';
 export { respondReceiptIdentityOf } from './mailbox-identity.js';
 export { replyTargetEligible } from './mailbox-archive.js';
 
@@ -102,7 +103,8 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     readMessageBody: (...args) => readMessageBody(mailbox, ...args),
     readInbox: (...args) => readInbox(mailbox, ...args),
     readOutbox: (...args) => readOutbox(mailbox, ...args),
-    ackMessage: (...args) => ackMessage(mailbox, ...args),
+    readQueryRound: (...args) => readQueryRound(mailbox, ...args),
+    readDecisionAnswerTaken: (...args) => readDecisionAnswerTaken(mailbox, ...args),
     respondMessage: (...args) => respondMessage(mailbox, ...args),
     respondFromQueryAnswer: (...args) => respondFromQueryAnswer(mailbox, ...args),
     recordConsultationDerivation: (...args) => recordConsultationDerivation(mailbox, ...args),
@@ -110,6 +112,7 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     sendUserMessage: (...args) => sendUserMessage(mailbox, ...args),
     disposeArchiveWait: (...args) => disposeArchiveWait(mailbox, ...args),
     readUndeliveredReplies: (...args) => readUndeliveredReplies(mailbox, ...args),
+    readPendingCopyQuestions: (...args) => readPendingCopyQuestions(mailbox, ...args),
     readRoutedReplies: (...args) => readRoutedReplies(mailbox, ...args),
     lookupToolCommit: (...args) => lookupToolCommit(mailbox, ...args),
     lookupHostSendCommit: (...args) => lookupHostSendCommit(mailbox, ...args),
@@ -117,7 +120,6 @@ export function createSessionMailbox(deps: SessionMailboxDependencies): SessionM
     readHostSystemOutbox: (...args) => readHostSystemOutbox(mailbox, ...args),
     appendHostSystemOutbox: (...args) => appendHostSystemOutbox(mailbox, ...args),
     withdrawMessage: (...args) => withdrawMessage(mailbox, ...args),
-    releaseMessage: (...args) => releaseMessage(mailbox, ...args),
     readMessageView: (...args) => readMessageView(mailbox, ...args),
     readInboxView: (...args) => readInboxView(mailbox, ...args),
   };
@@ -138,15 +140,12 @@ export function createMessageWriteOwner(deps: SessionMailboxDependencies): Messa
   function encodePersistEvent(event: SessionMessageEventV1): EncodedDomainEvent {
     switch (event.eventType) {
       case 'SessionMessageSent': return encodeSessionMessageSentEvent(event);
-      case 'SessionMessageRead': return encodeSessionMessageReadEvent(event);
       case 'SessionMessageResponded': return encodeSessionMessageRespondedEvent(event);
       case 'SessionMessageConsultationDerived': return encodeSessionMessageConsultationDerivedEvent(event);
       case 'SessionMessageInputAccepted': return encodeSessionMessageInputAcceptedEvent(event);
       case 'SessionMessageDecisionAnswered': return encodeSessionMessageDecisionAnsweredEvent(event);
       case 'SessionMessageDecisionApplied': return encodeSessionMessageDecisionAppliedEvent(event);
       case 'SessionMessageWithdrawn': return encodeSessionMessageWithdrawnEvent(event);
-      case 'SessionMessageReleaseDecided': return encodeSessionMessageReleaseDecidedEvent(event);
-      case 'SessionMessageReleased': return encodeSessionMessageReleasedEvent(event);
       case 'SessionMessageApplied': return encodeSessionMessageAppliedEvent(event);
       case 'SessionMessageExpired': return encodeSessionMessageExpiredEvent(event);
       default: return unreachable(event, 'message event');
@@ -209,8 +208,7 @@ export function createMessageWriteOwner(deps: SessionMailboxDependencies): Messa
       const expectedRevision = raw['expectedRevision'];
       if (!isPositiveInt(expectedRevision)) return reject('invalid', 'prepare requires the admitted message revision');
       const operation = raw['operation'];
-      if (operation !== 'message.withdraw' && operation !== 'message.release'
-        && operation !== 'message.releaseApproved' && operation !== 'message.apply'
+      if (operation !== 'message.withdraw' && operation !== 'message.apply'
         && operation !== 'message.recordExpiry' && operation !== 'message.inputAccepted') {
         return reject('invalid', 'prepare does not know this message write operation');
       }

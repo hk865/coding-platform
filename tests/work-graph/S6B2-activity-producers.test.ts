@@ -193,7 +193,7 @@ describe('request activity producers (memory)', () => {
     const routing = (await world.readRequest(waiting)).rounds.find(round => round.kind === 'routing');
     if (routing === undefined) throw new Error('S6B2: the drain wrote no routing round');
     expect(await activityOf(world, committer.ref)).toMatchObject({
-      revision: 1, lastActivityAt: '2026-10-25T10:06:00.000Z',
+      revision: 2, lastActivityAt: '2026-10-25T10:06:00.000Z',
       record: { kind: 'input', source: routing.ref },
     });
     expect(await activityOf(world, b.ref)).toMatchObject({ revision: 0, record: null });
@@ -359,7 +359,7 @@ describe('request activity retry (memory)', () => {
     const drained = await drainOf(world);
     expect(drained).toMatchObject({ progressed: 1, blocked: 0 });
     expect(injections.attempts()).toBe(2);
-    expect(await activityOf(world, a.ref)).toMatchObject({ revision: 1, record: { kind: 'input' } });
+    expect(await activityOf(world, a.ref)).toMatchObject({ revision: 2, record: { kind: 'input' } });
     expect((await world.readRequest(waiting)).owner).toEqual(a.ref);
   });
 
@@ -376,7 +376,7 @@ describe('request activity retry (memory)', () => {
     const drained = await drainOf(world);
     expect(drained).toMatchObject({ progressed: 0, blocked: 1 });
     expect(injections.attempts()).toBe(4);
-    expect(await activityOf(world, a.ref)).toMatchObject({ revision: 0, record: null });
+    expect(await activityOf(world, a.ref)).toMatchObject({ revision: 1, record: { kind: 'input' } });
   });
 });
 

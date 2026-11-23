@@ -11,7 +11,7 @@
  * This Host owns only live, in-memory advancement handles:
  *   - explicit Task selections have independent handles within one Goal; each
  *     forwards the existing Workflow next and retains the selected Task.
- *   - a fresh Work and its exact outbox consultation pump run concurrently.
+ *   - a fresh Work and its exact outbox wait projection run concurrently.
  *     A saved reply wait may yield and release the Session; the live waiter
  *     retains the formal Task/Session/message and starts a successor Run only
  *     after the reply and applicable controls permit it. This is not resuming
@@ -25,15 +25,14 @@
  *     from their owners, but there is no persistent/background runner here.
  */
 import type { CoreCallContext } from '../contracts/core/call-context.js';
-import type { CoreRejection, ReadResult } from '../contracts/core/results.js';
+import type { ReadResult } from '../contracts/core/results.js';
 import type { CommitCursor } from '../contracts/command-event.js';
 import type { RunContinuationV1, RunRef } from '../contracts/dispatch.js';
 import type { GoalRef } from '../contracts/ledger.js';
 import type { SessionRef, WorkspaceScope } from '../contracts/core/identity.js';
-import type { MessageRecipient } from '../contracts/core/session-message.js';
 import { messageOf } from '../contracts/error-message.js';
 import { rejected } from '../contracts/core/rejections.js';
-import { canonicalJson, sameJson as sameCanonical, sha256Hex, type JsonValue } from '../contracts/fingerprint.js';
+import { canonicalJson, sha256Hex, type JsonValue } from '../contracts/fingerprint.js';
 import { isRecord, nonEmpty } from '../contracts/validation/common.js';
 import type { RuntimeExecutionPort } from '../core/agent-runtime/ports.js';
 import type { ExecutionReadPort, TaskExecutionRecord } from '../core/work-graph/model/execution-read-contracts.js';
@@ -43,10 +42,8 @@ import type {
   SessionMailboxPort,
   SessionMessage,
 } from '../core/work-graph/model/communication-contracts.js';
-import { waitStateOf, waitFactsOfRecord } from '../core/work-graph/state/message-machine.js';
+import { isWaitMessage, waitStateOf, waitFactsOfRecord } from '../core/work-graph/state/message-machine.js';
 import type {
-  ConsultationInput,
-  ConsultationResult,
   FailedCardRefV1,
   GoalWaitBasisV1,
   WorkflowAdvanceInput,
@@ -58,6 +55,7 @@ import type { RepairActivationService } from '../core/work-graph/notes/activate-
 import type { WorkbenchQueryProfile } from './runtime-configuration.js';
 import type { GoalWaitWakes } from './goal-wait-wakes.js';
 import { GOAL_WAIT_WAKE_AGGREGATE_TYPES } from './goal-wait-wakes.js';
+import { backoffMsFor } from '../core/work-graph/model/request-contracts.js';
 
 /** The frozen closed set of states. `waiting_for_reply` stays active. */
 export type CollaborationState =
@@ -192,15 +190,6 @@ function withSessionWaitKind(basis: GoalWaitBasisV1): GoalWaitBasisV1 {
   return basis.recordKinds.includes('Session') ? basis
     : { ...basis, recordKinds: [...basis.recordKinds, 'Session'] };
 }
-/**
- * §4.6 recipient narrowing: the widened `MessageRecipient` union is a Session
- * ref or the workspace user address. `SessionRef` has no `kind`, so its absence
- * is the exact Session discriminator; the user address is never treated as a
- * Session and never consulted through `readSession`.
- */
-function isSessionRecipient(recipient: MessageRecipient): recipient is SessionRef {
-  return !('kind' in recipient);
-}
 /** A snapshot of the caller's trusted identity; each handle owns its own signals. */
 type TrustedContext = Pick<CoreCallContext, 'projectId' | 'principal' | 'materialReader'>;
 function snapshotContext(ctx: CoreCallContext): TrustedContext {
@@ -240,6 +229,16 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
     const timer = setTimeout(finish, Math.max(0, ms));
     signal.addEventListener('abort', onAbort, { once: true });
   });
+}
+/**
+ * Design 5.1: the overlap-note send an advance names, as `gate + basisDigest` — the retry of a failed send, or the
+ * next step that asks for it again; null for every other advance.
+ */
+function noteSendKeyOf(value: Extract<WorkflowAdvanceResult, { status: 'ready' }>['value']): string | null {
+  const send = value.retry
+    ?? (value.next?.kind === 'perform' && value.next.operation.kind === 'request_overlap_note'
+      ? value.next.operation.request : null);
+  return send === null ? null : canonicalOf({ gate: send.gate, basisDigest: send.basisDigest });
 }
 /** The RunRef an upcoming `perform:start` will start, if that is the next step. */
 function startRunRefOf(input: WorkflowAdvanceInput | null): RunRef | null {
@@ -307,7 +306,7 @@ type Handle = {
   wakeWaiting: boolean;
   /** The driver's own lifetime signal; never aborted (stop aborts `activePumpAbort`). */
   abort: AbortController;
-  /** The live consultation pump signal; aborted on stop/close/run end. */
+  /** The live wait-projection signal; aborted on stop/close/run end. */
   activePumpAbort: AbortController | null;
   /** One-shot drain promise so stop and close cannot double-drain. */
   stopDrain: Promise<void> | null;
@@ -345,6 +344,12 @@ type GoalDriver = Handle & {
   accepted: boolean;
   /** True while this driver holds the Goal's one registered wait. */
   registered: boolean;
+  /**
+   * Design 5.1: the consecutive transient failures of one overlap-note send, keyed by `gate + basisDigest`. A
+   * reselection that still names the same send keeps the count; a sent note, a note no longer needed or another key
+   * clears it.
+   */
+  noteRetry: { key: string; count: number } | null;
 };
 
 /**
@@ -538,50 +543,6 @@ export function createCollaborationDriver(dependencies: CollaborationDriverDepen
     return auth === undefined || auth.phase === 'authorized';
   }
 
-  /** Match one inquiry wait to exactly one same-scope/role trusted profile. */
-  async function consultFor(
-    handle: Handle, message: SessionMessage, signal: AbortSignal,
-  ): Promise<{ ok: true; profile: WorkbenchQueryProfile } | { ok: false; reason: string }> {
-    if (!isSessionRecipient(message.recipient)) {
-      return { ok: false, reason: 'the wait recipient is the workspace user, not a Session' };
-    }
-    const cardRead = await dependencies.sessions.readSession(
-      contextWith(handle.context, handle.workspaceId, signal), message.recipient);
-    if (cardRead.status !== 'ready') return { ok: false, reason: 'the wait recipient Session is not readable' };
-    const card = cardRead.value;
-    const matches = handle.profiles.filter(profile => profile.scope.projectId === handle.projectId
-      && profile.scope.workspaceId === handle.workspaceId
-      && sameCanonical(profile.sessionRole, card.record.role));
-    if (matches.length === 0) return { ok: false, reason: 'no trusted Query profile matches the wait recipient role' };
-    if (matches.length > 1) return { ok: false, reason: 'more than one trusted Query profile matches the wait recipient role' };
-    return { ok: true, profile: matches[0]! };
-  }
-
-  async function consultOne(
-    handle: Handle, message: SessionMessage, signal: AbortSignal,
-  ): Promise<ConsultationResult | CoreRejection> {
-    const consume = dependencies.workflow.consumeConsultation;
-    if (consume === undefined) return rejected('unsupported', 'the Workflow has no consultation consumer');
-    const matched = await consultFor(handle, message, signal);
-    if (!matched.ok) return rejected('incomplete', matched.reason);
-    const profile = matched.profile;
-    const input: ConsultationInput = {
-      schemaVersion: 1,
-      messageRef: message.ref,
-      goalRef: handle.goalRef,
-      roleBinding: profile.roleBinding,
-      runtimeBudget: profile.runtimeBudget,
-      budget: profile.budget,
-      consumerId: profile.consumerId,
-    };
-    try {
-      return await consume.call(dependencies.workflow,
-        contextWith(handle.context, handle.workspaceId, signal), input);
-    } catch (error) {
-      return rejected('unavailable', `the consultation consumer failed: ${messageOf(error)}`);
-    }
-  }
-
   /**
    * §4.5 `orderGoalAdvances` safe point. The Host calls it only at the
    * claim/create selection point, handing the currently pending competing
@@ -745,7 +706,7 @@ export function createCollaborationDriver(dependencies: CollaborationDriverDepen
     return all;
   }
 
-  /** The read-only consultation pump over the exact sender-Run outbox. */
+  /** The read-only wait projection over the exact sender-Run outbox. */
   async function pump(handle: Handle, runRef: RunRef, signal: AbortSignal, manageState = true, shouldDrain?: () => boolean): Promise<void> {
     const readOutbox = dependencies.mailbox.readOutbox;
     if (readOutbox === undefined) {
@@ -757,43 +718,20 @@ export function createCollaborationDriver(dependencies: CollaborationDriverDepen
       try {
         const all = await readAllOutbox(handle, runRef, signal);
         if (all !== null) {
-          // §4.6: a message addressed to the workspace user counts as a live
-          // wait but is never consulted as a Session; only Session recipients
-          // enter `consultOne`. The user reply is consumed by the ordinary
-          // `awaitWake`/Goal continuation rules, not by this pump.
-          const needsReply = all.filter(message => message.status !== 'responded'
-            && (isSessionRecipient(message.recipient)
-              ? message.sender.kind === 'work_run'
-                && message.intent === 'inquiry'
-              : message.intent === 'decision_request' && message.needsReply === true));
-          const waiting = needsReply.filter(message => isSessionRecipient(message.recipient));
-          if (needsReply.length === 0) {
-            if (manageState && !handle.stopRequested && handle.state === 'waiting_for_reply') handle.state = 'running';
-          } else {
-            if (manageState && !handle.stopRequested && needsReply.some(message => message.waitAfterSend === true
-              || !isSessionRecipient(message.recipient))) handle.state = 'waiting_for_reply';
-            for (const message of waiting) {
-              if (signal.aborted || handle.stopRequested) break;
-              // A consultation can run a whole Query; announce the wait first.
-              changed(handle);
-              const outcome = await consultOne(handle, message, signal);
-              if (outcome.status === 'ready') {
-                project(handle, outcome.value.message);
-                // Preserve the real reason for both an in-progress wait and a
-                // terminal `ended` projection; a responded/processed result
-                // carries no wait reason.
-                handle.reason = outcome.value.state === 'waiting' || outcome.value.state === 'ended'
-                  ? outcome.value.reason : null;
-              } else if (outcome.status === 'rejected') {
-                handle.reason = outcome.reason;
-              } else {
-                handle.reason = 'the consultation consumer did not return a ready result';
-              }
+          // A yielded wait is the message the sender chose to yield on (`waitAfterSend` + `needsReply`). This pump
+          // only projects the outbox and shows that state; copy questions are consumed by the Host by their question
+          // identity, never by this run's busy scan (design 2.3/1.2).
+          const waiting = all.filter(message => message.status !== 'responded' && isWaitMessage(message));
+          if (manageState && !handle.stopRequested) {
+            if (waiting.length === 0) {
+              if (handle.state === 'waiting_for_reply') handle.state = 'running';
+            } else {
+              handle.state = 'waiting_for_reply';
             }
           }
         }
       } catch (error) {
-        handle.reason = `the consultation pump failed: ${messageOf(error)}`;
+        handle.reason = `读取等待状态失败：${messageOf(error)}`;
       }
       if (finalPass) return;
       await tick(handle, signal);
@@ -936,7 +874,7 @@ function yieldedContinuationOf(value: WorkflowAdvanceResult): RunContinuationV1 
       profiles, null, advance);
     const driver: GoalDriver = {
       ...base, taskId: null, lanes: new Map(), activeTaskIds: new Set(), recheck: false,
-      deciding: null, accepted, registered: false,
+      deciding: null, accepted, registered: false, noteRetry: null,
     };
     if (!accepted) driver.state = 'waiting';
     handles.set(driver.key, driver);
@@ -1159,6 +1097,30 @@ function yieldedContinuationOf(value: WorkflowAdvanceResult): RunContinuationV1 
             return;
           }
           const value = result.value;
+          // Design 5.1: a retryable advance (a transient overlap-note send failure) backs off on the Host wake loop's
+          // own schedule (`backoffMsFor`: one second doubling to the cap), then reselects the Goal; the selection
+          // replays the same note send through the gate owner's receipt while it is still needed. The count is kept
+          // per `gate + basisDigest` across the reselection that names the same send again, so consecutive failures
+          // lengthen the back-off; anything else clears it. A stop or a Host close aborts the back-off like any other
+          // parked wait.
+          const noteKey = noteSendKeyOf(value);
+          if (noteKey === null || noteKey !== driver.noteRetry?.key) driver.noteRetry = null;
+          if (value.retry !== undefined && noteKey !== null) {
+            driver.noteRetry = { key: noteKey, count: (driver.noteRetry?.count ?? 0) + 1 };
+            driver.state = 'waiting'; driver.reason = value.reason;
+            changed(driver);
+            const backoff = new AbortController();
+            driver.activePumpAbort = backoff;
+            try {
+              await sleep(backoffMsFor(driver.noteRetry.count), backoff.signal);
+            } finally {
+              if (driver.activePumpAbort === backoff) driver.activePumpAbort = null;
+            }
+            if (driver.stopRequested) return;
+            driver.state = 'running';
+            input = null;
+            continue;
+          }
           if (value.state === 'completed') {
             // A Goal-level entry temporarily pins the yielded Task while waking
             // it; finishing that Task is not Goal completion.
@@ -1168,6 +1130,17 @@ function yieldedContinuationOf(value: WorkflowAdvanceResult): RunContinuationV1 
               driver.current = goalNext;
               input = goalNext;
               continue;
+            }
+            // A12: a completed Goal whose candidate chain is still undecided keeps one wait in the Host's existing
+            // goal-waits registry, so that chain's later abandonment wakes it to reply the executor's M.
+            if (value.waitBasis !== undefined && cursorAtRead !== null) {
+              const scope = { projectId: value.waitBasis.projectId, workspaceId: driver.workspaceId };
+              const waits = dependencies.goalWaits?.(scope);
+              if (waits !== undefined) {
+                waits.register(withSessionWaitKind(value.waitBasis), cursorAtRead);
+                driver.registered = true;
+                await dependencies.drainGoalWaits?.(scope);
+              }
             }
             driver.state = 'completed'; driver.reason = value.reason; return;
           }

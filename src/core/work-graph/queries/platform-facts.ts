@@ -73,8 +73,13 @@ const CONSULTATION_MESSAGE_LIMIT = 20;
 /** The shared read window's own bound; a longer prefix is truncated and reported, never silently cut. */
 const CONSULTATION_RECORD_LIMIT = 200;
 
-/** The source card's open task links carry the Goal its work belongs to; no extra read is added. */
+/** The source card's current Goal responsibility, else its open task links; no extra read is added. */
 export function sourceGoalRef(source: SessionCard): GoalRef | null {
+  // A line can hold a Goal through a goal-level responsible link before it has any task; that current
+  // responsibility outranks a task link that has already closed.
+  const goalLink = source.links.find(link => link.until === null
+    && link.ref.relation === 'responsible' && link.ref.target.kind === 'goal');
+  if (goalLink !== undefined && goalLink.ref.target.kind === 'goal') return goalLink.ref.target.ref;
   const taskLinks = source.links.filter(link => link.ref.target.kind === 'task');
   const link = taskLinks.find(candidate => candidate.until === null && candidate.ref.relation === 'responsible')
     ?? taskLinks.find(candidate => candidate.until === null)

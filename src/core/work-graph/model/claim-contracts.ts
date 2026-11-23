@@ -207,6 +207,16 @@ export interface TaskClaimPort {
     ctx: CoreCallContext, input: ReadTaskRequeueByIdentityInputV1,
   ): Promise<ReadResult<TaskRequeueReadV1>>;
 }
+/**
+ * 设计 3.3：一条来源消息的来源链根（`planfix:`/`planresume:` 一直走到最早的那封信）。组合根用现有的
+ * `planSourceLineageOf` 实现，按平台 Host 读（根只用来比同来源）；暂缓失效在这个根上认纯计划修复/恢复的来源，
+ * 也认转交后再修复的后继（首封信的请求根），读不到不证明失效；原请求反馈用同一个实例归属后继候选。
+ * `goalWorkspaceId` 是这条链所属 Goal 的工作区：系统轮的发送回执在那里查（设计 :554），调用方给它手里已有的值。
+ */
+export type PlanSourceRootPort = {
+  messageRoot(ctx: CoreCallContext, source: SessionMessageRef, goalWorkspaceId: string):
+    Promise<ReadResult<SessionMessageRef>>;
+};
 export type TaskClaimDependencies = {
   records: GoalRecordTransactionPort & RecordLookupPort & RecordOrderedLookupPort;
   roles: RoleBindingFactsPort;
@@ -221,6 +231,10 @@ export type TaskClaimDependencies = {
    * `unsupported`，别的领取照旧。
    */
   dispatchBasis?: DispatchBasisFactsPort;
+  /**
+   * 设计 3.3：暂缓失效认纯 `planfix`/`planresume` 的来源链根。组合根提供这唯一一份读口；来源链读不到时不证明失效。
+   */
+  planSourceRoot: PlanSourceRootPort;
   now(): string;
   newId(): string;
 };

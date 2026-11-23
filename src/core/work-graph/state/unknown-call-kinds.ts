@@ -23,14 +23,16 @@ export const UNKNOWN_CALL_KIND_TABLE: readonly UnknownCallKindEntry[] = [
     .map((toolName) => ({ toolName, kind: 'read_only' as const, contained: true })),
   // Row 2: platform read-only tools (these never look up a commit receipt).
   ...['read_session_inbox', 'read_session_message', 'read_session_message_body', 'read_user_decision',
-    'query_task_graph', 'query_ready_tasks', 'find_related_sessions', 'read_session_card', 'look_graph', 'find_graph',
+    'query_task_graph', 'query_ready_tasks', 'look_graph', 'find_graph',
     'check_links', 'web_search', 'web_fetch']
     .map((toolName) => ({ toolName, kind: 'read_only' as const, contained: true })),
   // Row 3: the read-only command.
   { toolName: 'run_readonly_command', kind: 'read_only', contained: true },
-  // Row 4: platform record-changing tools.
-  ...['send_session_message', 'ack_session_message', 'respond_session_message', 'send_user_message',
-    'record_decision_application', 'propose_future_plan', 'request_command_rerun', 'record_note',
+  // Row 4: platform record-changing tools. The P2 action tools are owned by the
+  // action-request/claim owners; the message tools by the mailbox owner.
+  ...['send_session_message', 'respond_session_message', 'dispatch_task', 'hold_claim', 'release_hold',
+    'request_stop', 'ask_copy', 'notify_person', 'ask_person', 'record_decision_application',
+    'propose_future_plan', 'request_command_rerun', 'record_note',
     'create_member', 'request_rework', 'request_recheck', 'withdraw_session_message', 'hand_off']
     .map((toolName) => ({ toolName, kind: 'platform' as const, contained: true })),
   // Row 5: the review tools (only present in a review round).

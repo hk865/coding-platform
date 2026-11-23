@@ -692,7 +692,7 @@ it('S4C2 item 2: a public completion + one new pending note, one failed Run read
     // persisted message.
     const inbox = await fullInboxOf(f, scribeRef);
     expect(inbox).toHaveLength(2);
-    expect(inbox.filter(message => message.sender.kind === 'host' && message.intent === 'notify')).toHaveLength(2);
+    expect(inbox.filter(message => message.sender.kind === 'host')).toHaveLength(2);
   } finally {
     if (first !== undefined) await first.host.close();
     if (second !== undefined) await second.host.close();
@@ -1025,7 +1025,8 @@ it('DMDN-1 a module deletion sends the reminder with the removed-module count an
     expect(started.sent[0]!.text).toContain('module:B');
     const inbox = await inboxOf(started);
     expect(inbox).toHaveLength(1);
-    expect(inbox[0]!.intent).toBe('notify');
+    expect(inbox[0]!.sender.kind).toBe('host');
+    expect(inbox[0]!.needsReply).not.toBe(true);
     const entries = await scribeRead(started.f, started.f.goalRef.goalId);
     expect(removedOf(entries.find(entry => entry.goalId === started.f.goalRef.goalId)!)).toEqual([{
       identity: `${started.noteId}@${String(started.noteVersion)}`, anchorKey: 'module:B',

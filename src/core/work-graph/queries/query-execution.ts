@@ -1367,19 +1367,15 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
     if ('status' in nextSession) return nextSession;
     const execution = job.job.intent.execution;
     if (execution.consultation !== undefined) {
-      // The FIRST occupancy point re-checks the bound recipient against the
-      // ACTUAL claimed Session and the deterministic message identity. The
-      // submit already did this, but a claim is the authoritative claim.
-      // The claimed Session is the ORIGINAL recipient for a legacy Query, or the
-      // formal derived child A′ for a derived one. The source is never replaced.
-      const claimSession = execution.consultation.derivation === undefined
-        ? execution.consultation.recipient
-        : execution.consultation.derivation.childSessionRef;
-      if (claimSession.projectId !== session.ref.projectId
+      // The FIRST occupancy point re-checks the binding against the ACTUAL claimed Session and the deterministic
+      // message identity. §2.3/§3.10: a consultation Query runs only on the frozen derived child A′ of its copy
+      // question, never on the original recipient line; the source is never replaced.
+      const claimSession = execution.consultation.derivation?.childSessionRef;
+      if (claimSession === undefined || claimSession.projectId !== session.ref.projectId
         || claimSession.sessionId !== session.ref.sessionId) {
-        return rejectedWithNonEmptyCurrent('forbidden', 'the consultation binding recipient is not the claimed Session');
+        return rejectedWithNonEmptyCurrent('forbidden', 'a consultation Query is claimed only on its frozen derived child Session');
       }
-      const refs = consultationQueryRefs(execution.consultation.messageRef, execution.consultation.part);
+      const refs = consultationQueryRefs(execution.consultation.messageRef);
       if (refs.queryJobRef.queryJobId !== queryRunRef.queryJobId || refs.queryRunRef.runId !== queryRunRef.runId) {
         return rejectedWithNonEmptyCurrent('invalid', 'the consultation Query is not the deterministic identity of its message');
       }
@@ -2274,6 +2270,25 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
   }
 
   /**
+   * The one `SessionActivity` write that advances the receiving line's clock
+   * when a QueryRun first proves Kernel entry. The normal `entered` observation,
+   * a terminal that settles an `entering` round, and the start-up reconcile all
+   * call it with the same pre/post Run; a pre-state history or a post-state
+   * without history writes nothing, so a replay and an already-entered round
+   * are first-time-only. A request round writes its own `round_ended` companion
+   * in the same commit and is never passed here.
+   */
+  async function firstEntryActivity(
+    state: QueryExecutionStateV1, run: QueryRunSnapshot, next: QueryRunSnapshot, at: string,
+  ): Promise<{ ok: true; record: EncodedRecord; guard: RecordGuard } | { ok: false; rejection: CoreRejection } | null> {
+    if (state.history !== null || next.run.executionState?.history == null) return null;
+    const advance = await planSessionActivityAdvance(deps.records, {
+      sessionRef: state.sessionRef, at, kind: 'input', source: queryJobRefFor(run.ref),
+    });
+    return advance.ok ? { ok: true, record: advance.record, guard: activityGuardOf(advance.guard) } : advance;
+  }
+
+  /**
    * For an entered request round: the carriers it used are consumed and
    * the `round_ended` companion is written in the ending commit. The executing
    * Job is folded into `nextJob` and written once by the caller.
@@ -2471,11 +2486,20 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
         owned, run, queryRunRef, requestId, actor, occurredAt, position: observation.history.startPosition,
       });
       if (consumption !== null && 'status' in consumption) return consumption;
+      // §2.3: the line's activity time advances when the round actually opens,
+      // never when the message is received. The advance rides this same entered
+      // commit: its guard joins the guard set and its record the write, so
+      // entry and the activity happen in one write. The entered step's own time
+      // stays the write time.
+      const advance = await firstEntryActivity(state, run, nextRun, occurredAt);
+      if (advance !== null && !advance.ok) return advance.rejection;
+      const advanceRecords = advance === null ? [] : [advance.record];
       const merged = mergeGuards([
         ...guards,
         ...(jobWritten ? [{ refKey: queryJobRefKey(queryJobRefFor(queryRunRef)), expectedRevision: job.revision }] : []),
         ...briefGuards,
         ...(consumption?.guards ?? []),
+        ...(advance === null ? [] : [advance.guard]),
       ]);
       if (!merged.ok) return merged.rejection;
       const event = buildRecordedEvent({
@@ -2486,8 +2510,9 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
         deps, identityKey, fingerprint,
         guards: merged.guards,
         records: jobWritten
-          ? [encodeQueryRunSnapshotRecord(nextRun), encodeQueryJobSnapshot(nextJob), ...briefRecords, ...(consumption?.records ?? [])]
-          : [encodeQueryRunSnapshotRecord(nextRun), ...briefRecords, ...(consumption?.records ?? [])],
+          ? [encodeQueryRunSnapshotRecord(nextRun), encodeQueryJobSnapshot(nextJob), ...advanceRecords,
+              ...briefRecords, ...(consumption?.records ?? [])]
+          : [encodeQueryRunSnapshotRecord(nextRun), ...advanceRecords, ...briefRecords, ...(consumption?.records ?? [])],
         events: [encodeQueryExecutionRecordedEvent(event), ...(consumption?.events ?? [])],
         ...(consumption === null ? {} : { claims: consumption.claims }),
         value: nextRecord, operation: 'entered',
@@ -2549,6 +2574,14 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
       if ('status' in planned) return planned;
       ending = planned;
     }
+    // A terminal can be the first proof of entry when the round skipped its own
+    // `entered` observation. A plain Query then writes the same input activity
+    // its entered step would have, at the Run's original start; the pre-state
+    // history makes a replay or an already-entered round write nothing. A
+    // request round already writes its `round_ended` companion above.
+    const entryActivity = isRequestRound(job)
+      ? null : await firstEntryActivity(state, run, next.run, run.run.startedAt ?? occurredAt);
+    if (entryActivity !== null && !entryActivity.ok) return entryActivity.rejection;
     const nextRecord: QueryExecutionRecord = { job: ending.job, run: next.run, session: next.session ?? session, answer: next.answer };
     // L16: the tally rides in this closing commit; no extra event accompanies it.
     const activityPlan = await plannedQueryActivity(ending.job, next.run, fact.activity, occurredAt);
@@ -2562,6 +2595,7 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
     if (next.session !== null) records.push(encodeSessionRecord(next.session));
     records.push(...activityPlan.records);
     records.push(...ending.records);
+    records.push(...(entryActivity === null ? [] : [entryActivity.record]));
     records.push(...(consumption?.records ?? []));
     // The Answer's event first, then the settled Run's, which carries the result a replay restores.
     const events: EncodedDomainEvent[] = [];
@@ -2584,6 +2618,7 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
     if (next.answer !== null) terminalGuards.push({ refKey: queryJobAnswerRefKey(next.answer.ref), expectedRevision: null });
     terminalGuards.push(...activityPlan.guards);
     terminalGuards.push(...ending.guards);
+    terminalGuards.push(...(entryActivity === null ? [] : [entryActivity.guard]));
     terminalGuards.push(...(consumption?.guards ?? []));
     return commitOperation({
       deps, identityKey, fingerprint, guards: terminalGuards, records, events,
@@ -2740,6 +2775,14 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
         nextJob = ending.job;
       }
     }
+    // A plain Query's reconcile can be the first proof that a Kernel Turn
+    // opened (QRR-04); it writes the same input activity the entered step would
+    // have, at the Run's original start. A request round writes its own
+    // `round_ended`; a not-entered or still-unknown round has no history, so
+    // the helper writes nothing.
+    const entryActivity = isRequestRound(job)
+      ? null : await firstEntryActivity(state, run, nextRun, run.run.startedAt ?? occurredAt);
+    if (entryActivity !== null && !entryActivity.ok) return entryActivity.rejection;
     const nextRecord: QueryExecutionRecord = { job: nextJob, run: nextRun, session: nextSession ?? session, answer: null };
     // One event per QueryRun the commit writes: a new attempt's pending Run first, then this one.
     const events = newRun === null
@@ -2753,6 +2796,7 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
     if (nextSession !== null) records.push(encodeSessionRecord(nextSession));
     records.push(...activityPlan.records);
     records.push(...ending.records);
+    records.push(...(entryActivity === null ? [] : [entryActivity.record]));
     records.push(...(consumption?.records ?? []));
     const guards = mergeGuards([
       { refKey: queryRunRefKey(queryRunRef), expectedRevision: run.revision },
@@ -2761,6 +2805,7 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
       ...requestGuards,
       ...activityPlan.guards,
       ...ending.guards,
+      ...(entryActivity === null ? [] : [entryActivity.guard]),
       ...(consumption?.guards ?? []),
     ]);
     if (!guards.ok) return guards.rejection;

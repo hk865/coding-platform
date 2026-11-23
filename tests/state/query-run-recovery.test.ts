@@ -293,7 +293,7 @@ describe('transitionQueryRunRecovery: every (phase, event) pair', () => {
     // lead 裁定 11-17：名单放宽到所有只读平台或工作区内部事实、没有外部影响的工具。
     for (const names of [['read'], ['look_graph'], ['find_graph'], ['check_links'], ['read', 'look_graph', 'find_graph', 'check_links'],
       ['read', 'list_files'], ['search', 'symbols', 'python_index'], ['query_task_graph', 'query_ready_tasks'], ['read_requests'],
-      ['read_execution_history'], ['read_session_inbox', 'read_user_decision', 'find_related_sessions'], [...PLATFORM_ATTESTED_READ_TOOLS]]) {
+      ['read_execution_history'], ['read_session_inbox', 'read_user_decision', 'look_graph'], [...PLATFORM_ATTESTED_READ_TOOLS]]) {
       expect(transitionQueryRunRecovery(stateAt('unknown'), attest, { ...platform, unresolvedToolNames: names }))
         .toEqual({ ok: true, next: SETTLED('failed'), effects: [
           { kind: 'settle_query', settlement: { outcome: 'failed', closeMessage: 'platform: read-only calls', answerCheck: null },

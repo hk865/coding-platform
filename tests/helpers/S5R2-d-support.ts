@@ -23,6 +23,7 @@ import { until } from './change-stream-reader.js';
 import { GOAL_A, GOAL_B, GOAL_C, WORKSPACE_SCOPE, type S5DecisionFixture } from './S5-decision-fixture.js';
 import { committed, ready } from './S5-user-message-support.js';
 import { openMemoryPlatform } from './K3-review-card-fixture.js';
+import { owners } from './S5-application-support.js';
 
 // ---------------------------------------------------------------------------
 // Driver-only doubles, following change-emitters.ts, with a REAL ordering seam.
@@ -105,6 +106,7 @@ export async function orderedDriver(f: S5DecisionFixture, script: AdvanceScript,
       now: f.now, eventId: f.newId }),
     sessions,
     claims: createTaskClaimService({ records: f.records, now: f.now, newId: f.newId,
+      planSourceRoot: owners(f).planSourceRoot,
       roles: createRoleConfigurationService({ records: f.records, now: f.now, eventId: f.newId }) }),
     executions: createRunStateReader({ records: f.records }), runtime,
     evidence: gate(platform.evidence),

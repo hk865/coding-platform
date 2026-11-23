@@ -2186,7 +2186,8 @@ class Component extends DCLogic {
     });
 
     /* the rail: nav's own lines and the archive's first page, with the line's
-       read-only card (R5/R7); no click on the card sends anything */
+       read-only card (R5/R7); the adapter's rows carry 负责 / 正在做 / 最近一步 /
+       叫醒, and no click on the card sends anything */
     const R = D.rail;
     const archOpen = !!s.arch;
     const railRowV = (m, arch) => {

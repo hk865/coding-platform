@@ -27,7 +27,7 @@ describe('the same-project forward into the other workspace', () => {
     const task = opened.lines.scribe.nextTask();
     opened.world.scriptReplies([
       { kind: 'calls', calls: [{ callId: 's7d1-g4-forward-send', name: 'send_session_message',
-        args: { recipient: recipient.ref, text: BODY_TEXT, intent: 'inquiry', needsReply: true } }] },
+        args: { recipient: recipient.ref, text: BODY_TEXT, needsReply: true } }] },
       { kind: 'text', text: 'S7D1 G4 forward sent' },
     ]);
     await driveWorkflow(opened.world.ag2b, { schemaVersion: 1, goalRef: opened.lines.scribe.goal,

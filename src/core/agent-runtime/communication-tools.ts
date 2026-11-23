@@ -23,9 +23,11 @@
 import type { CommitCursor } from '../../contracts/command-event.js';
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { SessionRef } from '../../contracts/core/identity.js';
+import type { TaskTriple } from '../../contracts/dispatch.js';
 import type { SessionMessageRef } from '../../contracts/core/session-message.js';
 import { decisionSourceKey } from '../../contracts/goal-decisions.js';
 import type { DecisionSourceV1 } from '../../contracts/goal-decisions.js';
+import type { GoalRef } from '../../contracts/ledger.js';
 import { PLATFORM_PROMPT_PACK_V1 } from '../../contracts/prompts/platform-pack.generated.js';
 import type { ToolTextV1 } from '../../contracts/prompts/prompt-pack.js';
 import type { ReadResult, WriteResult } from '../../contracts/core/results.js';
@@ -36,11 +38,14 @@ import {
   type ToolResult,
   type WorkspaceSandbox,
 } from '../../../vendor/coding-agent/dist/public-api.js';
-import type { SessionMessage, SessionMessageCommandPort } from '../work-graph/model/communication-contracts.js';
+import type {
+  SessionMessage, SessionMessageCommandPort,
+} from '../work-graph/model/communication-contracts.js';
 import type { DecisionMessagePort } from '../work-graph/model/decision-contracts.js';
+import type { ActionRequestPort, ClaimHoldPort } from '../work-graph/model/action-request-contracts.js';
 import {
-  ackSessionMessageRequest, recordDecisionApplicationRequest, respondSessionMessageRequest,
-  sendSessionMessageRequest, sendUserMessageRequest, withdrawSessionMessageRequest,
+  askCopySendRequest, personMessageRequest, recordDecisionApplicationRequest, respondSessionMessageRequest,
+  sendSessionMessageRequest, withdrawSessionMessageRequest,
   type SessionMessageSendInput,
 } from '../work-graph/model/tool-commit-arguments.js';
 import type { RespondMessageV1 } from '../work-graph/model/message-payload.js';
@@ -54,32 +59,41 @@ export const SESSION_MAILBOX_TOOL_NAMES = [
   'read_session_inbox',
   'read_session_message',
   'read_session_message_body',
-  'ack_session_message',
   'respond_session_message',
   'withdraw_session_message',
 ] as const;
 
-/** The secretary request round's two mailbox tools; the three reads stay forbidden for every Query. */
-export const SECRETARY_QUERY_MAILBOX_TOOL_NAMES = [
-  'send_session_message',
-  'withdraw_session_message',
+/**
+ * The §2.6 action tools, in the order the §2.6 table names them. They are adapters
+ * only: the P1 owners (`platform.actionRequests`, `platform.claimHolds`) own every
+ * rule, receipt and rejection, and their receipts are returned unchanged.
+ */
+export const ACTION_TOOL_NAMES = [
+  'dispatch_task',
+  'hold_claim',
+  'release_hold',
+  'request_stop',
 ] as const;
 
-/** A Query round has no wait registration, so `waitAfterSend` is refused at the tool.
- *  The mailbox owner stays unchanged: a direct owner send is not this tool. */
-const QUERY_WAIT_REFUSAL =
-  '问答轮不能选“发完等回复”（waitAfterSend）：回复会在这一轮结束后、之后的轮次里交给你。把 waitAfterSend 设为 false 再发。';
-
 /**
- * Slice 5 §4.6 user-decision tool names. They are registered ONLY when the
- * mailbox tool config carries a real `decisionMessages` dependency; an old
- * composition keeps exactly the original six `SESSION_MAILBOX_TOOL_NAMES`.
+ * Slice 5 §4.6 user-decision tool names. `send_user_message` was split into
+ * `notify_person`/`ask_person` (design 1.2); what stays here is the read of an
+ * existing answer and the application record.
  */
 export const USER_DECISION_TOOL_NAMES = [
-  'send_user_message',
   'read_user_decision',
   'record_decision_application',
 ] as const;
+
+/**
+ * The two person-addressed message tools. They are adapters over the one
+ * `sendUserMessage` owner: `notify_person` asks no reply, `ask_person` asks one
+ * and carries the card's options/objects. Neither opens a round here.
+ */
+export const PERSON_MESSAGE_TOOL_NAMES = ['notify_person', 'ask_person'] as const;
+
+/** The read-only copy question: stored through `sendMessage`, never delivered to the original line. */
+export const ASK_COPY_TOOL_NAME = 'ask_copy';
 
 export type SessionMailboxToolsConfig = {
   mailbox: SessionMessageCommandPort;
@@ -152,6 +166,9 @@ function cancelledResult(callId: string, reason: string, result: unknown): ToolR
   return { schemaVersion: 1, callId, status: 'cancelled', reason, output: outputValue(result), effects: noneEffects() };
 }
 
+/** AGTP-9: the frozen refusal text for a Query round's `waitAfterSend`. */
+const QUERY_WAIT_REFUSAL = '问答轮不能选“发完等回复”（waitAfterSend）：回复会在这一轮结束后、之后的轮次里交给你。把 waitAfterSend 设为 false 再发。';
+
 function mapWrite(callId: string, result: WriteResult<SessionMessage>): ToolResult {
   if (result.status === 'committed') return success(callId, result);
   if (result.status === 'rejected' && result.code === 'cancelled') return cancelledResult(callId, result.reason, result);
@@ -170,7 +187,7 @@ function mapRead(callId: string, result: ReadResult<unknown>): ToolResult {
 // Slice 5 user-decision tool schemas (spec §4.6).                             //
 // -------------------------------------------------------------------------- //
 //
-// The three user-decision tools reuse the SAME strict model-argument discipline
+// The two user-decision tools reuse the SAME strict model-argument discipline
 // as the mailbox tools: every object is `.strict()`, so an actor/duties/
 // operator/requestId field supplied by the model is an unknown key and fails as
 // `invalid_arguments`. The nested refs are the canonical decision-source refs
@@ -280,7 +297,7 @@ const decisionSubjectSchema = z.discriminatedUnion('kind', [
 /** Canonical `DecisionSourceV1` the model names for a read/record call. */
 const decisionSourceSchema = z.object({
   kind: z.enum(['message', 'goal_cause', 'candidate', 'note_review',
-    'planning_question', 'goal_conflict', 'message_release']),
+    'planning_question', 'goal_conflict', 'action_release']),
   key: z.string().min(1),
   subject: decisionSubjectSchema,
   pins: z.array(decisionVersionPinSchema),
@@ -304,19 +321,8 @@ const decisionApplicationReceiptSchema = z.object({
   cursor: z.string().min(1),
 }).strict();
 
-/** Strict args of the three tools, index-aligned with `USER_DECISION_TOOL_NAMES`. */
+/** Strict args of the two user-decision tools, index-aligned with `USER_DECISION_TOOL_NAMES`. */
 const USER_DECISION_TOOL_SCHEMAS: readonly z.ZodType[] = [
-  // send_user_message = the §3.3 `sendUserMessage` input, never its meta.
-  z.object({
-    goalRef: decisionGoalRefSchema,
-    intent: z.enum(['notify', 'decision_request']),
-    text: z.string(),
-    needsReply: z.boolean(),
-    waitAfterSend: z.boolean(),
-    options: z.array(decisionOptionSchema),
-    objects: z.array(decisionObjectSchema),
-    forwardedFrom: decisionMessageRefSchema.optional(),
-  }).strict(),
   // read_user_decision = { source: DecisionSourceV1 }
   z.object({ source: decisionSourceSchema }).strict(),
   // record_decision_application = { messageRef, receipt }
@@ -324,6 +330,95 @@ const USER_DECISION_TOOL_SCHEMAS: readonly z.ZodType[] = [
     messageRef: decisionMessageRefSchema,
     receipt: decisionApplicationReceiptSchema,
   }).strict(),
+];
+
+const sessionRefSchema = z.object({ projectId: z.string().min(1), sessionId: z.string().min(1) }).strict();
+const messageRefSchema = z.object({
+  aggregateType: z.literal('SessionMessage'),
+  projectId: z.string().min(1),
+  workspaceId: z.string().min(1),
+  messageId: z.string().min(1),
+}).strict();
+const taskTripleSchema = z.object({
+  projectId: z.string().min(1),
+  goalId: z.string().min(1),
+  taskId: z.string().min(1),
+}).strict();
+/** The exact `DispatchBasisV1` shape: `planRevision` may be null and `pointerRevision` may be 'none'. */
+const dispatchBasisSchema = z.object({
+  planRevision: z.number().int().min(0).nullable(),
+  pointerRevision: z.union([z.number().int().min(0), z.literal('none')]),
+  dispatchSequence: z.number().int().min(0),
+}).strict();
+
+/**
+ * The one strict-argument executor every coordination tool factory here shares:
+ * isolation happens before the first await, the request identity is the trusted
+ * Kernel call identity plus the bound Run, and the caller's real principal is
+ * snapshotted (the user-decision read and the action owners must see it).
+ */
+function createToolExecutor(context: CoreCallContext, requestIdForCall: (call: Readonly<ToolCall>) => string) {
+  function mailboxSnapshotContext(signal: AbortSignal): CoreCallContext {
+    return {
+      projectId: context.projectId,
+      ...(context.workspaceId === undefined ? {} : { workspaceId: context.workspaceId }),
+      principal: structuredClone(context.principal),
+      materialReader: structuredClone(context.materialReader),
+      signal,
+    };
+  }
+  return async function execute<Args>(
+    call: Readonly<ToolCall>,
+    signal: AbortSignal,
+    schema: z.ZodType,
+    run: (args: Args, requestId: string, context: CoreCallContext) => Promise<ToolResult>,
+  ): Promise<ToolResult> {
+    const parsed = schema.safeParse(call.arguments);
+    if (!parsed.success) return failure(call.callId, 'invalid_arguments', 'the tool arguments do not match the strict schema');
+    let accepted: Args;
+    try {
+      accepted = structuredClone(parsed.data) as Args;
+    } catch {
+      return failure(call.callId, 'invalid_arguments', 'the tool arguments cannot be isolated');
+    }
+    let requestId: string;
+    try {
+      requestId = requestIdForCall(call);
+    } catch {
+      return failure(call.callId, 'execution_failed', 'no trusted command identity is bound for this call');
+    }
+    if (typeof requestId !== 'string' || requestId.length === 0) {
+      return failure(call.callId, 'execution_failed', 'the trusted command identity is empty');
+    }
+    const owned = mailboxSnapshotContext(signal);
+    if (owned.signal.aborted) return cancelled(call.callId, 'the tool call was cancelled before the mailbox call');
+    try {
+      return await run(accepted, requestId, owned);
+    } catch {
+      return failure(call.callId, 'execution_failed', 'the mailbox call result is unconfirmed; inspect the original request before issuing another action');
+    }
+  };
+}
+
+/** An owner receipt keeps its own status: a refusal is an error result with the owner's full JSON output. */
+function mapActionReceipt(callId: string, result: { status: string; code?: string; reason?: string }): ToolResult {
+  if (result.status !== 'rejected') return success(callId, result);
+  return result.code === 'cancelled'
+    ? cancelledResult(callId, result.reason ?? 'cancelled', result)
+    : rejectedResult(callId, result, result.reason ?? 'the action request was rejected');
+}
+
+/** The action tools' strict schemas, index-aligned with `ACTION_TOOL_NAMES`. */
+const ACTION_TOOL_SCHEMAS: readonly z.ZodType[] = [
+  z.object({
+    taskRef: taskTripleSchema,
+    reason: z.string().min(1),
+    expected: dispatchBasisSchema.optional(),
+    preferredLine: sessionRefSchema.optional(),
+  }).strict(),
+  z.object({ taskRef: taskTripleSchema, reason: z.string().min(1) }).strict(),
+  z.object({ taskRef: taskTripleSchema, reasonId: z.string().min(1), note: z.string().min(1).optional() }).strict(),
+  z.object({ taskRef: taskTripleSchema, reason: z.string().min(1) }).strict(),
 ];
 
 
@@ -335,45 +430,24 @@ export function createSessionMailboxTools(config: SessionMailboxToolsConfig): Se
     read_session_inbox: textOf('read_session_inbox').description,
     read_session_message: textOf('read_session_message').description,
     read_session_message_body: textOf('read_session_message_body').description,
-    ack_session_message: textOf('ack_session_message').description,
     respond_session_message: textOf('respond_session_message').description,
     withdraw_session_message: textOf('withdraw_session_message').description,
-    send_user_message: textOf('send_user_message').description,
     read_user_decision: textOf('read_user_decision').description,
     record_decision_application: textOf('record_decision_application').description,
   };
-  const session = z.object({ projectId: z.string().min(1), sessionId: z.string().min(1) }).strict();
-  const message = z.object({
-    aggregateType: z.literal('SessionMessage'),
-    projectId: z.string().min(1),
-    workspaceId: z.string().min(1),
-    messageId: z.string().min(1),
-  }).strict();
-  const taskTriple = z.object({
-    projectId: z.string().min(1),
-    goalId: z.string().min(1),
-    taskId: z.string().min(1),
-  }).strict();
-  /** The exact `DispatchBasisV1` shape: `planRevision` may be null and `pointerRevision` may be 'none'. */
-  const dispatchBasis = z.object({
-    planRevision: z.number().int().min(0).nullable(),
-    pointerRevision: z.union([z.number().int().min(0), z.literal('none')]),
-    dispatchSequence: z.number().int().min(0),
-  }).strict();
+  const message = messageRefSchema;
   const schemas: readonly z.ZodType[] = [
     z.object({
-      recipient: session,
+      recipient: sessionRefSchema,
       text: z.string().min(1),
-      /** Explicit intent; omitted keeps the historical notify default. */
-      intent: z.enum(['notify', 'inquiry', 'action_request']).optional(),
       /** Independent of waitAfterSend: a reply may be requested without waiting. */
       needsReply: z.boolean().optional(),
       /** Independent of needsReply: yield after the message is durably saved. */
       waitAfterSend: z.boolean().optional(),
-      /** The dispatch basis the sender observed; omitted means no pin. */
-      expected: dispatchBasis.optional(),
+      /** The wake bit the sender chooses; omitted keeps the owner's true default. */
+      wake: z.boolean().optional(),
       /** The Task this message belongs to; omitted means no task pin. */
-      taskRef: taskTriple.optional(),
+      taskRef: taskTripleSchema.optional(),
       /** The message this one follows up; it does NOT start a new request root by itself. */
       followupOf: message.optional(),
       /** Inquiry only: a finite budget greater than 0; overflow belongs to the write. */
@@ -389,7 +463,6 @@ export function createSessionMailboxTools(config: SessionMailboxToolsConfig): Se
     }).strict(),
     z.object({ messageRef: message }).strict(),
     z.object({ messageRef: message, part: z.enum(['message', 'response']) }).strict(),
-    z.object({ messageRef: message, expectedRevision: z.number().int().min(1) }).strict(),
     z.union([
       z.object({ messageRef: message, expectedRevision: z.number().int().min(1), text: z.string().min(1) }).strict(),
       z.object({
@@ -400,57 +473,7 @@ export function createSessionMailboxTools(config: SessionMailboxToolsConfig): Se
     z.object({ messageRef: message }).strict(),
   ];
   const trustedSessionRef: SessionRef = { projectId: config.sessionRef.projectId, sessionId: config.sessionRef.sessionId };
-
-  function snapshotContext(signal: AbortSignal): CoreCallContext {
-    return {
-      projectId: config.context.projectId,
-      ...(config.context.workspaceId === undefined ? {} : { workspaceId: config.context.workspaceId }),
-      principal: structuredClone(config.context.principal),
-      materialReader: structuredClone(config.context.materialReader),
-      signal,
-    };
-  }
-
-  /**
-   * Slice 5 §4.6: the user-decision read keeps the caller's REAL principal.
-   * The owner checks the bound scope and the formal allowed-reader Session
-   * itself, so an agent can only read a card whose canonical source names its
-   * own Run/Query Session; a synthesized Host principal would silently bypass
-   * that gate. The model still supplies no actor.
-   */
-  async function execute<Args>(
-    call: Readonly<ToolCall>,
-    signal: AbortSignal,
-    schema: z.ZodType,
-    run: (args: Args, requestId: string, context: CoreCallContext) => Promise<ToolResult>,
-  ): Promise<ToolResult> {
-    // Isolation happens before the first await: a caller mutating its argument
-    // object afterwards cannot change what was accepted.
-    const parsed = schema.safeParse(call.arguments);
-    if (!parsed.success) return failure(call.callId, 'invalid_arguments', 'the tool arguments do not match the strict schema');
-    let accepted: Args;
-    try {
-      accepted = structuredClone(parsed.data) as Args;
-    } catch {
-      return failure(call.callId, 'invalid_arguments', 'the tool arguments cannot be isolated');
-    }
-    let requestId: string;
-    try {
-      requestId = config.requestIdForCall(call);
-    } catch {
-      return failure(call.callId, 'execution_failed', 'no trusted command identity is bound for this call');
-    }
-    if (typeof requestId !== 'string' || requestId.length === 0) {
-      return failure(call.callId, 'execution_failed', 'the trusted command identity is empty');
-    }
-    const context = snapshotContext(signal);
-    if (context.signal.aborted) return cancelled(call.callId, 'the tool call was cancelled before the mailbox call');
-    try {
-      return await run(accepted, requestId, context);
-    } catch {
-      return failure(call.callId, 'execution_failed', 'the mailbox call result is unconfirmed; inspect the original request before issuing another action');
-    }
-  }
+  const execute = createToolExecutor(config.context, config.requestIdForCall);
 
   function definitionFor(index: number): ToolDefinition {
     const name = SESSION_MAILBOX_TOOL_NAMES[index]!;
@@ -476,10 +499,12 @@ export function createSessionMailboxTools(config: SessionMailboxToolsConfig): Se
             switch (name) {
               case 'send_session_message': {
                 const input = args as SessionMessageSendInput;
-                // A Query round registers no wait (it has no onWaitRegistered): the reply reaches a later round.
-                if (input.waitAfterSend === true && config.context.principal.kind === 'query_run')
-                  return failure(call.callId, 'invalid_arguments', QUERY_WAIT_REFUSAL);
+                // A Query round's `waitAfterSend` is refused by the mailbox owner
+                // (`mailbox-send.ts`), not by this adapter: the owner holds the rule.
                 const result = await config.mailbox.sendMessage(context, sendSessionMessageRequest(input, requestId));
+                if (result.status === 'rejected' && result.code === 'invalid'
+                  && result.reason.startsWith('a query round cannot set waitAfterSend'))
+                  return failure(call.callId, 'invalid_arguments', QUERY_WAIT_REFUSAL);
                 if (result.status !== 'committed') return mapWrite(call.callId, result);
                 // The historical fire-and-forget send keeps the untouched result.
                 const waitAfterSend = input.waitAfterSend === true;
@@ -522,11 +547,6 @@ export function createSessionMailboxTools(config: SessionMailboxToolsConfig): Se
                 });
                 return mapRead(call.callId, result);
               }
-              case 'ack_session_message': {
-                const input = args as { messageRef: SessionMessageRef; expectedRevision: number };
-                const result = await config.mailbox.ackMessage(context, ackSessionMessageRequest(input, requestId));
-                return mapWrite(call.callId, result);
-              }
               case 'respond_session_message': {
                 const input = args as RespondMessageV1;
                 // The payload is flat; its body arm is spread into the owner's
@@ -550,7 +570,7 @@ export function createSessionMailboxTools(config: SessionMailboxToolsConfig): Se
   }
 
   /**
-   * The three user-decision tools. Part 1 registers their strict schemas and
+   * The two user-decision tools. Part 1 registers their strict schemas and
    * stub handlers only; Part 2 replaces the handlers with the real
    * `decisionMessages` calls. None of them carries an actor/duties/operator/
    * requestId model field.
@@ -565,7 +585,7 @@ export function createSessionMailboxTools(config: SessionMailboxToolsConfig): Se
       inputSchema: schema,
       effectClass: readOnly ? 'read_only' : 'workspace_write',
       requiredCapabilities: readOnly ? ['workspace_read'] : [],
-      defaultTimeoutMs: name === 'send_user_message' ? SESSION_MESSAGE_SEND_TIMEOUT_MS : 10000,
+      defaultTimeoutMs: 10000,
       outputLimitBytes: 64 * 1024,
       independentReadOnly: readOnly,
       summarize: () => ({ paths: [], cwd: null, commandPreview: null }),
@@ -577,15 +597,6 @@ export function createSessionMailboxTools(config: SessionMailboxToolsConfig): Se
               return failure(call.callId, 'execution_failed', 'no user decision owner is bound for this tool');
             }
             switch (name) {
-              case 'send_user_message': {
-                const input = args as Parameters<DecisionMessagePort['sendUserMessage']>[1]['input'];
-                const result = await decisions.sendUserMessage(context, sendUserMessageRequest(input, requestId));
-                if (result.status !== 'committed') return mapWrite(call.callId, result);
-                // The message is already durably saved; registration never changes
-                // the send receipt and never starts a model or a poll loop.
-                if (input.waitAfterSend) config.onWaitRegistered?.(result.value);
-                return success(call.callId, { message: result.value, waiting: input.waitAfterSend });
-              }
               case 'read_user_decision': {
                 const input = args as Parameters<DecisionMessagePort['readDecisionAnswer']>[1];
                 const result = await decisions.readDecisionAnswer(context, { source: input.source });
@@ -676,7 +687,7 @@ export function createSessionMailboxTools(config: SessionMailboxToolsConfig): Se
     };
   }
 
-  // The three user-decision names exist only when the real decision owner is
+  // The two user-decision names exist only when the real decision owner is
   // bound. Without it the factory still returns exactly the original six.
   const decisionNames: readonly string[] = config.decisionMessages === undefined ? [] : USER_DECISION_TOOL_NAMES;
 
@@ -686,5 +697,242 @@ export function createSessionMailboxTools(config: SessionMailboxToolsConfig): Se
       ...SESSION_MAILBOX_TOOL_NAMES.map((_name, index) => definitionFor(index)),
       ...decisionNames.map((_name, index) => decisionDefinitionFor(index)),
     ],
+  };
+}
+
+export type PersonMessageToolsConfig = {
+  /** The one `sendUserMessage` owner behind both person tools; it owns the card metadata and receivers. */
+  decisionMessages: Pick<DecisionMessagePort, 'sendUserMessage'>;
+  /** The trusted Goal of this round; every person message is scoped to it, never a model argument. */
+  goalRef: GoalRef;
+  /** Trusted, already-bound call context. Snapshotted per call; never model JSON. */
+  context: CoreCallContext;
+  /** Trusted command identity: Kernel `ToolCall.callId` + bound Run/operation. */
+  requestIdForCall: (call: Readonly<ToolCall>) => string;
+  /** The person tools' model-facing texts; defaults to the generated pack. */
+  texts?: Readonly<Record<string, ToolTextV1>>;
+};
+
+/** Strict args, index-aligned with `PERSON_MESSAGE_TOOL_NAMES`. */
+const PERSON_MESSAGE_TOOL_SCHEMAS: readonly z.ZodType[] = [
+  // notify_person: tell the person, ask nothing.
+  z.object({ text: z.string().min(1), taskRef: taskTripleSchema.optional() }).strict(),
+  // ask_person: one card with its options and object version pins.
+  z.object({
+    text: z.string().min(1),
+    options: z.array(decisionOptionSchema),
+    objects: z.array(decisionObjectSchema),
+    taskRef: taskTripleSchema.optional(),
+  }).strict(),
+];
+
+/**
+ * The two person-addressed message adapters. They only hand the model's text
+ * and card content to the one `sendUserMessage` owner; that owner decides the
+ * recipient, the card metadata, the Goal scope, refusals and the receipt. The
+ * reply tool never answers a card: the card's formal answer is the person's,
+ * and the owner refuses a reply to a card.
+ */
+export function createPersonMessageTools(config: PersonMessageToolsConfig): SessionMailboxToolsHandle {
+  const mailboxTextOf = (name: string): ToolTextV1 =>
+    config.texts?.[name] ?? PLATFORM_TOOL_TEXTS[name]!;
+  const descriptions: Readonly<Record<string, string>> = {
+    notify_person: mailboxTextOf('notify_person').description,
+    ask_person: mailboxTextOf('ask_person').description,
+  };
+  const execute = createToolExecutor(config.context, config.requestIdForCall);
+
+  function mailboxDefinitionFor(index: number): ToolDefinition {
+    const name = PERSON_MESSAGE_TOOL_NAMES[index]!;
+    const schema = PERSON_MESSAGE_TOOL_SCHEMAS[index]!;
+    return {
+      name,
+      description: descriptions[name]!,
+      inputSchema: schema,
+      effectClass: 'workspace_write',
+      requiredCapabilities: [],
+      defaultTimeoutMs: 10000,
+      outputLimitBytes: 64 * 1024,
+      independentReadOnly: false,
+      summarize: () => ({ paths: [], cwd: null, commandPreview: null }),
+      handler: {
+        async execute(call: Readonly<ToolCall>, options: Readonly<{ signal: AbortSignal }>): Promise<ToolResult> {
+          return execute(call, options.signal, schema, async (args, requestId, context) => {
+            switch (name) {
+              case 'notify_person': {
+                const input = args as { text: string; taskRef?: TaskTriple };
+                const request = personMessageRequest({
+                  goalRef: config.goalRef, intent: 'notify', text: input.text,
+                  ...(input.taskRef === undefined ? {} : { taskRef: input.taskRef }),
+                }, requestId);
+                const result = await config.decisionMessages.sendUserMessage(context, request);
+                return mapWrite(call.callId, result);
+              }
+              case 'ask_person': {
+                const input = args as { text: string;
+                  options: Parameters<DecisionMessagePort['sendUserMessage']>[1]['input']['options'];
+                  objects: Parameters<DecisionMessagePort['sendUserMessage']>[1]['input']['objects'];
+                  taskRef?: TaskTriple };
+                const request = personMessageRequest({
+                  goalRef: config.goalRef, intent: 'decision_request', text: input.text,
+                  options: input.options, objects: input.objects,
+                  ...(input.taskRef === undefined ? {} : { taskRef: input.taskRef }),
+                }, requestId);
+                const result = await config.decisionMessages.sendUserMessage(context, request);
+                return mapWrite(call.callId, result);
+              }
+              default:
+                return failure(call.callId, 'execution_failed', 'the person message tool name is not recognized');
+            }
+          });
+        },
+      },
+    };
+  }
+
+  return {
+    names: PERSON_MESSAGE_TOOL_NAMES,
+    create: () => PERSON_MESSAGE_TOOL_NAMES.map((_name, index) => mailboxDefinitionFor(index)),
+  };
+}
+
+export type AskCopyToolConfig = {
+  /** The mailbox owner: the question is an ordinary stored message with `answeredBy:'copy'`. */
+  mailbox: SessionMessageCommandPort;
+  /** Trusted, already-bound call context. Snapshotted per call; never model JSON. */
+  context: CoreCallContext;
+  /** Trusted command identity: Kernel `ToolCall.callId` + bound Run/operation. */
+  requestIdForCall: (call: Readonly<ToolCall>) => string;
+  /** The tool's model-facing text; defaults to the generated pack. */
+  texts?: Readonly<Record<string, ToolTextV1>>;
+};
+
+/**
+ * The read-only copy question. The adapter only stores the question with the
+ * copy marker; it never derives the copy, waits for it or opens a round. The
+ * Host consumes the stored question by its message identity.
+ */
+export function createAskCopyTool(config: AskCopyToolConfig): SessionMailboxToolsHandle {
+  const mailboxTextOf = (name: string): ToolTextV1 =>
+    config.texts?.[name] ?? PLATFORM_TOOL_TEXTS[name]!;
+  const schema = z.object({
+    line: sessionRefSchema,
+    question: z.string().min(1),
+    taskRef: taskTripleSchema.optional(),
+  }).strict();
+  const execute = createToolExecutor(config.context, config.requestIdForCall);
+  return {
+    names: [ASK_COPY_TOOL_NAME],
+    create: () => [{
+      name: ASK_COPY_TOOL_NAME,
+      description: mailboxTextOf(ASK_COPY_TOOL_NAME).description,
+      inputSchema: schema,
+      effectClass: 'workspace_write',
+      requiredCapabilities: [],
+      defaultTimeoutMs: 10000,
+      outputLimitBytes: 64 * 1024,
+      independentReadOnly: false,
+      summarize: () => ({ paths: [], cwd: null, commandPreview: null }),
+      handler: {
+        async execute(call: Readonly<ToolCall>, options: Readonly<{ signal: AbortSignal }>): Promise<ToolResult> {
+          return execute(call, options.signal, schema, async (args, requestId, context) => {
+            const input = args as {
+              line: SessionRef; question: string;
+              taskRef?: { projectId: string; goalId: string; taskId: string };
+            };
+            const request = askCopySendRequest(input, requestId);
+            const result = await config.mailbox.sendMessage(context, request);
+            return mapWrite(call.callId, result);
+          });
+        },
+      },
+    }],
+  };
+}
+
+export type ActionToolsConfig = {
+  /** The P1 action-request owner (`platform.actionRequests`); its receipts are returned unchanged. */
+  actionRequests: Pick<ActionRequestPort, 'requestDispatch' | 'requestStop'>;
+  /** The P1 claim-hold owner (`platform.claimHolds`); its receipts are returned unchanged. */
+  claimHolds: Pick<ClaimHoldPort, 'place' | 'release'>;
+  /** Trusted, already-bound Query call context. Snapshotted per call; never model JSON. */
+  context: CoreCallContext;
+  /** Trusted command identity: Kernel `ToolCall.callId` + bound Run/operation. */
+  requestIdForCall: (call: Readonly<ToolCall>) => string;
+  /** The action tools' model-facing texts; defaults to the generated pack. */
+  texts?: Readonly<Record<string, ToolTextV1>>;
+};
+
+/**
+ * The §2.6 action tools. They are adapters: round admission, blockers, the
+ * request/hold records and every receipt belong to the P1 owners. The model
+ * supplies no actor, duty, goal, request id or permission; the caller, the
+ * Goal and every missing dispatch-basis value are filled by the owner.
+ */
+export function createActionTools(config: ActionToolsConfig): SessionMailboxToolsHandle {
+  const mailboxTextOf = (name: string): ToolTextV1 =>
+    config.texts?.[name] ?? PLATFORM_TOOL_TEXTS[name]!;
+  const descriptions: Readonly<Record<string, string>> = {
+    dispatch_task: mailboxTextOf('dispatch_task').description,
+    hold_claim: mailboxTextOf('hold_claim').description,
+    release_hold: mailboxTextOf('release_hold').description,
+    request_stop: mailboxTextOf('request_stop').description,
+  };
+  const execute = createToolExecutor(config.context, config.requestIdForCall);
+
+  function mailboxDefinitionFor(index: number): ToolDefinition {
+    const name = ACTION_TOOL_NAMES[index]!;
+    const schema = ACTION_TOOL_SCHEMAS[index]!;
+    return {
+      name,
+      description: descriptions[name]!,
+      inputSchema: schema,
+      effectClass: 'workspace_write',
+      // A platform record write is not a workspace capability; it is authorized
+      // through the Host grant's tool list, like every other action adapter.
+      requiredCapabilities: [],
+      defaultTimeoutMs: 10000,
+      outputLimitBytes: 64 * 1024,
+      independentReadOnly: false,
+      summarize: () => ({ paths: [], cwd: null, commandPreview: null }),
+      handler: {
+        async execute(call: Readonly<ToolCall>, options: Readonly<{ signal: AbortSignal }>): Promise<ToolResult> {
+          return execute(call, options.signal, schema, async (args, requestId, context) => {
+            switch (name) {
+              case 'dispatch_task': {
+                const input = args as Parameters<ActionRequestPort['requestDispatch']
+                >[1]['input'];
+                const result = await config.actionRequests.requestDispatch(context, {
+                  input, meta: { requestId, expected: [] },
+                });
+                return mapActionReceipt(call.callId, result);
+              }
+              case 'hold_claim': {
+                const input = args as Parameters<ClaimHoldPort['place']>[1]['input'];
+                const result = await config.claimHolds.place(context, { input, meta: { requestId, expected: [] } });
+                return mapActionReceipt(call.callId, result);
+              }
+              case 'release_hold': {
+                const input = args as Parameters<ClaimHoldPort['release']>[1]['input'];
+                const result = await config.claimHolds.release(context, { input, meta: { requestId, expected: [] } });
+                return mapActionReceipt(call.callId, result);
+              }
+              case 'request_stop': {
+                const input = args as Parameters<ActionRequestPort['requestStop']>[1]['input'];
+                const result = await config.actionRequests.requestStop(context, { input, meta: { requestId, expected: [] } });
+                return mapActionReceipt(call.callId, result);
+              }
+              default:
+                return failure(call.callId, 'execution_failed', 'the action tool name is not recognized');
+            }
+          });
+        },
+      },
+    };
+  }
+
+  return {
+    names: ACTION_TOOL_NAMES,
+    create: () => ACTION_TOOL_NAMES.map((_name, index) => mailboxDefinitionFor(index)),
   };
 }

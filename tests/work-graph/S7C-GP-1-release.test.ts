@@ -5,14 +5,14 @@
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { RequestCoreViewV1 } from '../../src/core/work-graph/model/request-contracts.js';
-import { graphWrite, plain } from '../helpers/AG2b-collaboration-fixture.js';
+import { plain } from '../helpers/AG2b-collaboration-fixture.js';
 import { S6A_SCOPE } from '../helpers/S6A-request-fixture.js';
 import type { S6AHostWorld } from '../helpers/S6A-host-fixture.js';
 import {
-  approveS7A2Message, sendS7A2Request, withdrawS7A2Message,
+  answerS7A2Card, readS7A2Card, sendS7A2RequestWithDispatch, withdrawS7A2Message,
 } from '../helpers/S7A2-fixture.js';
 import {
-  committed, openS7AWorkWorld, pauseS7AGoal, ready, setS7AAutonomy,
+  openS7AWorkWorldWithActions, pauseS7AGoal, ready, setS7AAutonomy,
 } from '../helpers/S7A-fixture.js';
 
 vi.mock('../../src/core/record-store/in-memory-record-store.js', async importOriginal =>
@@ -27,13 +27,13 @@ afterEach(async () => {
 
 describe('the release reason', () => {
   it('awaiting and approved both stay processing until the message is rejected or withdrawn', async () => {
-    const opened = await openS7AWorkWorld({ backend: 'memory' });
+    const opened = await openS7AWorkWorldWithActions({ backend: 'memory' });
     worlds.push(opened.world);
     const world = opened.world;
     await setS7AAutonomy(world, opened.goal, 'every_step');
 
-    const sent = await sendS7A2Request(world, {
-      label: 's7c-gp1b-send', goal: opened.goal, recipient: opened.line.ref, intent: 'action_request',
+    const sent = await sendS7A2RequestWithDispatch(world, {
+      label: 's7c-gp1b-send', goal: opened.goal, recipient: opened.line.ref,
     });
     const root = sent.requestRoot;
     if (root === null) throw new Error('the secretary action request has no request root');
@@ -41,29 +41,30 @@ describe('the release reason', () => {
     const awaiting = ready<RequestCoreViewV1>(
       await world.post('requests/read', plain(S6A_SCOPE, { requestRoot: root })), 'the awaiting request read');
     expect(awaiting.processing).toBe(true);
-    expect(awaiting.reasons).toEqual(['release']);
+    // P2 §6 (S7C-GP-1-release:44): the request's pending work is the agent's dispatch action request, not a message
+    // release queue. The frozen reason enum has no `dispatch`; the projection names the pending reply work `reply`.
+    expect(awaiting.reasons).toEqual(['reply']);
 
-    const approved = await approveS7A2Message(world, sent, 's7c-gp1b-approve');
-    expect(approved.release).toBe('approved');
     const afterApproval = ready<RequestCoreViewV1>(
       await world.post('requests/read', plain(S6A_SCOPE, { requestRoot: root })), 'the approved request read');
     expect(afterApproval.processing).toBe(true);
-    expect(afterApproval.reasons).toEqual(['release']);
+    expect(afterApproval.reasons).toEqual(['reply']);
 
-    const denied = await sendS7A2Request(world, {
-      label: 's7c-gp1b-deny', goal: opened.goal, recipient: opened.line.ref, intent: 'action_request',
-    });
-    if (denied.requestRoot === null) throw new Error('the denied action request has no request root');
-    committed(await world.post('messages/release',
-      graphWrite(S6A_SCOPE, { messageRef: denied.ref, allow: false }, 's7c-gp1b-deny')), 'the denial');
+    // The person denies the FIRST request's `action_release` card through `decisions/answer`; the message queue is
+    // gone. Denying it also frees the one unfinished work Task, so the withdrawal below can dispatch it again.
+    const card = await readS7A2Card(world, opened.goal);
+    await answerS7A2Card(world, { source: card.source, optionId: 'deny', label: 's7c-gp1b-deny' });
     const afterDenial = ready<RequestCoreViewV1>(
-      await world.post('requests/read', plain(S6A_SCOPE, { requestRoot: denied.requestRoot })),
+      await world.post('requests/read', plain(S6A_SCOPE, { requestRoot: root })),
       'the denied request read');
-    expect(afterDenial.processing).toBe(false);
-    expect(afterDenial.reasons).toEqual([]);
+    // Denying the dispatch action request frees the card, but the secretary's request message still needs its reply
+    // (P2 §2.5 AR-05 closes the action request only): the request stays processing for `reply` until the message is
+    // withdrawn below.
+    expect(afterDenial.processing).toBe(true);
+    expect(afterDenial.reasons).toEqual(['reply']);
 
-    const withdrawnSent = await sendS7A2Request(world, {
-      label: 's7c-gp1b-withdraw', goal: opened.goal, recipient: opened.line.ref, intent: 'action_request',
+    const withdrawnSent = await sendS7A2RequestWithDispatch(world, {
+      label: 's7c-gp1b-withdraw', goal: opened.goal, recipient: opened.line.ref,
     });
     if (withdrawnSent.requestRoot === null) throw new Error('the withdrawn action request has no request root');
     await withdrawS7A2Message(world, withdrawnSent, 's7c-gp1b-withdraw');

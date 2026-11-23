@@ -110,7 +110,7 @@ describe('CS-consult: an archived or retired source line', () => {
     const refs = consultationQueryRefs(consulted.first.message.ref);
 
     // CS asks its own goal-less inquiry; Q2's accepted `action_request` is not the consulted message.
-    expect(consulted.first.message).toMatchObject({ intent: 'inquiry', needsReply: true, goalRef: null });
+    expect(consulted.first.message).toMatchObject({ answeredBy: 'copy', needsReply: true, goalRef: null });
     expect(payload).toMatchObject({
       messageRef: consulted.first.message.ref,
       mode: 'platform_facts',

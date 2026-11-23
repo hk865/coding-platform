@@ -644,14 +644,17 @@ it('A11 #7, #8: c1 turning PASS while c2 FAILs is another failure, so the requeu
 it('A11 #4: a message its recipient has answered is a new basis, so the requeue passes; the same message before the answer is not admitted', async () => {
   const QUESTION = 'A11 #4 question: does the static check read the workspace at all?';
   const ANSWER = 'A11 #4 answer: no, it exits 1 whatever the files hold';
-  const ask = { callId: 'a11-ask', name: 'send_session_message',
-    args: { recipient: {}, text: QUESTION, intent: 'inquiry', needsReply: true, waitAfterSend: true } as Record<string, unknown> };
+  // p2-frozen §2.3/T26: only `ask_copy` stores a copy question the consultation read accepts; a line
+  // `send_session_message` question is not a consultation input.
+  const ask = { callId: 'a11-ask', name: 'ask_copy',
+    args: { line: {}, question: QUESTION } as Record<string, unknown> };
   const h = await openHostScenario({ automation: NO_REDRIVE, check: 'fail', workIds: [W, WORK_2], script: {
-    replies: [textReply('A11 #4 Run 1 changes nothing'), textReply('A11 #4 Run 2 changes nothing'), { kind: 'calls', calls: [ask] }],
+    replies: [textReply('A11 #4 Run 1 changes nothing'), textReply('A11 #4 Run 2 changes nothing'),
+      { kind: 'calls', calls: [ask] }, textReply('A11 #4 work-2 asked the copy')],
     queryReplies: [textReply(ANSWER)] } });
   const recipient = (await createAG2bSession(h.host, 'a11-recipient', AG2B_QUERY_ROLE, [{ target: { kind: 'task',
     ref: { projectId: AG2B_SCOPE.projectId, goalId: AG2B_GOAL_REF.goalId, taskId: WORK_2 } }, relation: 'participates' }])).sessionRef;
-  ask.args['recipient'] = { projectId: recipient.projectId, sessionId: recipient.sessionId };
+  ask.args['line'] = { projectId: recipient.projectId, sessionId: recipient.sessionId };
   await assertInvariants(h, 'recipient Session created', stepOf(h, 'other', 'recipient Session created', SCENARIO_OPERATOR));
 
   // As #2: Run 1 FAILs, the first requeue passes, Run 2 FAILs the same way; its automatic requeue is not made.
@@ -661,10 +664,26 @@ it('A11 #4: a message its recipient has answered is a new basis, so the requeue 
   const run2Ref = await selectedRun(h);
   // work-2's Run asks the recipient a question and waits for the reply (yielded).
   expect((await h.advance(h.select('a11-reply-ask', WORK_2))).state).toBe('waiting');
-  const asked = (await execution(h, await selectedRun(h, WORK_2))).run;
-  expect(asked).toMatchObject({ status: 'ended', outcome: 'yielded', continuation: { kind: 'wait_reply' } });
-  if (asked.continuation === undefined) throw new Error('the yielded Run must have its continuation');
-  const messageRef = asked.continuation.messageRef;
+  const asked = await execution(h, await selectedRun(h, WORK_2));
+  expect(asked.run.status).toBe('ended');
+  // `ask_copy` stores the question in the asking line's outbox; the Host never delivers it to the original line.
+  const outbox = await h.post('messages/outbox', plain(AG2B_SCOPE, {
+    senderSession: { projectId: asked.session.ref.projectId, sessionId: asked.session.ref.sessionId },
+    page: { limit: 20 },
+  })) as { status: string; value?: { items: Array<{ ref: { kind: 'session_message' } & Record<string, unknown>;
+    answeredBy?: string }> } };
+  if (outbox.status !== 'ready' || outbox.value === undefined) {
+    throw new Error(`A11 #4: the asking line outbox is not readable: ${JSON.stringify(outbox)}`);
+  }
+  const copy = outbox.value.items.find(item => item.answeredBy === 'copy');
+  if (copy === undefined) {
+    // The work grant mirrors the Host startup grant (`AG2B_WORK_TOOLS`, the one definition in
+    // `tests/helpers/AG2b-collaboration-fixture.ts`, following `localWorkbenchGrant` in `src/app/host.ts:585`);
+    // `ask_copy` is part of it, so a missing copy item is a real refusal, not a narrow test grant.
+    throw new Error(`A11 #4: expected an ask_copy question (answeredBy 'copy') in the executor outbox; actual: `
+      + `${String(outbox.value.items.length)} item(s), run ${asked.run.status}/${asked.run.outcome ?? 'no outcome'}`);
+  }
+  const messageRef = copy.ref;
   const replyInput = { newInputRefs: [{ kind: 'session_message', ref: messageRef }] };
   // Not answered yet: `invalid` (only a responded message is a new basis), nothing written.
   const beforeReply = h.counts();
@@ -688,7 +707,7 @@ it('A11 #4: a message its recipient has answered is a new basis, so the requeue 
   expect(requeue2.basis.plan).toEqual(requeue1.basis.plan);
   expect(requeue1.basis.newInputDigest).toBeNull();
   expect(requeue2.basis.newInputDigest).not.toBeNull();
-  expect(h.modelCalls(), 'work-1 Runs 1 and 2, work-2 asking, the consultation').toBe(4);
+  expect(h.modelCalls(), 'work-1 Runs 1 and 2, work-2 asking and continuing, the copy derivation, the consultation').toBe(7);
 }, 120_000);
 
 // ---------------------------------------------------------------------------

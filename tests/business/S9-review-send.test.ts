@@ -57,7 +57,7 @@ describe('W2-send: send_system_round only from not_sent', () => {
     expect(sent).toMatchObject({ status: 'ready', value: { state: 'advance', next: { kind: 'select_work' },
       receipt: { kind: 'send_system_round', result: { status: 'committed' } } } });
     const messageRef = sentMessage(sent).ref;
-    expect(await readS7BMessage(world, messageRef)).toMatchObject({ intent: 'action_request', needsReply: true,
+    expect(await readS7BMessage(world, messageRef)).toMatchObject({ needsReply: true,
       goalRef: review.goal, taskRef: null, sender: PLAN_ROUND_SENDER });
     expect((await readBody(world, messageRef, 'message')).split('\n')[0]).toBe(`execreview:${round.roundRef.roundId}`);
     expect(await advanceS9Review(review, send!)).toMatchObject({ status: 'ready',

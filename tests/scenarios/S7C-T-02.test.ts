@@ -313,7 +313,7 @@ describe('T-02', () => {
       // 2. The requeued Run waits on its saved reply: the Run yields with no wait-specific requeue of its own.
       await world.scripted.script(line, [
         { kind: 'calls', calls: [{ callId: 's7c-l2-17-send', name: 'send_session_message',
-          args: { recipient: recipient.ref, text: 'S7C L2-17 question', intent: 'inquiry',
+          args: { recipient: recipient.ref, text: 'S7C L2-17 question',
             needsReply: true, waitAfterSend: true } }] },
         { kind: 'text', text: 'S7C L2-17: the continuation Run answers' },
       ]);

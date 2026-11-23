@@ -27,6 +27,7 @@
  * come only from `options`.
  */
 import { createHash, randomBytes } from 'node:crypto';
+import { sourceGoalRef } from '../core/work-graph/queries/platform-facts.js';
 import { createBuiltinProviderRegistry, resourceCapStatus } from '../../vendor/coding-agent/dist/public-api.js';
 import type { ResourceCapSource } from '../../vendor/coding-agent/dist/public-api.js';
 import { totalmem } from 'node:os';
@@ -35,7 +36,7 @@ import { runningCommandKey, type RunningCommandV1 } from '../core/agent-runtime/
 import { mkdirSync } from 'node:fs';
 import { mkdir, realpath, stat } from 'node:fs/promises';
 import { basename, join } from 'node:path';
-import { canonicalJson, canonicalKey, sha256Hex, type JsonValue } from '../contracts/fingerprint.js';
+import { canonicalJson, canonicalKey, sameJson, sha256Hex, type JsonValue } from '../contracts/fingerprint.js';
 import type { CommitCursor } from '../contracts/command-event.js';
 import type { GoalRef, WorkspaceRef } from '../contracts/ledger.js';
 import {
@@ -65,22 +66,23 @@ import { nextLineStatus } from '../core/work-graph/state/line-machine.js';
 import { derivePlanProposalReadVerdict } from '../core/work-graph/state/plan-machine.js';
 import type { WorkspaceHostBindings } from '../core/workspace/access.js';
 import type { CoreCallContext } from '../contracts/core/call-context.js';
-import type { SessionRef, WorkspaceScope } from '../contracts/core/identity.js';
+import type { RoleConfigurationRef, SessionRef, WorkspaceScope } from '../contracts/core/identity.js';
 import type { NoteScopeV1, NoteScribeTodoPort } from '../core/work-graph/model/note-contracts.js';
 import { NOTE_LINK_VERIFY_MAX } from '../core/work-graph/model/note-contracts.js';
-import type {
-  HostOutboxItemV1, HostOutboxKeysetV1, HostOutboxSourceV1, HostOutboxStoredItemV1,
-  SessionMailboxPort, SessionMessage, SessionMessageSendInputV1,
+import { consultationFacts, type HostOutboxItemV1, type HostOutboxKeysetV1,
+  type HostOutboxSourceV1, type HostOutboxStoredItemV1, type SessionMailboxPort, type SessionMessage,
+  type SessionMessageSendInputV1,
 } from '../core/work-graph/model/communication-contracts.js';
 import type { PlanProposalRef } from '../core/work-graph/model/plan-contracts.js';
 import type { PlanRevisionDraft, PlanRevisionSnapshot } from '../contracts/plan.js';
 import { interventionPlanningQueryRefs, isRequestRound, queryJobRefFor, type QueryJobRef } from '../contracts/query-job.js';
 import type { RunSnapshot } from '../contracts/dispatch.js';
 import { hostContextIn, interventionQueryWorkspaceOf, planSourceLineageOf } from '../core/work-graph/tasks/plan-lineage.js';
-import { waitFactsOfRecord, waitStateOf } from '../core/work-graph/state/message-machine.js';
+import { deliveryEligibility, isMessageAgentSender, isWaitMessage, waitFactsOfRecord, waitStateOf }
+  from '../core/work-graph/state/message-machine.js';
 import { QUEUE_DRAIN_BATCH } from '../core/work-graph/state/goal-adviser-queue.js';
 import type { GoalDrainResultV1 } from '../core/work-graph/tasks/goal-adviser-queue-service.js';
-import type { SessionMessageRef } from '../contracts/core/session-message.js';
+import { isUserMessageRecipient, type SessionMessageRef } from '../contracts/core/session-message.js';
 import type { WorkspaceResult } from '../core/workspace/ports.js';
 import { createPlatformCoreRouteBindings, type CoreRouteBindings, type HostReconcileReportV1 } from './core-routes.js';
 import { acquireHostInstanceLease } from './host-instance-lease.js';
@@ -94,22 +96,24 @@ import {
   CHECK_DENIED_PREFIXES, isRegisteredCommandCheck, proposedCheckSplit, type VerificationRoundRef,
 } from '../contracts/verification.js';
 import { checkReviewApproved, checkReviewConclusionOf } from '../business/workflow/check-approval.js';
+import { autoAdoptionRefusalOfBound, type AutoAdoptDependencies } from '../business/workflow/workflow.js';
 import {
   decisionSourceKey, decisionSubjectGoalRef, type DecisionSourceV1, type NoticePositionV1,
 } from '../contracts/goal-decisions.js';
 import type { NoticeItemV1 } from '../core/work-graph/model/decision-contracts.js';
 import { compareNoticePositions } from '../core/work-graph/views/notice-position.js';
-import type { ConsumableSessionV1 } from '../core/work-graph/views/consumable-sessions.js';
+import type { ConsumableSessionOfferV1, ConsumableSessionV1 }
+  from '../core/work-graph/views/consumable-sessions.js';
 import { missingQueryActivityGoalOf } from '../core/work-graph/views/activity-read-helpers.js';
 import { createChangeFeed } from './change-feed.js';
-import type { WorkflowAdvanceResult } from '../business/workflow/contracts.js';
+import { PLATFORM_NOTICE_ACTOR, type WorkflowAdvanceResult } from '../business/workflow/contracts.js';
 import { createCollaborationDriver } from './collaboration-driver.js';
 import { createGoalFanOutDriver } from './goal-fan-out-driver.js';
 import { AUTO_CAPTURE_ACTOR, createAutoCaptureDriver } from './auto-capture-driver.js';
 import { createWorkbenchTools } from './workbench-tools.js';
 import {
   createHandoffQueue, createWakeLoop, LIFECYCLE_QUEUE,
-  LIFECYCLE_WAKE_AGGREGATE_TYPES, notReady, MESSAGE_RELEASE_QUEUE, MESSAGE_RELEASE_WAKE_AGGREGATE_TYPES,
+  LIFECYCLE_WAKE_AGGREGATE_TYPES, notReady,
   type QueueHandler, type WakeLoop,
 } from './wake-loop.js';
 import {
@@ -127,9 +131,11 @@ import { GRAPH_TOOL_NAMES } from '../core/agent-runtime/graph-tools.js';
 import { LINK_CHECK_TOOL_NAMES } from '../core/agent-runtime/link-check-tool.js';
 import { WEB_LOOKUP_TOOL_NAMES } from '../core/agent-runtime/web-lookup-tools.js';
 import { NOTE_TOOL_NAMES } from '../core/agent-runtime/note-tool.js';
+import { ACTION_TOOL_NAMES, ASK_COPY_TOOL_NAME, PERSON_MESSAGE_TOOL_NAMES,
+  SESSION_MAILBOX_TOOL_NAMES } from '../core/agent-runtime/communication-tools.js';
 import { platformRoleProfile } from '../core/agent-runtime/role-profiles.js';
 import { plainSessionRefKey } from '../core/work-graph/sessions/session-record-codecs.js';
-import { sessionMessageRefKey } from '../core/work-graph/sessions/message-record-codecs.js';
+import { isSystemRoundSender, sessionMessageRefKey } from '../core/work-graph/sessions/message-record-codecs.js';
 import { EXPIRY_PAGE, type DueWaitPageInputV1 } from '../core/work-graph/communication/message-expiry.js';
 import type { ReadonlyCommandAccessInput, RuntimeHostBindings, ResolvedRuntimeConfiguration } from '../core/agent-runtime/execution-contracts.js';
 import type { CoreError, CoreRejection, ReadResult, WriteResult } from '../contracts/core/results.js';
@@ -145,6 +151,7 @@ import {
   type HostSettingsOpenedHost,
   type HostSettingsPrivateSnapshot,
   type HostSettingsStoredModel,
+  type ChecksAdoptionEntryPortWithJudge,
   type ChecksAdoptionHostCallbacks,
   WORKSPACE_REMOVED_REASON,
 } from './host-settings.js';
@@ -464,24 +471,32 @@ function localWorkbenchBudget(model: HostSettingsStoredModel): typeof LOCAL_WORK
 const LOCAL_READ_TOOL_NAMES: readonly string[] = ['read', ...GRAPH_TOOL_NAMES, ...LINK_CHECK_TOOL_NAMES];
 
 /** The local secretary's tools: the read tools (including `check_links`) and the read-only command, plus the note
- *  writer and the four coordination names (the mailbox sender/withdraw, member creation and the request read).
- *  `record_note` writes WorkGraph notes only, so the grant below keeps the file write scope empty. */
+ *  writer, the mailbox/person families, the action tools, the two Goal-bound plan reads, member creation and the
+ *  request read. `record_note` writes WorkGraph notes only, so the grant below keeps the file write scope empty. */
 const LOCAL_SECRETARY_TOOL_NAMES: readonly string[] = [...LOCAL_READ_TOOL_NAMES, READONLY_COMMAND_TOOL_NAME,
-  ...NOTE_TOOL_NAMES, 'send_session_message', 'withdraw_session_message', 'create_member', 'read_requests'];
+  ...NOTE_TOOL_NAMES, ...SESSION_MAILBOX_TOOL_NAMES, ...PERSON_MESSAGE_TOOL_NAMES, ASK_COPY_TOOL_NAME,
+  'read_user_decision', ...ACTION_TOOL_NAMES, 'query_task_graph', 'query_ready_tasks', 'create_member',
+  'read_requests'];
 
 // Each built-in duty's tools (book §3.8 item 6; O5b rulings 4, 5, 7, 32): the names its two skill templates
 // (`platform-work` and its own) put in a tool block, the frozen v4 names and what the tested duty bindings grant,
 // every one a name a Work Run knows; the adviser's `read_requests` is for the cold start's exploration Query only
 // (a Work Run knows it and builds none); `read` brings `search` and `code_index` with it. Every duty runs the
-// platform read-only command (121-112 ruling 3); the reviewer's are read-only, without `record_note` (PL's rule).
+// platform read-only command (121-112 ruling 3); the reviewer's text round has the mailbox reads but never
+// `respond_session_message`, `ask_copy`, `ask_person` or `read_user_decision` (S6/C23).
+// `query_task_graph`/`query_ready_tasks` are the frozen tool matrix's plan-read column: every duty whose rows
+// carry a Goal (secretary, adviser, scribe, reviewer, executor) gets them; a round without a Goal builds none.
 const LOCAL_ADVISER_TOOL_NAMES: readonly string[] = [...LOCAL_READ_TOOL_NAMES, READONLY_COMMAND_TOOL_NAME,
-  ...NOTE_TOOL_NAMES, 'query_task_graph', 'query_ready_tasks', 'propose_future_plan', 'find_related_sessions',
-  'send_session_message', 'create_member', 'assign_module_maintainer', 'propose_role_split',
-  'propose_architecture_revision', 'read_requests', 'request_rework', 'request_recheck', 'send_user_message',
-  'hand_off'];
+  ...NOTE_TOOL_NAMES, ...SESSION_MAILBOX_TOOL_NAMES, ...PERSON_MESSAGE_TOOL_NAMES, ASK_COPY_TOOL_NAME,
+  'read_user_decision', ...ACTION_TOOL_NAMES, 'query_task_graph', 'query_ready_tasks', 'propose_future_plan',
+  'create_member', 'assign_module_maintainer', 'propose_role_split', 'propose_architecture_revision',
+  'read_requests', 'request_rework', 'request_recheck', 'hand_off'];
 const LOCAL_SCRIBE_TOOL_NAMES: readonly string[] = [...LOCAL_READ_TOOL_NAMES, READONLY_COMMAND_TOOL_NAME,
-  ...NOTE_TOOL_NAMES, 'find_related_sessions', 'send_session_message', 'send_user_message'];
-const LOCAL_REVIEWER_TOOL_NAMES: readonly string[] = [...LOCAL_READ_TOOL_NAMES, 'run_readonly_command'];
+  ...NOTE_TOOL_NAMES, ...SESSION_MAILBOX_TOOL_NAMES, ...PERSON_MESSAGE_TOOL_NAMES, ASK_COPY_TOOL_NAME,
+  'read_user_decision', 'query_task_graph', 'query_ready_tasks'];
+const LOCAL_REVIEWER_TOOL_NAMES: readonly string[] = [...LOCAL_READ_TOOL_NAMES, 'run_readonly_command',
+  'read_session_inbox', 'read_session_message', 'read_session_message_body',
+  'send_session_message', 'withdraw_session_message', 'notify_person', 'query_task_graph', 'query_ready_tasks'];
 
 /** The local workbench secretary's binding identity. Its Role is the exact
  * platform secretary legacy template, which the Session duty resolver reads as
@@ -561,13 +576,14 @@ export function localWorkbenchGrant(workspace: WorkbenchWorkspaceConfig, model: 
     // plan proposal write no workspace, so a read-only executor keeps them.
     // The executor also requests rework/recheck/hand-off only when it can write:
     // a hand-off starts by writing the current understanding.
+    // The two plan reads are the tool matrix's plan-read column for every Goal-bound round.
     tools: [...LOCAL_READ_TOOL_NAMES,
       // The platform web lookup follows the workspace model: only a DeepSeek binding has the port (121-112).
       ...(model.provider === 'deepseek' ? WEB_LOOKUP_TOOL_NAMES : []),
       ...(readonlyCommandsAllowed ? [READONLY_COMMAND_TOOL_NAME] : []),
       ...(writeAllowed ? ['write', 'record_note'] : []),
-      'send_session_message', 'read_session_inbox', 'read_session_message', 'read_session_message_body',
-      'propose_future_plan',
+      ...SESSION_MAILBOX_TOOL_NAMES, ASK_COPY_TOOL_NAME, PERSON_MESSAGE_TOOL_NAMES[0], 'read_user_decision',
+      'query_task_graph', 'query_ready_tasks', 'propose_future_plan',
       ...(writeAllowed ? ['request_rework', 'request_recheck', 'hand_off'] : []),
       ...(commandsAllowed ? ['shell'] : [])],
     writeScope: writeAllowed ? ['.'] : [],
@@ -653,6 +669,29 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     runtimeProfiles.find(entry => entry.scope.projectId === scope.projectId
       && entry.scope.workspaceId === scope.workspaceId
       && canonicalJson(entry.sessionRole as never) === canonicalJson(role as never));
+  /**
+   * The one selection of a read-only copy's Query target. Ruling 9 (E22) asks a line whose Role has no profile of
+   * its own (a builder or a goal-less line) with the workspace's first profile's budgets; ruling 33 keeps the two
+   * roles apart, so the copy's `roleBinding` still comes from a trusted Work binding of the line's own Role (the
+   * copy keeps the source Role and its claim checks it). The person's ask and the copy-question consumer share it.
+   */
+  type CopyQueryTarget =
+    | { readonly ok: true; readonly limits: WorkbenchQueryProfile;
+        readonly roleBinding: WorkbenchQueryProfile['roleBinding'] }
+    | { readonly ok: false; readonly missing: 'profile' | 'binding' };
+  const copyQueryTargetOf = (
+    scope: { projectId: string; workspaceId: string }, role: RoleConfigurationRef): CopyQueryTarget => {
+    const sameRole = queryProfileOf(scope, role);
+    const limits = sameRole ?? runtimeProfiles.find(entry => entry.scope.projectId === scope.projectId
+      && entry.scope.workspaceId === scope.workspaceId);
+    if (limits === undefined) return { ok: false, missing: 'profile' };
+    const roleId = role.kind === 'legacy_template' ? role.templateId : role.pin.ref.roleId;
+    const workBinding = sameRole === undefined
+      ? servingBinding(workflow?.bindings ?? [], scope.projectId, scope.workspaceId, roleId)
+      : null;
+    if (sameRole === undefined && workBinding === null) return { ok: false, missing: 'binding' };
+    return { ok: true, limits, roleBinding: sameRole?.roleBinding ?? workBinding!.roleBinding };
+  };
   const attentionScopes: AttentionScopeV1[] = options.attention === undefined ? [] : structuredClone(options.attention);
   const inputConsumers = structuredClone(options.inputConsumers ?? []);
   for (const entry of inputConsumers) {
@@ -868,7 +907,6 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
   // The request driver's sinks are set inside its switch below; with it off a wake or an arm starts nothing, and the
   // rounds stay on record for a later Host with the driver on.
   let requestWakeSink: ((scope: WorkspaceScope, source: 'request_command') => void) | undefined;
-  let armMessageRelease: ((scope: WorkspaceScope) => void) | undefined;
   /** 121-136 A3: the settings queue every adoption takes once settings exist (`runExclusive`); see `wrapPlanChange`. */
   let adoptionGate: (<T>(operation: () => Promise<T>) => Promise<T>) | undefined;
   /**
@@ -1057,11 +1095,6 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
           ?? Promise.resolve(COLD_START_STAGE_NOT_BOUND),
         wake: scope => { projects.get(scope.projectId)?.coldStartStages?.wake(scope); },
       },
-      // A committed approval through the trusted entry arms the release queue; a replay included, and
-      // arming twice is harmless (`7a2-rgp-v7.md:1076`).
-      onMessageReleaseApproved: approved => { armMessageRelease?.({
-        projectId: approved.messageRef.projectId, workspaceId: approved.messageRef.workspaceId,
-      }); },
     }),
   });
   /** A scope's platform: its project's, or null when that project is not open in this Host. */
@@ -1163,6 +1196,62 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
   const goalWaitWakesOf = (scope: WorkspaceScope): GoalWaitWakes =>
     goalWaitRegistries.find(candidate => candidate.scope.projectId === scope.projectId
       && candidate.scope.workspaceId === scope.workspaceId)!.waits;
+  /**
+   * The Goal's pending restart interruption, read through its display: only a person continues such a Goal (decision
+   * 97-9), so the start-up rebuild and the resume review below both leave it alone. Only the recorded interruption
+   * counts (cp2fn review ruling 10): `resumeOnStartup` is read by the next start, and an `auto` start writes none. The
+   * Goal may live in another workspace of the project than the wait naming it (a line of A runs B's Task and waits in
+   * A): the project-scope Goal read locates it, and its display is read in its own workspace (cp2fq). A read that is
+   * not ready throws; it is never "not held".
+   */
+  const goalHeldByRestart = async (project: HostProject, ctx: CoreCallContext, goalRef: GoalRef): Promise<boolean> => {
+    const located = await project.runtime.platform.plans.queryGoal(ctx, goalRef, { scope: 'project' });
+    if (located.status !== 'ready') throw notReady('the Goal workspace read', located);
+    const own: CoreCallContext = { ...hostScopeContext({ projectId: goalRef.projectId,
+      workspaceId: located.value.goal.workspaceRef.workspaceId }, actor), signal: ctx.signal };
+    const read = await project.goalFanOut.readGoalDisplay(own, { goalRef });
+    if (read.status !== 'ready') throw notReady('the Goal interruption read', read);
+    return read.value.display.causes.some(cause => 'interruption' in cause);
+  };
+  /**
+   * P2 §2.5 (MP-7; cp2fn FN-5, FN-6): a dispatch request approved while its Goal was paused stays `open`; the start-up
+   * reconcile does not drive a paused Goal. A committed resume only marks its Goal here, at the resume commit's cursor,
+   * and wakes `goal_waits`, so the route always returns the committed receipt. The loop's goal-waits pass reviews the
+   * marks first (`reviewResumes`). Memory only: after a restart the start-up reconcile reads the `open` requests again.
+   */
+  const resumeReviews = new Map<string, Map<string, { goalRef: GoalRef; cursorAtRead: CommitCursor }>>();
+  const resumeGoalWaitForOpenDispatches = (scope: WorkspaceScope, goalRef: GoalRef, cursorAtRead: CommitCursor): void => {
+    const marks = resumeReviews.get(scopeKey(scope)) ?? new Map<string, { goalRef: GoalRef; cursorAtRead: CommitCursor }>();
+    marks.set(canonicalKey(goalRef), { goalRef, cursorAtRead });
+    resumeReviews.set(scopeKey(scope), marks);
+    wakeLoop.wake(scope, GOAL_WAITS_QUEUE, 'commit');
+  };
+  /**
+   * The goal-waits pass's review of the resume marks. A Goal that still has an `open` dispatch request and no restart
+   * interruption (`goalHeldByRestart`, shared with the start-up rebuild) gets its wait registered at the resume cursor and
+   * queued, so this same pass wakes the existing goal loop, whose claim turns the request `open -> applied`. An
+   * interrupted Goal keeps its `open` request until the person starts the Goal (frozen `:186`, design `:513`); a Goal
+   * with no `open` request is not woken. Either way the mark goes. A read that is not ready throws with the mark kept,
+   * and the loop's back-off retries the pass.
+   */
+  const reviewResumes = async (scope: WorkspaceScope, signal: AbortSignal): Promise<void> => {
+    const marks = resumeReviews.get(scopeKey(scope));
+    const project = projects.get(scope.projectId);
+    if (marks === undefined || project === undefined) return;
+    const ctx: CoreCallContext = { ...hostScopeContext(scope, actor), signal };
+    for (const [key, mark] of [...marks]) {
+      const open = await project.runtime.platform.actionRequests.listOpenDispatches(ctx, { goalRef: mark.goalRef });
+      if (open.status !== 'ready') throw notReady(`the open dispatch requests of ${mark.goalRef.goalId}`, open);
+      if (open.value.some(entry => entry.request.state === 'open') && !await goalHeldByRestart(project, ctx, mark.goalRef)) {
+        const waits = goalWaitWakesOf(scope);
+        waits.register({ projectId: scope.projectId, goalId: mark.goalRef.goalId,
+          recordKinds: GOAL_WAIT_WAKE_AGGREGATE_TYPES, reasons: ['resume_open_dispatch'] }, mark.cursorAtRead);
+        waits.enqueue(mark.goalRef);
+      }
+      // A newer resume of the same Goal during these reads replaced the mark; that one waits for the next pass.
+      if (marks.get(key) === mark) marks.delete(key);
+    }
+  };
   const workbenchTools = createWorkbenchTools({
     workspaces: workspaces.map(workspace => ({
       scope: workspace.scope,
@@ -1281,8 +1370,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       const execution = job.intent.execution;
       if (execution.kind === 'intervention_planning') return senderClass(qctx, execution.sourceMessageRef!, 'message');
       if (execution.consultation !== undefined) {
-        return senderClass(qctx, execution.consultation.messageRef,
-          execution.consultation.part === 'response' ? 'response' : 'message');
+        return senderClass(qctx, execution.consultation.messageRef, 'message');
       }
       if (execution.kind === 'role_exploration') return 2;   // the cold start's round: the platform (Host system) starts it
       return 0;                                   // initial_coordination / a plain semantic_query: only `queries/submit`
@@ -1330,6 +1418,29 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
         answerMessageRef: answer.answerMessageRef })),
     });
   };
+  // 2.8/§3.10: an answered `action_release` card is handed to the same Workflow advance, which replays ② through the
+  // registered adapter under the archived answer's Host actor and records ③. The advance applies the saved answer and
+  // returns without selecting work, so the start-up policy still decides whether a Goal loop starts.
+  const redriveActionReleaseAnswers = async (trigger: CoreCallContext,
+    input: { goalRef: GoalRef }): Promise<WorkflowAdvanceResult | null> => {
+    const ctx: CoreCallContext = {
+      ...hostScopeContext({ projectId: trigger.projectId, workspaceId: trigger.workspaceId! }, actor),
+      signal: trigger.signal,
+    };
+    const platform = platformFor(trigger.projectId);
+    if (platform === null) return null;
+    const read = await platform.reconcile.reviews?.readActionReleaseAnswers?.(ctx, input);
+    if (read === undefined || read.status === 'not_found') return null;
+    if (read.status !== 'ready') throw notReady('the answered action releases', read);
+    const answers = read.value.answers.flatMap(answer => answer.kind === 'action_release'
+      ? [{ kind: 'action_release' as const, requestRef: answer.requestRef, answerMessageRef: answer.answerMessageRef }]
+      : []);
+    if (answers.length === 0) return null;
+    return await platform.workflow.advanceWork(ctx, {
+      schemaVersion: 1, goalRef: input.goalRef, flowId: `action-release-answer-redrive:${input.goalRef.goalId}`,
+      sessionHint: null, kind: 'select_work', answers,
+    });
+  };
   // The one wake loop of this Host (U1): a pass of a workspace runs only while this Host holds that workspace's project
   // lease. The goal-waits queue is registered on it in every case; the two request queues, the lifecycle and release
   // queues and their sinks stay inside the request-driver switch, so with it off a submitted round waits where the
@@ -1352,22 +1463,25 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       const project = projects.get(scope.projectId);
       if (project === undefined) throw new Error(`the project store of ${scope.projectId} is not available`);
       const platform = project.runtime.platform;
-      await createGoalWaitRebuild({ ctx: target => hostScopeContext(target, actor), sessions: platform.sessions, facts: platform.sessionFacts, released: platform.messageRelease,
+      await createGoalWaitRebuild({ ctx: target => hostScopeContext(target, actor), sessions: platform.sessions, facts: platform.sessionFacts,
         // The goal loop's own candidate reads (§6.1.6); the accepted arm walks the source lineage with the
         // same mailbox/Query/Plan reads the readers use.
         planCandidates: platform.planReaders.planCandidates.bind(platform.planReaders),
         acceptedCandidatesOf: platform.planReaders.acceptedCandidatesOf.bind(platform.planReaders),
+        abandonedCandidateTailsOf: platform.planReaders.abandonedCandidateTailsOf.bind(platform.planReaders),
+        completedGoalsOf: platform.planReaders.completedGoalsOf.bind(platform.planReaders),
         messages: platform.messages, queries: platform.queries, plans: platform.plans,
-        held: async (ctx, goalRef) => {
-          if (platform.automationPolicy().resumeOnStartup === 'auto') return false;
-          const read = await project.goalFanOut.readGoalDisplay(ctx, { goalRef });
-          if (read.status !== 'ready') throw notReady('the Goal interruption read', read);
-          return read.value.display.causes.some(cause => 'interruption' in cause);
-        } })(scope, registry);
+        readReview: (ctx, input) => platform.unknownCallReviews.readReview(ctx, input),
+        held: (ctx, goalRef) => goalHeldByRestart(project, ctx, goalRef) })(scope, registry);
     },
   });
   goalWaitQueueOwner = goalWaitQueue;
-  wakeLoop.register(GOAL_WAITS_QUEUE, goalWaitQueue, {
+  // The loop's pass reviews the resume marks before its drain: a failed review read throws out of the pass, so the
+  // marks stay and the loop backs off and retries. The driver's own drains (`drainGoalWaits`) do not review them.
+  wakeLoop.register(GOAL_WAITS_QUEUE, { ...goalWaitQueue, drain: async (scope, input) => {
+    await reviewResumes(scope, input.signal);
+    return await goalWaitQueue.drain(scope, input);
+  } }, {
     aggregateTypes: GOAL_WAIT_WAKE_AGGREGATE_TYPES, maxItems: WAKE_LIMIT,
   });
   if (options.requestDriver !== 'off') {
@@ -1615,63 +1729,6 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       },
     };
     loop.register(LIFECYCLE_QUEUE, lifecycleHandler, { aggregateTypes: LIFECYCLE_WAKE_AGGREGATE_TYPES });
-    // The release queue: ONE pass per wake. It chooses no message and no page — the Workflow's own release step
-    // does that (`book-7a.md:380–:381`); the pass asks each active Goal's one selection and performs what the step
-    // names, until that Goal has nothing left in THIS pass. A pass that released nothing reports no progress and
-    // the loop parks the pair until the next wake; a blocked item is never a handler failure (`:386–:389`;
-    // `wake-loop.ts:19–:24`).
-    const runReleasePass = async (ctx: CoreCallContext): Promise<{ released: number; blocked: number }> => {
-      const platform = projectPlatform(ctx.projectId);
-      const goals = await platform.reconcile.candidates.listGoals(
-        { projectId: ctx.projectId, workspaceId: ctx.workspaceId ?? '' }, ctx.signal);
-      // A Goals read failure is the failure: the loop's own back-off retries it (`wake-loop.ts:194`, `:22–:24`).
-      if (goals.status !== 'ready') throw notReady('the release pass Goals', goals);
-      let released = 0;
-      let blocked = 0;
-      for (const goal of goals.value.records) {
-        if (goal.desiredState !== 'active') continue;
-        // This Goal's own copies of the items this pass refused (`7a2-rgp-v7.md:750–:752`); empty on entry.
-        const skip = new Set<string>();
-        for (;;) {
-          // The pass's skip set travels in the Host-driver-only third argument, never in the input.
-          const selected = await platform.workflow.advanceWork(ctx, {
-            schemaVersion: 1, goalRef: goal.ref, flowId: `release:${goal.ref.goalId}`, sessionHint: null,
-            kind: 'select_work',
-          }, { releaseSkip: [...skip] });
-          // A selection that is not ready is the failure, never "no candidate" (rd7a2a-05, D8-10 (a)).
-          if (selected.status !== 'ready') throw notReady('the release selection', selected);
-          const next = selected.value.next;
-          if (next === null || next.kind !== 'perform' || next.operation.kind !== 'release_message') break;
-          const performed = await platform.workflow.advanceWork(ctx, next);
-          // A refused call (bad input or scope) is a failure too, not a blocked item: the item's own refusals
-          // arrive as the `waiting` step result below.
-          if (performed.status !== 'ready') throw notReady('the release performance', performed);
-          if (performed.value.state === 'advance') { released += 1; continue; }
-          // Blocked this pass: an activity-only conflict after R2's bound, `revision_conflict`, `busy` (the Goal
-          // is not active) or `not_found`. A change of its message, Goal, plan pointer, understanding pointer,
-          // counter or activity record wakes the queue again (`book-7a.md:386–:391`); the next item follows in
-          // this same pass.
-          skip.add(sessionMessageRefKey(next.operation.request.messageRef));
-          blocked += 1;
-        }
-      }
-      return { released, blocked };
-    };
-    const releaseHandler: QueueHandler = {
-      async rebuild() {},
-      async drain(scope, input) {
-        // The same system actor as the other queue passes (`HOST_RECONCILE_ACTOR`, imported above).
-        const pass = await runReleasePass({ ...hostScopeContext(scope, HOST_RECONCILE_ACTOR), signal: input.signal });
-        // No `more`: the inner loop above already exhausted this pass's items of every active Goal, so the
-        // loop's own rule parks the pair after the wrap and the next wake is a real change (`wake-loop.ts:19–:21`).
-        return { progressed: pass.released, more: false, continuation: null, wrapped: true,
-          blocked: pass.blocked };
-      },
-    };
-    loop.register(MESSAGE_RELEASE_QUEUE, releaseHandler, { aggregateTypes: MESSAGE_RELEASE_WAKE_AGGREGATE_TYPES });
-    // The explicit arm (`book-7a.md:382–:383`): the person's approval, a Goal resume or an explicit advance. A
-    // commit notice alone never arms it, which is why `resumeOnStartup: 'off'` is respected (`:383–:384`).
-    armMessageRelease = scope => loop.wake(scope, MESSAGE_RELEASE_QUEUE, 'release_armed');
     lifecycleQueue = lifecycle;
   }
 
@@ -2746,7 +2803,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
   const settingsCatalog = settingsEnabled
     ? projectSettingsCatalog(runtimeConfiguration)
     : { models: [] as HostSettingsModelDefinition[], seedSelection: {} as Record<string, string | null> };
-  const hostSettings: (HostSettingsPort & ChecksAdoptionEntryPort) | undefined = settingsEnabled
+  const hostSettings: (HostSettingsPort & ChecksAdoptionEntryPortWithJudge) | undefined = settingsEnabled
     ? await createHostSettings({
       settingsDirectory: settingsDirectory as string,
       ...(promptsRoot === undefined ? {} : { promptsRoot }),
@@ -2769,7 +2826,10 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       const platform = platformFor(ctx.projectId);
       if (platform === null) return null;
       const proposal = await platform.plans.readPlanProposal(ctx, request.input.proposalRef);
-      if (proposal.status !== 'ready' || proposal.value.checks === undefined) return null;
+      // The candidate must still be the revision this adoption was judged for: a newer one is the owner's
+      // revision conflict (retried), never a reason to read its approval and install its checks.
+      if (proposal.status !== 'ready' || proposal.value.revision !== request.input.expectedProposalRevision) return null;
+      if (proposal.value.checks === undefined) return null;
       const { ref, checks, revision } = proposal.value;
       const scope = { projectId: ref.projectId, workspaceId: ref.workspaceId };
       // 只有真带来新检查的才查批准轮；都已装好（或读不到已装的）就照旧过闸，由 owner 判。
@@ -2781,9 +2841,16 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       if (read.status === 'rejected') return read;
       if (read.status !== 'ready' || !checkReviewApproved(read.value)) return null;
       const { subject, recipient, answerRef } = read.value;
+      // 2.5a A13: the judgement stays bound to the candidate version read above; the settings queue runs it again
+      // before installing the checks and before the adoption, so a version that moved while queued is not installed.
+      // The completeness is the Goal loop's own `latestAgentCandidate` read (B3-01), never a second lineage walk.
+      const candidateDeps: AutoAdoptDependencies = { plans: platform.plans, messages: platform.messages,
+        requests: platform.requestFacts, sessions: platform.sessions, sessionDuty: hostDutyResolver,
+        latestAgentCandidate: platform.planReaders.latestAgentCandidate.bind(platform.planReaders) };
       return hostSettings.adoptWithPlanChecks(ctx, { scope, proposalRef: ref, checks, approval: { kind: 'agent',
         duty: subject.approverDuty, session: recipient, answerRef, author: subject.authorDuty, baselines: subject.baselines } },
-      { replay: () => platform.plans.lookupPlanChange(ctx, request), apply });
+      { replay: () => platform.plans.lookupPlanChange(ctx, request), apply },
+      () => autoAdoptionRefusalOfBound(ctx, candidateDeps, proposal.value));
     };
   }
   // Every open project's stage two (its route bindings) now that the settings exist; a project opened later builds
@@ -2851,7 +2918,9 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       return {
         platform: { sessions: platform.sessions, executions: platform.executions, controls: platform.controls,
           plans: platform.plans, reconcile: platform.reconcile,
-          repairs: platform.repairs, redriveRepairAnswers },
+          actionRequests: platform.actionRequests, claimHolds: platform.claimHolds,
+          deliverControl: (...args) => platform.runtime.deliverControl!(...args),
+          repairs: platform.repairs, redriveRepairAnswers, redriveActionReleaseAnswers },
         hostInstanceId: lease.hostInstanceId,
         resumeOnStartup: platform.automationPolicy().resumeOnStartup,
         takeover: lease.takeover,
@@ -2991,6 +3060,11 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     }
   }
   const inputJobs = new Map<string, Promise<void>>();
+  /** Per workspace: the one in-flight copy-question page read and the page key it continues from (null = first page). */
+  const copyPageJobs = new Map<string, Promise<void>>();
+  const copyCursors = new Map<string, string | null>();
+  /** Per copy question (its full message ref key): the one in-flight `consumeConsultation`. */
+  const copyJobs = new Map<string, Promise<void>>();
   const consumeBarrierWaiters: Array<() => void> = [];
   /** Per workspace: the Session-key continuation C's view returned last, null at a wrapped end. */
   const consumeCursors = new Map<string, string | null>();
@@ -3033,11 +3107,15 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
   /**
    * C-25/DR-P2-01: is the message this closing would reply to an executor's
    * still-open wait? The target is the source Query's `repliesToMessageRef`, else
-   * the one lineage root for a Host system round, else the source itself. A read
-   * failure counts as "still waiting", so a candidate/questions close-out never
-   * replies the executor M by accident; the reason alone never decides.
+   * the one lineage root for a Host system round, else the source itself. Only a
+   * real wait (`waitAfterSend && needsReply`) counts: an executor's unanswered
+   * message sent without yielding is not a wait and its closing reply is not
+   * withheld. A read failure is `unknown` ("still waiting"), so a candidate/questions
+   * close-out never replies the executor M by accident; the reason alone never decides.
+   * The resolved wait ref lets the caller tell a separate M from the source itself.
    */
-  async function executorWaitOf(ctx: CoreCallContext, message: SessionMessage): Promise<boolean> {
+  async function executorWaitOf(ctx: CoreCallContext, message: SessionMessage):
+  Promise<SessionMessageRef | 'unknown' | null> {
     const executorSender = (sender: SessionMessage['sender']): boolean =>
       sender.kind === 'work_run' || sender.kind === 'secretary_round';
     const platform = projectPlatform(ctx.projectId);
@@ -3045,33 +3123,36 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     if (message.sender.kind === 'host' && message.sender.actor.kind === 'system') {
       // The round's Query and its lineage's candidates live with the Goal the round names, maybe another workspace.
       const goalWorkspace = await interventionQueryWorkspaceOf(ctx, platform.plans, message);
-      if (goalWorkspace.status !== 'ready') return true;
+      if (goalWorkspace.status !== 'ready') return 'unknown';
       const query = await platform.queries.readQueryJob(ctx,
         interventionPlanningQueryRefs(message.ref, goalWorkspace.value).queryJobRef, { scope: 'project' });
-      if (query.status !== 'ready') return true;
+      if (query.status !== 'ready') return 'unknown';
       const execution = query.value.job.job.intent.execution;
       const repliesTo = execution.kind === 'intervention_planning' ? execution.repliesToMessageRef : undefined;
       if (repliesTo !== undefined) {
         targetRef = repliesTo;
       } else {
         const lineage = await planSourceLineageOf(ctx,
-          { messages: platform.messages, queries: platform.queries, plans: platform.plans }, message.ref,
-          goalWorkspace.value);
-        if (lineage.status !== 'ready') return true;
+          { messages: platform.messages, queries: platform.queries, plans: platform.plans,
+            readReview: (callCtx, input) => platform.unknownCallReviews.readReview(callCtx, input) },
+          message.ref, goalWorkspace.value);
+        if (lineage.status !== 'ready') return 'unknown';
         targetRef = lineage.value.rootMessage;
       }
     } else if (!executorSender(message.sender)) {
-      return false;
+      return null;
     }
     const same = targetRef.projectId === message.ref.projectId
       && targetRef.workspaceId === message.ref.workspaceId
       && targetRef.messageId === message.ref.messageId;
     const target = same ? null : await platform.messages.readMessage(hostContextIn(ctx, targetRef.workspaceId), targetRef);
-    if (target !== null && target.status !== 'ready') return true;
+    if (target !== null && target.status !== 'ready') return 'unknown';
     const targetMessage = target === null ? message : (target as { status: 'ready'; value: SessionMessage }).value;
-    if (!executorSender(targetMessage.sender)) return false;
-    if (targetMessage.response !== null) return false;
-    return waitStateOf(targetMessage, waitFactsOfRecord(targetMessage)).state === 'open';
+    if (!executorSender(targetMessage.sender)) return null;
+    if (!isWaitMessage(targetMessage)) return null;
+    if (targetMessage.response !== null) return null;
+    return waitStateOf(targetMessage, waitFactsOfRecord(targetMessage)).state === 'open'
+      ? { ...targetRef } : null;
   }
   /**
    * One workspace's consume batch over C's published view: up to `CONSUME_BATCH` candidate Sessions in
@@ -3101,6 +3182,100 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     ];
     return page.value.next;
   }
+  /**
+   * §2.3: a wake only opens a new round on a line that is still idle, is not a read-only copy, is not waiting on a
+   * yielded Run and whose source is still deliverable. The consumable view already applied all of these; this is
+   * the same read one more time immediately before the round, with the same helpers, so a race never opens a round
+   * on a line that moved. A failed read refuses the round; the next heartbeat re-reads.
+   * A marked `resume` offer is not a new round: it enters the Query that already holds the line, so the idle and
+   * unoccupied gates and the bound-wait gate do not apply; lifecycle, copy provenance and deliverability still do.
+   * The one gate the Host adds is the run identity: the line's occupancy must still be the `resumeQueryRunRef` the
+   * view named, so a stale offer never enters a QueryRun that no longer holds the line.
+   */
+  async function roundOpenAllowed(ctx: CoreCallContext, project: HostProject,
+    candidate: ConsumableSessionV1, message: SessionMessage, kind: ConsumableSessionOfferV1): Promise<boolean> {
+    const platform = project.runtime.platform;
+    const card = await platform.sessions.readSession(ctx, candidate.session);
+    if (card.status !== 'ready') return false;
+    const record = card.value.record;
+    if (record.lifecycle !== 'active' || record.provenance.kind === 'readonly_copy') return false;
+    // The view alone decides that the offer continues this line's claimed/prepared Query; the Host re-checks only
+    // that occupancy is still the QueryRun it named, and refuses the offer when the line moved on.
+    if (kind.resume === true) {
+      const occupancy = record.occupancy;
+      if (kind.resumeQueryRunRef === undefined || occupancy === null || occupancy.kind !== 'execution'
+        || occupancy.executionRef.aggregateType !== 'QueryRun'
+        || !sameJson(occupancy.executionRef, kind.resumeQueryRunRef)) return false;
+    }
+    if (kind.resume !== true && (card.value.availability !== 'idle' || record.occupancy !== null)) return false;
+    const facts = await platform.sessionFacts.readSessionFacts(ctx, candidate.session);
+    if (facts.status !== 'ready') return false;
+    // Only the person's B20 claim may consume a bound wait (`consumedWait: intervention`); an agent wake on a
+    // yielded line queues and is never offered by the view. The platform's own system round opens beside the wait
+    // (lead 11-23, P-A 2). Every other wake keeps the wait untouched.
+    if (kind.resume !== true && kind.kind !== 'person_message' && kind.kind !== 'system_round'
+      && facts.value.wait !== null) return false;
+    const readFacts = platform.workflow.readDeliveryEligibilityFacts;
+    if (readFacts === undefined) return false;
+    const extra = await readFacts(ctx, { messageRef: message.ref });
+    if (extra.status !== 'ready') return false;
+    const part = kind.kind === 'decision_answer' ? 'response' as const : 'message' as const;
+    return deliveryEligibility(consultationFacts(message, part, extra.value, candidate.session)).offerable;
+  }
+  /**
+   * §2.3/1.2: a copy question is consumed by its question identity, never by the asking line's busy scan or the
+   * ordinary consume throttle. Every heartbeat reads ONE page of this workspace's unanswered copy questions from the
+   * mailbox owner, keeps its `next` and wraps to the first page at the end, so a steady stream of new questions never
+   * starves a later page. Each question is its own job keyed by its full message ref: a slow copy never holds the
+   * page, the next page or the ordinary wake, and one question is never consumed twice at once. `consumeConsultation`
+   * owns the deterministic Query, the derivation and the answer write-back, so re-finding a question replays it. A
+   * failed page keeps the cursor for the next heartbeat; `close` awaits the page and question jobs.
+   */
+  function scheduleCopyQuestions(scope: WorkspaceScope): void {
+    const key = scopeKey(scope);
+    const project = projects.get(scope.projectId);
+    if (project === undefined || copyPageJobs.has(key)) return;
+    const job = readCopyQuestionPage(hostContext(scope), project, scope, key)
+      .catch(() => { /* the cursor stays; the next heartbeat re-reads this page */ })
+      .finally(() => { copyPageJobs.delete(key); });
+    copyPageJobs.set(key, job);
+  }
+  async function readCopyQuestionPage(ctx: CoreCallContext, project: HostProject, scope: WorkspaceScope,
+    key: string): Promise<void> {
+    const platform = project.runtime.platform;
+    if (platform.workflow.consumeConsultation === undefined) return;
+    const page = await platform.messages.readPendingCopyQuestions(ctx,
+      { workspace: scope, after: copyCursors.get(key) ?? null, limit: CONSUME_BATCH });
+    if (page.status !== 'ready') return;
+    copyCursors.set(key, page.value.next);
+    for (const message of page.value.items) {
+      const questionKey = canonicalKey(message.ref);
+      if (copyJobs.has(questionKey)) continue;
+      const job = consumeCopyQuestion(ctx, project, message)
+        .catch(() => { /* the question stays unanswered; a later page finds it again */ })
+        .finally(() => { copyJobs.delete(questionKey); });
+      copyJobs.set(questionKey, job);
+    }
+  }
+  /** One copy question: its Query target by the same `copyQueryTargetOf` rule as the person's ask. */
+  async function consumeCopyQuestion(ctx: CoreCallContext, project: HostProject, message: SessionMessage): Promise<void> {
+    const platform = project.runtime.platform;
+    const consume = platform.workflow.consumeConsultation;
+    const recipient = message.recipient;
+    // The owner's page holds line recipients only; this narrows the type.
+    if (consume === undefined || 'kind' in recipient) return;
+    const card = await platform.sessions.readSession(ctx, recipient);
+    if (card.status !== 'ready') return;
+    const target = copyQueryTargetOf(
+      { projectId: message.ref.projectId, workspaceId: message.ref.workspaceId }, card.value.record.role);
+    if (!target.ok) return;
+    // The copy belongs to the line it asks, not to the sender's round: a Goal-less line's copy Query is Goal-less
+    // (2.3/T9), and a line with a Goal copies under that Goal. `sourceGoalRef` is the one existing Session->Goal read.
+    await consume.call(platform.workflow, ctx, {
+      schemaVersion: 1, messageRef: message.ref, goalRef: sourceGoalRef(card.value),
+      roleBinding: target.roleBinding, runtimeBudget: target.limits.runtimeBudget,
+      budget: target.limits.budget, consumerId: target.limits.consumerId });
+  }
   /** One candidate Session of a consume page: at most one turn; its skip, or null when it is not skipped. */
   async function consumeCandidate(ctx: CoreCallContext, scope: WorkspaceScope, project: HostProject,
     candidate: ConsumableSessionV1): Promise<HostConsumeSkipV1 | null> {
@@ -3108,86 +3283,151 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     // notify-only (and every other no-offer candidate): no turn, zero model calls.
     const offer = candidate.nextMessage;
     if (offer === null) return null;
+    // C-25/A12: the round's one fixed notice is already committed and one reply slot (R or the original wait M) is
+    // missing. The association reads no execution profile and sends no notice, so it runs before the profile gate.
+    if (offer.missingReply !== undefined) {
+      await platform.workflow.handleIntervention?.(ctx, {
+        messageRef: offer.messageRef, completion: 'associate_answer', replySlot: offer.missingReply });
+      return null;
+    }
     // Never guess the model: the first configured profile whose scope and sessionRole match this Session.
-    const profile = queryProfileOf(scope, candidate.role);
+    const matched = queryProfileOf(scope, candidate.role);
+    // §2.4: an `action_request` is the close-out of a round that already ended. Without a matching profile it still
+    // settles (so it never stays at the queue head or holds the line's archive): the Workflow's `settle_existing`
+    // entry closes only the existing Query by its saved shape — no new round, no claim, no new-Goal request. With a
+    // profile the ordinary pass runs, so a person's adopted candidate still claims its first ready Task.
+    const profile = matched === undefined && offer.kind === 'action_request' ? null : matched;
     if (profile === undefined) return { sessionRef: candidate.session, reason: 'no_profile' };
     const read = await platform.messages.readMessage(ctx, offer.messageRef);
     if (read.status !== 'ready') return null;                      // the next heartbeat re-reads
+    // The round's frozen source part: a card-answer wake and a card-answer round's settlement both carry the card's
+    // `decision_answer` part; every other round is the message part. The stored card facts decide, not the offer kind.
+    const sourcePart: 'message' | 'decision_answer' = offer.kind === 'decision_answer'
+      || (read.value.decision !== undefined && read.value.response !== null
+        && isMessageAgentSender(read.value.sender) && isUserMessageRecipient(read.value.recipient))
+      ? 'decision_answer' : 'message';
+    // Only a `needsReply:true` ordinary message has a reply slot (design 2.4); the closing notice text and the
+    // reply write below share this one fact, so a no-slot round never points at a reply it does not write.
+    const hasReplySlot = sourcePart === 'message' && read.value.needsReply === true;
     const goalRef = read.value.goalRef
       ?? (read.value.taskRef === null ? null : { aggregateType: 'Goal' as const,
         projectId: read.value.taskRef.projectId, goalId: read.value.taskRef.goalId });
-    if (offer.kind === 'person_message' || offer.kind === 'action_request') {
-      // §5.3.5: only a Host system round is the planning-round profile; its reserve is
-      // the one formula against this profile's own window, frozen as the request-side budget.
-      const planningRound = offer.kind === 'action_request'
-        && read.value.sender.kind === 'host' && read.value.sender.actor.kind === 'system';
-      // The one public intervention dispatch; a claimed turn ends this Session's scan, and every
-      // other message of the Session stays queued for a later safe point.
-      const interventionInput = {
+    // A15: an automatic closing notice is the platform's own message, sent under the source's workspace with the one
+    // fixed platform identity (never the configured operator's); the receipt read (`closingNotice`) looks it up under
+    // that same identity and workspace. The operator ctx stays for the rest of the pass — the B20 withdrawal below
+    // keeps the original sender's authorization.
+    const noticeCtx: CoreCallContext = { ...ctx, projectId: read.value.ref.projectId,
+      workspaceId: read.value.ref.workspaceId,
+      principal: { kind: 'host', actor: { ...PLATFORM_NOTICE_ACTOR } },
+      materialReader: { kind: 'host', projectId: read.value.ref.projectId,
+        workspaceId: read.value.ref.workspaceId, actor: { ...PLATFORM_NOTICE_ACTOR } } };
+    // C-25/A12: the notice read below is first-wins by source and part: once any reason's notice is committed, the
+    // round's one fixed notice is that one, so no later ending sends a second. `null` is a failed read (retry).
+    const noticeCommitted = async (): Promise<boolean | null> => {
+      const readNotice = platform.workflow.closingNotice;
+      if (readNotice === undefined) return false;
+      const found = await readNotice(ctx, { sourceMessageRef: offer.messageRef, part: sourcePart });
+      return found.status === 'ready' ? found.value : null;
+    };
+    // A settlement close-out is not a new round; every other kind re-checks the line and the source immediately
+    // before opening one, with the same facts the consumable view used.
+    if (offer.kind !== 'action_request'
+      && !await roundOpenAllowed(ctx, project, candidate, read.value, offer)) return null;
+    // §5.3.5: only a newly opened trusted Host system round is the planning-round profile; its reserve is
+    // the one formula against this profile's own window, frozen as the request-side budget. An overlap-note is
+    // reported as `system_round` too, but its automation sender keeps the ordinary text-round budget.
+    const planningRound = offer.kind === 'system_round' && isSystemRoundSender(read.value.sender);
+    // The one public intervention dispatch; a claimed turn ends this Session's scan, and every
+    // other message of the Session stays queued for a later safe point.
+    const interventionInput = profile === null
+      ? { messageRef: offer.messageRef, completion: 'settle_existing' as const }
+      : {
         messageRef: offer.messageRef, roleBinding: profile.roleBinding,
         runtimeBudget: planningRound ? planningRoundRuntimeBudget(profile) : profile.runtimeBudget,
         budget: profile.budget, consumerId: profile.consumerId,
+        ...(sourcePart === 'decision_answer' ? { part: 'decision_answer' as const } : {}),
       };
-      // G7 W2: a `progressed` stage is followed at once by the next one, not one stage per heartbeat.
-      let claimed = await platform.workflow.handleIntervention?.(ctx, interventionInput);
-      for (let step = 1; step < IDLE_LINE_STAGES && claimed?.status === 'progressed'; step += 1) {
-        claimed = await platform.workflow.handleIntervention?.(ctx, interventionInput);
-      }
-      if (claimed?.status === 'claimed') {
-        // The claimed Task's Goal may live in another workspace than the message: the claim names it.
-        const addressed = claimed.claim.task;
-        await announceInterruption({ ...reconcileContext(scope), signal: ctx.signal }, project.hostNotices, {
-          scope: { projectId: addressed.projectId, workspaceId: claimed.claim.workspaceId },
-          sessionRef: candidate.session,
-          personMessageRef: offer.messageRef,
-        });
-        await project.collaborationDriver.start(hostScopeContext({ projectId: addressed.projectId,
-          workspaceId: claimed.claim.workspaceId }, actor), {
-          advance: { schemaVersion: 1, flowId: `intervention:${claimed.claim.runRef.runId}`,
-            goalRef: { aggregateType: 'Goal' as const, projectId: addressed.projectId, goalId: addressed.goalId },
-            sessionHint: claimed.claim.sessionRef, kind: 'select_work', taskId: addressed.taskId },
-          queryProfileIds: [profile.id],
-        });
-      } else if (claimed?.status === 'answer_ready') {
-        // The closing's one notice is committed BEFORE the reply; a failed notice leaves the next pass to retry,
-        // never a reply without its explanation. `questions` sends no notice: the cards carry the questions.
-        if (claimed.reason !== 'questions') {
-          const notice = await platform.messages.sendMessage(ctx, interventionClosingNoticeRequest({
+    // G7 W2: a `progressed` stage is followed at once by the next one, not one stage per heartbeat.
+    let claimed = await platform.workflow.handleIntervention?.(ctx, interventionInput);
+    for (let step = 1; step < IDLE_LINE_STAGES && claimed?.status === 'progressed'; step += 1) {
+      claimed = await platform.workflow.handleIntervention?.(ctx, interventionInput);
+    }
+    // A settle-only close-out never claims; only a profile-driven round reaches the claimed branch.
+    if (claimed?.status === 'claimed' && profile !== null) {
+      // The claimed Task's Goal may live in another workspace than the message: the claim names it.
+      const addressed = claimed.claim.task;
+      await announceInterruption({ ...reconcileContext(scope), signal: ctx.signal }, project.hostNotices, {
+        scope: { projectId: addressed.projectId, workspaceId: claimed.claim.workspaceId },
+        sessionRef: candidate.session,
+        personMessageRef: offer.messageRef,
+      });
+      await project.collaborationDriver.start(hostScopeContext({ projectId: addressed.projectId,
+        workspaceId: claimed.claim.workspaceId }, actor), {
+        advance: { schemaVersion: 1, flowId: `intervention:${claimed.claim.runRef.runId}`,
+          goalRef: { aggregateType: 'Goal' as const, projectId: addressed.projectId, goalId: addressed.goalId },
+          sessionHint: claimed.claim.sessionRef, kind: 'select_work', taskId: addressed.taskId },
+        queryProfileIds: [profile.id],
+      });
+    } else if (claimed?.status === 'answer_ready') {
+      // The closing's one notice is committed BEFORE the reply; a failed notice leaves the next pass to retry,
+      // never a reply without its explanation. `questions` sends no notice: the cards carry the questions.
+      if (claimed.reason !== 'questions') {
+        const committed = await noticeCommitted();
+        if (committed === null) return null;
+        if (!committed) {
+          const notice = await platform.messages.sendMessage(noticeCtx, interventionClosingNoticeRequest({
             recipient: candidate.session, messageRef: offer.messageRef, reason: claimed.reason,
-            goalRef: read.value.goalRef,
+            part: sourcePart, hasReplySlot,
           }));
           if (notice.status !== 'committed') return null;
         }
-        // §5.2.4/C-25: only an executor's open wait defers M on a candidate/question close-out;
-        // every terminal answer still replies it. R itself is associated in both cases.
-        const candidateOrQuestions = claimed.reason === 'candidate' || claimed.reason === 'questions';
-        const executorWait = candidateOrQuestions && await executorWaitOf(ctx, read.value);
-        await platform.workflow.handleIntervention?.(ctx, { ...interventionInput,
-          completion: 'associate_answer', replyToOriginal: !executorWait });
-      } else if (claimed?.status === 'no_answer') {
-        // The third ending is a real termination: the fixed notice, then the source withdrawal. Both carry the
-        // fixed identities, so a crash between them replays the one already committed and finishes the other.
-        const key = sessionMessageRefKey(offer.messageRef);
-        const notice = await platform.messages.sendMessage(ctx, interventionClosingNoticeRequest({
+      }
+      // §5.2.4/C-25: only an executor's open wait defers M on a candidate/question close-out; every terminal answer
+      // still replies it. R itself is associated in both cases, except when the deferred wait is R itself (`M === R`).
+      const candidateOrQuestions = claimed.reason === 'candidate' || claimed.reason === 'questions';
+      // A12: `replySlot: 'source'` names a chain whose tail is another round: its Answer replies M, so only R closes here
+      // (and nothing when R is that M itself).
+      const sourceOnly = claimed.replySlot === 'source';
+      const executorWait = candidateOrQuestions || sourceOnly ? await executorWaitOf(ctx, read.value) : null;
+      const separateExecutorWait = executorWait !== null && executorWait !== 'unknown'
+        && sessionMessageRefKey(executorWait) !== sessionMessageRefKey(offer.messageRef);
+      // The notice and this reply share the one reply-slot fact: a reviewer's text round, a card-answer round and
+      // every other no-reply source keep their slot untouched; the notice alone closes the round. A saved reply is not
+      // written again: the close-out only supplies the one effect that was missing.
+      if (hasReplySlot && read.value.response === null) {
+        if (executorWait === null) {
+          // No deferred executor wait: M (when the round froze a distinct one) first, then R; only R for `source`.
+          await platform.workflow.handleIntervention?.(ctx, { ...interventionInput,
+            completion: 'associate_answer', replySlot: sourceOnly ? 'source' as const : 'both' as const });
+        } else if (separateExecutorWait) {
+          // The waited M is another message: R closes now, M waits for the final answer.
+          await platform.workflow.handleIntervention?.(ctx, { ...interventionInput,
+            completion: 'associate_answer', replySlot: 'source' as const });
+        }
+      }
+    } else if (claimed?.status === 'no_answer') {
+      // The third ending is a real termination: the fixed notice, then — only for the person's B20 source — the
+      // withdrawal that ends its consumption. An agent source is never withdrawn: its sender's wait expires on its
+      // own and the committed notice alone yields the queue head. Both writes carry fixed identities, so a crash
+      // between them replays the one already committed and finishes the other.
+      const key = sessionMessageRefKey(offer.messageRef);
+      const committed = await noticeCommitted();
+      if (committed === null) return null;
+      if (!committed) {
+        const notice = await platform.messages.sendMessage(noticeCtx, interventionClosingNoticeRequest({
           recipient: candidate.session, messageRef: offer.messageRef, reason: 'no_answer',
-          goalRef: read.value.goalRef,
+          part: sourcePart, hasReplySlot, withdrawSource: read.value.entry === 'person_intervention',
         }));
         if (notice.status !== 'committed') return null;
+      }
+      if (read.value.entry === 'person_intervention') {
         await platform.messages.withdrawMessage(ctx, { input: { messageRef: offer.messageRef },
           meta: { requestId: `intervention:${key}:withdraw`, expected: [] } });
-      } else if (goalRef === null) {
-        return { sessionRef: candidate.session, reason: 'no_goal' };
       }
-      return null;
+    } else if (goalRef === null) {
+      return { sessionRef: candidate.session, reason: 'no_goal' };
     }
-    if (goalRef === null) return { sessionRef: candidate.session, reason: 'no_goal' };
-    // An ordinary late reply is the existing consultation's response input; an inquiry keeps no part.
-    const part = offer.kind === 'late_reply' ? 'response' as const : undefined;
-    await platform.workflow.consumeConsultation?.(ctx, {
-      schemaVersion: 1, ...(part === undefined ? {} : { part }), messageRef: offer.messageRef, goalRef,
-      roleBinding: profile.roleBinding, runtimeBudget: profile.runtimeBudget, budget: profile.budget,
-      consumerId: profile.consumerId });
-    return null;                                                    // a consultation ends this Session's scan
+    return null;
   }
   // Slice 4C-2 §11.5/U-10: the scribe reminder shell. One check per configured
   // workspace per heartbeat; the to-do port and the recipient resolver are the
@@ -3334,7 +3574,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
           page: { limit: 100, ...(cursor === undefined ? {} : { cursor }) } });
         if (inbox.status !== 'ready') return 'unknown';
         for (const message of inbox.value.items) {
-          if (message.sender.kind !== 'host' || message.intent !== 'notify') continue;
+          if (message.sender.kind !== 'host') continue;
           const completion = await inputCompletion(inboxCtx, message);
           if (completion === 'unknown') return 'unknown';
           if (completion === 'completed') continue;
@@ -3949,15 +4189,20 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       // `Date.now()` still opens it only when the row moves its clock.
       for (const workspace of workspaces) {
         if (!ownedProject(workspace.scope.projectId)) continue;
+        // §2.3/1.2: the copy page goes before the ordinary throttle, so a running consume pass never delays it.
+        scheduleCopyQuestions(workspace.scope);
         const key = scopeKey(workspace.scope);
         if (inputJobs.has(key) || Date.now() - (lastInputScan.get(key) ?? 0) < period / 2) continue;
         lastInputScan.set(key, Date.now());
         const after = consumeCursors.get(key) ?? null;
         const job = consumeIdle(workspace.scope, after)
           .then(next => { consumeCursors.set(key, next); })
-          // 7D2 O2 (book :395-:400): one bounded maintenance page in the same idle job; no second loop or timer.
+          // 7D2 O2 (book :395-:400): one bounded maintenance page in the same idle job; no second loop or timer. The
+          // page is the Host's own automation, so it runs as the trusted Host system: a `too_long` handoff admits only
+          // that caller (`state/session-handoff.ts:62-63`), which P1's release pass supplied before P2 removed it.
           .then(async () => { await projectPlatform(workspace.scope.projectId).workflow.maintainSessions?.(
-            hostContext(workspace.scope), { workspace: workspace.scope, after: null }); })
+            { ...reconcileContext(workspace.scope), signal: attentionAbort.signal },
+            { workspace: workspace.scope, after: null }); })
           .catch(() => { /* original facts remain retryable */ })
           // KLS-2c [2C1-24]: when idle, the workspace's knowledge reconciliation rides its consume job (so the consume
           // barrier covers it), git or not; it holds the workspace's next consume until done.
@@ -4122,7 +4367,12 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
   // The real route bindings over this project's platform; `host/reconcile-report` answers this project's report.
   const routeBindings = createPlatformCoreRouteBindings(platform, project.collaborationDriver, workbenchTools.tools,
     project.goalFanOut, { readReconcileReport: async () => ({ status: 'ready', value: structuredClone(project.report) }) },
-    adoptionHost, scope => { armMessageRelease?.(scope); }, platform.readArchitectureProposal,
+    // A person's command arms the workspace (cp2fn FN-4): the goal waits first, which the request driver's switch does
+    // not cover, then the request queues when that driver is on. Only Goals already marked are woken by it.
+    adoptionHost, scope => {
+      wakeLoop.wake(scope, GOAL_WAITS_QUEUE, 'request_command');
+      requestWakeSink?.(scope, 'request_command');
+    }, platform.readArchitectureProposal,
     // SHT-2 (121-112): the person's read of the commands this project is running, ten minutes or older. Work and
     // QueryRun entries both carry `run.kind`, so the page knows which one it can stop.
     { readRunningCommands: async () => {
@@ -4135,7 +4385,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       }).filter(item => item.elapsedMs >= COMMAND_VISIBLE_AFTER_MS)
         .sort((a, b) => a.startedAt.localeCompare(b.startedAt) || a.callId.localeCompare(b.callId));
       return { status: 'ready' as const, value: { items } };
-    } });
+    } }, resumeGoalWaitForOpenDispatches);
   // L8 (book ruling 1): the route-registration path uses the SAME shared step as
   // the settings flow, only after a NON-REPLAYED committed registration. The
   // step itself triggers only when `byScope` already holds the scope.
@@ -4152,8 +4402,8 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     const lined = await registerHostLines(project.runtime, ctx, scope, bound.root);
     return lined ?? written;
   };
-  // `queries/ask` is the person's command: read the line once, select the one
-  // profile by the same `scope + sessionRole` rule the consume loop uses, then
+  // `queries/ask` is the person's command: read the line once, select the copy target with the same
+  // `copyQueryTargetOf` rule the copy-question consumer uses, then
   // hand the projected command to the Workflow's one ask entry.
   const askLine: CoreRouteBindings['askLine'] = async (ctx, input) => {
     if (ctx.principal.kind !== 'host' || ctx.principal.actor.kind !== 'human') {
@@ -4168,31 +4418,17 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
         : { status: 'rejected', code: 'incomplete', reason: `the requested record is not ready (${card.status})` };
     }
     const scope = { projectId: ctx.projectId, workspaceId: ctx.workspaceId ?? '' };
-    // Ruling 9 (E22): a builder or goal-less line has no profile of its own, so the read-only copy runs on the
-    // workspace's first profile instead of refusing the person's question. Ruling 33 keeps the two roles apart:
-    // the first profile supplies the budgets, while the copy's `roleBinding` must come from a trusted Work
-    // binding of the line's own Role (the copy keeps the source Role and its claim checks it).
-    const sameRole = queryProfileOf(scope, card.value.record.role);
-    const limits = sameRole ?? runtimeProfiles.find(entry => entry.scope.projectId === scope.projectId
-      && entry.scope.workspaceId === scope.workspaceId);
-    if (limits === undefined) {
-      return { status: 'rejected', code: 'unavailable', reason: 'the Session role has no query profile' };
+    const target = copyQueryTargetOf(scope, card.value.record.role);
+    if (!target.ok) {
+      return { status: 'rejected', code: 'unavailable', reason: target.missing === 'profile'
+        ? 'the Session role has no query profile' : 'the Session role has no trusted work binding' };
     }
-    const roleId = card.value.record.role.kind === 'legacy_template'
-      ? card.value.record.role.templateId : card.value.record.role.pin.ref.roleId;
-    const workBinding = sameRole === undefined
-      ? servingBinding(workflow?.bindings ?? [], scope.projectId, scope.workspaceId, roleId)
-      : null;
-    if (sameRole === undefined && workBinding === null) {
-      return { status: 'rejected', code: 'unavailable', reason: 'the Session role has no trusted work binding' };
-    }
-    const roleBinding = sameRole?.roleBinding ?? workBinding!.roleBinding;
     const ask = platform.workflow.askLine;
     if (ask === undefined) {
       return { status: 'rejected', code: 'unsupported', reason: 'the Workflow does not publish the ask entry' };
     }
-    return ask(ctx, { ...input, roleBinding, runtimeBudget: limits.runtimeBudget,
-      budget: limits.budget, consumerId: limits.consumerId });
+    return ask(ctx, { ...input, roleBinding: target.roleBinding, runtimeBudget: target.limits.runtimeBudget,
+      budget: target.limits.budget, consumerId: target.limits.consumerId });
   };
   // PL §6.4.3 adoption point 1: the committed first plan exports before the driver starts;
   // the result is unchanged and the export is detached.
@@ -4225,6 +4461,8 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
   // about to remove; a Host that keeps no settings has no take-back and adopts directly.
   const applyPlanWithChecks: CoreRouteBindings['applyPlanChange'] = async (ctx, request) => {
     if (hostSettings === undefined) return routeBindings.applyPlanChange(ctx, request);
+    // The person's adoption stays on the plain entry: it passes no PlanAdoptionJudgeV1 (2.5a A13).
+    const personAdoption: ChecksAdoptionEntryPort = hostSettings;
     // The route's own admission judges the body; only a readable candidate that brings checks goes through settings.
     const proposalRef = (request as { input?: { proposalRef?: unknown } } | undefined)?.input?.proposalRef;
     const proposal = typeof proposalRef === 'object' && proposalRef !== null
@@ -4233,7 +4471,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       return hostSettings.runExclusive(() => routeBindings.applyPlanChange(ctx, request));
     }
     const { ref, checks } = proposal.value;
-    return hostSettings.adoptWithPlanChecks(ctx, { scope: { projectId: ref.projectId, workspaceId: ref.workspaceId },
+    return personAdoption.adoptWithPlanChecks(ctx, { scope: { projectId: ref.projectId, workspaceId: ref.workspaceId },
       proposalRef: ref, checks, approval: { kind: 'person' } }, { replay: () => platform.plans.lookupPlanChange(ctx, request),
       apply: () => routeBindings.applyPlanChange(ctx, request) });
   };
@@ -4304,6 +4542,10 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
         await backfillDone;
         await attentionDone.catch(() => { /* the loop records its own state */ });
         await Promise.all([...inputJobs.values()]);
+        // A copy page starts its question jobs before it settles, so the pages drain first and then the questions;
+        // both swallow failures like `inputJobs`, so this drain cannot reject past the store closes below.
+        await Promise.all([...copyPageJobs.values()]);
+        await Promise.all([...copyJobs.values()]);
         // The request driver goes before the other drivers and the platform: a
         // pass would otherwise start a round on a platform that is draining.
         // The loop stops scheduling, aborts the signal every drain and every

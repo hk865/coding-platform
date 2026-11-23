@@ -533,10 +533,11 @@ describe('S3 graph tools', () => {
     } finally { await p.close(); }
   });
 
-  it('GT11 does not let send/note/shell into the Query grant; only explicitly granted look/find appear', async () => {
-    // The real writer names the Host grant carries: the mailbox `send`, a write,
-    // and the command `shell`. They must never reach the real Query request.
-    const writers = ['send_session_message', 'write', 'shell'];
+  it('GT11 does not let write/shell into the Query grant; only explicitly granted look/find appear', async () => {
+    // The real writer names the Host grant carries: a write and the command
+    // `shell`. A plain agent Query may send (design §6), so `send_session_message`
+    // is not a stripped writer any more. The two below must never reach it.
+    const writers = ['write', 'shell'];
     const grant = ['read', 'look_graph', 'find_graph', ...writers];
     const p = await openGtPlatform({ queryTools: grant, queryReplies: [{ kind: 'text', text: 'gt11 answered' }] });
     try {
@@ -719,17 +720,8 @@ describe('S3 graph tools', () => {
     } finally { await p.close(); }
   }, 120_000);
 
-  it('GT20 G-03 a read-only Query granted record_note never receives it', async () => {
-    const p = await openGtPlatform({
-      queryTools: [...GT_QUERY_TOOLS, 'record_note'],
-      queryReplies: [{ kind: 'text', text: 'gt20 answered' }],
-    });
-    try {
-      const run = await startGtQuery(p, 'gt20');
-      const names = requestToolNames(run.requests[0]);
-      expect(names).not.toContain('record_note');
-    } finally { await p.close(); }
-  }, 120_000);
+  // GT20 retired: design §6 now admits `record_note` on a plain Query round (the text round's `记`
+  // column), so the old "read-only Query never receives it" row no longer states a frozen rule.
 });
 
 /** Small accessor so GT03 can read the recording port's calls by name. */

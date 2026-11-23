@@ -16,6 +16,7 @@ import { createInitializationBindingReader } from '../../src/core/work-graph/tas
 import { createSessionDirectory } from '../../src/core/work-graph/sessions/session-directory.js';
 import { unknownSessionDuty } from './session-duty-double.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
+import { createQueryRoundResolver } from '../../src/core/work-graph/tasks/query-round.js';
 import { createRoleConfigurationService } from '../../src/core/work-graph/configuration/role-memory-service.js';
 import { createMaterialService } from '../../src/core/work-graph/materials/material-service.js';
 import { createMaterialRecordReaders } from '../../src/core/work-graph/materials/record-readers.js';
@@ -56,6 +57,7 @@ export function realOwners(f: S5DecisionFixture, duties: readonly PlatformDutyV1
       knowledge: knowledgeLinesOver(records), lookups: records, duty: unknownSessionDuty }),
     executions: createRunStateReader({ records }),
     roles: createRoleConfigurationService({ records, now, eventId: newId }),
+    queryRounds: createQueryRoundResolver({ records, duties: unknownSessionDuty, bodies: f.bodies }),
     ...(duties === null ? {} : { duties: {
       async readMessageDutiesFacts() {
         return { status: 'ready' as const, value: {

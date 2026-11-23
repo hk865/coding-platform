@@ -16,6 +16,11 @@ import { join } from 'node:path';
 import { vi } from 'vitest';
 import type { createTargetPlatform } from '../../src/composition/create-platform.js';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
+import type { SessionMessageRef } from '../../src/contracts/core/session-message.js';
+import { WORKFLOW_AUTOMATION_ACTOR } from '../../src/contracts/task-requeue.js';
+import type { PlanSourceRootPort } from '../../src/core/work-graph/model/claim-contracts.js';
+import { hostSystemContext } from '../../src/core/work-graph/model/platform-check-context.js';
+import { planSourceLineageOf, type PlanSourceLineageDeps } from '../../src/core/work-graph/tasks/plan-lineage.js';
 import type { RoleConfigurationRef, SessionRef, VersionPin, WorkspaceScope } from '../../src/contracts/core/identity.js';
 import type { SessionRecord } from '../../src/contracts/core/session.js';
 import type { RoleBindingRefV1, RunRef, RunSnapshot, TaskBudgetV1, TaskTriple } from '../../src/contracts/dispatch.js';
@@ -110,6 +115,20 @@ export type ClaimFixtureOptions<A = unknown> = {
   bootstrapModule?: { moduleId?: string; name?: string; responsibility?: string; description?: string;
     paths?: readonly string[] };
 };
+
+/**
+ * The test-side binding of the ONE source-chain root the claim owner, the node
+ * detail, the action card and the dispatch receipt share. It is the production
+ * `planSourceLineageOf` walk, reached the same way the composition root does:
+ * the caller's own context for a Host, the platform Host otherwise.
+ */
+export function planSourceRootOf(deps: PlanSourceLineageDeps): PlanSourceRootPort {
+  return { messageRoot: async (ctx: CoreCallContext, source: SessionMessageRef, goalWorkspaceId: string) => {
+    const reader = ctx.principal.kind === 'host' ? ctx : hostSystemContext(ctx, WORKFLOW_AUTOMATION_ACTOR);
+    const lineage = await planSourceLineageOf(reader, deps, source, goalWorkspaceId);
+    return lineage.status === 'ready' ? { status: 'ready', value: lineage.value.rootMessage } : lineage;
+  } };
+}
 
 export type TaskClaimFixture = {
   kind: ClaimFixtureKind;
@@ -477,7 +496,9 @@ export async function createTaskClaimFixture<A = unknown>(kind: ClaimFixtureKind
   const wrapped = wrapRecords(backendRecords, spy);
   function makeService(target: Records = wrapped, clock: () => string = now): TaskClaimPort {
     const roles = createRoleConfigurationService({ records: target, now: clock, eventId });
-    return createTaskClaimService({ records: target, roles, now: clock, newId });
+    return createTaskClaimService({ records: target, roles, now: clock, newId,
+      planSourceRoot: planSourceRootOf({ messages: platform.messages, queries: platform.queries, plans: platform.plans,
+        readReview: (ctx, input) => platform.unknownCallReviews.readReview(ctx, input) }) });
   }
   const service = makeService();
 

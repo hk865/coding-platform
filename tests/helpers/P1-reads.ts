@@ -130,14 +130,14 @@ export async function reachedBefore(reached: Promise<unknown>, call: Promise<unk
 export async function personSends(world: S6AHostWorld, to: { ref: SessionRef }, text: string, requestId: string,
   needsReply = true): Promise<SessionMessage['ref']> {
   return committed<SessionMessage>(await world.post('messages/send', graphWrite(S6A_SCOPE,
-    { recipient: to.ref, text, intent: 'inquiry', needsReply }, requestId)), 'the person message').ref;
+    { recipient: to.ref, text, needsReply }, requestId)), 'the person message').ref;
 }
 
 /** The person's direct `action_request` on `task` to `to` (the intervention a marked claim carries, Q6a). */
 export async function personRequestsAction(p1: P1World, to: { ref: SessionRef }, task: TaskTriple, text: string,
   requestId: string): Promise<SessionMessage['ref']> {
   return committed<SessionMessage>(await p1.world.post('messages/send', graphWrite(S6A_SCOPE, { recipient: to.ref, text,
-    intent: 'action_request', needsReply: false, goalRef: p1.goal, taskRef: task }, requestId)),
+    entry: 'person_intervention', needsReply: false, goalRef: p1.goal, taskRef: task }, requestId)),
   'the person action_request').ref;
 }
 

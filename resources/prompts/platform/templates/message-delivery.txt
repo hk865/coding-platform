@@ -1,0 +1,2 @@
+消息 {{messageId}}，来自 {{sender}}，要回复：{{needsReply}}，叫醒你：{{wake}}{{deadline}}
+{{body}}

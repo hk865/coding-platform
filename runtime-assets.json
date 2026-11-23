@@ -13,15 +13,15 @@
   },
   {
     "path": "resources/prompts/platform/pack.json",
-    "sha256": "270b9be0c959cf5d47874ec80bec388f72c04da1f8d7e6312105e15592417fc1"
+    "sha256": "6a4dded392097ca72b183834238a757f766aaebbacd5b7db9e3e8321ae640514"
   },
   {
     "path": "resources/prompts/platform/strings.json",
-    "sha256": "7d52fe870328ad7b9ea10b4c5499551ff05f612f16870b149b197e2ad563069a"
+    "sha256": "f7dc64223feffb7cf0ce98ac4203c782dad5dc7541c5ae953711bc985171e8e8"
   },
   {
     "path": "resources/prompts/platform/templates/initial-planning-answer.txt",
-    "sha256": "3f554344a39bcf3d8f91db2b2cbefcfdea84c8bff1c1b0d5f589be61b683d6e9"
+    "sha256": "9ec3414a3646292c52fc2c06b08cbb0e3952775b9c1af45780a7586d0a37a624"
   },
   {
     "path": "resources/prompts/platform/templates/consultation-received-input.txt",
@@ -30,18 +30,6 @@
   {
     "path": "resources/prompts/platform/templates/user-decision-response.txt",
     "sha256": "71accd8d578f6ae8edbd766ad8b2453b15ef7870d2d126156ed6d742ead89edb"
-  },
-  {
-    "path": "resources/prompts/platform/templates/action-request-delivery.txt",
-    "sha256": "10b584710c7c790063129af35a8558b3e36d420c1821baa3b4a6128c6f75f381"
-  },
-  {
-    "path": "resources/prompts/platform/templates/inquiry-delivery.txt",
-    "sha256": "3d7401621ce4117293c285ca781ecf8b7bd810cae36bb44b948559f4c1f0f17e"
-  },
-  {
-    "path": "resources/prompts/platform/templates/notify-delivery.txt",
-    "sha256": "04e14394a9a5a6a80723347587afe70be2ca93f12bb78ae6d7b6b808b23b4c68"
   },
   {
     "path": "resources/prompts/platform/templates/wait-reply-delivery.txt",
@@ -57,7 +45,7 @@
   },
   {
     "path": "resources/prompts/platform/templates/intervention-planning.txt",
-    "sha256": "bda67890b5173c7ea7d542e1396e371496205d2f2c190b0033d694298895ba40"
+    "sha256": "d6bf6695ef18aa7374f7bbaec6c24fde3b8ccbfba8c5e08bcf238e913525aaa3"
   },
   {
     "path": "resources/prompts/platform/templates/plan-review-input.txt",
@@ -133,23 +121,23 @@
   },
   {
     "path": "resources/prompts/platform/templates/skill-platform-work.txt",
-    "sha256": "7900ad9ec942898d22a666e20a6a82d8e0e647291d226108325bfa1d84bdaa08"
+    "sha256": "77cab7d447ce03b66cd83f63a680303991ab6148b4ce38fb9eff106cd86c9093"
   },
   {
     "path": "resources/prompts/platform/templates/skill-platform-secretary.txt",
-    "sha256": "70dde99ef1db48706385d58c1fec689ea6be77f1ba033cc8f7502dd79f999dfb"
+    "sha256": "eb6dc54774b250b7bb022245f3783b91b42cb812d74d11595edaf6b217cc08cd"
   },
   {
     "path": "resources/prompts/platform/templates/skill-platform-adviser.txt",
-    "sha256": "5c823b9ff62bb22618c605f72511a89e5ab0654311c937b05783d8e16caeb062"
+    "sha256": "ca1623d443071551cf7c32c2ef1c164f5f7a2e625d58461c2042739254b8c015"
   },
   {
     "path": "resources/prompts/platform/templates/skill-platform-scribe.txt",
-    "sha256": "06eaa54bb819486d3b7e3e69bd4bdcfe0a5cfb7e5a73a893296500710ec7b65d"
+    "sha256": "0f564aed3d684fa56026ad0d17b820f5c41e5ced948036ee2db61bce9a445190"
   },
   {
     "path": "resources/prompts/platform/templates/skill-platform-reviewer.txt",
-    "sha256": "730e2ee4693fbd17776a2adfb5c6b8edaeab2c5ba7ed102aec0ba49aec9307a6"
+    "sha256": "ff28c4a70368a6c321019d758180a7c7c71ab194fc5e62a6c847572c8655f10d"
   },
   {
     "path": "resources/prompts/platform/tools/query_task_graph.json",
@@ -165,7 +153,7 @@
   },
   {
     "path": "resources/prompts/platform/tools/create_member.json",
-    "sha256": "5b4eb8fd5c4202b1f9fe16e7668b5b8995d2c7da7dbf4c836fbda366918571da"
+    "sha256": "d882e2b176b092bc4fa31bce6d6b3096080bafe2b89df17d631069a73c209666"
   },
   {
     "path": "resources/prompts/platform/tools/assign_module_maintainer.json",
@@ -173,11 +161,11 @@
   },
   {
     "path": "resources/prompts/platform/tools/withdraw_session_message.json",
-    "sha256": "febb24dffb552328da0fcf125b469c9a5c6a00e2c3515f70111c7f97f6bf96a0"
+    "sha256": "f3ea9c331541ed0db96b945b3363d208648ad627ba739c1979e6c2d3c4259678"
   },
   {
     "path": "resources/prompts/platform/tools/read_requests.json",
-    "sha256": "426080b13bba32ae53f37a589366a33dd1c67907e00820e6a37cbdcaca13b121"
+    "sha256": "8006f1936fa85257bc09b0bcf6b90d2ddf4f84d9749b17cc03e14132a164874d"
   },
   {
     "path": "resources/prompts/platform/tools/request_rework.json",
@@ -189,7 +177,7 @@
   },
   {
     "path": "resources/prompts/platform/tools/record_note.json",
-    "sha256": "2bdeb41ddc5b9c8ccfd55378316435e71b8e1c4c1c631500ec2d1bb0593b6111"
+    "sha256": "f70a6fadbd605416209943d75d7f7b42582c453c9e46b72ab5b38055847b9605"
   },
   {
     "path": "resources/prompts/platform/tools/propose_architecture_revision.json",
@@ -201,43 +189,43 @@
   },
   {
     "path": "resources/prompts/platform/tools/project_source.json",
-    "sha256": "a60c4d5049756e231fc44a12e0756eab52456237cfb8b1bc69aa61a5e929d637"
+    "sha256": "720ae773bc644e12008040a6a8257c9fc871e28bd1b75b7e3b09bedf95fc15fe"
   },
   {
     "path": "resources/prompts/platform/tools/read_source.json",
-    "sha256": "4cf417795a78585a948481387f1f27f7bce056d8f453bdf461b7e2fdfd0e121d"
+    "sha256": "c80d07f8ebbe0b4b94340b0a81838fe6b3bf5a795643012e2875370fa152e54a"
   },
   {
     "path": "resources/prompts/platform/tools/cpp_index.json",
-    "sha256": "b28680d1bc7145d5a7978cc6f9395079ecda83f13ee7015ff2d4bdaaacb3b88a"
+    "sha256": "45150fe75a5e54ab0c7d1783d759451f2d89171ce6d6c26afb516f0ad3974104"
   },
   {
     "path": "resources/prompts/platform/tools/python_index.json",
-    "sha256": "680ffdd2b4ba62d7dad10767eef426a27c01e45ea65d3635ec771ba6d23252f1"
+    "sha256": "6714b8feae504487b62114d92385cf804f48530cfac3b21d45d39ea47fa60f3d"
   },
   {
     "path": "resources/prompts/platform/tools/code_index.json",
-    "sha256": "00c065c71df81aff4050a591cc46cebc14b47d5e058d76139babaa6ac785bd90"
+    "sha256": "8c3cf2621ea5a3a4ffe4c4808e7ae0df6b399ad6d51ef5b94db43cf69fccb184"
   },
   {
     "path": "resources/prompts/platform/tools/source_excerpt.json",
-    "sha256": "a70d476681ab583125e5660e659078a10134c3653e55580069eee1c265d6fb99"
+    "sha256": "c99c69fdddb25c3a056c760c9c6553b43c24aed8516d192dce62dc23db9ec005"
   },
   {
     "path": "resources/prompts/platform/tools/list_files.json",
-    "sha256": "074c3ddf505f2c406f0df1df34dbed5957851467836789363dec66e6f0022ada"
+    "sha256": "67df2767702de60a54c466d639f438eb1d8083536af6f438aee3bdb2d6592fd4"
   },
   {
     "path": "resources/prompts/platform/tools/search.json",
-    "sha256": "0aad4a54636306a77cda3c7b7f964908cc94171851bc5c324db4a5684eb581c6"
+    "sha256": "cce2b2202122053aac7f5d146093cdc72ffb2f5135f4f06171c406fbb40ca9cb"
   },
   {
     "path": "resources/prompts/platform/tools/symbols.json",
-    "sha256": "6f9632ec107c61a890df34c5931a4d515d4cd1c541b9b1c6fa0051a27fcb830b"
+    "sha256": "b614d4c0c09f525fda78dfec11f05e6e5d69eb5301de75a7fc0df1ac8d9c8a57"
   },
   {
     "path": "resources/prompts/platform/tools/run_readonly_command.json",
-    "sha256": "4c54e221ff5300e129f8c7d62be1e5c1bbf1ae538638aca35cd68e02348c496b"
+    "sha256": "a6531bd3ef7d8249886d56d0f98134c4f2afee88ffcb2f4270fa5628dc88e353"
   },
   {
     "path": "resources/prompts/platform/tools/request_command_rerun.json",
@@ -245,7 +233,7 @@
   },
   {
     "path": "resources/prompts/platform/tools/send_session_message.json",
-    "sha256": "e36151ed63e1ef404388c2cc44597cf4ce1a3a53554828c8162a3f62a0c24ac0"
+    "sha256": "56bba3b05c0223ffe98c0adc4242219a9e9f271508125b4f2ac35b55cec3a467"
   },
   {
     "path": "resources/prompts/platform/tools/read_session_inbox.json",
@@ -260,16 +248,8 @@
     "sha256": "3164ba05bb4d5e0010d8020381b1ad5df60062c9cd2e2fb3100501feb140a686"
   },
   {
-    "path": "resources/prompts/platform/tools/ack_session_message.json",
-    "sha256": "caaf5ce074af49b8749d83a4eecc2a600b5ae7e162a8c6eae5a086b5a17a54d1"
-  },
-  {
     "path": "resources/prompts/platform/tools/respond_session_message.json",
-    "sha256": "f4ac0caea999407a409abd48d0a48465b2b2357ddbe4fc286abda8307a39c420"
-  },
-  {
-    "path": "resources/prompts/platform/tools/send_user_message.json",
-    "sha256": "6ee9091de037b68923bc2e8e1b46dc060b6722672f7df626d4fd198bc4c6e79c"
+    "sha256": "cff2ba5c7ddb05151f486708bda2854d40253077d74a02fab17730d74f5da16f"
   },
   {
     "path": "resources/prompts/platform/tools/read_user_decision.json",
@@ -281,19 +261,11 @@
   },
   {
     "path": "resources/prompts/platform/tools/look_graph.json",
-    "sha256": "4d001b5e755beabbeb4a149c149d6551e03e2e34ecf4b7cdc946837055e4d866"
+    "sha256": "f9d480c4e13e9e7091b9f41b009d6a1ad649598ab7aa906a14db1c6b32876d8e"
   },
   {
     "path": "resources/prompts/platform/tools/find_graph.json",
-    "sha256": "97d136cd690b18392bb25fde171170373e7d2ecd4657c2448dd8f8c748e6bcba"
-  },
-  {
-    "path": "resources/prompts/platform/tools/find_related_sessions.json",
-    "sha256": "50ad2519060a05e085275cfd2e1cb1949c3e196dd183d49f7e1bdb704d367fe5"
-  },
-  {
-    "path": "resources/prompts/platform/tools/read_session_card.json",
-    "sha256": "a6620f60b59bb5fa79743e35802115e765e42694aebb99a44702834822737c38"
+    "sha256": "7a9ddeedcf44a5cf77f0425a51f092cbb9344edb7e6ab5ba869c84e28750725b"
   },
   {
     "path": "resources/prompts/platform/tools/record_unknown_call_review.json",
@@ -305,15 +277,15 @@
   },
   {
     "path": "resources/prompts/platform/tools/submit_secretary_answer.json",
-    "sha256": "ef839b969327b8e80d8bb4f52c5052cdb0e1780852a95a8d4020778afe13f568"
+    "sha256": "fdef14b27c0b35bd101889955f1ec4e089bb3c00e5d8db566c4fbab5afb396b9"
   },
   {
     "path": "resources/prompts/platform/tools/submit_initial_plan.json",
-    "sha256": "f211b6a65e559651989c59e838381f04a9dbc3bba056c5764ed5e50875f2980e"
+    "sha256": "914af9dfc2e61106dbb159980ab0e579747049cbf79818e64a81d0d6e78b7fae"
   },
   {
     "path": "resources/prompts/platform/tools/submit_initial_questions.json",
-    "sha256": "5dd9daf3528030f5b6cf660c5e34c2d4f18a178c640d8398670a3855f49fc817"
+    "sha256": "fc4e916e9cfd600a8cc3f45876edc80453ba3ed29227a4ba4d2a985e0551c8e2"
   },
   {
     "path": "resources/prompts/platform/tools/submit_plan_review.json",
@@ -321,7 +293,7 @@
   },
   {
     "path": "resources/prompts/platform/tools/submit_plan_round.json",
-    "sha256": "1ac190de0899453f0805a4295bf298c9a3f651824ffa36571416cae422b42c01"
+    "sha256": "feaa25a0e3f33caacb6b2d373f4d2e83bed0b05fe09b2dde1e77ad25a16eabba"
   },
   {
     "path": "resources/prompts/platform/tools/hand_off.json",
@@ -373,19 +345,19 @@
   },
   {
     "path": "resources/prompts/platform/tools/check_links.json",
-    "sha256": "bf8d74f844bdc1a70a542afe8a86c3001b76a791ef167c46edf43042044aad38"
+    "sha256": "c2aba8cbb72bcf712878ba573e6020243455db503b025abe41ba2db03f70cace"
   },
   {
     "path": "resources/prompts/platform/tools/web_search.json",
-    "sha256": "fc67e6c7d68aecaea6237de84ec8be491928b79ac68fd6f4e51ee6fd0a84cbf1"
+    "sha256": "d6fb1527da679a378760456ffe9676f3c91cb536f69b2afeed547a677a641c0e"
   },
   {
     "path": "resources/prompts/platform/tools/web_fetch.json",
-    "sha256": "15aea49ae2e7c3761e43039f16cc1a6021430a075c25c37aa8eee1de57a0b653"
+    "sha256": "f4719b3c1db56324a490fb79e7a8ebc1b9d9d5031f09dcee55365be08d4618de"
   },
   {
     "path": "resources/prompts/platform/templates/context-summary-request.txt",
-    "sha256": "b32c1b765884283df8b8dc598d7389bd73153ca6ec45ba4089d3bb2084ae34e4"
+    "sha256": "5fb809b1cd604e8ce5ed6a4b8b71a12393b3e14670f8d3a240ddc741df38304e"
   },
   {
     "path": "resources/prompts/platform/tools/submit_exec_review.json",
@@ -426,5 +398,37 @@
   {
     "path": "resources/prompts/platform/tools/submit_check_review.json",
     "sha256": "2cc0ee4c0561be82e14389b00db444332f22cbe11bc402c6064a5b4ad9e35f64"
+  },
+  {
+    "path": "resources/prompts/platform/templates/message-delivery.txt",
+    "sha256": "84dbc0af2fa4c7a2cc79029aed566dad9576d1c526a873b73b6b06802db9d473"
+  },
+  {
+    "path": "resources/prompts/platform/tools/dispatch_task.json",
+    "sha256": "3f1a73502788870350f9c2747df73a98616e8aa62cabf543974953750cc86710"
+  },
+  {
+    "path": "resources/prompts/platform/tools/hold_claim.json",
+    "sha256": "a099c31ff89fb86d0e6b17b655e1c9608545fcd6a653642c3d481db54c5cf7c5"
+  },
+  {
+    "path": "resources/prompts/platform/tools/release_hold.json",
+    "sha256": "0e2945a127c8ca10000746b04be0d6cace4ee7329a265743bede9fa21afc1280"
+  },
+  {
+    "path": "resources/prompts/platform/tools/request_stop.json",
+    "sha256": "3505a867e2c02cd0c9fbebb2cf0e8ef76eca2c66630d0f7bbd77f6042509ed07"
+  },
+  {
+    "path": "resources/prompts/platform/tools/ask_copy.json",
+    "sha256": "c3a6764fec56a71fa0ae2ebfe8e57283c8a6816954d99ad6a03db146f1171194"
+  },
+  {
+    "path": "resources/prompts/platform/tools/notify_person.json",
+    "sha256": "452481138bc41c880a8e6cb8ca26490a3e90a13da15096c7903dda1c052011ac"
+  },
+  {
+    "path": "resources/prompts/platform/tools/ask_person.json",
+    "sha256": "75286392c44796dec2433bf61963842b5122ffca2a7e629e2f777487f2551367"
   }
 ]

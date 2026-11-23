@@ -26,7 +26,7 @@ type Over = {
 };
 
 const base = (over: Over): DeliveryBaseFactsV1 => ({
-  consumption: { status: 'pending', release: 'released', withdrawnAt: null, ...over.consumption },
+  consumption: { status: 'pending', withdrawnAt: null, ...over.consumption },
   goal: over.goal === undefined ? 'active' : over.goal,
   taskBlocked: over.taskBlocked ?? false,
   recipientOutcomeUnknown: over.recipientOutcomeUnknown ?? false,
@@ -47,17 +47,11 @@ describe('deliveryEligibility', () => {
   it.each<Row>([
     ['withdrawn', message({ consumption: { withdrawnAt: AT } }),
       { offerable: false, reason: 'withdrawn' }],
-    ['awaiting release', message({ consumption: { release: 'awaiting' } }),
-      { offerable: false, reason: 'not_released' }],
-    ['approved release', message({ consumption: { release: 'approved' } }),
-      { offerable: false, reason: 'not_released' }],
-    ['denied release', message({ consumption: { release: 'denied' } }),
-      { offerable: false, reason: 'not_released' }],
     ['paused goal', message({ goal: 'paused' }),
       { offerable: false, reason: 'paused' }],
     ['cancelled goal', message({ goal: 'cancelled' }),
       { offerable: false, reason: 'cancelled' }],
-    ['blocking task decision', message({ taskBlocked: true }),
+    ['blocking task decision', message({ taskBlocked: true, consumption: { entry: 'person_intervention' } }),
       { offerable: false, reason: 'awaiting_decision' }],
     ['unknown recipient outcome', message({ recipientOutcomeUnknown: true }),
       { offerable: false, reason: 'outcome_unknown' }],
@@ -72,8 +66,6 @@ describe('deliveryEligibility', () => {
       { offerable: false, reason: 'not_bound' }],
     ['expiry not bound here', expiry({ waitConsumed: false, boundHere: false }),
       { offerable: false, reason: 'not_bound' }],
-    ['no release', message({ consumption: { release: null } }),
-      { offerable: true }],
     ['released', message({}),
       { offerable: true }],
     ['a message with no goal', message({ goal: null }),

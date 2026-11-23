@@ -68,6 +68,8 @@ import { createSessionMailbox } from '../../src/core/work-graph/communication/ma
 import { createSessionAnomalyService } from '../../src/core/work-graph/tasks/session-anomaly-service.js';
 import { createSessionFactsService } from '../../src/core/work-graph/tasks/session-facts.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
+import { createQueryRoundResolver } from '../../src/core/work-graph/tasks/query-round.js';
+import { unknownSessionDuty } from './session-duty-double.js';
 import { createRoleConfigurationService } from '../../src/core/work-graph/configuration/role-memory-service.js';
 import { SESSION_MAILBOX_TOOL_NAMES } from '../../src/core/agent-runtime/communication-tools.js';
 import { sessionAnomalyRefKey } from '../../src/core/work-graph/tasks/session-anomaly-codecs.js';
@@ -216,6 +218,7 @@ function mailboxOver(f: LineFixture, records: GoalRecordTransactionPort & Record
   let seq = 0;
   return createSessionMailbox({
     defaultInquiryDeadlineMs: 86_400_000,
+    queryRounds: createQueryRoundResolver({ records, duties: unknownSessionDuty, bodies }),
     records, sessions: f.base.sessionsPort,
     executions: createRunStateReader({ records }),
     roles: createRoleConfigurationService({ records, now, eventId: () => `s2c-x-mail-event-${++seq}` }),
@@ -409,7 +412,7 @@ export async function buildScaleFixture(kind: ClaimFixtureKind,
   const sent: { ref: SessionMessageRef; revision: number }[] = [];
   for (let index = 0; index < rMessageCount; index += 1) {
     const message = await mailbox.sendMessage(workContext(f.ctx, rClaim.runRef, rExec.run.roleBinding), {
-      input: { recipient: replier, text: `S2C-X scale message ${String(index)}`, intent: 'inquiry', needsReply: true },
+      input: { recipient: replier, text: `S2C-X scale message ${String(index)}`, needsReply: true },
       meta: { requestId: requestId(`send-${String(index)}`), expected: [] } });
     if (message.status !== 'committed') throw new Error(`S2C-X send failed: ${JSON.stringify(message)}`);
     sent.push({ ref: message.value.ref, revision: message.value.revision });

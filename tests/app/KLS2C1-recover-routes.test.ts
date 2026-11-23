@@ -170,11 +170,11 @@ it('K37 a notice\'s recovery items are found only in its own project', async () 
   expect(world.read(path)).not.toBeNull();
 }, 120_000);
 
-/** The `action_request` messages in one Session's inbox. */
+/** The Host system-round messages that ask for a reply, in one Session's inbox. */
 async function actionRequests(world: KLS2CHost, recipient: SessionRef): Promise<unknown[]> {
-  const page = readyValue<{ items: { intent?: string }[] }>(await world.call('messages/inbox',
+  const page = readyValue<{ items: { sender: { kind: string; actor: { kind: string } } }[] }>(await world.call('messages/inbox',
     plain(world.scope, { recipient, page: { limit: 100 } })), 'messages/inbox');
-  return page.items.filter(item => item.intent === 'action_request');
+  return page.items.filter(item => item.sender.kind === 'host' && item.sender.actor.kind === 'system');
 }
 
 it('V6 a recovery whose file makes two module files claim one path: the recovery round opens the knowledge_conflict '

@@ -59,10 +59,10 @@ describe('the mailbox input order around an answered wait', () => {
     const asyncQuestion = 'S7B order async question';
     await world.scripted.script(sender, [
       { kind: 'calls', calls: [{ callId: 's7b-order-async', name: 'send_session_message',
-        args: { recipient: recipient.ref, text: asyncQuestion, intent: 'inquiry', needsReply: true } }] },
+        args: { recipient: recipient.ref, text: asyncQuestion, needsReply: true } }] },
       { kind: 'text', text: 'S7B order async sent' },
       { kind: 'calls', calls: [{ callId: 's7b-order-wait', name: 'send_session_message',
-        args: { recipient: recipient.ref, text: 'S7B order wait question', intent: 'inquiry',
+        args: { recipient: recipient.ref, text: 'S7B order wait question',
           needsReply: true, waitAfterSend: true } }] },
       { kind: 'text', text: 'S7B order wait answered' },
     ]);
@@ -81,15 +81,15 @@ describe('the mailbox input order around an answered wait', () => {
 
     // Person, then the two agent letters in commit order; the async question came first but its reply comes last.
     const person = committed<SessionMessage>(await world.post('messages/send', graphWrite(S6A_SCOPE, {
-      recipient: sender.ref, text: 'S7B order person body', intent: 'action_request', needsReply: true,
+      recipient: sender.ref, text: 'S7B order person body', entry: 'person_intervention', needsReply: true,
     }, 's7b-order-person')), 'the person message');
     const firstAgent = committed<SessionMessage>(await world.dispatch('messages/send', world.systemContext(),
       graphWrite(S6A_SCOPE, {
-        recipient: sender.ref, text: 'S7B order first agent body', intent: 'action_request', needsReply: true,
+        recipient: sender.ref, text: 'S7B order first agent body', needsReply: true,
       }, 's7b-order-agent-first')), 'the first agent message');
     const secondAgent = committed<SessionMessage>(await world.dispatch('messages/send', world.systemContext(),
       graphWrite(S6A_SCOPE, {
-        recipient: sender.ref, text: 'S7B order second agent body', intent: 'action_request', needsReply: true,
+        recipient: sender.ref, text: 'S7B order second agent body', needsReply: true,
       }, 's7b-order-agent-second')), 'the second agent message');
     await replyS7AMessage(world, { goal, recipient, messageRef: asyncMessage.ref,
       taskId: tasks[2]!.taskId, label: 's7b-order-async', text: 'S7B order async reply' });
@@ -139,7 +139,7 @@ describe('the mailbox input order around an answered wait', () => {
     ]);
   });
 
-  it('gives an intervention execution the person message and never the saved reply or an agent action_request', async () => {
+  it('gives an intervention execution the person message and an unbound saved reply, never an agent action_request', async () => {
     const { world } = await openS7BWorld({ backend: 'memory' });
     worlds.push(world);
     const main = s6aCardsWorkspace(world, S6A_SCOPE);
@@ -157,9 +157,9 @@ describe('the mailbox input order around an answered wait', () => {
     await world.scripted.script(sender, [
       { kind: 'calls', calls: [
         { callId: 's7b-intervention-async', name: 'send_session_message',
-          args: { recipient: recipient.ref, text: asyncQuestion, intent: 'inquiry', needsReply: true } },
+          args: { recipient: recipient.ref, text: asyncQuestion, needsReply: true } },
         { callId: 's7b-intervention-wait', name: 'send_session_message',
-          args: { recipient: recipient.ref, text: 'S7B intervention wait', intent: 'inquiry',
+          args: { recipient: recipient.ref, text: 'S7B intervention wait',
             needsReply: true, waitAfterSend: true } },
       ] },
       { kind: 'text', text: 'S7B intervention sent' },
@@ -179,11 +179,11 @@ describe('the mailbox input order around an answered wait', () => {
       taskId: tasks[1]!.taskId, label: 's7b-intervention-async', text: asyncAnswer });
     // A person's message is the intervention beside the still-open wait; an agent action_request is queued behind it.
     const person = committed<SessionMessage>(await world.post('messages/send', graphWrite(S6A_SCOPE, {
-      recipient: sender.ref, text: 'S7B intervention person body', intent: 'action_request', needsReply: true,
+      recipient: sender.ref, text: 'S7B intervention person body', entry: 'person_intervention', needsReply: true,
     }, 's7b-intervention-person')), 'the intervention person message');
     const agent = committed<SessionMessage>(await world.dispatch('messages/send', world.systemContext(),
       graphWrite(S6A_SCOPE, {
-        recipient: sender.ref, text: 'S7B intervention agent body', intent: 'action_request', needsReply: true,
+        recipient: sender.ref, text: 'S7B intervention agent body', needsReply: true,
       }, 's7b-intervention-agent')), 'the intervention agent message');
 
     const result = await callPublishedOwnerAsHost(world, 'S7B', {
@@ -195,7 +195,7 @@ describe('the mailbox input order around an answered wait', () => {
     expect(result.claim.task).toEqual(tasks[0]);
     await startIntervention(world, result.claim);
 
-    // The intervention execution accepted the person's message and nothing else.
+    // The intervention execution accepted the person's message; the queued agent message waits for the continuation.
     const personRead = ready<SessionMessage>(await world.post('messages/read', plain(S6A_SCOPE, person.ref)),
       'the delivered intervention person message');
     expect(personRead.acceptedInputs ?? []).toContainEqual(expect.objectContaining({ part: 'message',
@@ -206,8 +206,10 @@ describe('the mailbox input order around an answered wait', () => {
       .toBe(false);
     const asyncRead = ready<SessionMessage>(await world.post('messages/read', plain(S6A_SCOPE, asyncMessage.ref)),
       'the asynchronous question beside the intervention');
-    expect((asyncRead.acceptedInputs ?? []).some(entry => entry.part === 'response'
-      && entry.executionRef.runId === result.claim.runRef.runId)).toBe(false);
+    // P2 MP-4 (cp2mp-rulings.md:12; p2-frozen.md:151): a saved reply bound to no wait reaches the line's next safe
+    // point as ordinary input, the intervention execution's too; only a reply still bound to the wait is kept from it.
+    expect(asyncRead.acceptedInputs ?? []).toContainEqual(expect.objectContaining({ part: 'response',
+      executionRef: result.claim.runRef, consumesWait: false }));
     const interventionRun = ready<TaskExecutionRecord>(
       await world.post('executions/read', plain(S6A_SCOPE, result.claim.runRef)), 'the intervention execution');
     expect(interventionRun.run.consumedWait).toMatchObject({ kind: 'intervention', messageRef: person.ref });

@@ -14,14 +14,34 @@ import type { SessionRef } from '../../../contracts/core/identity.js';
 import type { CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
 import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
 import type { RunRef, TaskTriple } from '../../../contracts/dispatch.js';
-import type { DispatchBasisV1, DispatchCurrentV1 } from '../../../contracts/ledger.js';
+import type { DispatchBasisV1, DispatchCurrentV1, GoalRef } from '../../../contracts/ledger.js';
+import type { PlanRevisionRef } from '../../../contracts/plan.js';
 import type { TaskClaimHoldRef } from '../../../contracts/task-claim-hold.js';
+import { isRecord } from '../../../contracts/validation/common.js';
 import type { ActionRequestSnapshotV1, ActionRequestV1, DispatchBlockerV1 } from '../state/action-request.js';
 import type { TaskClaimHoldV1 } from '../state/task-claim-hold.js';
+import { dispatchBasisProblem } from './message-payload.js';
 import type { GraphWrite } from './task-contracts.js';
 
 /** 派活受理的拒绝：显式 `expected` 对不上时带回当前三值（同发信的做法）。 */
 export type ActionRequestRejectionV1 = CoreRejection & { dispatchCurrent?: DispatchCurrentV1 };
+
+/**
+ * The stored `ActionRequest.expected` (a dispatch record's three values) through the one
+ * `dispatchBasisProblem` validator: `null` when the request carries none, never a cast of
+ * unvalidated JSON. Every read that projects `expected` calls this one helper.
+ */
+export function storedDispatchBasis(value: unknown): DispatchBasisV1 | null {
+  if (!isRecord(value) || dispatchBasisProblem(value) !== null) return null;
+  const planRevision = value['planRevision'];
+  const pointerRevision = value['pointerRevision'];
+  const dispatchSequence = value['dispatchSequence'];
+  return (planRevision === null || typeof planRevision === 'number')
+    && (pointerRevision === 'none' || typeof pointerRevision === 'number')
+    && typeof dispatchSequence === 'number'
+    ? { planRevision, pointerRevision, dispatchSequence }
+    : null;
+}
 
 type CommittedV1 = { replayed: boolean; cursor: CommitCursor };
 
@@ -35,9 +55,11 @@ export type DispatchRequestInputV1 = {
 };
 export type DispatchRequestResultV1 =
   /** 收下了（自动档或规则命中）：请求留着，能领时目标循环先领它；`blockedBy` 是此刻读得到的挡着的原因。 */
-  | ({ status: 'requested'; actionRef: ActionRequestRef; blockedBy: DispatchBlockerV1[] } & CommittedV1)
-  /** 「每步确认」：等你批。 */
-  | ({ status: 'needs_decision'; actionRef: ActionRequestRef } & CommittedV1)
+  | ({ status: 'requested'; actionRef: ActionRequestRef; blockedBy: DispatchBlockerV1[];
+    /** 受理回执的排队说明（p2-frozen.md:179）：请求不失败，等目标循环能领时先领它。 */
+    queueNote: string } & CommittedV1)
+  /** 「每步确认」：等你批。`cardKey` 是 `action_release` 卡的来源键（请求加创建版本）。 */
+  | ({ status: 'needs_decision'; actionRef: ActionRequestRef; cardKey: string } & CommittedV1)
   /** 这个任务已有在等的派活请求：回那一条，不另建。 */
   | { status: 'already_requested'; actionRef: ActionRequestRef }
   | ActionRequestRejectionV1;
@@ -48,13 +70,20 @@ export type StopRequestResultV1 =
   | ({ status: 'released'; actionRef: ActionRequestRef; holdReasonId: string | null;
     notSent: 'person_stopped' | 'run_ended' | null } & CommittedV1)
   | ({ status: 'void'; actionRef: ActionRequestRef; reason: string } & CommittedV1)
-  | ({ status: 'needs_decision'; actionRef: ActionRequestRef } & CommittedV1)
+  | ({ status: 'needs_decision'; actionRef: ActionRequestRef; cardKey: string } & CommittedV1)
   | CoreRejection;
 
 /** 答卡 ② 适配器交来的可信输入（照返工请求的批准落实）：请求、它的版本、命令号、正式答复。 */
 export type ActionRequestAnswerV1 = {
   request: ActionRequestRef; revision: number; commandId: string; answerRef: SessionMessageRef;
 };
+
+/**
+ * 一条目标里的派活请求：记录快照加它的目标号。`goalId` 就是 `request.task.goalId`，启动重建直接拿它，
+ * 不再按目标反查（2.5）。按目标读时含 `open` 和待批 `pending`，顺序是受理先后（提交游标）；只有 `open`
+ * 是优先项，`pending` 只用来发现任务已不可服务的作废。启动重建只取 `open`。
+ */
+export type OpenDispatchRequestV1 = { request: ActionRequestSnapshotV1; goalId: string };
 
 export type DeliverStopResultV1 =
   /** 送停的意图（这次提交的，或先前已提交的）。 */
@@ -72,10 +101,22 @@ export interface ActionRequestPort {
   deny(ctx: CoreCallContext, input: ActionRequestAnswerV1): Promise<WriteResult<ActionRequestSnapshotV1>>;
   withdraw(ctx: CoreCallContext, request: GraphWrite<{ request: ActionRequestRef }>):
     Promise<WriteResult<ActionRequestSnapshotV1>>;
-  settle(ctx: CoreCallContext, request: GraphWrite<{ request: ActionRequestRef; reason: string }>):
-    Promise<WriteResult<ActionRequestSnapshotV1>>;
+  /**
+   * 作废的 `basis`（设计 3.2 第 5 步、3.4 C19）：目标循环看到这条派活请求再也不可能被服务的原因，和它读到的那份已采用
+   * 计划。owner 在同一份计划上重读任务状态、核实原因，并守这次读到的目标、计划和租约版本；记录版本由请求自己守。
+   */
+  settle(ctx: CoreCallContext, request: GraphWrite<{ request: ActionRequestRef; reason: string; basis: {
+    kind: 'goal_cancelled' | 'task_cancelled' | 'task_replaced' | 'task_completed' | 'person_stopped';
+    planRevision: PlanRevisionRef;
+  } }>): Promise<WriteResult<ActionRequestSnapshotV1>>;
   deliverStop(ctx: CoreCallContext, input: { request: ActionRequestRef }): Promise<DeliverStopResultV1>;
   readRequest(ctx: CoreCallContext, input: { ref: ActionRequestRef }): Promise<ReadResult<ActionRequestV1>>;
+  /** 一个目标里 `open` 和待批 `pending` 的派活请求，受理先后；目标循环只把 `open` 排前，`pending` 用来作废。 */
+  listOpenDispatches(ctx: CoreCallContext, input: { goalRef: GoalRef }):
+    Promise<ReadResult<OpenDispatchRequestV1[]>>;
+  /** 一个项目/工作区里所有已放行在等（`open`）的派活请求（启动重建）；每条带着 `task.goalId`。 */
+  listOpenDispatchesInProject(ctx: CoreCallContext, input: { projectId: string; workspaceId: string }):
+    Promise<ReadResult<OpenDispatchRequestV1[]>>;
 }
 
 /** 暂缓写口的回执：哪条暂缓、写成的版本、放下或点名撤的那条原因（撤全部是 `null`）。 */

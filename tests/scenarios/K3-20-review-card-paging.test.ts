@@ -302,7 +302,7 @@ function completeReadModel(records: ReadRecords, cardSources: readonly DecisionC
     lineage,
     cardSources: [...cardSources,
       emptyCardSource('goal_cause'), emptyCardSource('note_review'),
-      emptyCardSource('planning_question'), emptyCardSource('message_release'),
+      emptyCardSource('planning_question'), emptyCardSource('action_release'),
       emptyCardSource('command_rerun_request'),
       emptyCardSource('member_creation'), emptyCardSource('rework_request'),
       emptyCardSource('handoff_approval'), emptyCardSource('adviser_creation'),

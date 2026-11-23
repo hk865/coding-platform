@@ -396,7 +396,7 @@ async function deviationItemsOf(
       const messageCtx = hostContextIn(ctx, messageRef.workspaceId);
       const body = await deps.messages.readMessageBody(messageCtx, { messageRef, part: 'message' });
       if (body.status !== 'ready') throw noticeUnavailableOf(body);
-      const queryRefs = interventionPlanningQueryRefs(messageRef, workspaceId);
+      const queryRefs = interventionPlanningQueryRefs(messageRef, workspaceId, 'message');
       const job = await deps.queries.readQueryJob(ctx, queryRefs.queryJobRef);
       if (job.status === 'not_found') continue;
       if (job.status !== 'ready') throw noticeUnavailableOf(job);

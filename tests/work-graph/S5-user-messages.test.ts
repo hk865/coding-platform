@@ -89,7 +89,7 @@ describe.each(['memory', 'sqlite'] as const)('S5 user messages %s', kind => {
       roleBinding: h.f.runRA.roleBinding, generation: h.f.claimRA.generation,
     });
     expect(sent.value).toMatchObject({ goalRef: GOAL_B, status: 'pending', revision: 1,
-      intent: 'decision_request', needsReply: true, waitAfterSend: true });
+      needsReply: true, waitAfterSend: true });
     const key = refKey(sent.value.ref);
     expect((await h.f.userMessagesByGoal('B')).filter(candidate => candidate === key)).toHaveLength(1);
     const inbox = ready(await h.mailbox.readInbox(h.f.ctx, { recipient: h.f.sessionS, page: { limit: 50 } }));
@@ -116,7 +116,7 @@ describe.each(['memory', 'sqlite'] as const)('S5 user messages %s', kind => {
     const planBefore = await storedJson(h.f, PLAN_B1);
     const before = await h.f.storeSnapshot();
     const sent = committed(await h.send('um03', 'notify'));
-    expect(sent.value).toMatchObject({ status: 'pending', revision: 1, intent: 'notify' });
+    expect(sent.value).toMatchObject({ status: 'pending', revision: 1 });
     expect(sent.value).not.toHaveProperty('needsReply');
     expect(sent.value).not.toHaveProperty('waitAfterSend');
     expect(await h.readTask()).toEqual(taskBefore);
@@ -235,7 +235,7 @@ describe.each(['memory', 'sqlite'] as const)('S5 user messages %s', kind => {
   it('UM10 the user answer rejects a Session message while the original work_run response still commits', async () => {
     const h = await harness(kind);
     const sent = committed(await h.mailbox.sendMessage(h.f.ctx, {
-      input: { recipient: h.f.sessionS, text: 'old session mail' }, meta: h.meta('um10-send'),
+      input: { recipient: h.f.sessionS, text: 'old session mail', needsReply: true }, meta: h.meta('um10-send'),
     }));
     expect(sent.value.decision).toBeUndefined();
     const source: DecisionSourceV1 = { kind: 'message',

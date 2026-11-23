@@ -10,6 +10,17 @@ import { isRequestRound } from '../../../contracts/query-job.js';
 import type { QueryActivityRef, QueryActivitySnapshot, RunActivityFactsV1 } from '../../../contracts/run-activity.js';
 import { decideActivityOutcome, type ActivityWriteOutcome } from '../state/activity-replacement.js';
 
+/**
+ * The one WorkGraph proof that a QueryRun really entered the Kernel: an execution state with an observed Kernel
+ * `history` and no platform `not_entered` outcome. The platform's `entering` record (its begin ticket and
+ * `startedAt`) is written before the Kernel accepts the round, so it is never this proof. The activity reads, the
+ * line clock's copy start and the line's "woken by" read all use it.
+ */
+export function queryEnteredKernel(run: QueryRunSnapshot): boolean {
+  const state = run.run.executionState;
+  return state !== undefined && state.history !== null && run.run.outcome !== 'not_entered';
+}
+
 /** The record content a Query closing write supplies; `endCommit` is the L4 row-3 switch. */
 export type QueryActivityRecordContent = {
   queryRunRef: QueryRunRef;

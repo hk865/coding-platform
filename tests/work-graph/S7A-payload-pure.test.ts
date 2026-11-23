@@ -20,23 +20,24 @@ const MESSAGE_REF = {
 };
 const GOAL_REF = { aggregateType: 'Goal' as const, projectId: 'project-1', goalId: 'goal-1' };
 const TASK_REF = { projectId: 'project-1', goalId: 'goal-1', taskId: 'task-1' };
-const EXPECTED = { planRevision: 2, pointerRevision: 'none' as const, dispatchSequence: 7 };
 
 describe('send payload defaults and pass-through', () => {
   it.each([
     ['omitted optional fields keep their defaults', { recipient: RECIPIENT, text: 'status update' },
-      { recipient: RECIPIENT, text: 'status update', intent: null, needsReply: false, waitAfterSend: false,
-        expected: null, taskRef: null, followupOf: null, deadlineMs: null, goalRef: null }],
+      { recipient: RECIPIENT, text: 'status update', needsReply: false, waitAfterSend: false,
+        wake: true, answeredBy: 'line', entry: null, taskRef: null, followupOf: null, deadlineMs: null, goalRef: null }],
     ['omitted needsReply follows waitAfterSend, the mailbox owner default',
       { recipient: RECIPIENT, text: 'question', waitAfterSend: true },
-      { recipient: RECIPIENT, text: 'question', intent: null, needsReply: true, waitAfterSend: true,
-        expected: null, taskRef: null, followupOf: null, deadlineMs: null, goalRef: null }],
+      { recipient: RECIPIENT, text: 'question', needsReply: true, waitAfterSend: true,
+        wake: true, answeredBy: 'line', entry: null, taskRef: null, followupOf: null, deadlineMs: null, goalRef: null }],
     ['given values pass through', {
-      recipient: RECIPIENT, text: 'question', intent: 'inquiry', needsReply: true, waitAfterSend: true,
-      expected: EXPECTED, taskRef: TASK_REF, followupOf: MESSAGE_REF, deadlineMs: 2500, goalRef: GOAL_REF,
+      recipient: RECIPIENT, text: 'question', needsReply: true, waitAfterSend: true,
+      wake: false, answeredBy: 'copy', entry: 'person_intervention',
+      taskRef: TASK_REF, followupOf: MESSAGE_REF, deadlineMs: 2500, goalRef: GOAL_REF,
     }, {
-      recipient: RECIPIENT, text: 'question', intent: 'inquiry', needsReply: true, waitAfterSend: true,
-      expected: EXPECTED, taskRef: TASK_REF, followupOf: MESSAGE_REF, deadlineMs: 2500, goalRef: GOAL_REF,
+      recipient: RECIPIENT, text: 'question', needsReply: true, waitAfterSend: true,
+      wake: false, answeredBy: 'copy', entry: 'person_intervention',
+      taskRef: TASK_REF, followupOf: MESSAGE_REF, deadlineMs: 2500, goalRef: GOAL_REF,
     }],
   ] as const)('%s', (_name, input, expected) => {
     expect(normalizeSendMessageInput(input)).toEqual({ status: 'ready', value: expected });

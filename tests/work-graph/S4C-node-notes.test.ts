@@ -10,6 +10,8 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { NoteDraftV1 } from '../../src/contracts/note.js';
 import type { SessionDutyReadPort } from '../../src/core/work-graph/model/work-line-contracts.js';
+import { createQueryJobService } from '../../src/core/work-graph/queries/query-job-service.js';
+import { planSourceRootOf } from '../helpers/task-claim-fixture.js';
 import { createNodeDetailReader } from '../../src/core/work-graph/views/node-detail-reader.js';
 import type { WorkLineReaderDeps } from '../../src/core/work-graph/views/work-line-reader.js';
 import { createS4CNodeNotesFixture } from '../helpers/S4C-node-notes-fixture.js';
@@ -126,6 +128,9 @@ describe('S4C R-02 node-detail notes column and hover counts', () => {
       executedFiles: scriptedExecutedFiles({ availability: 'not_available', files: [], possiblyIncomplete: true,
         sourceCursor: null }),
       line: lineDeps,
+      planSourceRoot: planSourceRootOf({ messages: fixture.runs.mailbox(), plans: fixture.plans,
+        queries: createQueryJobService({ records: fixture.records, now: () => '2026-09-24T00:00:00.000Z',
+          eventId: () => 's4c-node-lineage' }) }),
       maintainerOf: async () => ({ status: 'ready' as const, value: { status: 'none' as const } }),
       notes: async () => ({ status: 'rejected', code: 'unavailable', reason: 'the note store is down' }),
     });

@@ -12,6 +12,10 @@ import { SESSION_MESSAGE_LOOKUP_INDEXES, SESSION_MESSAGE_CONTENT_TYPE } from '..
 import { SESSION_MAILBOX_TOOL_NAMES } from '../../src/core/agent-runtime/communication-tools.js';
 import type { ClaimFixtureKind } from '../helpers/task-claim-fixture.js';
 import { AT, createC1Harness, envelopeFor, type C1Harness } from '../helpers/C1-mailbox-fixture.js';
+import { P2_COORDINATION_TOOL_NAMES, S6A_SCOPE } from '../helpers/S6A-request-fixture.js';
+import { holdS6BRequestRound } from '../helpers/S6B1-fixture.js';
+import { openPLWorkflowWorld } from '../helpers/PL-workflow-fixture.js';
+import { captureAnswerContexts } from '../helpers/query-context-capture.js';
 const KINDS = ['memory','sqlite'] as const;
 const systemActor = {kind:'system' as const,id:'c1-mailbox-body-system'};
 const signal = () => new AbortController().signal;
@@ -87,16 +91,11 @@ describe.each(KINDS)('C1 SessionMailbox real %s', kind => {
     if (body.status === 'ready') expect(body.value).toMatchObject({ text: 'hello busy', part: 'message', usage: 'message' });
   });
 
-  it('Host cannot fabricate an acknowledgement or a reply', async () => {
+  it('Host cannot fabricate a reply', async () => {
     const h = await open(kind);
     const sent = await h.mailbox.sendMessage(h.ctxHost, sendRequest(h.idleSession, 'forbidden flows', 'c1-host-forbidden'));
     expect(sent).toMatchObject({ status: 'committed' });
     if (sent.status !== 'committed') return;
-    const ack = await h.mailbox.ackMessage(h.ctxHost, {
-      input: { messageRef: sent.value.ref },
-      meta: { requestId: 'c1-host-ack', expected: [messagePin(sent.value.ref, sent.value.revision)] },
-    });
-    expect(ack).toMatchObject({ status: 'rejected', code: 'forbidden' });
     const respond = await h.mailbox.respondMessage(h.ctxHost, {
       input: { messageRef: sent.value.ref, text: 'host reply' },
       meta: { requestId: 'c1-host-respond', expected: [messagePin(sent.value.ref, sent.value.revision)] },
@@ -104,7 +103,7 @@ describe.each(KINDS)('C1 SessionMailbox real %s', kind => {
     expect(respond).toMatchObject({ status: 'rejected', code: 'forbidden' });
   });
 
-  it('rejects extra send pins and query_run senders', async () => {
+  it('rejects extra send pins, while a query_run sends, the recipient reads and the reply commits', async () => {
     const h = await open(kind);
     const withPin = await h.mailbox.sendMessage(h.ctxHost, {
       input: { recipient: h.idleSession, text: 'pinned' },
@@ -112,17 +111,46 @@ describe.each(KINDS)('C1 SessionMailbox real %s', kind => {
     });
     expect(withPin).toMatchObject({ status: 'rejected', code: 'invalid' });
 
-    const workspaceId = h.ctxWork.workspaceId as string;
-    const queryRunRef = { aggregateType: 'QueryRun' as const, projectId: h.busySession.projectId, workspaceId, queryJobId: 'c1-job', runId: 'c1-query-run' };
-    const ctxQuery: CoreCallContext = {
-      projectId: h.busySession.projectId,
-      workspaceId,
-      principal: { kind: 'query_run', queryRunRef, initiator: { kind: 'system', id: 'c1-query' } },
-      materialReader: { kind: 'run', requester: queryRunRef },
-      signal: signal(),
-    };
-    const querySend = await h.mailbox.sendMessage(ctxQuery, sendRequest(h.idleSession, 'query', 'c1-query-send'));
-    expect(querySend).toMatchObject({ status: 'rejected', code: 'unsupported' });
+    // A real, entered secretary request round is the only source of a query_run principal (P2 §2.1).
+    const workflow = await openPLWorkflowWorld({ backend: kind, label: `c1-query-${kind}`,
+      tools: P2_COORDINATION_TOOL_NAMES });
+    try {
+      const target = await workflow.world.createSecretary(`c1-query-target-${kind}`);
+      const capture = captureAnswerContexts();
+      try {
+        await holdS6BRequestRound(workflow.world, {
+          label: `c1-query-${kind}`, goalId: null,
+          replies: () => [{ kind: 'text', text: 'the query round answer' }],
+        }, async round => {
+          const ctxQuery = capture.ofRun(round.prepared.queryRunRef.runId);
+          if (ctxQuery === undefined) throw new Error('C1: the held round opened no real query_run context');
+          // ① send: the real round addresses another line.
+          const querySend = await workflow.world.platform.messages.sendMessage(ctxQuery,
+            sendRequest(target.ref, 'query', `c1-query-send-${kind}`));
+          expect(querySend).toMatchObject({ status: 'committed' });
+          if (querySend.status !== 'committed') return;
+          // ② read: the Host reads the stored body.
+          expect(await workflow.world.platform.messages.readMessage(workflow.world.humanContext(), querySend.value.ref))
+            .toMatchObject({ status: 'ready' });
+          // ③ reply: a Host letter addressed to the round's own line; the real recipient answers it.
+          const incoming = await workflow.world.platform.messages.sendMessage(workflow.world.humanContext(), {
+            input: { recipient: round.secretary.ref, text: 'please answer', needsReply: true },
+            meta: { requestId: `c1-query-incoming-${kind}`, expected: [] },
+          });
+          expect(incoming).toMatchObject({ status: 'committed' });
+          if (incoming.status !== 'committed') return;
+          expect(await workflow.world.platform.messages.respondMessage(ctxQuery, {
+            input: { messageRef: incoming.value.ref, text: 'the query round answer' },
+            meta: { requestId: `c1-query-reply-${kind}`,
+              expected: [messagePin(incoming.value.ref, incoming.value.revision)] },
+          })).toMatchObject({ status: 'committed' });
+        });
+      } finally {
+        capture.restore();
+      }
+    } finally {
+      await workflow.close();
+    }
   });
 
   it('a valid running Run sends, while forged/ended/missing-envelope/unauthorized facts are denied', async () => {
@@ -185,9 +213,12 @@ describe.each(KINDS)('C1 SessionMailbox real %s', kind => {
     expect(conflict).toMatchObject({ status: 'rejected', code: 'idempotency_conflict' });
   });
 
-  it('keeps pending -> read -> responded monotonic; reads never ack; the response slot is single', async () => {
+  it('keeps pending -> responded monotonic; reads never ack; the response slot is single', async () => {
     const h = await open(kind);
-    const sent = await h.mailbox.sendMessage(h.ctxHost, sendRequest(h.busySession, 'please handle', 'c1-lifecycle-send'));
+    const sent = await h.mailbox.sendMessage(h.ctxHost, {
+      input: { recipient: h.busySession, text: 'please handle', needsReply: true },
+      meta: { requestId: 'c1-lifecycle-send', expected: [] },
+    });
     expect(sent).toMatchObject({ status: 'committed' });
     if (sent.status !== 'committed') return;
 
@@ -195,24 +226,9 @@ describe.each(KINDS)('C1 SessionMailbox real %s', kind => {
     expect(readOnce).toMatchObject({ status: 'ready' });
     if (readOnce.status === 'ready') expect(readOnce.value.status).toBe('pending');
 
-    const acked = await h.mailbox.ackMessage(h.ctxWork, {
-      input: { messageRef: sent.value.ref },
-      meta: { requestId: 'c1-ack', expected: [messagePin(sent.value.ref, sent.value.revision)] },
-    });
-    expect(acked).toMatchObject({ status: 'committed' });
-    if (acked.status !== 'committed') return;
-    expect(acked.value.status).toBe('read');
-    expect(acked.value.readAt).not.toBeNull();
-
-    const ackAgain = await h.mailbox.ackMessage(h.ctxWork, {
-      input: { messageRef: sent.value.ref },
-      meta: { requestId: 'c1-ack-2', expected: [messagePin(sent.value.ref, acked.value.revision)] },
-    });
-    expect(ackAgain).toMatchObject({ status: 'rejected', code: 'invalid' });
-
     const responded = await h.mailbox.respondMessage(h.ctxWork, {
       input: { messageRef: sent.value.ref, text: 'handled' },
-      meta: { requestId: 'c1-respond', expected: [messagePin(sent.value.ref, acked.value.revision)] },
+      meta: { requestId: 'c1-respond', expected: [messagePin(sent.value.ref, sent.value.revision)] },
     });
     expect(responded).toMatchObject({ status: 'committed' });
     if (responded.status !== 'committed') return;
@@ -336,23 +352,20 @@ describe.each(KINDS)('C1 SessionMailbox real %s', kind => {
     const unmet = await h.mailbox.readInbox(h.ctxWork, { recipient: h.busySession, page: { limit: 10, atLeastCursor: future } });
     expect(unmet).toMatchObject({ status: 'not_ready' });
   });
-  it('retains the exact send/ack/respond receipts after the bound Run ends but denies a new request', async () => {
+  it('retains the exact send/respond receipts after the bound Run ends but denies a new request', async () => {
     const h = await open(kind);
-    const send = sendRequest(h.busySession, 'receipt body', 'ended-send');
+    const send = { input: { recipient: h.busySession, text: 'receipt body', needsReply: true },
+      meta: { requestId: 'ended-send', expected: [] } };
     const sent = await h.mailbox.sendMessage(h.ctxWork, send);
     expect(sent.status).toBe('committed'); if (sent.status !== 'committed') return;
-    const ack = {input:{messageRef:sent.value.ref},meta:{requestId:'ended-ack',expected:[messagePin(sent.value.ref,sent.value.revision)]}};
-    const acked = await h.mailbox.ackMessage(h.ctxWork,ack);
-    expect(acked.status).toBe('committed'); if (acked.status !== 'committed') return;
-    const reply = {input:{messageRef:sent.value.ref,text:'reply'},meta:{requestId:'ended-reply',expected:[messagePin(sent.value.ref,acked.value.revision)]}};
+    const reply = {input:{messageRef:sent.value.ref,text:'reply'},meta:{requestId:'ended-reply',expected:[messagePin(sent.value.ref,sent.value.revision)]}};
     const replied = await h.mailbox.respondMessage(h.ctxWork,reply);
     expect(replied.status).toBe('committed'); if (replied.status !== 'committed') return;
     await h.commitRun({...h.currentRun,revision:h.currentRun.revision+1,status:'ended',outcome:'completed',endedAt:AT});
     expect(await h.mailbox.sendMessage(h.ctxWork,send)).toEqual({...sent,replayed:true});
-    expect(await h.mailbox.ackMessage(h.ctxWork,ack)).toEqual({...acked,replayed:true});
     expect(await h.mailbox.respondMessage(h.ctxWork,reply)).toEqual({...replied,replayed:true});
-    expect(await h.mailbox.sendMessage(h.ctxWork,{...send,meta:{...send.meta,requestId:'fresh-after-end'}})).toMatchObject({status:'rejected',code:'forbidden'});
-    expect(await h.mailbox.ackMessage(h.ctxWork,{...ack,meta:{...ack.meta,expected:[messagePin(sent.value.ref,99)]}})).toMatchObject({status:'rejected',code:'idempotency_conflict'});
+    expect(await h.mailbox.sendMessage(h.ctxWork,{input:{...send.input,text:'fresh'},meta:{requestId:'fresh-after-end',expected:[]}})).toMatchObject({status:'rejected',code:'forbidden'});
+    expect(await h.mailbox.respondMessage(h.ctxWork,{...reply,meta:{...reply.meta,expected:[messagePin(sent.value.ref,99)]}})).toMatchObject({status:'rejected',code:'idempotency_conflict'});
   });
 
   it('joins the sender Session guard to the message commit rather than trusting an earlier ownership check', async () => {
@@ -369,7 +382,7 @@ describe.each(KINDS)('C1 SessionMailbox real %s', kind => {
 
   it('two responses race on the same slot; the loser cannot replace the winner and replay keeps its original receipt', async () => {
     const h = await open(kind);
-    const sent = await h.mailbox.sendMessage(h.ctxHost,sendRequest(h.busySession,'race reply','race-send'));
+    const sent = await h.mailbox.sendMessage(h.ctxHost,{input:{recipient:h.busySession,text:'race reply',needsReply:true},meta:{requestId:'race-send',expected:[]}});
     expect(sent.status).toBe('committed'); if(sent.status !== 'committed') return;
     let arrivals=0; let release!:()=>void;
     const barrier = new Promise<void>(resolve=>{release=resolve;});

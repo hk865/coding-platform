@@ -18,6 +18,8 @@ import { createWorkflow } from '../../src/business/workflow/workflow.js';
 import type { WorkflowDependencies, WorkflowHostConfiguration } from '../../src/business/workflow/ports.js';
 import type { RuntimeExecutionPort } from '../../src/core/agent-runtime/ports.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
+import { createQueryRoundResolver } from '../../src/core/work-graph/tasks/query-round.js';
+import { unknownSessionDuty } from '../helpers/session-duty-double.js';
 import { createMaterialRecordReaders } from '../../src/core/work-graph/materials/record-readers.js';
 import { createMaterialService } from '../../src/core/work-graph/materials/material-service.js';
 import { createRoleConfigurationService } from '../../src/core/work-graph/configuration/role-memory-service.js';
@@ -92,6 +94,7 @@ async function assemble(fixture: TaskClaimFixture) {
       records: fixture.records, now: () => '2026-09-24T00:00:00.000Z', eventId: () => `r5c-role-${++sequence}` }),
     materials,
     defaultInquiryDeadlineMs: 86_400_000,
+    queryRounds: createQueryRoundResolver({ records: fixture.records, duties: unknownSessionDuty, bodies }),
     systemActor: { kind: 'system', id: 'r5c-business-system' },
     now: () => '2026-09-24T00:00:00.000Z', newId: () => `r5c-business-${++sequence}`,
   };

@@ -256,7 +256,7 @@ describe('K3-26 the attestation inventory through the Host entry', () => {
   it('K3-26 (二): Kernel readable with no unresolved calls -> an empty, resolved inventory', async () => {
     const send = { callId: 'k3-26-two-send', name: 'send_session_message',
       args: { recipient: {} as Record<string, unknown>, text: 'k3-26 (二) a question',
-        intent: 'inquiry', needsReply: true, waitAfterSend: true } };
+        needsReply: true, waitAfterSend: true } };
     const h = await HostScenario.open({ automation: redrivePolicy(false), check: 'pass',
       script: { replies: [{ kind: 'calls', calls: [send] }] } });
     const recipient = (await createAG2bSession(h.host, 'k3-26-two-recipient', AG2B_QUERY_ROLE,

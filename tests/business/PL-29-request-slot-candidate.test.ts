@@ -22,7 +22,7 @@ import { ready } from '../helpers/S7A-fixture.js';
 import { S6A_SCOPE, S6A_WORK_ROLE } from '../helpers/S6A-request-fixture.js';
 import type { S6ACandidate, S6ARequest } from '../helpers/S6A-cards-fixture.js';
 import {
-  plPlanChangeDraft, runPLAutomaticChain, type PLWorkflowWorld,
+  PL_PROPOSE_FUTURE_TOOLS, plPlanChangeDraft, runPLAutomaticChain, type PLWorkflowWorld,
 } from '../helpers/PL-workflow-fixture.js';
 
 let opened: PLWorkflowWorld | null = null;
@@ -36,10 +36,13 @@ it('PL-29: the request-slot candidate stays candidate; only the agent candidate 
   } = {};
 
   const chain = await runPLAutomaticChain('pl-29', {
-    draft: (skeleton, goal) => {
+    // A-13: the normal agent candidate is a real Work Run `propose_future_plan` (`submittedBy`), so it reaches its
+    // review; the request-slot candidate stays the person's separate head.
+    extraBindings: [PL_PROPOSE_FUTURE_TOOLS],
+    propose: (skeleton, goal) => {
       const placeholder = skeleton.plan.tasks.find(task => task.taskId === 'pl-placeholder-pl-stage-2');
       if (placeholder === undefined) throw new Error('PL-29: the stage-2 placeholder is missing');
-      return plPlanChangeDraft(skeleton.plan, goal, {
+      return { draft: plPlanChangeDraft(skeleton.plan, goal, {
         planId: 'pl-plan-pl-29-agent',
         tasks: skeleton.plan.tasks.map(task => task.taskId === placeholder.taskId
           ? { ...task, executionIntent: 'request_execution' as const, estimatedLines: 20, sizeClass: 'small' as const }
@@ -47,7 +50,7 @@ it('PL-29: the request-slot candidate stays candidate; only the agent candidate 
         assignments: [...(skeleton.plan.assignments ?? []), { taskId: placeholder.taskId,
           role: S6A_WORK_ROLE.templateId, instruction: 'PL-29 agent stage 2 work' }],
         obligations: skeleton.plan.obligations,
-      });
+      }), reasonText: 'PL-29 agent stage-2 revision' };
     },
     beforeRuns: async ({ workflow }) => {
       slot.request = await workflow.main.submit({ label: 'pl-29', goalId: workflow.goal.goalId,

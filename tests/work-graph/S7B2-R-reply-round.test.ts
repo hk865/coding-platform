@@ -119,8 +119,11 @@ describe('S7B-2 R reply round', () => {
         await world.waitForRequest(root, current => s7b2WaitRounds(current, 'reply')[0]?.status === 'ended',
           'the successor reply round ends');
         const entries = (await readS7BMessage(world, reply.message.ref)).acceptedInputs ?? [];
-        expect(entries).toHaveLength(1);
-        expect(entries[0]).toMatchObject({ part: 'response', evidence: 'query_entered', consumesWait: true });
+        expect(entries).toHaveLength(2);
+        expect(entries.find(entry => entry.part === 'message'))
+          .toMatchObject({ part: 'message', evidence: 'input_accepted', consumesWait: false });
+        expect(entries.find(entry => entry.part === 'response'))
+          .toMatchObject({ part: 'response', evidence: 'query_entered', consumesWait: true });
       }
 
       if (variant === 'expiry') {

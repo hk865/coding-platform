@@ -163,7 +163,7 @@ describe.each(['memory', 'sqlite'] as const)('2C-14 failed reads propagate (%s)'
       // A real scripted-model wait through the send_session_message tool: the
       // Run is genuinely yielded and its continuation names the saved message.
       const send = { callId: 'rd8-wait-send', name: 'send_session_message',
-        args: { recipient, text: 'RD-8: which result should the continuation use?', intent: 'inquiry',
+        args: { recipient, text: 'RD-8: which result should the continuation use?',
           needsReply: true, waitAfterSend: true } };
       const yieldedClaim = await f.claim('w', head, goal);
       const sent = await steps.start(yieldedClaim.claim, { at: '2026-09-24T00:00:00.000Z',

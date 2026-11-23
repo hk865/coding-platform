@@ -14,9 +14,7 @@
  */
 import { afterEach, expect, it } from 'vitest';
 import type { PlanRevisionDraft, RuntimeTask } from '../../src/contracts/plan.js';
-import type { PlanProposal } from '../../src/core/work-graph/model/plan-contracts.js';
 import type { WorkflowStepReceipt } from '../../src/business/workflow/contracts.js';
-import { graphWrite } from '../helpers/AG2b-collaboration-fixture.js';
 import { driveWorkflow } from '../helpers/A2-restart-fixture.js';
 import { createS6BLine } from '../helpers/S6B1-fixture.js';
 import { listed } from '../helpers/S7B-fixture.js';
@@ -30,6 +28,7 @@ import {
   performOne, plSystemRoundRef, requestHeads, verdictOf,
 } from '../helpers/PL-workflow-fixture.js';
 import { createPLAdviserLine } from '../helpers/PL-consumption-fixture.js';
+import { proposePLCandidateThroughRefine } from '../helpers/PL-forms-fixture.js';
 
 let opened: PLWorkflowWorld | null = null;
 afterEach(async () => { await opened?.close(); opened = null; });
@@ -59,33 +58,33 @@ it.each(rows)('PL-10: a 2_400-line stage still auto-adopts; $name', async row =>
   const reviewer = await createPLReviewerLine(workflow.world, workflow.main, 'pl-10-reviewer');
   await workflow.world.scripted.script(reviewer, [{ kind: 'text', text: PASS }]);
 
-  // The stage-2 candidate: two real work Tasks at 1_200 lines each, no placeholder.
+  // The stage-2 candidate: two real work Tasks at 1_200 lines each. A-13 (`p2-frozen.md:208/210/345`): it is the
+  // adviser's real `refine:` answer and only adds Tasks (the `plan_only` slot stays), so it reaches its review.
   const makeTask = (taskId: string): RuntimeTask => ({
     taskId, stageId: 'pl-stage-2', title: `PL-10 stage 2 ${taskId}`, requirementLevel: 'required',
     taskKind: 'work', disposition: 'active', phase: 'pending',
     scope: { kind: 'stage', stageId: 'pl-stage-2' }, executionIntent: 'request_execution',
     estimatedLines: 1_200, sizeClass: 'small',
   });
-  const added = ['pl-c', 'pl-d'].map(makeTask);
+  // Filling the base `plan_only` slot is the lead-approved exemption (a-changed Task, no disposition change); the
+  // second stage-2 Task is new.
+  const promoted = makeTask('pl-c');
+  const added = ['pl-d'].map(makeTask);
   const draft: PlanRevisionDraft = plPlanChangeDraft(skeleton.plan, workflow.goal, {
     planId: 'pl-plan-pl-10-v2',
     tasks: [...skeleton.plan.tasks.map(task => task.taskId === 'pl-placeholder-pl-stage-2'
-      ? { ...task, disposition: 'superseded' as const } : task), ...added],
+      ? { ...promoted, taskId: task.taskId, title: task.title } : task), ...added],
     assignments: [...(skeleton.plan.assignments ?? []),
       ...added.map(task => ({ taskId: task.taskId, role: S6A_WORK_ROLE.templateId,
-        instruction: `PL-10 ${task.taskId}` }))],
+        instruction: `PL-10 ${task.taskId}` })),
+      { taskId: 'pl-placeholder-pl-stage-2', role: S6A_WORK_ROLE.templateId, instruction: 'PL-10 pl-c' }],
     obligations: skeleton.plan.obligations.map(obligation => obligation.obligationId === 'pl-obligation-stage-2'
-      ? { ...obligation, taskIds: ['pl-c', 'pl-d', 'pl-gate-pl-stage-2'] } : obligation),
+      ? { ...obligation, taskIds: ['pl-placeholder-pl-stage-2', 'pl-d', 'pl-gate-pl-stage-2'] } : obligation),
   });
-  const proposed = (await workflow.main.post('plans/propose', graphWrite(S6A_SCOPE, {
-    goalRef: workflow.goal, basedOn: skeleton.plan.ref, draft,
-    reason: { text: 'PL-10 2400-line stage 2', sources: [], affectedTaskIds: ['pl-c', 'pl-d'] },
-  }, 'pl-10-propose'))) as { status: string; value?: PlanProposal };
-  expect(proposed.status, JSON.stringify(proposed)).toBe('committed');
-  const candidate = proposed.value;
-  if (candidate === undefined) throw new Error('PL-10: the candidate was not written');
-  // The adviser line is present, so a stage-line system round would have a place to go.
+  // The adviser line is present, so the real stage-line `refine:` has a place to go.
   const adviser = await createPLAdviserLine(workflow.world, 'pl-10-adviser');
+  const candidate = await proposePLCandidateThroughRefine({ world: workflow.world, goal: workflow.goal,
+    basePlan: skeleton.plan, draft, adviser, target: { kind: 'stage', stageId: 'pl-stage-2' }, label: 'pl-10-candidate' });
   // The first drive sends the review; after its pass the automatic band adopts: the stage line must not force a card.
   await driveWorkflow(workflow.world.ag2b, { schemaVersion: 1, goalRef: workflow.goal,
     flowId: 'pl-10-review', sessionHint: null, kind: 'select_work' });
@@ -107,8 +106,10 @@ it.each(rows)('PL-10: a 2_400-line stage still auto-adopts; $name', async row =>
     }), 'main/read');
   // The adoption moment: no stage-end notice yet, and the adoption notice carries no stage number.
   const atAdoption = await readMain();
-  expect(atAdoption.notices.map(entry => entry.itemKey)).not.toContain('stage-end:pl-plan-pl-10-v2:2:pl-stage-2');
-  const adoption = atAdoption.notices.find(entry => entry.itemKey === 'plan-adoption:pl-plan-pl-10-v2:2');
+  expect(atAdoption.notices.map(entry => entry.itemKey))
+    .not.toContain(`stage-end:${after.planId}:${after.planRevision}:pl-stage-2`);
+  const adoption = atAdoption.notices.find(entry =>
+    entry.itemKey === `plan-adoption:${after.planId}:${after.planRevision}`);
   expect(adoption?.summary).toContain('已采用 · 计划 v2');
   expect(adoption?.summary).not.toContain('2400');
   expect(adoption?.summary).not.toContain('超线');
@@ -121,10 +122,11 @@ it.each(rows)('PL-10: a 2_400-line stage still auto-adopts; $name', async row =>
 
   const line2 = await sessionOf(workflow.world, await createS6BLine(workflow.main, {
     label: 'pl-10-stage2', role: S6A_WORK_ROLE,
-    tasks: ['pl-c', 'pl-d'].map(taskId => ({ projectId: workflow.goal.projectId,
+    tasks: ['pl-placeholder-pl-stage-2', 'pl-d'].map(taskId => ({ projectId: workflow.goal.projectId,
       goalId: workflow.goal.goalId, taskId })),
   }));
-  await satisfyPLTask(workflow.world, workflow.goal, 'pl-c', line2, 'pl10c', { usage: usageOf(1_000) });
+  await satisfyPLTask(workflow.world, workflow.goal, 'pl-placeholder-pl-stage-2', line2, 'pl10c',
+    { usage: usageOf(1_000) });
   await satisfyPLTask(workflow.world, workflow.goal, 'pl-d', line2, 'pl10d', row.lastRun);
   await driveWorkflow(workflow.world.ag2b, { schemaVersion: 1, goalRef: workflow.goal,
     flowId: 'pl-10-gate', sessionHint: null, kind: 'select_work' });
@@ -132,14 +134,19 @@ it.each(rows)('PL-10: a 2_400-line stage still auto-adopts; $name', async row =>
   // The stage-end `plan_notice`: stage 2 at 2_400 lines over the 2_000 prompt line.
   const main = await readMain();
   const notice = main.notices.find(entry => entry.category === 'plan_notice'
-    && entry.itemKey === 'stage-end:pl-plan-pl-10-v2:2:pl-stage-2');
+    && entry.itemKey === `stage-end:${after.planId}:${after.planRevision}:pl-stage-2`);
   expect(notice).toBeDefined();
   for (const text of row.contains) expect(notice?.summary).toContain(text);
   for (const text of row.excludes) expect(notice?.summary).not.toContain(text);
 
-  // The stage line opened no system round and no card: the one round is this candidate's review.
-  expect(await requestHeads(workflow, adviser)).toEqual([]);
-  expect(await requestHeads(workflow, reviewer)).toEqual([`planreview:${candidate.ref.proposalId}:1`]);
+  // The only adviser round is the stage-2 refinement this candidate answers; the stage line opened no other round
+  // and no card, and the one review is this candidate's.
+  const adviserHeads = await requestHeads(workflow, adviser);
+  expect(adviserHeads.filter(head => head.startsWith('deviation:'))).toEqual([]);
+  expect(adviserHeads.filter(head => head.startsWith('refine:'))).toHaveLength(1);
+  expect(adviserHeads.filter(head => head.startsWith('refine:'))[0]).toMatch(/^refine:.*:pl-stage-2:1$/);
+  expect((await requestHeads(workflow, reviewer)).filter(head => head.startsWith('planreview:')))
+    .toEqual([`planreview:${candidate.ref.proposalId}:1`]);
   expect(await requestHeads(workflow, line2)).toEqual([]);
   expect((await workflow.main.readCards(workflow.goal)).filter(card => card.closedReason === null)).toEqual([]);
 });

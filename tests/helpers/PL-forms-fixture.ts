@@ -19,21 +19,28 @@ import type { WorkflowAdvanceInput } from '../../src/business/workflow/contracts
 import { sha256Hex } from '../../src/contracts/fingerprint.js';
 import type { GoalRef } from '../../src/contracts/ledger.js';
 import type { NoteVersionSnapshot } from '../../src/contracts/note.js';
-import type { PlanRevisionSnapshot } from '../../src/contracts/plan.js';
+import type { PlanRevisionDraft, PlanRevisionSnapshot } from '../../src/contracts/plan.js';
+import type { SessionMessageRef } from '../../src/contracts/core/session-message.js';
+import { interventionPlanningQueryRefs } from '../../src/contracts/query-job.js';
+import { systemRoundRequestId, type SystemRoundV1 } from '../../src/contracts/plan-round.js';
+import { systemRoundMessageRef } from './system-round-ref.js';
 import { platformRoleProfile } from '../../src/core/agent-runtime/role-profiles.js';
 import type { PlanProposalRef } from '../../src/core/work-graph/model/plan-contracts.js';
 import type { NoteItemV1 } from '../../src/core/work-graph/model/note-contracts.js';
 import type { ModuleOverlapGateV1 } from '../../src/core/work-graph/persistence/module-overlap-gate-codecs.js';
-import { AG2B_CONSUMER_ID, AG2B_RUNTIME_BUDGET, graphWrite, plain } from './AG2b-collaboration-fixture.js';
+import { AG2B_CONSUMER_ID, AG2B_QUERY_BUDGET, AG2B_RUNTIME_BUDGET, graphWrite, plain } from './AG2b-collaboration-fixture.js';
 import { draftFrom } from '../scenarios/support/common.js';
 import { s6aCardsWorkspace, type S6ACardsWorkspace } from './S6A-cards-fixture.js';
 import { openS6AHostWorld, type S6AHostWorld, type S6AReply } from './S6A-host-fixture.js';
 import type { ScriptedReply } from './B2-runtime-fixture.js';
-import { S6A_SCOPE, S6A_WORK_ROLE, type S6ABackend, type S6ASession } from './S6A-request-fixture.js';
+import {
+  S6A_SCOPE, S6A_WORK_ROLE, S6A_WORK_ROLE_BINDING, type S6ABackend, type S6ASession,
+} from './S6A-request-fixture.js';
 import { adoptS6BPlan, createS6BLine, governS6B } from './S6B1-fixture.js';
 import {
-  awaitPlanningAnswer, questionCards, readQueryAnswer,
+  awaitPlanningAnswer, heartbeatUntil, proposalRefOf, questionCards, readQueryAnswer,
 } from './IV-host-fixture.js';
+import { advanceUntil } from './A2-restart-fixture.js';
 import { openS7C1World, type S7C1World } from './S7C-member-fixture.js';
 import { sessionOf } from './S7A-fixture.js';
 import { assignGoalAdviserLine } from './S7C-handoff-fixture.js';
@@ -82,6 +89,23 @@ const REVIEWER_INSTRUCTION = 'PL reviewer guidance';
 const ADVISER_INSTRUCTION = 'PL adviser guidance';
 const S7C_ADVISER_BINDING_ID = 's7c-adviser-binding';
 
+/** The `submit_plan_round` tool's plan body: the tool omits the record identity and the runtime `phase`. */
+function reviewRoundPlanOf(draft: PlanRevisionDraft): Record<string, unknown> {
+  return {
+    stages: draft.stages,
+    tasks: draft.tasks.map(task => {
+      const { phase: _phase, ...rest } = task;
+      return rest;
+    }),
+    ...(draft.assignments === undefined ? {} : { assignments: draft.assignments }),
+    obligations: draft.obligations,
+    taskHierarchy: draft.taskHierarchy,
+    executionDag: draft.executionDag,
+    ...(draft.taskRelations === undefined ? {} : { taskRelations: draft.taskRelations }),
+    ...(draft.inputRequirements === undefined ? {} : { inputRequirements: draft.inputRequirements }),
+  };
+}
+
 /**
  * Add the adviser Query profile and its `read`/`record_note` grant to S7C's
  * finished configuration. A separate binding cannot carry them: validation
@@ -89,10 +113,12 @@ const S7C_ADVISER_BINDING_ID = 's7c-adviser-binding';
  * adviser binding is created inside S7C's own factory after `extraBindings`
  * are applied.
  */
-function configureOverlapAdviser(configuration: WorkbenchRuntimeConfiguration): void {
+function configureOverlapAdviser(configuration: WorkbenchRuntimeConfiguration,
+  extraTools: readonly string[] = []): void {
   const binding = configuration.bindings.find(entry => entry.id === S7C_ADVISER_BINDING_ID);
   if (binding === undefined) throw new Error('PL: the S7C adviser binding is absent');
-  binding.grant = { ...binding.grant, tools: [...new Set([...binding.grant.tools, 'read', 'record_note'])] };
+  binding.grant = { ...binding.grant,
+    tools: [...new Set([...binding.grant.tools, 'read', 'record_note', ...extraTools])] };
   configuration.queryProfiles.push({
     id: 'pl-overlap-adviser-profile',
     label: 'PL overlap adviser',
@@ -216,6 +242,8 @@ export async function openPLReviewWorld(options: {
   backend?: S6ABackend;
   /** Default `with_secretary`; the review round needs no secretary profile. */
   configuration?: 'with_secretary' | 'no_secretary';
+  /** A-13 sourced candidates: also consume the adviser profile, so a real `refine:` round is served. */
+  adviserConsumer?: boolean;
 } = {}): Promise<PLReviewWorld> {
   const binding = reviewerBinding();
   const adviser = adviserBinding();
@@ -226,7 +254,10 @@ export async function openPLReviewWorld(options: {
       { binding, queryProfile: reviewerProfile(binding) },
       { binding: adviser, queryProfile: adviserProfile(adviser) },
     ],
-    extraHostOptions: { inputConsumers: [consumerOf(PL_REVIEWER_PROFILE_ID, 'pl-reviewer')] },
+    extraHostOptions: { inputConsumers: [
+      consumerOf(PL_REVIEWER_PROFILE_ID, 'pl-reviewer'),
+      ...(options.adviserConsumer === true ? [consumerOf(PL_ADVISER_PROFILE_ID, 'pl-adviser')] : []),
+    ] },
   });
   try {
     const main = s6aCardsWorkspace(world, S6A_SCOPE);
@@ -269,9 +300,19 @@ export type PLReviewCandidateWorld = PLReviewWorld & {
 export async function openPLReviewCandidateWorld(options: {
   backend?: S6ABackend;
   adviser?: boolean;
+  /**
+   * A-13 (`p2-frozen.md:208/210/345`): write the candidate through the adviser's real `refine:` round instead of a
+   * direct `plans/propose` (whose missing author is now the A13 `source_incomplete` card). The base keeps
+   * `PL_REVIEW_CHANGED_TASK_ID` as a `plan_only` placeholder and the candidate fills it, the lead-approved exemption;
+   * the default path stays the frozen unsourced candidate.
+   */
+  sourced?: boolean;
+  /** With `sourced`: the caller's draft instead of the frozen review-template candidate (e.g. plannedFiles). */
+  draft?: (base: PlanRevisionSnapshot) => PlanRevisionDraft;
 } = {}): Promise<PLReviewCandidateWorld> {
   const opened = await openPLReviewWorld({
     ...(options.backend === undefined ? {} : { backend: options.backend }), configuration: 'no_secretary',
+    ...(options.sourced === true ? { adviserConsumer: true } : {}),
   });
   try {
     const main = s6aCardsWorkspace(opened.world, S6A_SCOPE);
@@ -307,7 +348,9 @@ export async function openPLReviewCandidateWorld(options: {
     const baseDraft = draftFrom(oldPlan, 'pl-review-base', draft => ({
       ...draft,
       tasks: draft.tasks.map(task => task.taskId === PL_REVIEW_OLD_TASK_ID
-        ? { ...task, disposition: 'cancelled' as const } : task),
+        ? { ...task, disposition: 'cancelled' as const }
+        : options.sourced === true && task.taskId === PL_REVIEW_CHANGED_TASK_ID
+          ? { ...task, executionIntent: 'plan_only' as const } : task),
     }));
     const baseProposed = await main.post('plans/propose', graphWrite(S6A_SCOPE, {
       goalRef: goal, basedOn: oldPlan.ref, draft: baseDraft, reason: { text: 'PL review base', sources: [] },
@@ -321,9 +364,10 @@ export async function openPLReviewCandidateWorld(options: {
     if (basePlan === null) throw new Error('PL: the review base Plan is not readable');
     // `draftFrom` is the existing future-draft copier: the candidate differs
     // from the adopted Plan in tasks, obligations and all three relation kinds.
-    const candidateDraft = draftFrom(basePlan, 'pl-review-candidate', draft => ({
+    const candidateDraft = options.draft === undefined ? draftFrom(basePlan, 'pl-review-candidate', draft => ({
       ...draft,
-      tasks: [...draft.tasks,
+      tasks: [...draft.tasks.map(task => options.sourced === true && task.taskId === PL_REVIEW_CHANGED_TASK_ID
+        ? { ...task, executionIntent: 'request_execution' as const } : task),
         {
           taskId: PL_REVIEW_NEW_TASK_A, title: 'PL review new task A',
           requirementLevel: 'required', taskKind: 'work', disposition: 'active', phase: 'pending',
@@ -353,29 +397,123 @@ export async function openPLReviewCandidateWorld(options: {
       executionDag: { dependsOn: [...draft.executionDag.dependsOn, PL_REVIEW_DEPENDS_ON] },
       taskRelations: [...(draft.taskRelations ?? []), PL_REVIEW_TASK_RELATION],
       inputRequirements: [...(draft.inputRequirements ?? []), PL_REVIEW_INPUT_REQUIREMENT],
-    }));
-    const proposed = await main.post('plans/propose', graphWrite(S6A_SCOPE, {
-      goalRef: goal, basedOn: basePlan.ref, draft: candidateDraft,
-      reason: { text: 'PL review candidate', sources: [] },
-    }, 'pl-review-candidate-propose')) as { status: string; value: { ref: PlanProposalRef; revision: number } };
-    if (proposed.status !== 'committed') throw new Error('PL: the review candidate did not commit');
+    })) : options.draft(basePlan);
     // 7D2 O4b-2: the review fix goes to the Goal's responsible adviser; T4a opens the line and lets the platform's
     // queue assignment write the Goal link and its claim (no `sessions/link` patch).
-    const adviser = options.adviser === true
+    const adviser = options.adviser === true || options.sourced === true
       ? await assignGoalAdviserLine(opened.world, { goal, label: 'pl-adviser', requestId: 'pl-adviser' })
       : null;
+    let candidate: { readonly ref: PlanProposalRef; readonly revision: number };
+    if (options.sourced === true) {
+      if (adviser === null) throw new Error('PL: the sourced review candidate has no adviser line');
+      candidate = await proposePLCandidateThroughRefine({ world: opened.world, goal, basePlan,
+        draft: candidateDraft, adviser, target: { kind: 'task', taskId: PL_REVIEW_CHANGED_TASK_ID }, label: 'pl-review-refine' });
+    } else {
+      const proposed = await main.post('plans/propose', graphWrite(S6A_SCOPE, {
+        goalRef: goal, basedOn: basePlan.ref, draft: candidateDraft,
+        reason: { text: 'PL review candidate', sources: [] },
+      }, 'pl-review-candidate-propose')) as { status: string; value: { ref: PlanProposalRef; revision: number } };
+      if (proposed.status !== 'committed') throw new Error('PL: the review candidate did not commit');
+      candidate = { ref: proposed.value.ref, revision: proposed.value.revision };
+    }
     return {
       ...opened,
       main,
       goal,
       plan,
-      candidate: { ref: proposed.value.ref, revision: proposed.value.revision },
+      candidate,
       adviser,
     };
   } catch (error) {
     await opened.close();
     throw error;
   }
+}
+
+/**
+ * A-13 (`p2-frozen.md:208/210/345`): write one future candidate through the Goal's adviser line, answering the
+ * Goal's real `refine:` round of `target` with `submit_plan_round`. The candidate's `sourceMessageRef` is that
+ * round, so its author lineage is complete; a base `plan_only` target keeps the candidate inside the lead-approved
+ * filling exemption. Public steps only (the Goal's own `workflow/advance` plus the Host's consume pass).
+ */
+export async function proposePLCandidateThroughRefine(input: {
+  world: S6AHostWorld;
+  goal: GoalRef;
+  basePlan: PlanRevisionSnapshot;
+  draft: PlanRevisionDraft;
+  adviser: S6ASession;
+  target: { kind: 'task'; taskId: string } | { kind: 'stage'; stageId: string };
+  label: string;
+}): Promise<{ readonly ref: PlanProposalRef; readonly revision: number }> {
+  const { world, goal, basePlan, draft, adviser, target, label } = input;
+  await world.scripted.script(adviser, [{ kind: 'calls', calls: [{
+    callId: `${label}-submit`, name: 'submit_plan_round', args: {
+      answerKind: 'plan', summary: label, plan: reviewRoundPlanOf(draft),
+      reason: { text: label, affectedTaskIds: [] },
+    } }] }]);
+  const round: SystemRoundV1 = { kind: 'refine', goalRef: goal, target, planRevision: basePlan.planRevision };
+  const requestId = systemRoundRequestId(round);
+  if (requestId.status !== 'ready') throw new Error(`PL: the ${label} round has no request id`);
+  const messageRef = systemRoundMessageRef(S6A_SCOPE, requestId.value);
+  if (messageRef.status !== 'ready') throw new Error(`PL: the ${label} round has no message ref`);
+  const next = await advanceUntil(world.ag2b, { schemaVersion: 1, goalRef: goal,
+    flowId: `${label}-send`, sessionHint: null, kind: 'select_work' }, 'send_system_round');
+  const sent = await world.post('workflow/advance', plain(S6A_SCOPE, next));
+  if ((sent.body as { status?: string }).status !== 'ready') {
+    throw new Error(`PL: the ${label} send was not ready: ${JSON.stringify(sent.body)}`);
+  }
+  // The Host's close-out of the adviser's answer writes the candidate from M (`intervention:<key>:propose`).
+  const written = await heartbeatUntil(world, async () => (await world.post('plans/proposal',
+    plain(S6A_SCOPE, proposalRefOf(messageRef.value, goal)))).body as
+    { status: string; value?: { ref: PlanProposalRef; revision: number } },
+  read => read.status === 'ready', 16);
+  if (written.status !== 'ready' || written.value === undefined) {
+    throw new Error(`PL: the ${label} candidate was not written: ${JSON.stringify(written)}`);
+  }
+  return { ref: written.value.ref, revision: written.value.revision };
+}
+
+/**
+ * A-13 (`p2-frozen.md:208/210/345`): write a candidate that names a real source message and its intervention request
+ * root. The source is a person message to a fresh work line; its Query stays un-served (that line has no Host input
+ * consumer), so a row's own `planfix:`/`planreview:` scripts are never eaten by it.
+ */
+export async function proposePLCandidateFromIntervention(input: {
+  world: S6AHostWorld;
+  goal: GoalRef;
+  basedOn: PlanRevisionSnapshot['ref'];
+  draft: PlanRevisionDraft;
+  reason: { text: string; sources: readonly unknown[]; affectedTaskIds?: readonly string[] };
+  label: string;
+}): Promise<{ readonly ref: PlanProposalRef; readonly revision: number }> {
+  const { world, goal, basedOn, draft, reason, label } = input;
+  // A fresh work line has no Host input consumer: the source Query stays un-served, so it never eats replies the
+  // row scripts for its own `planfix:`/`planreview:` rounds.
+  const author = await createS6BLine(s6aCardsWorkspace(world, S6A_SCOPE), {
+    label: `${label}-source-line`, role: S6A_WORK_ROLE,
+  });
+  const sent = await world.post('messages/send', graphWrite(S6A_SCOPE, {
+    recipient: author.ref, text: `PL ${label} planning source`, entry: 'person_intervention' as const,
+    needsReply: true, goalRef: goal,
+  }, `${label}-source`));
+  const sentBody = sent.body as { status?: string; value?: { ref: SessionMessageRef } };
+  if (sentBody.status !== 'committed' || sentBody.value === undefined) {
+    throw new Error(`PL: the ${label} source message was not sent: ${JSON.stringify(sentBody)}`);
+  }
+  const opened = await world.platform.workflow.handleIntervention!(world.humanContext(), {
+    messageRef: sentBody.value.ref, roleBinding: S6A_WORK_ROLE_BINDING, runtimeBudget: AG2B_RUNTIME_BUDGET,
+    budget: AG2B_QUERY_BUDGET, consumerId: AG2B_CONSUMER_ID,
+  });
+  if (opened.status === 'rejected') throw new Error(`PL: the ${label} source Query was refused: ${JSON.stringify(opened)}`);
+  const proposed = await world.post('plans/propose', graphWrite(S6A_SCOPE, {
+    goalRef: goal, basedOn, draft, reason, sourceMessageRef: sentBody.value.ref,
+    requestRef: interventionPlanningQueryRefs(sentBody.value.ref).queryJobRef,
+  }, `${label}-propose`));
+  const body = proposed.body as { status?: string; value?: { ref: PlanProposalRef; revision: number } };
+  if (body.status !== 'committed' || body.value === undefined) {
+    throw new Error(`PL: the ${label} candidate did not commit: ${JSON.stringify(body)}`);
+  }
+  return { ref: body.value.ref, revision: body.value.revision };
 }
 
 export type PLPlanOnlyWorld = {
@@ -396,9 +534,12 @@ export type PLPlanOnlyWorld = {
  * The adviser binding/profile is the one the line's own Role matches.
  */
 export async function openPlanOnlyWorld(
-  label: string, options: { contextWindowTokens?: number } = {},
+  label: string, options: { contextWindowTokens?: number; tools?: readonly string[] } = {},
 ): Promise<PLPlanOnlyWorld> {
   const binding = adviserBinding();
+  if (options.tools !== undefined) {
+    binding.grant = { ...binding.grant, tools: [...new Set([...binding.grant.tools, ...options.tools])] };
+  }
   const profile = adviserProfile(binding);
   if (options.contextWindowTokens !== undefined) {
     binding.grant.budget = { ...binding.grant.budget, contextWindowTokens: options.contextWindowTokens };
@@ -460,14 +601,15 @@ export type PLOverlapWorld = {
  * its `read`/`record_note` grant and the one consumer that reaches the adviser line.
  * The profile rides the lead-approved `openS7C1World({ extraBindings })` seam; the
  * consumer rides `extraHostOptions` because a consumer is a Host start option, not
- * a binding. Nothing about the world, its plan or its steps is copied here.
+ * a binding. Nothing about the world, its plan or its steps is copied here. `adviserTools` adds tool names to the
+ * adviser's grant (a Host input, A8), e.g. the reply tool for a row whose busy adviser round may answer mail.
  */
 export async function openPLOverlapWorld(options: { backend?: S6ABackend;
-  firstRun?: 'held' | 'deferred' } = {}): Promise<PLOverlapWorld> {
+  firstRun?: 'held' | 'deferred'; adviserTools?: readonly string[] } = {}): Promise<PLOverlapWorld> {
   const world = await openS7C1World({
     backend: options.backend ?? 'memory',
     firstRun: options.firstRun ?? 'deferred',
-    configure: configureOverlapAdviser,
+    configure: configuration => configureOverlapAdviser(configuration, options.adviserTools),
     extraHostOptions: { inputConsumers: [consumerOf('pl-overlap-adviser-profile', 'pl-overlap-adviser')] },
   });
   const adviser = world.lines.adviser;

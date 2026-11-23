@@ -8,44 +8,75 @@ import type {
 import type { SessionFactsPort } from '../core/work-graph/model/session-facts-contracts.js';
 import type { NodeDetailReadPort } from '../core/work-graph/model/work-line-contracts.js';
 import { canonicalKey } from '../contracts/fingerprint.js';
-import { sessionMessageRefKey } from '../core/work-graph/sessions/message-record-codecs.js';
+import { interventionClosingNoticeRequestId,
+  type InterventionClosingReasonV1 } from '../business/workflow/intervention.js';
 import { readDisconnectFacts,
   type DisconnectNoticeSourceDependencies } from '../core/work-graph/views/disconnect-notices.js';
 
-/** The ONE Host system-notify request builder: intent, recipient, deterministic request id, empty expected set. */
+/** The ONE Host system-notify request builder: recipient, deterministic request id, empty expected set. */
 export function systemNotifyRequest(input: {
   recipient: SessionRef; text: string; requestId: string; goalRef?: GoalRef | null;
 }): SessionMessageSendInputV1 {
   return {
-    input: { recipient: input.recipient, text: input.text, intent: 'notify',
+    // A platform notice never wakes the line: `wake:false` keeps it out of the `agent_wake` class and opens no round.
+    input: { recipient: input.recipient, text: input.text, wake: false,
       ...(input.goalRef === undefined || input.goalRef === null ? {} : { goalRef: input.goalRef }) },
     meta: { requestId: input.requestId, expected: [] },
   };
 }
 
 
-/** The lead's fixed closing sentences: exactly one per reason, and `questions` sends none (the cards say it). */
-export const INTERVENTION_CLOSING_NOTICE_TEXTS = {
+/**
+ * The lead's fixed closing sentences: exactly one per reason, and `questions` sends none (the cards say it). A
+ * round that writes a reply (`part: 'message'` and `needsReply:true`) carries its content there, so these sentences
+ * point at it; every round without a reply slot (a card-answer round, a `needsReply:false` message round) gets the
+ * sentences below that never point at a reply.
+ */
+const MESSAGE_ROUND_CLOSING_NOTICE_TEXTS = {
   invalid_plan: '这次规划没有形成可采用的计划，模型的原回答在回复里。可以补充要求后重新发送。',
   declined: '这次规划的方案没有采用，原回答在回复里。可以补充要求后重新发送。',
-  no_answer: '这次规划已结束，没有留下可用的回答，这条消息已撤回。请补充要求后重新发送。',
   // PL-1's planning-round endings: a review answer, a written candidate and an
   // adoption each end the system round; the reply/card carries the content.
   answered: '这次规划已有结论，模型的回答在回复里。',
   candidate: '这次规划已写入候选，采用前可以继续补充要求。',
   adopted: '这次规划已经采用，计划的内容在候选卡和回复里。',
-} as const;
+} as const satisfies Record<Exclude<InterventionClosingReasonV1, 'no_answer'>, string>;
 
-export type InterventionClosingReasonV1 = keyof typeof INTERVENTION_CLOSING_NOTICE_TEXTS;
+/** A round with no reply slot's fixed sentences: same endings, without a reply the round never writes. */
+const NO_REPLY_SLOT_CLOSING_NOTICE_TEXTS = {
+  invalid_plan: '这次规划没有形成可采用的计划。可以补充要求后重新发送。',
+  declined: '这次规划的方案没有采用。可以补充要求后重新发送。',
+  answered: '这次规划已有结论。',
+  candidate: '这次规划已写入候选，采用前可以继续补充要求。',
+  adopted: '这次规划已经采用，计划的内容在候选卡里。',
+} as const satisfies Record<Exclude<InterventionClosingReasonV1, 'no_answer'>, string>;
 
-/** The ONE Host closing notice of an intervention: the fixed text, the original line and the fixed request id. */
+/**
+ * The `no_answer` ending: the other side ended this round without a reply. Only the person's B20 source is withdrawn
+ * afterwards; an agent's message is not withdrawn (its sender's wait expires on its own), so only that source says so.
+ */
+function noAnswerText(withdrawSource: boolean): string {
+  return withdrawSource
+    ? '对方这一轮结束，没有回复。这条消息已撤回。请补充要求后重新发送。'
+    : '对方这一轮结束，没有回复。请补充要求后重新发送。';
+}
+
+/** The ONE Host closing notice of an intervention: the fixed text, the original line, the frozen source part and
+ *  the fixed request id (a card-answer round has its own part, so it never collides with the message round). The
+ *  notice binds no Goal: a cancelled or paused Goal must not refuse or withhold the close-out (design 2.3/2.6). */
 export function interventionClosingNoticeRequest(input: {
   recipient: SessionRef; messageRef: SessionMessageRef; reason: InterventionClosingReasonV1;
-  goalRef?: GoalRef | null;
+  part?: 'message' | 'decision_answer';
+  /** This round writes a reply (`part: 'message'` and `needsReply:true`); only then may the text point at it. */
+  hasReplySlot: boolean;
+  /** The person's B20 source is withdrawn after the notice; every other source is not. */
+  withdrawSource?: boolean;
 }): SessionMessageSendInputV1 {
-  return systemNotifyRequest({ recipient: input.recipient, text: INTERVENTION_CLOSING_NOTICE_TEXTS[input.reason],
-    requestId: `intervention:${sessionMessageRefKey(input.messageRef)}:notice:${input.reason}`,
-    ...(input.goalRef === undefined ? {} : { goalRef: input.goalRef }) });
+  const text = input.reason === 'no_answer' ? noAnswerText(input.withdrawSource === true)
+    : input.hasReplySlot ? MESSAGE_ROUND_CLOSING_NOTICE_TEXTS[input.reason]
+    : NO_REPLY_SLOT_CLOSING_NOTICE_TEXTS[input.reason];
+  return systemNotifyRequest({ recipient: input.recipient, text,
+    requestId: interventionClosingNoticeRequestId(input.messageRef, input.reason, input.part) });
 }
 
 export type HostNoticeDependencies = {

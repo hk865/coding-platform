@@ -7,6 +7,9 @@
  */
 import type { AdoptedArchitecture } from '../../../contracts/architecture-catalog.js';
 import type { ArtifactRef } from '../../../contracts/artifact.js';
+import { canonicalJson } from '../../../contracts/fingerprint.js';
+import { renderTemplate } from '../../../contracts/prompts/render-template.js';
+import type { PromptTextsV1 } from '../../../contracts/prompts/prompt-set.js';
 import type { RegisteredCommandCheck } from '../../../contracts/verification.js';
 import type { ActorRef, CommitCursor } from '../../../contracts/command-event.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
@@ -16,11 +19,11 @@ import type {
   DecisionApplicationReceiptV1,
   DecisionApplicationV1,
   DecisionHostSenderV1,
-  SendRejectionV1,
   SessionMessageRef,
   UserMessageResponseV1,
 } from '../../../contracts/core/session-message.js';
 import type { RoleBindingRefV1, RunRef, SourceRefV1, TaskTriple } from '../../../contracts/dispatch.js';
+import type { ActionRequestBlockerV1, NodeActionRequestV1, TaskClaimTargetBlockerV1 } from '../../../contracts/work-line.js';
 import type {
   DecisionActionV1,
   DecisionAnnotationV1,
@@ -33,7 +36,6 @@ import type {
   GoalAutonomyV1,
   GoalFootprintV1,
   GoalSettingsV1,
-  MessageReleaseBlockV1,
   NoticeCategoryV1,
   NoticePositionV1,
   UserDecisionBodyV1,
@@ -57,9 +59,9 @@ import type { NoteDecisionApplicationInputV1, NoteDispositionResult } from './no
 import type { PlanProposal, PlanProposalRef, RequestCandidateImpactV1 } from './plan-contracts.js';
 import type { GraphWrite } from './task-contracts.js';
 import type {
-  MessageAppliedChangeV1, MessageExpiredChangeV1, MessageGuardContext, MessageReleaseDecidedChangeV1,
-  MessageReleasedChangeV1, MessageWithdrawnChangeV1, SessionMessageChange,
+  MessageAppliedChangeV1, MessageExpiredChangeV1, MessageGuardContext, MessageWithdrawnChangeV1, SessionMessageChange,
 } from '../state/message-machine.js';
+import type { ActionRequestDecisionVerdictV1 } from '../state/action-request.js';
 
 // ------------------------------------------------------------------------ //
 // First-slice seams (spec §2.6)                                             //
@@ -100,6 +102,8 @@ export interface CandidateRequestFactsPort {
     currentSecretary: SessionRef | null; guards: readonly RecordGuard[];
     /** The narrow branch's proof: the admitted `intervention_planning` Query's source message, or null. */
     interventionSource: SessionMessageRef | null;
+    /** The part frozen on that Query's source (`decision_answer` only for a card-answer round). */
+    interventionSourcePart?: 'decision_answer';
   }>>;
 }
 
@@ -221,8 +225,6 @@ export type SessionMessageWriteEnvelopeV1 = {
 
 export type SessionMessageWriteCommandV1 =
   | (SessionMessageWriteEnvelopeV1 & { operation: 'message.withdraw'; change: MessageWithdrawnChangeV1 })
-  | (SessionMessageWriteEnvelopeV1 & { operation: 'message.release'; change: MessageReleaseDecidedChangeV1 })
-  | (SessionMessageWriteEnvelopeV1 & { operation: 'message.releaseApproved'; change: MessageReleasedChangeV1 })
   | (SessionMessageWriteEnvelopeV1 & { operation: 'message.apply'; change: MessageAppliedChangeV1 })
   | (SessionMessageWriteEnvelopeV1 & { operation: 'message.recordExpiry'; change: MessageExpiredChangeV1 })
   | (SessionMessageWriteEnvelopeV1 & {
@@ -406,6 +408,54 @@ export type DecisionCardStateV1 =
   | 'waiting_answer' | 'answered_pending_application' | 'applied'
   | 'answered_no_application' | 'closed';
 
+/**
+ * §2.8: the `action_release` card's facts beside the shared card shape. It is
+ * the same request view the task detail shows (`NodeActionRequestV1`), plus the
+ * card key, the stored intake verdict and the live blockers the read can name.
+ */
+export type ActionReleaseCardViewV1 = NodeActionRequestV1 & {
+  /** The card's own stable key; equal to `DecisionCardV1.cardKey`. */
+  cardKey: string;
+  /** The stored intake verdict: `needs_decision` on a card, the automatic arms otherwise. */
+  decisionVerdict: ActionRequestDecisionVerdictV1;
+  blockedBy: ActionRequestBlockerV1[];
+  /**
+   * §2.8: whether the Task can be claimed now, from the same target-loop judgment the task detail projects. False
+   * with an empty `blockedBy` still means not claimable: the six skips that only set the verdict name no blocker.
+   * Null when no request-side blocker stands and the target-loop judgment is not read (no port, or a stop card).
+   */
+  claimableNow: boolean | null;
+  /** A waiting dispatch card does NOT block a claim; a waiting stop card does ("answer the card first"). */
+  claimsBlockedByCard: boolean;
+  /**
+   * The target loop's gate/node/line judgment (§2.8); `not_read` is the old read when no port is wired, and the
+   * standing value on a stop card, which reads its own record instead of the dispatch judgment.
+   */
+  targetLoopBlockers: 'not_read' | { blockers: TaskClaimTargetBlockerV1[] };
+  /**
+   * §2.8: the plan the claiming Run actually read (`outcome.run` → `Run.planRef`), beside the intake
+   * `planVersion`; null when nothing claimed the Task or the Run is not readable.
+   */
+  claimedPlanRef: PlanRevisionRef | null;
+};
+
+/**
+ * §2.8: one Task's claim judgment from the target loop — the module gate, node occupancy, line busy and the resulting
+ * claimable verdict. The Workflow keeps the one judgment (`workflow.ts`'s selection path); this port is how the card
+ * source and the task detail read it without importing `business/workflow`. Absent, both keep `not_read`.
+ */
+export type TaskClaimJudgmentV1 = {
+  /** The target loop's own three causes; empty when none of them stands. */
+  blockers: TaskClaimTargetBlockerV1[];
+  /** The target loop's verdict for this Task now (it may be false for a cause outside the three named ones). */
+  claimable: boolean;
+};
+
+export interface TaskClaimabilityPort {
+  readTaskClaimability(ctx: CoreCallContext, input: { goalRef: GoalRef; task: TaskTriple }):
+    Promise<ReadResult<TaskClaimJudgmentV1>>;
+}
+
 export type DecisionCardV1 = {
   cardKey: string; source: DecisionSourceV1;
   state: DecisionCardStateV1;
@@ -428,10 +478,8 @@ export type DecisionCardV1 = {
   actions: ('answer' | 'ask_secretary' | 'apply' | 'record_application'
     | 'adopt' | 'regenerate' | 'abandon' | 'adopt_architecture'
     | 'adopt_completion_policy')[];
-  /** §3.10 / book :428–:435: present only on the `message_release` card — the message's own live facts, merged on
-   * every read (`deadline` before and after the release, the block, so the three reads cannot disagree). Absent on
-   * every other kind (the `NoticeItemV1.actions?` precedent, `:367`). */
-  messageRelease?: { deadline: string | null; releaseBlock: MessageReleaseBlockV1 | null };
+  /** §2.8: the `action_release` card's request view; absent on every other source kind. */
+  actionRelease?: ActionReleaseCardViewV1;
   /** 121-136 A4: present only on a `candidate` card whose plan brings checks — the candidate's stored checks (id,
    *  kind, command, the Tasks they apply to); the person's adoption installs the ones not installed yet. */
   proposedChecks?: readonly RegisteredCommandCheck[];
@@ -667,74 +715,16 @@ export type GoalSettingsChangedEventV1 = DecisionWriteEventBaseV1<
 export type WorkspaceNoticeSeenChangedEventV1 = DecisionWriteEventBaseV1<WorkspaceSnapshot>
   & { eventType: 'WorkspaceNoticeSeenChanged' };
 
-// ------------------------------------------------------------------------ //
-// `message_release`'s remaining TS (SM-20; the card and its entry are built by their owner) //
-// ------------------------------------------------------------------------ //
-
 /**
- * The trusted entry's ONLY input: the target, the option and the source are derived from the saved
- * answer and checked there; a caller naming a message or an option is not this entry.
+ * §2.3: the one `user-decision-response` composer. Both the card-answer round's
+ * stored question and the line's busy-point input render the same template with
+ * the same formal body, so an edit to that template cannot fork the two texts.
+ * The submit has no execution's frozen texts yet and passes the platform pack;
+ * the busy point passes its execution's frozen set to this same function.
  */
-export type MessageReleaseApplicationInputV1 = { answerRef: SessionMessageRef };
-
-/** The bounded release-candidate page: approved, not released, not withdrawn. */
-export type MessageReleaseCandidatesInputV1 = {
-  /** The bound scope; a goal narrows the page, absent means every goal of the workspace. */
-  scope: WorkspaceScope;
-  goalRef: GoalRef | null;
-  /** The declared index's opaque keyset cursor; `null` on the first page. */
-  after: string | null;
-  /** 1–100; any other value is `invalid`. */
-  limit: number;
-};
-export type MessageReleaseCandidateV1 = {
-  messageRef: SessionMessageRef;
-  /** The record revision, the release command's CAS pin. */
-  revision: number;
-  /** The revision at which the message became `awaiting`; the card's identity, never the CAS revision. */
-  creationRevision: number;
-  pins: DispatchBasisV1 | null;
-  deadline: string | null;
-  /** Why this pass cannot release it; `null` means releasable. A stale item is blocked, never a pass failure. */
-  blockedReason: MessageReleaseBlockV1['blockedReason'] | 'activity_conflict';
-};
-export type MessageReleaseCandidatesPageV1 = {
-  items: readonly MessageReleaseCandidateV1[];
-  /** The page's own consistent watermark. */
-  readThrough: CommitCursor;
-  nextCursor: string | null;
-};
-export interface MessageReleaseCandidatesPort {
-  /** A read failure is the failure, never an empty page; a cross-goal ref is refused. */
-  readReleaseCandidates(ctx: CoreCallContext, input: MessageReleaseCandidatesInputV1):
-    Promise<ReadResult<MessageReleaseCandidatesPageV1>>;
+export function composeDecisionResponseInput(
+  texts: PromptTextsV1, body: UserDecisionBodyV1, toolNames: readonly string[],
+): string {
+  return renderTemplate(texts, 'user-decision-response', { bodyJson: canonicalJson(body) }, toolNames).text;
 }
 
-export type MessageReleasedActionsInputV1 = {
-  /** The one workspace whose released, unprocessed action requests are read. */
-  scope: WorkspaceScope;
-  /** The declared index's opaque keyset cursor; `null` on the first page. */
-  after: string | null;
-  /** 1–100; any other value is `invalid`. */
-  limit: number;
-};
-export type MessageReleasedActionsPageV1 = {
-  /** The released, unprocessed `action_request` goals, in approval order; a repeated goal is left to `register`'s merge. */
-  goals: readonly GoalRef[];
-  /** The page's own consistent watermark; the restart registration's `cursorAtRead`. */
-  readThrough: CommitCursor;
-  nextCursor: string | null;
-};
-export interface MessageReleasedActionsPort {
-  /** A read failure is the failure, never an empty page. */
-  readReleasedActions(ctx: CoreCallContext, input: MessageReleasedActionsInputV1):
-    Promise<ReadResult<MessageReleasedActionsPageV1>>;
-}
-
-export interface MessageReleasePort {
-  releaseApproved(ctx: CoreCallContext, input: { messageRef: SessionMessageRef; approvalRevision: number }):
-    Promise<Extract<WriteResult<SessionMessage>, { status: 'committed' }> | SendRejectionV1>;
-  applyMessageRelease(ctx: CoreCallContext, input: MessageReleaseApplicationInputV1):
-    Promise<(Extract<WriteResult<SessionMessage>, { status: 'committed' }> &
-      { receipt: DecisionApplicationReceiptV1 }) | CoreRejection>;
-}

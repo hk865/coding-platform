@@ -36,9 +36,15 @@ import type { PreparedTaskExecution } from '../../src/contracts/core/prepared-ex
 import { roleSpecContentDigest, type RoleSpecContentV1 } from '../../src/contracts/role-spec.js';
 import type { TrustedCheckConfiguration } from '../../src/contracts/verification.js';
 import { coordinationPolicyContentDigest, type CoordinationPolicyContentV1 } from '../../src/contracts/human-role-collaboration.js';
-import { SESSION_MAILBOX_TOOL_NAMES, USER_DECISION_TOOL_NAMES } from '../../src/core/agent-runtime/communication-tools.js';
+import {
+  createPlatformPromptPackSource, type PromptPackSourcePort, type ToolTextV1,
+} from '../../src/contracts/prompts/prompt-pack.js';
+import {
+  PERSON_MESSAGE_TOOL_NAMES, SESSION_MAILBOX_TOOL_NAMES, USER_DECISION_TOOL_NAMES,
+} from '../../src/core/agent-runtime/communication-tools.js';
 import { WHITEBOARD_TOOL_NAMES } from '../../src/core/agent-runtime/whiteboard-tools.js';
 import type { ClaimTaskInput } from '../../src/core/work-graph/model/claim-contracts.js';
+import { personMessageRequest, type SendUserMessageInput } from '../../src/core/work-graph/model/tool-commit-arguments.js';
 import type { GraphWrite } from '../../src/core/work-graph/model/task-contracts.js';
 import { plainSessionRefToAggregate } from '../../src/core/work-graph/sessions/session-record-codecs.js';
 import {
@@ -47,9 +53,41 @@ import {
 import { B2_AT, createScriptedModel, type ScriptedModel, type ScriptedReply } from './B2-runtime-fixture.js';
 import { C2_SKILL_ROOT, C2_SAFETY_PATH, C2_SKILL_IDS } from './C2-runtime-platform-fixture.js';
 
-const WP2_ALL_TOOL_NAMES: readonly string[] = [
-  ...SESSION_MAILBOX_TOOL_NAMES, ...USER_DECISION_TOOL_NAMES, ...WHITEBOARD_TOOL_NAMES,
+export const WP2_ALL_TOOL_NAMES: readonly string[] = [
+  ...SESSION_MAILBOX_TOOL_NAMES, ...USER_DECISION_TOOL_NAMES, ...PERSON_MESSAGE_TOOL_NAMES,
+  ...WHITEBOARD_TOOL_NAMES,
 ];
+
+/**
+ * G2 split `send_user_message` into `notify_person`/`ask_person`, but the
+ * generated platform pack still carries only the old entry (the two tool text
+ * resources belong to G4). Without their texts the tool group cannot be built,
+ * so this fixture supplies the two model-facing texts alongside the grant.
+ */
+const WP2_PERSON_TOOL_TEXTS: Readonly<Record<string, ToolTextV1>> = {
+  notify_person: { description: 'Tell the person; no reply is requested.', parameters: {} },
+  ask_person: { description: 'Ask the person to decide; the card carries its options and objects.', parameters: {} },
+};
+
+function wp2PromptPacks(): PromptPackSourcePort {
+  const platform = createPlatformPromptPackSource();
+  return {
+    async resolve(packId, signal) {
+      const resolved = await platform.resolve(packId, signal);
+      if (resolved.status !== 'ready') return resolved;
+      const value = resolved.value;
+      return { status: 'ready', value: {
+        ...value,
+        tools: { ...value.tools, ...WP2_PERSON_TOOL_TEXTS },
+        toolOrigins: { ...value.toolOrigins, notify_person: 'platform', ask_person: 'platform' },
+        manifest: { ...value.manifest, tools: {
+          ...value.manifest.tools,
+          notify_person: 'tools/notify_person.json', ask_person: 'tools/ask_person.json',
+        } },
+      } };
+    },
+  };
+}
 
 type WP2PlatformOptions = {
   kind?: 'memory' | 'sqlite';
@@ -430,6 +468,7 @@ async function createWP2MemoryPlatform(options: WP2PlatformOptions): Promise<WP2
   const platformOptions: Parameters<typeof createTargetPlatform>[0] = {
     storage: { kind: 'memory' }, workspace: workspaceHost, now: platformClock(options),
     operatorActor: { kind: 'human', id: 'r4c-claim-operator' },
+    promptPacks: wp2PromptPacks(),
     ...(options.ownedHost === true ? { hostInstance: { hostInstanceId: 'wp2-host', lease: 'owned' as const } } : {}),
     commitObserver: { started: () => undefined, committed: notice => { notices.push(notice); options.onCommit?.(notice); } },
     ...(options.check === true ? { checks: wp2ChecksConfiguration(f) } : {}),
@@ -816,6 +855,7 @@ export async function createWP2Platform(options: WP2PlatformOptions = {}): Promi
   const platformOptions: Parameters<typeof createTargetPlatform>[0] = {
     storage: { kind: 'sqlite', directory: f.storeDirectory }, workspace: workspaceHost, now: platformClock(options),
     operatorActor: { kind: 'human', id: 'r4c-claim-operator' },
+    promptPacks: wp2PromptPacks(),
     ...(options.ownedHost === true ? { hostInstance: { hostInstanceId: 'wp2-host', lease: 'owned' as const } } : {}),
     commitObserver: { started: () => undefined, committed: notice => { notices.push(notice); options.onCommit?.(notice); } },
     ...(options.check === true ? { checks: wp2ChecksConfiguration(f) } : {}),
@@ -885,22 +925,42 @@ export async function createWP2Platform(options: WP2PlatformOptions = {}): Promi
   };
 }
 
-/** The exact secret/decision request args the scripted model passes. */
-export function decisionRequestArgs(goalRef: GoalRef, overrides: Partial<{
-  intent: 'notify' | 'decision_request'; text: string; needsReply: boolean; waitAfterSend: boolean;
+function decisionRequestOptions(): Array<{ id: string; label: string; effect: 'apply' | 'reject' | 'defer' }> {
+  return [{ id: 'continue', label: '继续', effect: 'apply' }, { id: 'stop', label: '停止', effect: 'reject' }];
+}
+
+/**
+ * The exact `notify_person`/`ask_person` tool args the scripted model passes.
+ * Both tools are strict schemas: `notify_person` takes only `text`, and
+ * `ask_person` takes `text` plus the card's `options`/`objects`. `goalRef`,
+ * `needsReply`, `waitAfterSend` and `wake` are owner facts, never model args, so
+ * the tool name alone selects notify (text) or ask (card).
+ */
+export function decisionRequestArgs(tool: 'notify_person' | 'ask_person', overrides: Partial<{
+  text: string;
   options: Array<{ id: string; label: string; effect: 'apply' | 'reject' | 'defer' }>;
 }> = {}): Record<string, unknown> {
-  const intent = overrides.intent ?? 'decision_request';
-  return {
+  const text = overrides.text ?? '请决定是否继续';
+  if (tool === 'notify_person') return { text };
+  return { text, options: overrides.options ?? decisionRequestOptions(), objects: [] };
+}
+
+/**
+ * The same person request as the owner's `sendUserMessage` input: the complete
+ * trusted request the tool adapter builds, for the receipt replay rows that
+ * call the owner directly instead of going back through the model.
+ */
+export function decisionOwnerRequest(goalRef: GoalRef, overrides: Partial<{
+  text: string;
+  options: Array<{ id: string; label: string; effect: 'apply' | 'reject' | 'defer' }>;
+}> = {}): SendUserMessageInput {
+  return personMessageRequest({
     goalRef,
-    intent,
+    intent: 'decision_request',
     text: overrides.text ?? '请决定是否继续',
-    needsReply: overrides.needsReply ?? intent === 'decision_request',
-    waitAfterSend: overrides.waitAfterSend ?? false,
-    options: overrides.options ?? (intent === 'decision_request'
-      ? [{ id: 'continue', label: '继续', effect: 'apply' }, { id: 'stop', label: '停止', effect: 'reject' }] : []),
+    options: overrides.options ?? decisionRequestOptions(),
     objects: [],
-  };
+  }, 'x').input;
 }
 
 /** One trusted passing static check on the WP2 workspace (E0 next-round rows). */

@@ -1,5 +1,6 @@
 /**
- * R13b 冻结稿第五节 I1（B1–B3）：S9 审阅世界里工作 Run 跑着时，人经 `messages/send` 发一条 `action_request`，脚本模型在
+ * R13b 冻结稿第五节 I1（B1–B3）：S9 审阅世界里工作 Run 跑着时，人经 `messages/send` 发一条直接干预（P2：
+ * `entry: 'person_intervention'`），脚本模型在
  * 一次工具调用后的安全点收下（`deliveryEvidence` 指向这个 Run）；同一条线的 `notify` 不列。审阅轮发出后，`execreview:`
  * 正文在固定正文之后附人的原话、收下它的 Run 和任务，包头七行仍是冻结轮次的包。只走公开入口，只跑 memory（RULES S3）。
  */
@@ -42,11 +43,13 @@ it('I1：审阅包带这个 Goal 里人被 Run 收下的原话，不带 notify�
   const driving = driveWorkflow(world.ag2b, { schemaVersion: 1, goalRef: goal, flowId: 'r13-i1-subject',
     sessionHint: workLine.ref, kind: 'select_work', taskId: task.taskId }, { receipts, stopBefore: 'send_system_round' });
   await first.reached;
+  // P2 §2.1/§2.3 (`p2-frozen.md:102`, `:126`): only the person's direct-intervention entry writes `entry` (the same
+  // input `src/ui/boot.ts` sends), and the review packet reads the person by that `entry`, not by an old `intent`.
   const sent = commit<SessionMessage>(await world.post('messages/send', graphWrite(S6A_SCOPE, {
-    recipient: workLine.ref, text: words, intent: 'action_request', needsReply: true }, 'r13-i1-action')),
+    recipient: workLine.ref, text: words, needsReply: true, entry: 'person_intervention' }, 'r13-i1-action')),
   'R13 I1 人的 action_request');
   commit(await world.post('messages/send', graphWrite(S6A_SCOPE, {
-    recipient: workLine.ref, text: notify, intent: 'notify', needsReply: false }, 'r13-i1-notify')),
+    recipient: workLine.ref, text: notify, needsReply: false, wake: false }, 'r13-i1-notify')),
   'R13 I1 人的 notify');
   first.release();
   await second.reached;

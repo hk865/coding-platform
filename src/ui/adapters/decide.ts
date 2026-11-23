@@ -14,9 +14,9 @@
  */
 
 import { asRecord, asText } from '../values.js';
-import { decisionCardCountPartial, goalDisplayState, localShortAt, stopWordOf, taskState } from './task-map.js';
-import type { NavData } from './nav.js';
-import type { WorkspaceScope } from '../../contracts/core/identity.js';
+import { blockerTextOf, decisionCardCountPartial, goalDisplayState, localShortAt, planRefText, planVersionText, stopRunText, stopWordOf, taskState } from './task-map.js';
+import { dutyWordOf, lineNameOfSession, sessionRefAtEdge, type NavData } from './nav.js';
+import type { SessionRef, WorkspaceScope } from '../../contracts/core/identity.js';
 import type {
   DecisionObjectV1, DecisionOptionV1, DecisionSelectionV1, DecisionSourceV1, DecisionSubjectV1,
   NoticeCategoryV1, NoticePositionV1,
@@ -42,6 +42,24 @@ export type DecisionCardV1 = {
   runRef: RunRef | null;
   readOnly: boolean;
   actions: readonly string[];
+  /** §2.8: the release card's request view; absent on every other source kind. */
+  actionRelease?: ActionReleaseViewV1;
+};
+
+/** §2.8: the request facts a release card can show. Every field is guarded at
+ * its use (the route value crosses the JSON edge); a fact is drawn only when
+ * the read supplies its field. */
+export type ActionReleaseViewV1 = {
+  action: 'dispatch' | 'stop';
+  requester: { session: SessionRef; duty: 'executor' | 'adviser' | 'secretary' };
+  reason: string;
+  planVersion: { planRevision: number | null } | null;
+  preferredLine: SessionRef | null;
+  stopRun: RunRef | null;
+  blockedBy: readonly { kind: string; reason?: string; reasonId?: string; holdKind?: string }[];
+  targetLoopBlockers: 'not_read' | { blockers: readonly { kind: string; reason: string }[] };
+  /** The plan the claiming Run read; only a closed card carries it. */
+  claimedPlanRef: { planId: string } | null;
 };
 export type DecisionCardStateV1 =
   | 'waiting_answer' | 'answered_pending_application' | 'applied'
@@ -226,7 +244,7 @@ const CATEGORY_WORD: Record<string, string> = {
 const KIND_WORD: Record<string, string> = {
   message: '消息', candidate: '计划候选', note_review: '注记复核', planning_question: '规划问题',
   goal_cause: '目标原因', goal_conflict: '目标冲突',
-  message_release: '消息放行', unknown_call_review: '未知结果待核对', command_rerun_request: '命令重跑',
+  action_release: '放行请求', unknown_call_review: '未知结果待核对', command_rerun_request: '命令重跑',
   member_creation: '成员创建', rework_request: '返工请求', handoff_approval: '交接确认',
   adviser_creation: '参谋创建', module_maintainer_assignment: '模块维护者指派',
   repair_approval: '修复确认', structural_proposal: '结构提案', role_capacity: '容量',
@@ -333,6 +351,62 @@ function factsOf(row: Record<string, unknown>): DecideCard['facts'] {
     { k: '尝试', v: attempt },
     { k: '最近拒绝', v: last },
   ];
+}
+
+/**
+ * §2.8: the release card's facts. Each fact is conditioned on its own field, so
+ * a stop card never asks for a plan version or a preferred line, and a waiting
+ * card never shows the claimed plan. The read projection supplies the live
+ * blockers; when it says `not_read`, that fact is not invented here.
+ */
+function actionReleaseFactsOf(
+  card: DecisionCardV1, nav: NavData, taskName: string, currentPlan: unknown,
+  taskRow: Record<string, unknown> | null,
+): DecideCard['facts'] {
+  const view = asRecord(card.actionRelease);
+  if (Object.keys(view).length === 0) return [];
+  const out: DecideCard['facts'] = [];
+  const action = asText(view.action);
+  if (action === 'dispatch') out.push({ k: '动作', v: '派活' });
+  else if (action === 'stop') out.push({ k: '动作', v: '叫停' });
+  if (taskName !== '') out.push({ k: '任务', v: taskName });
+  const requester = asRecord(view.requester);
+  const duty = asText(requester.duty);
+  const who = lineNameOfSession(nav.lines, sessionRefAtEdge(requester.session))
+    || (duty === '' ? '' : dutyWordOf(duty));
+  if (who !== '') out.push({ k: '谁要', v: who });
+  const reason = asText(view.reason);
+  if (reason !== '') out.push({ k: '理由', v: reason });
+  const planVersion = asRecord(view.planVersion);
+  if (Object.keys(planVersion).length > 0) {
+    out.push({ k: '请求时的计划版本', v: planVersionText(
+      typeof planVersion.planRevision === 'number' ? planVersion.planRevision : null) });
+  }
+  const blocked = Array.isArray(view.blockedBy) ? view.blockedBy.map((entry) => asRecord(entry)) : [];
+  const target = view.targetLoopBlockers;
+  const targetSupplied = target !== undefined && target !== null && target !== 'not_read';
+  const targetBlockers = targetSupplied && Array.isArray(asRecord(target).blockers)
+    ? (asRecord(target).blockers as unknown[]).map((entry) => asRecord(entry)) : [];
+  if (blocked.length > 0 || targetSupplied) {
+    const parts = [...blocked, ...targetBlockers].map(blockerTextOf).filter((text) => text !== '');
+    out.push({ k: '当前阻塞', v: parts.length === 0 ? '没有' : parts.join('；') });
+  }
+  const preferred = asRecord(view.preferredLine);
+  if (Object.keys(preferred).length > 0) {
+    const name = lineNameOfSession(nav.lines, sessionRefAtEdge(preferred));
+    if (name !== '') out.push({ k: '首选线', v: name });
+  }
+  const stopRun = asRecord(view.stopRun);
+  if (Object.keys(stopRun).length > 0) {
+    const runId = asText(stopRun.runId);
+    if (runId !== '') out.push({ k: '要停的运行', v: stopRunText(stopRun, taskRow) });
+  }
+  const claimed = asRecord(view.claimedPlanRef);
+  if (Object.keys(claimed).length > 0) {
+    const planId = asText(claimed.planId);
+    if (planId !== '') out.push({ k: '领取时用的计划', v: planRefText(planId, currentPlan) });
+  }
+  return out;
 }
 
 function budgetOfRow(row: Record<string, unknown>): DecideCard['budget'] {
@@ -447,7 +521,7 @@ function cardTitleOf(card: DecisionCardV1, label: string): string {
 }
 
 function makeView(args: {
-  card: DecisionCardV1; level: DecideRow['level']; key: string; label: string; title: string;
+  card: DecisionCardV1; nav: NavData; level: DecideRow['level']; key: string; label: string; title: string;
   path: string; state: string; goalId: string; ordinal: number | null; taskRef: TaskTriple | null;
   goalName: string; taskName: string; taskRow: Record<string, unknown> | null;
   plan: unknown; pins: Array<{ ref: unknown; revision: number }>; files: { path: string; parts: string[] }[];
@@ -470,7 +544,16 @@ function makeView(args: {
   }));
   const roundOrdinal = typeof round.ordinal === 'number' ? round.ordinal : 1;
   const isGate = asText(asRecord(taskRow?.definition).taskKind) === 'gate' || asText(failure.subjectKind) === 'gate';
-  const options = card.options.map((option) => ({ id: option.id, label: option.label, effect: option.effect }));
+  /* §2.8: the release card's own words, only when its request view is present. */
+  const release = card.actionRelease === undefined ? null : card.actionRelease;
+  const options = card.options.map((option) => ({
+    id: option.id,
+    label: release === null ? option.label
+      : option.id === 'approve' ? '批准' : option.id === 'deny' ? '拒绝' : option.label,
+    effect: option.effect,
+  }));
+  const actionFacts = release === null ? [] : actionReleaseFactsOf(card, args.nav, args.taskName,
+    asRecord(args.plan).plan, taskRow);
   const answer = card.answer === null ? null : {
     selection: selectionWord(card.answer.decision.selection, options),
     respondedAt: typeof card.answer.respondedAt === 'string' ? card.answer.respondedAt : null,
@@ -488,8 +571,9 @@ function makeView(args: {
     line: answer !== null ? answer.selection + (answer.application === 'pending' ? '；等落实' : answer.application === 'applied' ? '；已落实' : '') : '',
     path: args.path,
     position: '',
-    facts: taskRow !== null ? factsOf(taskRow)
-      : conflict ? [{ k: '重叠文件', v: '', files }] : [],
+    facts: release !== null ? actionFacts
+      : taskRow !== null ? factsOf(taskRow)
+        : conflict ? [{ k: '重叠文件', v: '', files }] : [],
     options,
     actions: [...new Set([
       ...(card.options.length > 0 && !card.readOnly ? ['answer' as const] : []),
@@ -597,7 +681,7 @@ export function adaptDecide(source: DecideSource, ui: DecideUi): DecideData {
     const time = timeOf(level === 'done'
       ? card.answer?.respondedAt ?? card.openedAt : card.openedAt);
     const view = makeView({
-      card, level, key: card.cardKey, label, title: label, path, state,
+      card, nav: source.nav, level, key: card.cardKey, label, title: label, path, state,
       goalId: goalId ?? '', ordinal, goalName: nameOf(goalId), taskName, taskRow, taskRef: triple,
       plan: taskGoalId === null ? null : source.tasks[taskGoalId] ?? null, pins, files,
     });

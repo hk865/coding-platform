@@ -28,6 +28,8 @@ import {
 } from '../../src/business/workflow/decision-actions.js';
 import { createGoalService } from '../../src/core/work-graph/tasks/task-service.js';
 import { createPlanService } from '../../src/core/work-graph/tasks/plan-service.js';
+import { createQueryJobService } from '../../src/core/work-graph/queries/query-job-service.js';
+import { planSourceRootOf } from '../helpers/task-claim-fixture.js';
 import { createInitializationBindingReader } from '../../src/core/work-graph/tasks/goal-confirm-service.js';
 import { createTaskClaimService } from '../../src/core/work-graph/tasks/claim-service.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
@@ -226,7 +228,9 @@ async function assemble(world: K3ReviewCardWorld, options: {
     sessions: createSessionDirectory({ records: f.records,
       knowledge: knowledgeLinesOver(f.records), lookups: f.records, duty: unknownSessionDuty }),
     claims: createTaskClaimService({ records: f.records, now: f.now, newId: f.newId,
-      roles: createRoleConfigurationService({ records: f.records, now: f.now, eventId: f.newId }) }),
+      roles: createRoleConfigurationService({ records: f.records, now: f.now, eventId: f.newId }),
+      planSourceRoot: planSourceRootOf({ messages: world.mailbox, plans,
+        queries: createQueryJobService({ records: f.records, now: f.now, eventId: f.newId }) }) }),
     executions: createRunStateReader({ records: f.records }),
     runtime, evidence, checks,
     sourceAuthority: createSourceAuthorityReader({ authority }),

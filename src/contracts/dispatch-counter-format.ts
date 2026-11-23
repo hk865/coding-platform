@@ -1,5 +1,5 @@
 import { defineRecord, f, type InferRecord } from './data-format.js';
-import { DispatchCounterRefShape, SessionMessageRefShape, id } from './data-format-refs.js';
+import { ActionRequestRefShape, DispatchCounterRefShape, id } from './data-format-refs.js';
 
 /** The field table of `DispatchCounter@1`; D adds the rule and the `defineRecord` format (SR5). */
 export const DispatchCounterFields = {
@@ -8,7 +8,7 @@ export const DispatchCounterFields = {
   revision: f.revision({ min: 1 }),
   goalId: id,
   sequence: f.integer({ min: 1 }),
-  lastMessageRef: f.nullable(f.ref(SessionMessageRefShape)),
+  lastActionRef: f.nullable(f.ref(ActionRequestRefShape)),
 };
 
 export type DispatchCounterV1 = InferRecord<typeof DispatchCounterFields>;
@@ -20,7 +20,7 @@ export function dispatchCounterProblem(value: unknown): string | null {
     ref?: { projectId?: unknown; goalId?: unknown };
     goalId?: unknown;
     sequence?: unknown;
-    lastMessageRef?: unknown;
+    lastActionRef?: unknown;
   };
   if (typeof record.sequence === 'number'
     && (!Number.isSafeInteger(record.sequence) || record.sequence < 1)) {
@@ -29,11 +29,11 @@ export function dispatchCounterProblem(value: unknown): string | null {
   if (typeof record.goalId === 'string' && record.ref?.goalId !== record.goalId) {
     return 'DispatchCounter.goalId must equal its ref.goalId';
   }
-  const last = record.lastMessageRef;
+  const last = record.lastActionRef;
   if (last !== null && typeof last === 'object') {
     const ref = last as { projectId?: unknown };
     if (ref.projectId !== record.ref?.projectId) {
-      return 'DispatchCounter.lastMessageRef must belong to the same project';
+      return 'DispatchCounter.lastActionRef must belong to the same project';
     }
   }
   return null;

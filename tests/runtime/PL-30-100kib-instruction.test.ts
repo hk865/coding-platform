@@ -34,7 +34,7 @@ import { platformRoleProfile } from '../../src/core/agent-runtime/role-profiles.
 import type { PlanProposal } from '../../src/core/work-graph/model/plan-contracts.js';
 import { graphWrite, plain } from '../helpers/AG2b-collaboration-fixture.js';
 import { driveWorkflow, readQuery } from '../helpers/A2-restart-fixture.js';
-import { driverRead, startGoalDriver } from '../helpers/DRV-fixture.js';
+import { startGoalDriver } from '../helpers/DRV-fixture.js';
 import { plPlanChangeDraft } from '../helpers/PL-workflow-fixture.js';
 import { listed } from '../helpers/S7B-fixture.js';
 import { heartbeatUntil, proposalRefOf, readBody, readPlanningQuery } from '../helpers/IV-host-fixture.js';
@@ -55,6 +55,7 @@ const BIG = `PL30-BEGIN-${'x'.repeat(102_400 - 20)}-PL30-END`;
 const BIG_BYTES = 102_400;
 const BIG_HASH = createHash('sha256').update(BIG, 'utf8').digest('hex');
 const LONG_TASK_ID = 'pl30-long-work';
+const REVIEW_TASK_ID = 'pl30-review-candidate';
 const STAGE_ID = 'pl30-stage';
 const STAGE_TITLE = 'PL-30 stage title';
 const STAGE_DESCRIPTION = 'PL-30 stage description';
@@ -240,17 +241,27 @@ describe('PL-30: a 100 KiB task instruction reaches the Work Run and the review 
       expect(input).toContain(`stage: ${STAGE_TITLE} (${STAGE_ID})`);
       expect(input.indexOf(`stage: ${STAGE_TITLE}`)).toBeGreaterThan(at + BIG_BYTES);
 
-      // The review needs a candidate on the adopted plan; the long task changes, so its instruction is shown.
+      // The review needs a candidate on the adopted plan. A-13 (`p2-frozen.md:208/210/345`): the candidate comes
+      // from this Goal's real planning round (`sourceMessageRef` + `requestRef`) and only adds a new Task, so the
+      // author lineage is complete and no existing Task is touched.
       const adoptedPlan = await main.activePlan(goal);
       if (adoptedPlan === null) throw new Error('PL-30: no adopted plan to review against');
       const proposed = committed(await opened.post('plans/propose', graphWrite(S6A_SCOPE, {
         goalRef: goal, basedOn: adoptedPlan.ref,
         draft: plPlanChangeDraft(adoptedPlan, goal, {
-          planId: 'pl30-candidate', assignments: adoptedPlan.assignments ?? [], obligations: adoptedPlan.obligations,
-          tasks: adoptedPlan.tasks.map(task => task.taskId === LONG_TASK_ID
-            ? { ...task, estimatedLines: (task.estimatedLines ?? 0) + 1 } : task),
+          planId: 'pl30-candidate',
+          assignments: [...(adoptedPlan.assignments ?? []), {
+            taskId: REVIEW_TASK_ID, role: S6A_SECRETARY_ROLE.templateId, instruction: BIG,
+          }],
+          obligations: adoptedPlan.obligations,
+          tasks: [...adoptedPlan.tasks, {
+            taskId: REVIEW_TASK_ID, stageId: STAGE_ID, title: 'PL-30 review candidate task',
+            requirementLevel: 'required', taskKind: 'work', disposition: 'active', phase: 'pending',
+            scope: { kind: 'stage', stageId: STAGE_ID }, executionIntent: 'request_execution', sizeClass: 'small',
+          }],
         }),
         reason: { text: 'PL-30 100 KiB candidate', sources: [] },
+        sourceMessageRef: person.ref, requestRef: interventionPlanningQueryRefs(person.ref).queryJobRef,
       }, 'pl30-propose', [])), 'the PL-30 candidate proposal') as { ref: PlanProposal['ref'] };
       const reviewCandidate = ready<PlanProposal>((await opened.post('plans/proposal',
         plain(S6A_SCOPE, proposed['ref']))).body, 'the PL-30 review candidate');
@@ -264,7 +275,7 @@ describe('PL-30: a 100 KiB task instruction reaches the Work Run and the review 
       // The Host's own goal driver runs the candidate decision and the one system-round send; never a
       // hand-built `plan_review` intent.
       await opened.scripted.script(reviewer, [{ kind: 'calls', calls: [{ callId: 'pl30-review',
-        name: 'submit_plan_review', args: { verdict: 'fix', findings: [{ taskId: LONG_TASK_ID, text: 'PL-30 reviewed' }] } }] }]);
+        name: 'submit_plan_review', args: { verdict: 'fix', findings: [{ taskId: REVIEW_TASK_ID, text: 'PL-30 reviewed' }] } }] }]);
       await startGoalDriver(opened, goal, 'pl30-review');
       const reviewMessageRef = systemRoundMessageRef(S6A_SCOPE, head.value);
       expect(reviewMessageRef.status).toBe('ready');
@@ -272,13 +283,7 @@ describe('PL-30: a 100 KiB task instruction reaches the Work Run and the review 
       const reviewInbox = await heartbeatUntil(opened, () => listed(opened, 'inbox', reviewer),
         items => items.some(message => message.ref.messageId === reviewMessageRef.value.messageId), 16);
       const reviewSent = reviewInbox.some(message => message.ref.messageId === reviewMessageRef.value.messageId);
-      if (!reviewSent) {
-        const driver = await driverRead(opened, goal);
-        expect(reviewSent, 'the Host goal loop does not send the candidate\'s planreview: system '
-          + 'round. Stop point: WorkflowDependencies.planCandidates is not wired (the candidate arm rejects '
-          + 'unsupported before the send). Missing owner: L (composition root); the send itself is P4. Driver: '
-          + (driver.status === 'ready' ? JSON.stringify(driver.value.last) : JSON.stringify(driver))).toBe(true);
-      }
+      expect(reviewSent, 'the Host goal loop sends the sourced candidate\'s planreview: system round').toBe(true);
       const reviewQuery = await heartbeatUntil(opened,
         () => readPlanningQuery(opened, reviewMessageRef.value),
         read => (read?.run.run.executionState?.prepared ?? null) !== null, 16);

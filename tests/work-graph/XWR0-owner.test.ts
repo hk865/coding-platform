@@ -43,7 +43,8 @@ async function lineWithMessage(host: S6AHostWorld, label: string, extra: { goalR
   Promise<{ line: S6ASession; sent: SessionMessage }> {
   const line = await host.createSecretary(label);
   const sent = valueOf<SessionMessage>((await host.post('messages/send', graphWrite(S6A_SCOPE, {
-    recipient: line.ref, text: `${label}: please plan this`, intent: 'action_request', needsReply: true, ...extra,
+    recipient: line.ref, text: `${label}: please plan this`, needsReply: true,
+    entry: 'person_intervention' as const, ...extra,
   }, `${label}-person`))).body, 'committed', `the ${label} person message`);
   await host.scripted.script(line, [{ kind: 'text', text: `${label} answer` }]);
   return { line, sent };

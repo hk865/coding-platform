@@ -39,7 +39,7 @@ describe('A-03: the review text fallback through the reviewer Host line', () => 
         findings: [{ taskId: null, text: '可选意见' }] } },
     { label: 'bad terminal text', text: 'not a review answer', reply: null, parsed: null },
   ])('$label: the saved text, its reply and the card', async ({ label, text, reply, parsed }) => {
-    const opened = await openPLReviewCandidateWorld();
+    const opened = await openPLReviewCandidateWorld({ sourced: true });
     try {
       await opened.script([{ kind: 'text', text }]);
       await startGoalDriver(opened.world, opened.goal, `pl-review-text-${label.replaceAll(' ', '-')}-flow`);
@@ -113,7 +113,8 @@ describe('A-03: the review text fallback through the reviewer Host line', () => 
         expect(await opened.world.scripted.requests(opened.reviewer), 'A-03: no second review model request')
           .toHaveLength(1);
         expect(await sessionQueries(opened.world, opened.reviewer), 'A-03: no second review Query').toHaveLength(1);
-        expect(inbox.filter(message => message.intent === 'action_request'), 'A-03: no second review request')
+        expect(inbox.filter(message => message.sender.kind === 'host'
+          && message.sender.actor.kind === 'system' && message.needsReply === true), 'A-03: no second review request')
           .toHaveLength(1);
         expect((await opened.main.activePlan(opened.goal))?.ref, 'A-03: nothing was adopted').toEqual(proposal.basedOn);
       }
@@ -141,7 +142,7 @@ describe('A-03: the review text fallback through the reviewer Host line', () => 
   }, 120_000);
 
   it('fix as text: the goal loop sends planfix and the candidate is not adopted', async () => {
-    const opened = await openPLReviewCandidateWorld({ adviser: true });
+    const opened = await openPLReviewCandidateWorld({ adviser: true, sourced: true });
     try {
       await opened.script([{ kind: 'text', text: FIX_TEXT }]);
       await opened.world.scripted.script(opened.adviser!, [{ kind: 'text', text: 'A-03 fix round reply' }]);

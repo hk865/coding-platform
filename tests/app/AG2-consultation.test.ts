@@ -276,11 +276,12 @@ async function createSession(started: Started, requestId: string): Promise<{ ses
   return { sessionRef, sessionAggregateRef, revision: body.value.revision };
 }
 
-async function sendMessage(started: Started, recipient: SessionRef, text: string, requestId: string, intent: 'inquiry' | 'action_request' = 'inquiry'): Promise<SessionMessageRef> {
+async function sendConsultationMessage(started: Started, recipient: SessionRef, text: string, requestId: string): Promise<SessionMessageRef> {
   // §2.1 step 3 / BX-11: an inquiry names its own duration, so the send needs no
-  // injected default and no silent "no deadline".
+  // injected default and no silent "no deadline". P2 §2.1/§2.3: the consultation consumes only a copy
+  // question, so the question is stored as one (`answeredBy: 'copy'`) when it is sent.
   const response = await corePost(started.base, 'messages/send', started.token,
-    graphWrite({ recipient, text, intent, needsReply: true, deadlineMs: 86_400_000 }, requestId, []));
+    graphWrite({ recipient, text, needsReply: true, deadlineMs: 86_400_000, answeredBy: 'copy' }, requestId, []));
   expect(response.status).toBe(200);
   const body = await response.json() as WriteResult<SessionMessage>;
   expect(body).toMatchObject({ status: 'committed', value: { status: 'pending', recipient } });
@@ -332,7 +333,7 @@ describe('AG2 explicit consultation over the real Host HTTP', () => {
       await seedGoal(started, 'happy');
       const created = await createSession(started, 'ag2-happy-session');
       const recipientRef = created.sessionRef;
-      messageRef = await sendMessage(started, recipientRef, question, 'ag2-happy-message');
+      messageRef = await sendConsultationMessage(started, recipientRef, question, 'ag2-happy-message');
       // Receiving durable mail never starts a model and never wakes the idle
       // recipient or changes its lifecycle.
       expect(started.scripted.calls()).toBe(0);
@@ -437,7 +438,7 @@ describe('AG2 explicit consultation over the real Host HTTP', () => {
         .toMatchObject({ status: 'ready', value: { availability: 'busy' } });
 
       // Mail still lands while busy, and never wakes the recipient.
-      const messageRef = await sendMessage(started, recipient.sessionRef, question, 'ag2-busy-message');
+      const messageRef = await sendConsultationMessage(started, recipient.sessionRef, question, 'ag2-busy-message');
       expect(started.scripted.calls()).toBe(0);
       expect(await (await corePost(started.base, 'messages/inbox', started.token,
         plain({ recipient: recipient.sessionRef, page: { limit: 10 } }))).json())
@@ -466,19 +467,18 @@ describe('AG2 explicit consultation over the real Host HTTP', () => {
       const mismatch = await corePost(started.base, 'queries/submit', started.token,
         submitBody(mismatchRefs, mismatchIntent, 'ag2-mismatch-submit'));
       expect(await mismatch.json()).toMatchObject({ status: 'rejected' });
-      // Claim a real, correctly bound pending Query on the wrong Session; a
-      // missing Query would prove nothing about recipient ownership. The first
-      // message already has its derived Query, so use a fresh message identity.
-      const freshMessageRef = await sendMessage(started, recipient.sessionRef, 'AG2 wrong-session claim', 'ag2-wrong-message');
+      // P2 (p2-frozen.md:101, :133): a copy question is consumed only through the consumer's frozen derivation, so
+      // even a correctly bound submit for a fresh question that never derived is refused at the formal writer; no
+      // pending consultation Query exists that a wrong Session could claim.
+      const freshMessageRef = await sendConsultationMessage(started, recipient.sessionRef, 'AG2 wrong-session claim', 'ag2-wrong-message');
       const validRefs = consultationQueryRefs(freshMessageRef);
       const validIntent = consultationIntent(freshMessageRef, recipient.sessionRef, 'AG2 wrong-session claim', validRefs, 'ag2-valid-corr');
       expect(await (await corePost(started.base, 'queries/submit', started.token,
         submitBody(validRefs, validIntent, 'ag2-valid-submit'))).json())
-        .toMatchObject({ status: 'committed' });
-      const mismatchClaim = await corePost(started.base, 'queries/claim', started.token,
-        claimBody(validRefs, other.sessionAggregateRef, other.revision, 'ag2-mismatch-claim'));
-      expect([400, 403, 409]).toContain(mismatchClaim.status);
-      expect(await mismatchClaim.json()).toMatchObject({ status: 'rejected' });
+        .toMatchObject({ status: 'rejected', code: 'source_stale' });
+      expect(await (await corePost(started.base, 'queries/read', started.token, plain(validRefs.queryJobRef))).json())
+        .toMatchObject({ status: 'not_found' });
+      expect(started.scripted.calls()).toBe(1);
     } finally {
       await started.host.close();
     }
@@ -497,47 +497,34 @@ describe('AG2 explicit consultation over the real Host HTTP', () => {
     try {
       await seedGoal(started, 'window');
       const recipient = await createSession(started, 'ag2-window-recipient');
-      const messageRef = await sendMessage(started, recipient.sessionRef, question, 'ag2-window-message', 'action_request');
+      const messageRef = await sendConsultationMessage(started, recipient.sessionRef, question, 'ag2-window-message');
       const refs = consultationQueryRefs(messageRef);
       const intent = consultationIntent(messageRef, recipient.sessionRef, question, refs, 'ag2-window-corr');
       const submit = submitBody(refs, intent, 'ag2-window-submit');
 
-      // Public submit/claim/prepare/start save the official Answer with no reply
-      // association yet.
+      // P2 (p2-frozen.md:101, :133): the public submit cannot open the copy question's Query before the consumer
+      // froze its derivation, so the formal Answer can only come from the consumer; nothing runs and the reply
+      // slot stays empty.
       expect(await (await corePost(started.base, 'queries/submit', started.token, submit)).json())
-        .toMatchObject({ status: 'committed' });
-      expect(await (await corePost(started.base, 'queries/claim', started.token,
-        claimBody(refs, recipient.sessionAggregateRef, recipient.revision, 'ag2-window-claim'))).json())
-        .toMatchObject({ status: 'committed' });
-      const prepared = await corePost(started.base, 'queries/prepare', started.token,
-        plain({ queryRunRef: refs.queryRunRef, requestId: 'ag2-window-prepare' }));
-      const preparedBody = await prepared.json() as ReadResult<PreparedQueryExecution>;
-      expect(preparedBody).toMatchObject({ status: 'ready' });
-      if (preparedBody.status !== 'ready') throw new Error(`window preparation was not ready: ${JSON.stringify(preparedBody)}`);
-      const startedQuery = await corePost(started.base, 'queries/start', started.token,
-        plain({ prepared: preparedBody.value, consumerId: CONSUMER_ID, requestId: 'ag2-window-start' }));
-      const startedBody = await startedQuery.json() as ReadResult<QueryExecutionRecord>;
-      expect(startedBody).toMatchObject({ status: 'ready' });
-      if (startedBody.status !== 'ready') throw new Error(`window query start was not ready: ${JSON.stringify(startedBody)}`);
-      const firstAnswerRef = startedBody.value.answer?.ref;
-      if (firstAnswerRef === undefined) throw new Error('the window QueryRun did not record a formal answer');
-      expect(started.scripted.calls()).toBe(1);
-      // Before the consumer runs, the original message has no response slot.
+        .toMatchObject({ status: 'rejected', code: 'source_stale' });
+      expect(started.scripted.calls()).toBe(0);
       expect(await (await corePost(started.base, 'messages/read', started.token, plain(messageRef))).json())
         .toMatchObject({ status: 'ready', value: { status: 'pending', response: null } });
 
-      // The consumer must only attach the saved answer; no second model call.
+      // The consumer runs the one deterministic Query and attaches its formal Answer.
       const consultation = await corePost(started.base, 'workflow/consultation', started.token, plain(consultationInput(messageRef)));
-      // FIRST RED (Stage 1): the unpublished route answers 404.
       expect(consultation.status).toBe(200);
-      expect(await consultation.json()).toMatchObject({ status: 'ready', value: {
-        state: 'responded', answer: { ref: firstAnswerRef } } });
+      const answered = await consultation.json() as unknown;
+      expect(answered).toMatchObject({ status: 'ready', value: {
+        state: 'responded', answer: { answer: { answer: firstAnswer, runRef: refs.queryRunRef } } } });
+      const firstAnswerRef = asRecord(asRecord(asRecord(answered)['value'])['answer'])['ref'];
+      expect(firstAnswerRef).toMatchObject({ aggregateType: 'QueryJobAnswer' });
       expect(started.scripted.calls()).toBe(1);
 
-      // Replaying the original submit keeps the original result, and replaying
-      // the consumer keeps the original reply without a new run.
+      // The refused submit stays refused, and replaying the consumer attaches the
+      // saved Answer again without a new run.
       expect(await (await corePost(started.base, 'queries/submit', started.token, submit)).json())
-        .toMatchObject({ status: 'committed', replayed: true });
+        .toMatchObject({ status: 'rejected' });
       const replay = await corePost(started.base, 'workflow/consultation', started.token, plain(consultationInput(messageRef)));
       expect(replay.status).toBe(200);
       expect(await replay.json()).toMatchObject({ status: 'ready', value: {
@@ -546,7 +533,7 @@ describe('AG2 explicit consultation over the real Host HTTP', () => {
 
       // A different message gets its own deterministic identity and can never
       // bind the first message's saved Answer.
-      const otherMessage = await sendMessage(started, recipient.sessionRef, 'AG2 window second message', 'ag2-window-message-2');
+      const otherMessage = await sendConsultationMessage(started, recipient.sessionRef, 'AG2 window second message', 'ag2-window-message-2');
       const otherRefs = consultationQueryRefs(otherMessage);
       expect(otherRefs.queryJobRef.queryJobId).not.toBe(refs.queryJobRef.queryJobId);
       const other = await corePost(started.base, 'workflow/consultation', started.token, plain(consultationInput(otherMessage)));
@@ -571,34 +558,21 @@ describe('AG2 explicit consultation over the real Host HTTP', () => {
     try {
       await seedGoal(started, 'terminal');
       const recipient = await createSession(started, 'ag2-terminal-recipient');
-      const messageRef = await sendMessage(started, recipient.sessionRef, question, 'ag2-terminal-message');
+      const messageRef = await sendConsultationMessage(started, recipient.sessionRef, question, 'ag2-terminal-message');
       const refs = consultationQueryRefs(messageRef);
-      const intent = consultationIntent(messageRef, recipient.sessionRef, question, refs, 'ag2-terminal-corr');
 
-      // Drive the ONE deterministic Query to its real closed terminal through
-      // the public writers; the turn produces no bounded answer text.
-      expect(await (await corePost(started.base, 'queries/submit', started.token,
-        submitBody(refs, intent, 'ag2-terminal-submit'))).json()).toMatchObject({ status: 'committed' });
-      expect(await (await corePost(started.base, 'queries/claim', started.token,
-        claimBody(refs, recipient.sessionAggregateRef, recipient.revision, 'ag2-terminal-claim'))).json())
-        .toMatchObject({ status: 'committed' });
-      const prepared = await corePost(started.base, 'queries/prepare', started.token,
-        plain({ queryRunRef: refs.queryRunRef, requestId: 'ag2-terminal-prepare' }));
-      const preparedBody = await prepared.json() as ReadResult<PreparedQueryExecution>;
-      expect(preparedBody).toMatchObject({ status: 'ready' });
-      if (preparedBody.status !== 'ready') throw new Error(`terminal preparation was not ready: ${JSON.stringify(preparedBody)}`);
-      const startedQuery = await corePost(started.base, 'queries/start', started.token,
-        plain({ prepared: preparedBody.value, consumerId: CONSUMER_ID, requestId: 'ag2-terminal-start' }));
-      const startedBody = await startedQuery.json() as ReadResult<QueryExecutionRecord>;
-      expect(startedBody).toMatchObject({ status: 'ready' });
-      if (startedBody.status !== 'ready') throw new Error(`terminal query start was not ready: ${JSON.stringify(startedBody)}`);
-      expect(startedBody.value.run.run.status, 'the Query really ended closed').toBe('closed');
-      expect(startedBody.value.answer, 'a closed Query recorded no formal answer').toBeNull();
-      expect(startedBody.value.job.job.answerRefs).toEqual([]);
+      // P2 (p2-frozen.md:101, :133): the ONE deterministic Query is the consumer's own (the public submit cannot
+      // open it before the derivation); its turn produces no bounded answer text, so it ends closed.
+      const first = await corePost(started.base, 'workflow/consultation', started.token, plain(consultationInput(messageRef)));
+      expect(first.status).toBe(200);
+      await first.json();
+      const terminal = await (await corePost(started.base, 'queries/read', started.token, plain(refs.queryJobRef))).json();
+      expect(terminal, 'the Query really ended closed with no formal answer').toMatchObject({ status: 'ready', value: {
+        run: { run: { status: 'closed' } }, job: { job: { answerRefs: [] } } } });
       const callsAfterTerminal = started.scripted.calls();
       expect(callsAfterTerminal).toBe(1);
 
-      const consultation = await corePost(started.base, 'workflow/consultation', started.token, plain({ ...consultationInput(messageRef), budget: { maxTokens: null, deadline: null } }));
+      const consultation = await corePost(started.base, 'workflow/consultation', started.token, plain(consultationInput(messageRef)));
       expect(consultation.status).toBe(200);
       const body = await consultation.json() as unknown;
       expect(asRecord(body)).toMatchObject({ status: 'ready', value: {

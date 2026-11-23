@@ -121,7 +121,7 @@ export async function buildOverboundNoticesWorld(
     const sentMessages: SessionMessage[] = [];
     for (let index = 0; index < config.replies; index += 1) {
       sentMessages.push(committed(await mailbox.sendMessage(workContext(f, sourceClaim), { input: {
-        recipient: responderSession, text: `Undelivered reply ${index}`, intent: 'inquiry', needsReply: true, waitAfterSend: false },
+        recipient: responderSession, text: `Undelivered reply ${index}`, needsReply: true, waitAfterSend: false },
         meta: { requestId: f.newId(), expected: [] } })));
     }
     const replyOrder = [...sentMessages].sort((left, right) => {
@@ -142,7 +142,7 @@ export async function buildOverboundNoticesWorld(
     // Default (`sc-base`) path: send one message and reply to it immediately.
     for (let index = 0; index < config.replies; index += 1) {
       const sent = committed(await mailbox.sendMessage(workContext(f, sourceClaim), { input: {
-        recipient: responderSession, text: `Undelivered reply ${index}`, intent: 'inquiry', needsReply: true, waitAfterSend: false },
+        recipient: responderSession, text: `Undelivered reply ${index}`, needsReply: true, waitAfterSend: false },
         meta: { requestId: f.newId(), expected: [] } }));
       const replied = committed(await mailbox.respondMessage(workContext(f, responderClaim), { input: {
         messageRef: sent.ref, text: `Reply answer ${index}` },

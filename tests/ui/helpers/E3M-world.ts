@@ -69,7 +69,7 @@ export async function openMemberS7C(options: { firstRun?: 'ended' | 'held'; copy
     const copyRound = options.copy === true ? await askLine(s7c.world, module, 'E3M copy question', 'e3m-copy-question') : null;
     if (options.track === true) {
       const sent = asRecord((await s7c.world.post('messages/send', graphWrite(S6A_SCOPE, {
-        recipient: module, text: 'E3M track message', intent: 'action_request', needsReply: true,
+        recipient: module, text: 'E3M track message', needsReply: true,
       }, 'e3m-track-message'))).body);
       if (sent['status'] !== 'committed') throw new Error(`E3M: the track message did not commit: ${JSON.stringify(sent)}`);
     }

@@ -31,7 +31,7 @@ import type { DecisionQueueReadV1 } from '../../src/core/work-graph/model/decisi
 import { g8Check, g8PlanCall, g8PlanForm, type G8Check } from '../helpers/G8-world.js';
 import {
   expectB15, G8B_ROLE, G8B_TEMPLATE, g8bCheckReview, g8bSubjectOf, openG8BWorld, p0History,
-  P0_REVIEWER_TOOLS, p0ToolNames,
+  P0_REVIEWER_TOOLS, p0ToolNames, P2_REVIEW_ROUND_TOOLS,
 } from '../helpers/G8B-world.js';
 import { adviserToolResult } from '../helpers/K3L3-adviser-world.js';
 import type { S6AReply } from '../helpers/S6A-host-fixture.js';
@@ -101,10 +101,9 @@ describe('G8B-1a: a secretary\'s small change brings a new check; the adviser ap
     const history = await adviserToolResult({ world: r.w.world, adviser: r.adviser }, 'g8b-d1-approval-history',
       r.adviser, r.w.scope);
     expectB15(history, 'D1: the check review');
-    // 第四节手推：参谋名单多 `query_task_graph`、`query_ready_tasks`（`host.ts:477-481`），其余同审阅者。
+    // 批检查轮参谋和审阅者同一范围（S7；设计 §6 第 610 行，`p2-frozen.md:224`）：P0 的读名单加任、发、撤、告。
     expect([...(await p0ToolNames(r.w, r.adviser, r.adviserRequests))].sort(), 'D1: the check review tool list')
-      .toEqual([...P0_REVIEWER_TOOLS.slice(0, -1), 'query_task_graph', 'query_ready_tasks', 'run_readonly_command',
-        'submit_check_review'].sort());
+      .toEqual([...P0_REVIEWER_TOOLS, ...P2_REVIEW_ROUND_TOOLS, 'submit_check_review'].sort());
     expect(await r.w.planRevision(r.goal)).toBe(2);
     const entry = await r.w.steps.settingsEntry();
     expect(entry.checks?.find(item => item.checkId === 'g8b-d1-check')).toMatchObject(check);

@@ -43,11 +43,14 @@ async function actionRequests(target: S7C1World): Promise<number> {
       recipient: { projectId: session.record.ref.projectId, sessionId: session.record.ref.sessionId },
       page: { limit: 100 },
     }));
-    const body = read.body as { status: string; value?: { items: readonly { intent?: string }[] } };
+    const body = read.body as { status: string; value?: { items: readonly {
+      needsReply?: boolean; sender?: { kind?: string; actor?: { kind?: string } } }[] } };
     if (body.status !== 'ready' || body.value === undefined) {
       throw new Error(`the inbox of ${session.record.ref.sessionId} is not readable: ${JSON.stringify(body)}`);
     }
-    count += body.value.items.filter(message => message.intent === 'action_request').length;
+    // P2: a system round is a stored `needsReply` host-system send, never an `action_request` intent.
+    count += body.value.items.filter(message => message.needsReply === true
+      && message.sender?.kind === 'host' && message.sender.actor?.kind === 'system').length;
   }
   return count;
 }
@@ -103,7 +106,7 @@ describe('S-01: the pick basis and the adviser suggestion', () => {
     const messageRef = sent.result.value.ref;
     const read = await world.world.post('messages/read', plain(S6A_SCOPE, messageRef));
     expect(read.body).toMatchObject({ status: 'ready', value: {
-      ref: messageRef, intent: 'action_request', status: 'pending',
+      ref: messageRef, needsReply: true, status: 'pending',
       recipient: { projectId: adviser.ref.projectId, sessionId: adviser.ref.sessionId },
       goalRef: world.goal,
     } });

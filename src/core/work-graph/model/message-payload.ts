@@ -6,13 +6,15 @@
  *
  * Pure: no Goal, Run or Session read and no clock. `deadlineMs` is checked as a
  * finite number greater than 0; the `now + deadlineMs` overflow belongs to the
- * send/release deadline computation that has the injected clock.
+ * send deadline computation that has the injected clock.
  */
 import { rejected } from '../../../contracts/core/rejections.js';
 import type { CoreRejection, ReadResult } from '../../../contracts/core/results.js';
 import type { SessionRef } from '../../../contracts/core/identity.js';
-import type { SessionMessageIntentV1, SessionMessageRef } from '../../../contracts/core/session-message.js';
-import type { DispatchBasisV1, GoalRef } from '../../../contracts/ledger.js';
+import type {
+  MessageAnsweredByV1, MessageEntryV1, SessionMessageRef,
+} from '../../../contracts/core/session-message.js';
+import type { GoalRef } from '../../../contracts/ledger.js';
 import type { TaskTriple } from '../../../contracts/dispatch.js';
 import { GoalRefShape, SessionMessageRefShape, SessionRefShape, TaskTripleShape } from '../../../contracts/data-format-refs.js';
 import { checkShape } from '../../../contracts/validation/data-format.js';
@@ -21,10 +23,14 @@ import { hasOnlyKeys, isNonNeg, isPos, isRecord } from '../../../contracts/valid
 export type SendMessageV1 = {
   recipient: SessionRef;
   text: string;
-  intent: SessionMessageIntentV1 | null;
   needsReply: boolean;
   waitAfterSend: boolean;
-  expected: DispatchBasisV1 | null;   // the same shape as DispatchBasisV1; planRevision may be null
+  /** The sender chooses; omitting it at the tool boundary means `true`. */
+  wake: boolean;
+  /** `copy` only on the consultation question; `line` is the write-time default. */
+  answeredBy: MessageAnsweredByV1;
+  /** Only the direct-intervention Host entry supplies it; an agent cannot write it. */
+  entry: MessageEntryV1 | null;
   taskRef: TaskTriple | null;
   followupOf: SessionMessageRef | null;
   deadlineMs: number | null;          // inquiry only; a finite number > 0, overflow checked
@@ -39,8 +45,8 @@ export type RespondMessageV1 = {
 } & RespondBodyV1;
 
 const SEND_KEYS = [
-  'recipient', 'text', 'intent', 'needsReply', 'waitAfterSend',
-  'expected', 'taskRef', 'followupOf', 'deadlineMs', 'goalRef',
+  'recipient', 'text', 'needsReply', 'waitAfterSend', 'wake', 'answeredBy', 'entry',
+  'taskRef', 'followupOf', 'deadlineMs', 'goalRef',
 ] as const;
 const RESPOND_KEYS = ['messageRef', 'expectedRevision', 'text', 'reject', 'reason'] as const;
 
@@ -65,7 +71,7 @@ function optionalRef<T>(
 
 /**
  * `DispatchBasisV1` has `number | 'none'`, which no single field-table kind describes. The one check of a
- * non-null basis: the message codec's pins check calls it too.
+ * non-null basis: the dispatch acceptance's `expected` read calls it; send and the message codec do not.
  */
 export function dispatchBasisProblem(value: unknown): string | null {
   if (!isRecord(value) || Object.keys(value).length !== 3
@@ -94,10 +100,17 @@ export function normalizeSendMessageInput(raw: unknown): ReadResult<SendMessageV
   const text = raw['text'];
   if (typeof text !== 'string' || text.length === 0) return invalid('send text must be a non-empty string');
 
-  const intent = raw['intent'];
-  if (intent !== undefined && intent !== null
-    && intent !== 'notify' && intent !== 'inquiry' && intent !== 'action_request' && intent !== 'decision_request') {
-    return invalid('send intent must be notify, inquiry, action_request or decision_request');
+  const explicitWake = raw['wake'];
+  if (explicitWake !== undefined && typeof explicitWake !== 'boolean') {
+    return invalid('send wake must be a boolean');
+  }
+  const answeredBy = raw['answeredBy'];
+  if (answeredBy !== undefined && answeredBy !== 'line' && answeredBy !== 'copy') {
+    return invalid("send answeredBy must be 'line' or 'copy'");
+  }
+  const entry = raw['entry'];
+  if (entry !== undefined && entry !== null && entry !== 'person_intervention') {
+    return invalid("send entry must be 'person_intervention'");
   }
   const explicitNeedsReply = raw['needsReply'];
   if (explicitNeedsReply !== undefined && typeof explicitNeedsReply !== 'boolean') {
@@ -112,13 +125,6 @@ export function normalizeSendMessageInput(raw: unknown): ReadResult<SendMessageV
   const waitAfterSend = explicitWaitAfterSend === true;
   const needsReply = explicitNeedsReply === true || (explicitNeedsReply === undefined && waitAfterSend);
 
-  let expected: DispatchBasisV1 | null = null;
-  const expectedRaw = raw['expected'];
-  if (expectedRaw !== undefined && expectedRaw !== null) {
-    const problem = dispatchBasisProblem(expectedRaw);
-    if (problem !== null) return invalid(`send expected: ${problem}`);
-    expected = expectedRaw as DispatchBasisV1;
-  }
   const taskRef = optionalRef<TaskTriple>(raw, 'taskRef', TaskTripleShape, 'send taskRef');
   if (!taskRef.ok) return taskRef.rejection;
   const followupOf = optionalRef<SessionMessageRef>(raw, 'followupOf', SessionMessageRefShape, 'send followupOf');
@@ -137,10 +143,11 @@ export function normalizeSendMessageInput(raw: unknown): ReadResult<SendMessageV
     value: {
       recipient: raw['recipient'] as SessionRef,
       text,
-      intent: (intent ?? null) as SessionMessageIntentV1 | null,
       needsReply,
       waitAfterSend,
-      expected,
+      wake: explicitWake !== false,
+      answeredBy: (answeredBy ?? 'line') as MessageAnsweredByV1,
+      entry: (entry ?? null) as MessageEntryV1 | null,
       taskRef: taskRef.value,
       followupOf: followupOf.value,
       deadlineMs: (deadlineMs ?? null) as number | null,

@@ -1,7 +1,7 @@
 /**
- * L-routes-1 (book §5): the four message routes over the REAL Host, route table and composition root —
- * `messages/release` (the person's), `messages/withdraw` (the owner admits the person or the original sender) and the
- * two derived view reads; the Workflow's own release owns no route.
+ * L-routes-1: the person's routes over the REAL Host, route table and composition root —
+ * `tasks/hold/release` (a task hold) and `decisions/answer` (an `action_release` card) replace the old message
+ * release; `messages/withdraw` and the two derived view reads stay.
  *
  * Every prior state comes from the frozen 7A-1 fixture's public steps; every check reads a route or the public owner.
  * No store read, no hand-written fact, no model call. Expected values are hand-computed: a decision pins
@@ -33,44 +33,15 @@ async function openInquiryWorld(label: string) {
   return { ...opened, sent };
 }
 
-describe('L-routes-1: release over HTTP', () => {
-  it('the person approves and denies, and a system actor is refused before the owner runs', async () => {
-    const opened = await openInquiryWorld('l-release');
-    const inquiry = (label: string) => sendS7ASecretaryMessage(opened.world, { label, goalId: opened.goal.goalId },
-      opened.session, `S7A ${label} inquiry`);
-    const [second, third] = [await inquiry('l-release-second'), await inquiry('l-release-third')];
-    expect(opened.sent.message).toMatchObject({ revision: 1, release: 'awaiting', approvalRevision: null });
-
-    // A3: a delegating wrapper around the real owner, so the count (not only the body) proves the route's own person
-    // check answered before the owner ran. It returns the owner's result unchanged.
-    const owner = opened.world.platform.messages;
-    const realRelease = owner.releaseMessage.bind(owner);
-    let releaseCalls = 0;
-    owner.releaseMessage = async (ctx, request) => { releaseCalls += 1; return realRelease(ctx, request); };
-    try {
-      const approved = committed<SessionMessage>(await opened.world.post('messages/release',
-        graphWrite(S6A_SCOPE, { messageRef: opened.sent.message.ref, allow: true }, 'l-release-approve')),
-        'the approval');
-      expect(approved).toMatchObject({ release: 'approved' });
-      expect(ready<SessionMessage>(await opened.world.post('messages/read', plain(S6A_SCOPE, opened.sent.message.ref)),
-        'the approved message')).toEqual(approved);
-
-      expect(await opened.world.dispatch('messages/release', opened.world.systemContext(),
-        graphWrite(S6A_SCOPE, { messageRef: second.message.ref, allow: true }, 'l-release-system')))
-        .toMatchObject({ status: 'rejected', code: 'forbidden' });
-      expect(releaseCalls).toBe(1);
-      expect(ready<SessionMessage>(await opened.world.post('messages/read', plain(S6A_SCOPE, second.message.ref)),
-        'the untouched awaiting message')).toEqual(second.message);
-
-      const denied = committed<SessionMessage>(await opened.world.post('messages/release',
-        graphWrite(S6A_SCOPE, { messageRef: third.message.ref, allow: false }, 'l-release-deny')), 'the denial');
-      expect(denied).toMatchObject({ release: 'denied' });
-      expect(ready<SessionMessage>(await opened.world.post('messages/read', plain(S6A_SCOPE, third.message.ref)),
-        'the denied message')).toEqual(denied);
-      expect(releaseCalls).toBe(2);
-    } finally {
-      owner.releaseMessage = realRelease;
-    }
+describe('L-routes-1: hold release and card answer over HTTP', () => {
+  it('publishes the person routes for a hold release and an action-card answer', async () => {
+    // P2 moves the person's release from a message to a task hold and an
+    // `action_release` card: `tasks/hold/release` releases a hold, and the
+    // card answer stays `decisions/answer`. RED until the hold route exists.
+    const holdRoute = Object.entries(CORE_ROUTE_SPECS)
+      .find(([suffix]) => suffix === 'tasks/hold/release')?.[1];
+    expect(holdRoute).toMatchObject({ kind: 'graph_write' });
+    expect(CORE_ROUTE_SPECS['decisions/answer']).toMatchObject({ kind: 'graph_write' });
   });
 });
 
@@ -80,7 +51,7 @@ describe('L-routes-1: withdraw over HTTP', () => {
     worlds.push(opened.world);
     const send = (requestId: string, text: string) => opened.world.dispatch('messages/send',
       opened.world.humanContext(), graphWrite(S6A_SCOPE,
-        { recipient: opened.session.ref, text, intent: 'inquiry', needsReply: true }, requestId));
+        { recipient: opened.session.ref, text, needsReply: true }, requestId));
     const first = committed<SessionMessage>(await send('l-withdraw-first', 'S7A withdraw me'), 'the first send');
     const second = committed<SessionMessage>(await send('l-withdraw-second', 'S7A not yours'), 'the second send');
     const secondBefore = ready<SessionMessage>(await opened.world.post('messages/read', plain(S6A_SCOPE, second.ref)),
@@ -107,7 +78,7 @@ describe('L-routes-1: withdraw over HTTP', () => {
     const withdrawn = await holdS7AQueryRound(opened.world, { label: 'l-withdraw-own', goalId: opened.goal.goalId },
       async context => {
         const saved = committed<SessionMessage>(await opened.world.dispatch('messages/send', context,
-          graphWrite(S6A_SCOPE, { recipient: opened.session.ref, text: 'S7A own round', intent: 'inquiry',
+          graphWrite(S6A_SCOPE, { recipient: opened.session.ref, text: 'S7A own round',
             needsReply: true }, 'l-withdraw-own-send')), 'the round send');
         return committed<SessionMessage>(await opened.world.dispatch('messages/withdraw', context,
           graphWrite(S6A_SCOPE, { messageRef: saved.ref }, 'l-withdraw-own')), 'the sender\'s withdrawal');
@@ -126,7 +97,8 @@ describe('L-routes-1: the two view reads', () => {
       plain(S6A_SCOPE, ref)), 'the message view');
     expect(view.message).toEqual(opened.sent.message);
     expect(view.delivery).toEqual({ delivery: 'queued', deliveredTo: null, evidence: null, undeliveredReason: null });
-    expect(view.disposition).toEqual({ kind: 'not_released', release: 'awaiting' });
+    // P2 §2.2: the release gate is gone; an unwithdrawn, unresponded message is offerable.
+    expect(view.disposition).toEqual({ kind: 'offerable' });
 
     const page = ready<SessionMessageReadPageV1>(await opened.world.post('messages/inbox-view',
       plain(S6A_SCOPE, { recipient: opened.session.ref, page: { limit: 20 } })), 'the inbox view');
@@ -143,15 +115,5 @@ describe('L-routes-1: the two view reads', () => {
     expect(Object.keys(inbox)).toEqual(['items', 'cursors', 'nextCursor', 'sourceCursor']);
     expect(inbox.items).toHaveLength(1);
     expect(inbox.items[0]).toEqual(opened.sent.message);
-  });
-});
-
-describe('L-routes-1: the Workflow\'s release has no route', () => {
-  it('only messages/release binds releaseMessage', () => {
-    expect(Object.entries(CORE_ROUTE_SPECS).filter(([, spec]) => spec.binding === 'releaseMessage'))
-      .toEqual([['messages/release', { kind: 'graph_write', binding: 'releaseMessage',
-        owner: 'messages.releaseMessage' }]]);
-    expect(Object.entries(CORE_ROUTE_SPECS)
-      .filter(([suffix, spec]) => suffix.startsWith('workflow/') && spec.owner.includes('release'))).toEqual([]);
   });
 });

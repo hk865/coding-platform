@@ -36,7 +36,7 @@ import { createSourceAuthorityReader } from '../../src/core/work-graph/source-au
 import { readTaskClosure } from '../../src/core/work-graph/tasks/plan-readers.js';
 import type { AuthorizeConfiguration } from '../../src/core/work-graph/model/execution-entry-contracts.js';
 import type { GoalRef } from '../../src/contracts/ledger.js';
-import type { ScriptedModel } from './B2-runtime-fixture.js';
+import { deliveryFactsForFixture, type ScriptedModel } from './B2-runtime-fixture.js';
 import type { K3ReviewCardWorld } from './K3-review-card-fixture.js';
 import { GOAL_B } from './S5-decision-fixture.js';
 
@@ -228,6 +228,7 @@ export function createK3_35Runtime(world: K3ReviewCardWorld, options: K3_35Runti
     graphHistory,
     sessionOperations,
     kernelStores: options.kernelStores,
+    deliveryFacts: deliveryFactsForFixture,
     workspaceHost,
     sourceAuthority,
     host,

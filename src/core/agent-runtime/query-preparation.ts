@@ -23,8 +23,8 @@ import {
   type QueryAnswerShapeV1, type QueryJobIntentV1,
 } from '../../contracts/query-job.js';
 import {
-  checkReviewSubjectOfText, commandRerunAdviceSubjectOfText, planResumeOriginalQueryOfText, systemRoundOfText,
-  unknownCallAdviceSubjectOfText,
+  checkReviewSubjectOfText, commandRerunAdviceSubjectOfText, systemRoundOfText, unknownCallAdviceSubjectOfText,
+  type SystemRoundV1,
 } from '../../contracts/plan-round.js';
 import { parseInitialPlanningResponseV2 } from '../../contracts/initial-planning-parse.js';
 import type { FrozenHandoffBriefV1 } from '../../contracts/handoff-brief.js';
@@ -41,6 +41,7 @@ import type { PromptPackSourcePort } from '../../contracts/prompts/prompt-pack.j
 import { promptSelectionOf } from '../../contracts/prompts/prompt-set.js';
 import { renderTemplate } from '../../contracts/prompts/render-template.js';
 import { plainSessionRefToAggregate } from '../work-graph/sessions/session-record-codecs.js';
+import { isSystemRoundSender } from '../work-graph/sessions/message-record-codecs.js';
 import { readConsultationCreate } from '../work-graph/queries/platform-facts.js';
 import type { ConsultationCreateV1, ConsultationFactsV1 } from '../work-graph/model/session-contracts.js';
 import type { QueryNoteAdmissionV1 } from '../work-graph/model/secretary-note-contracts.js';
@@ -48,21 +49,21 @@ import type { SecretaryPreparationFactsV1 } from '../work-graph/model/secretary-
 import type { SecretaryHandoffFactsPort } from '../work-graph/model/secretary-lifecycle-contracts.js';
 import type { RequestFactsPort } from '../work-graph/tasks/request-facts.js';
 import { planningNoteAdmission, secretaryNoteAdmission } from '../work-graph/state/secretary-note.js';
-import { decisionActionPolicy } from '../work-graph/state/decision-policy.js';
-import { SECRETARY_QUERY_MAILBOX_TOOL_NAMES, SESSION_MAILBOX_TOOL_NAMES } from './communication-tools.js';
 import { CREATE_MEMBER_TOOL_NAME } from './member-tools.js';
-import { NOTE_TOOL_NAMES } from './note-tool.js';
-import { READ_REQUESTS_TOOL_NAME } from './request-read-tools.js';
+import { decisionActionPolicy } from '../work-graph/state/decision-policy.js';
 import type { ContextAssembler } from './context-assembler.js';
 import { createContextAssembler } from './context-assembler.js';
 import { queryPreparedSectionOrder, sectionOrderFor } from './context-rendering.js';
 import type { SecretaryHandoffPromptFactsV1 } from './context-secretary-recipe.js';
 import type { ConsultationResolvedFactV1 } from './consultation-facts-text.js';
-import { finalToolNamesOf, BUILTIN_TOOL_NAMES, RUNTIME_TOOL_NAMES } from './tool-group-assembly.js';
+import {
+  finalToolNamesOf, BUILTIN_TOOL_NAMES, QUERY_ROUND_COORDINATION_NAMES, queryRoundCoordinationNames,
+  queryRoundKindOf, RUNTIME_TOOL_NAMES,
+} from './tool-group-assembly.js';
 import { READONLY_COMMAND_TOOL_NAME } from './readonly-command-tool.js';
 import type { ContextQueryHistoryInputV1 } from './context-types.js';
 import type { PlanningQuestionReader } from '../work-graph/tasks/planning-question-reader.js';
-import { hostContextIn } from '../work-graph/tasks/plan-lineage.js';
+import { hostContextIn, trustedSystemRoundOf } from '../work-graph/tasks/plan-lineage.js';
 import type { PlanProposal } from '../work-graph/model/plan-contracts.js';
 import { deriveFuturePlanDelta, type FuturePlanDelta } from '../work-graph/tasks/plan-validation.js';
 import { isQuestionAskRound } from '../work-graph/tasks/request-service.js';
@@ -85,36 +86,6 @@ export { QUERY_MANIFEST_CONTENT_TYPE };
 export const MAX_QUERY_MANIFEST_BYTES = ARTIFACT_MAX_SIZE_BYTES;
 
 /**
- * The read-only Query ceiling: no file mutation, no shell, no mailbox writer and no plan or member writer,
- * regardless of what the Host grant or the Role ceiling declare. `propose_future_plan` stays out (coordination):
- * an agent plan write is admitted only for a work Run holding the Task lease (plan-write-admission.ts), and a
- * planning round's candidate is written by the platform from the round's answer. The two whiteboard reads are
- * reads and pass (121-114). Declaring a name here grants nothing; it is the outer intersection applied AFTER the
- * Host grant and Role ceiling.
- */
-const FORBIDDEN_QUERY_TOOL_NAMES: ReadonlySet<string> = new Set<string>([
-  'write', 'edit', 'shell', ...SESSION_MAILBOX_TOOL_NAMES, 'propose_future_plan', CREATE_MEMBER_TOOL_NAME,
-  READ_REQUESTS_TOOL_NAME,
-]);
-/** Only a secretary request round may select these four. */
-const SECRETARY_QUERY_TOOL_NAMES: ReadonlySet<string> = new Set<string>([
-  ...SECRETARY_QUERY_MAILBOX_TOOL_NAMES, CREATE_MEMBER_TOOL_NAME, READ_REQUESTS_TOOL_NAME,
-]);
-/** A cold-start exploration round may also select `read_requests` (the request it explores from). */
-const EXPLORATION_QUERY_TOOL_NAMES: ReadonlySet<string> = new Set<string>([READ_REQUESTS_TOOL_NAME]);
-/** 121-114: the adviser's own planning round may create an executor line. */
-const ADVISER_QUERY_TOOL_NAMES: ReadonlySet<string> = new Set<string>([CREATE_MEMBER_TOOL_NAME]);
-/** The three rounds are exclusive: a request round, a `role_exploration` round, an `intervention_planning` round. */
-function forbiddenQueryToolNames(
-  secretaryRound: boolean, explorationRound: boolean, memberRound: boolean,
-): ReadonlySet<string> {
-  if (!secretaryRound && !explorationRound && !memberRound) return FORBIDDEN_QUERY_TOOL_NAMES;
-  const allowed = secretaryRound ? SECRETARY_QUERY_TOOL_NAMES
-    : explorationRound ? EXPLORATION_QUERY_TOOL_NAMES : ADVISER_QUERY_TOOL_NAMES;
-  return new Set([...FORBIDDEN_QUERY_TOOL_NAMES].filter(name => !allowed.has(name)));
-}
-
-/**
  * 121-114: the one Query besides the secretary's request round that keeps `create_member`: an adviser's
  * intervention planning round in the planning shape or the Host-system text shape (null). A review round and
  * every other system-round shape is not one. Every other Query keeps the name out for a product rule
@@ -129,18 +100,6 @@ export function adviserMemberRound(round: {
 }): boolean {
   return round.executionKind === 'intervention_planning' && round.duty === 'adviser'
     && (round.shape === 'plan_round' || round.shape === null);
-}
-
-/**
- * R7（B20）：人发给执行者线的干预规划轮（`plan_round`）不挂注记工具。规划轮注记的作者只认参谋、秘书
- * （`planning-query-run.ts` 的规划轮解析），给了也必被拒；准备、启动、WorkGraph 授权三处投影用这一条规则。
- */
-export function executorPlanRound(round: {
-  executionKind: QueryJobIntentV1['execution']['kind'];
-  shape: QueryAnswerShapeV1 | null;
-  duty: PlatformDutyV1 | null;
-}): boolean {
-  return round.executionKind === 'intervention_planning' && round.duty === 'executor' && round.shape === 'plan_round';
 }
 
 function ownContext(ctx: CoreCallContext): CoreCallContext | null {
@@ -258,26 +217,42 @@ export function projectQueryConfiguration(input: {
   permissions: { tools: string[]; writeScope: [] };
   hostTemplate: PreparedQueryManifestV1['hostTemplate'];
   budget: RuntimeBudget;
+  /** The round Session's formal duty, from the same read that fixed `shape`; null when the Host and the Role disagree. */
+  duty: PlatformDutyV1 | null;
 } {
   // A non-request round's frozen shape is `queryAnswerShapeOf(execution, null)` (the preparation's own call). A duty
   // the Host and the Role disagree on is not the adviser's; the context recipe refuses that round anyway.
   const duty = effectiveDuty(input.roleResolution, input.host, input.sessionRole);
   const dutyValue = 'duty' in duty ? duty.duty : null;
   const shape = queryAnswerShapeOf(input.execution, null);
-  const memberRound = adviserMemberRound({ executionKind: input.execution.kind, shape, duty: dutyValue });
-  const base = forbiddenQueryToolNames(input.secretaryRound, input.explorationRound === true, memberRound);
-  const forbidden = executorPlanRound({ executionKind: input.execution.kind, shape, duty: dutyValue })
-    ? new Set([...base, ...NOTE_TOOL_NAMES]) : base;
+  // §2.6: the same round projection the start and final list use. The request
+  // mark is the frozen `secretaryRound`; a copy is a saved-message consultation;
+  // every other round follows its duty and answer shape.
+  const roundAllowed = queryRoundCoordinationNames(queryRoundKindOf({
+    duty: dutyValue ?? 'unknown',
+    noteClass: input.secretaryRound ? 'secretary' : 'none',
+    answerTools: shape,
+    explorationRound: input.explorationRound === true,
+    readOnlyCopy: input.execution.kind === 'semantic_query' && input.execution.consultation !== undefined,
+  }));
+  // §2.6: the secretary builds only in its request round; the adviser's one
+  // non-request round is `adviserMemberRound`. One rule, used by start too.
+  const memberRound = input.secretaryRound
+    || adviserMemberRound({ executionKind: input.execution.kind, shape, duty: dutyValue });
   const ceiling = input.roleResolution.status === 'resolved'
     ? new Set(input.roleResolution.spec.permissions.tools)
     : null;
-  const tools = input.host.tools.filter(tool => !forbidden.has(tool)
+  const alwaysForbidden = new Set(['write', 'edit', 'shell', 'propose_future_plan']);
+  const tools = input.host.tools.filter(tool => !alwaysForbidden.has(tool)
+    && (!QUERY_ROUND_COORDINATION_NAMES.has(tool) || roundAllowed.has(tool))
+    && (tool !== CREATE_MEMBER_TOOL_NAME || memberRound)
     && (ceiling === null || ceiling.has(tool)));
   return {
     configurationRevision: input.host.configurationRevision,
     permissions: { tools, writeScope: [] },
     hostTemplate: input.host.hostTemplate === null ? null : { ...input.host.hostTemplate },
     budget: tightenRuntimeBudget(input.requested, input.host.budget),
+    duty: dutyValue,
   };
 }
 
@@ -510,33 +485,22 @@ export function createQueryPreparation(deps: QueryPreparationDependencies, conte
       }
       const shape = queryAnswerShapeOf(
         execution, secretaryFacts === null ? null : secretaryFacts.executionKind, planTurn);
-      let hostSystemPlanningSource = false;
-      if (shape === null && execution.kind === 'intervention_planning') {
-        if (deps.messages === undefined) {
-          return rejected('unavailable', 'the planning source read is not bound');
-        }
-        let source;
-        try {
-          // The source lives in its recipient line's workspace, which may differ from the Query's (the Goal's).
-          const sourceRef = execution.sourceMessageRef!;
-          source = await deps.messages.readMessage(hostContextIn(owned, sourceRef.workspaceId), sourceRef);
-        } catch (error) {
-          return rejected('unavailable', `the planning source message read failed: ${messageOf(error)}`);
-        }
-        if (source.status !== 'ready') {
-          return rejected('unavailable', 'the planning source message could not be read');
-        }
-        const message = source.value;
-        hostSystemPlanningSource = message.sender.kind === 'host'
-          && message.sender.actor.kind === 'system' && message.intent === 'action_request';
-      }
+      // A gate's saved overlap-note is the one text-shaped adviser/secretary round
+      // (`planningAnswerShapeOf`). The Query carries the gate owner's verified proof
+      // (`overlapNote`, set only after the saved `noteRequest.messageRef` matched), so
+      // preparation reads that frozen flag; the sender's identity proves nothing.
+      const gateTextNote = execution.kind === 'intervention_planning'
+        && execution.answerShape === 'text'
+        && execution.overlapNote === true
+        && (projected.duty === 'adviser' || projected.duty === 'secretary');
       const noteAdmission: QueryNoteAdmissionV1 = secretaryFacts === null
         ? planningNoteAdmission({
             answerShape: shape,
             effectiveGoalId: goal === null ? null : goal.ref.goalId,
             planRef: focusPlan === null ? null : focusPlan.ref,
-            hostSystemPlanningSource,
+            hostSystemPlanningSource: gateTextNote,
             roleExploration: explorationRound,
+            executorTextRound: projected.duty === 'executor' && !consultationRound,
           })
         : secretaryNoteAdmission({
             requestRoot: secretaryFacts.request.requestRoot,
@@ -554,9 +518,16 @@ export function createQueryPreparation(deps: QueryPreparationDependencies, conte
         && decisionActionPolicy({ autonomy: goal.settings.autonomy, action: 'refine_future',
           actorClass: 'system', countedNext: null, cap: 0 }) === 'automatic')
         || (shape === 'plan_round' && isQuestionAskRound(record.job));
+      // The same member-round rule the projection and start use: the secretary's
+      // request round plus the adviser's one planning round.
+      const memberRoundFlag = requestRound || adviserMemberRound({
+        executionKind: execution.kind, shape, duty: projected.duty,
+      });
       const finalNames = finalToolNamesOf({
         callKind: 'query',
         explorationRound,
+        readOnlyCopy: consultationRound,
+        adviserMemberRound: memberRoundFlag,
         noteAdmission,
         // Preparation freezes only the names this Runtime knows; the start
         // checks the real selection and rejects an unknown name first.
@@ -567,6 +538,9 @@ export function createQueryPreparation(deps: QueryPreparationDependencies, conte
         frozenSource: builtinTools.includes('read'),
         materialTools: false,
         goalBound: goal !== null,
+        // The §2.6 round is named by the existing frozen facts: the request/planning
+        // note class, the frozen answer shape and the duty this projection already read.
+        ...(projected.duty === null ? {} : { duty: projected.duty }),
         // The frozen answer shape follows the request round's own execution
         // kind, never the Host grant or the Role ceiling.
         answerTools: shape,
@@ -576,9 +550,10 @@ export function createQueryPreparation(deps: QueryPreparationDependencies, conte
         // Query builds graph/read-only tools and secretary-admitted note tools.
         owners: {
           mailbox: true, decisionMessages: true, applicationReceipt: true,
-          sessions: true, plans: true, graph: true, notes: true,
+          plans: true, graph: true, notes: true,
           unknownCallReviews: true, commandRerunRequests: true,
           architectureProposals: explorationRound,
+          actionRequests: true, claimHolds: true,
         },
         readonlyCommand: {
           requested: readonlyRequested,
@@ -743,11 +718,42 @@ export function createQueryPreparation(deps: QueryPreparationDependencies, conte
       }
       // A `planresume:` Query carries only the head and the original Query ref;
       // the original question and the per-card answers are assembled here from
-      // the saved facts (spec §5.3.5 #8). No source is rebuilt and no second
-      // scan is added.
-      const resumeOriginal = execution.kind === 'intervention_planning'
-        ? planResumeOriginalQueryOfText(requestQuestion) : null;
-      if (resumeOriginal !== null) {
+      // the saved facts (spec §5.3.5 #8). The source must be the round the one
+      // formal recognition accepted (`trustedSystemRoundOf`, receipt and full
+      // message ref); its second line alone never enters this assembly. Only a
+      // shaped round can be a resume: a text-shaped gate note has no resume and
+      // is not read here.
+      let resumeRound: Extract<SystemRoundV1, { kind: 'planresume' }> | null = null;
+      if (execution.kind === 'intervention_planning' && shape !== null) {
+        if (deps.messages === undefined) {
+          return rejected('unavailable', 'the planning source read is not bound');
+        }
+        let planningSource;
+        try {
+          // The source lives in its recipient line's workspace, which may differ from the Query's (the Goal's).
+          const sourceRef = execution.sourceMessageRef!;
+          planningSource = await deps.messages.readMessage(hostContextIn(owned, sourceRef.workspaceId), sourceRef);
+        } catch (error) {
+          return rejected('unavailable', `the planning source message read failed: ${messageOf(error)}`);
+        }
+        if (planningSource.status !== 'ready') {
+          return rejected('unavailable', 'the planning source message could not be read');
+        }
+        if (isSystemRoundSender(planningSource.value.sender)) {
+          const hostSendRef = deps.messages.readHostSendMessageRef;
+          if (hostSendRef === undefined) {
+            return rejected('unavailable', 'the Host send receipt read is not bound');
+          }
+          const trusted = await trustedSystemRoundOf(owned, { messages: {
+            readMessage: deps.messages.readMessage,
+            readMessageBody: deps.messages.readMessageBody,
+            readHostSendMessageRef: hostSendRef,
+          } }, planningSource.value, requestQuestion, queryRunRef.workspaceId);
+          if (trusted.status !== 'ready') return trusted;
+          if (trusted.value !== null && trusted.value.kind === 'planresume') resumeRound = trusted.value;
+        }
+      }
+      if (resumeRound !== null) {
         if (deps.planningQuestions === undefined) {
           return rejected('unsupported', 'the planning question reader is not bound');
         }
@@ -756,7 +762,15 @@ export function createQueryPreparation(deps: QueryPreparationDependencies, conte
         }
         if (goal === null) return rejected('invalid', 'no goal');
         // The original Query lives with the same Goal as this one, in this Query's workspace.
-        const originalRefs = interventionPlanningQueryRefs(resumeOriginal, queryRunRef.workspaceId);
+        // The recognized round's `queryJobId` is the original Query's real id,
+        // already computed for the part it was written under; a head that
+        // matches neither part keeps today's plain-`message` read.
+        const headerQueryJobId = resumeRound.queryJobId;
+        const cardRefs = interventionPlanningQueryRefs(resumeRound.originalMessageRef,
+          queryRunRef.workspaceId, 'decision_answer');
+        const part = cardRefs.queryJobRef.queryJobId === headerQueryJobId ? 'decision_answer' : 'message';
+        const originalRefs = interventionPlanningQueryRefs(resumeRound.originalMessageRef,
+          queryRunRef.workspaceId, part);
         const original = await deps.queryExecution.readQueryExecution(owned, originalRefs.queryRunRef);
         if (original.status !== 'ready') return original;
         const answerRef = original.value.job.job.answerRefs.at(-1);
@@ -879,6 +893,10 @@ export function createQueryPreparation(deps: QueryPreparationDependencies, conte
         history = { callKind: 'query', hasCompletedCursor: false };
       } else if (sessionBasis !== undefined) {
         history = { callKind: 'query', sessionBasis };
+      } else if (shape === 'plan_review' || shape === 'exec_review' || shape === 'check_review') {
+        // B15 (design 5.3): a formal review round's material range is fixed, so
+        // it freezes to this turn only and never takes the line's earlier history.
+        history = { callKind: 'query', hasCompletedCursor: false };
       } else {
         history = { callKind: 'query', hasCompletedCursor: record.session.historyCursor !== null };
       }

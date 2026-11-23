@@ -156,7 +156,6 @@ describe('DRV goal driver queue: D-F3b', () => {
         ctx: () => world.fixture.ctx,
         sessions: platform.sessions,
         facts: platform.sessionFacts,
-        released: platform.messageRelease,
         // PL L-05: the same platform's published candidate reads and its real
         // message/Query/Plan owners, not empty or `not_found` stand-ins.
         planCandidates: (...args) => {
@@ -167,6 +166,8 @@ describe('DRV goal driver queue: D-F3b', () => {
           acceptedReads += 1;
           return platform.planReaders.acceptedCandidatesOf(...args);
         },
+        abandonedCandidateTailsOf: platform.planReaders.abandonedCandidateTailsOf.bind(platform.planReaders),
+        completedGoalsOf: platform.planReaders.completedGoalsOf.bind(platform.planReaders),
         messages: platform.messages,
         queries: platform.queries,
         plans: platform.plans,

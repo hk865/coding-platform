@@ -30,12 +30,15 @@ import { plainSessionRefToAggregate } from '../../src/core/work-graph/sessions/s
 import { createSessionDirectory } from '../../src/core/work-graph/sessions/session-directory.js';
 import { unknownSessionDuty } from './session-duty-double.js';
 import { createTaskClaimService } from '../../src/core/work-graph/tasks/claim-service.js';
+import { createSessionMailbox } from '../../src/core/work-graph/communication/mailbox-service.js';
+import { createQueryJobService } from '../../src/core/work-graph/queries/query-job-service.js';
+import { planSourceRootOf } from './task-claim-fixture.js';
 import { createExecutionEntryService } from '../../src/core/work-graph/tasks/execution-entry-service.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
 import { PROJECT_ID, T, type S5DecisionFixture } from './S5-decision-fixture.js';
 import { openManyTaskWorld, type ManyTaskWorldClaimStack } from './S2A-notices-support.js';
 import { preparationHost, prepareTaskForReal } from './task-claim-fixture.js';
-import { committed, storedRecord } from './S5-queue-support.js';
+import { committed, mailboxDependencies, storedRecord } from './S5-queue-support.js';
 
 export const W2_WORKSPACE_ID = 'W2';
 export const W2_SCOPE: WorkspaceScope = { projectId: PROJECT_ID, workspaceId: W2_WORKSPACE_ID };
@@ -72,7 +75,9 @@ export async function w2ClaimStack(f: S5DecisionFixture): Promise<ManyTaskWorldC
   const roles = createRoleConfigurationService({ records: f.records, now: f.now, eventId: f.newId });
   const sessionsPort = createSessionDirectory({ records: f.records,
     knowledge: f.knowledge, lookups: f.records, duty: unknownSessionDuty });
-  const claimService = createTaskClaimService({ records: f.records, roles, now: f.now, newId: f.newId });
+  const claimService = createTaskClaimService({ records: f.records, roles, now: f.now, newId: f.newId,
+    planSourceRoot: planSourceRootOf({ messages: createSessionMailbox(mailboxDependencies(f)), plans: f.b2.base.plans,
+      queries: createQueryJobService({ records: f.records, now: f.now, eventId: f.newId }) }) });
   const reads = createRunStateReader({ records: f.records });
   const kernelStores = await createKernelStoreRegistry({ entries: [{ adapterId: 's5-kernel', storeKey: 's5-kernel-store',
     workspace: W2_SCOPE, databasePath: join(f.base.directory, 's5-kernel.sqlite') }] });

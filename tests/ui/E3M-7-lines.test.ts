@@ -29,7 +29,7 @@ const w1Archived = () => slot.use('W1-archived', async () => {
   const opened = await openMemberS7C();
   try {
     const sent = asRecord((await opened.s7c.world.post('messages/send', graphWrite(S6A_SCOPE, {
-      recipient: opened.work, text: ARCHIVED_TEXT, intent: 'action_request', needsReply: true,
+      recipient: opened.work, text: ARCHIVED_TEXT, needsReply: true,
     }, 'e3m-archived-history'))).body);
     if (sent['status'] !== 'committed') throw new Error(`E3M-7: the work line's message did not commit: ${JSON.stringify(sent)}`);
     await opened.s7c.world.archive(opened.s7c.lines.work);
@@ -117,12 +117,12 @@ describe('E3M-7 the line view and the other Session lines', () => {
       press(composer.send, 'the line-view send');
       await settle(() => booted.receipts.some((receipt) => receipt.route === 'messages/send')
         && userTexts(page.root).includes('E3M inline intervention'), 5_000);
-      /* 具名改坏（测试内）: 期望的 `intent` 写成 `notify`；本行的 `input` 红。 */
+      /* 具名改坏（测试内）: 期望的 `entry` 省略；本行的 `input` 红。 */
       const calls = callsOf(log, 'messages/send');
       expect(calls).toHaveLength(1);
       expect(calls[0]!.input).toEqual({
         recipient: { projectId: 'ag2b-collab-project', sessionId: w.work.sessionId },
-        text: 'E3M inline intervention', intent: 'action_request', needsReply: true,
+        text: 'E3M inline intervention', entry: 'person_intervention', needsReply: true,
       });
       expect(calls[0]!.input).not.toHaveProperty('waitAfterSend');
       expect(calls[0]!.input).not.toHaveProperty('deadlineMs');
@@ -192,7 +192,7 @@ describe('E3M-7 the line view and the other Session lines', () => {
       expect(calls).toHaveLength(1);
       expect(calls[0]!.input).toEqual({
         recipient: { projectId: 'ag2b-collab-project', sessionId: w.work.sessionId },
-        text: 'E3M successor intervention', intent: 'action_request', needsReply: true,
+        text: 'E3M successor intervention', entry: 'person_intervention', needsReply: true,
       });
       expect(receiptBody(booted, 'messages/send')?.['status']).toBe('committed');
       expect(userTexts(page.root)).toContain('E3M successor intervention');

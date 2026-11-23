@@ -25,10 +25,11 @@
  * success, and a write that already committed is never reported as
  * "not committed" because the signal changed afterwards.
  *
- * Deprecated read tools (slice 3, T5): `query_task_graph` and `query_ready_tasks`
- * are superseded by the read-only `look_graph`/`find_graph` graph tools in new
- * grants. The exports and behaviour stay unchanged for already-bound Runs and
- * explicit old callers; the remaining writer tool is unaffected.
+ * The two plan reads (`query_task_graph`/`query_ready_tasks`) are the tool
+ * matrix's plan-read column for Goal-bound rounds, beside the read-only
+ * `look_graph`/`find_graph` graph tools: they read the same adopted Plan through
+ * the SAME `PlanTaskPort` the Host reads. The writer `propose_future_plan` is
+ * unaffected.
  */
 import type { CommitCursor } from '../../contracts/command-event.js';
 import type { CoreCallContext } from '../../contracts/core/call-context.js';

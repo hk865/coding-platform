@@ -63,11 +63,11 @@ describe('C1–C3, C6: the round sends, reads its own box and replies', () => {
     expect(received?.sender).toEqual({ kind: 'query_run', sessionRef: p1.lines.A.ref,
       queryRunRef: a.ctx.principal.queryRunRef, generation: await generationOf(p1, a) });
     expect(await p1.world.platform.messages.readMessage(a.ctx, sent.value.ref)).toMatchObject({ status: 'ready' });
-    // C6 (ruling S2): the Host reads A's outbox page; it is ready and skips the query_run send.
+    // C6 (ruling S2, P2): the Host reads A's outbox page; it is ready and INCLUDES the query_run send.
     const outbox = (await p1.world.post('messages/outbox', plain(S6A_SCOPE, {
       senderSession: p1.lines.A.ref, page: { limit: 20 } }))).body as { status: string; value?: { items: SessionMessage[] } };
     expect(outbox.status).toBe('ready');
-    expect(outbox.value?.items.map(item => item.ref.messageId)).not.toContain(sent.value.ref.messageId);
+    expect(outbox.value?.items.map(item => item.ref.messageId)).toContain(sent.value.ref.messageId);
   }, LONG);
 
   it('C2: the round reads its own inbox page and items; another Session\'s message stays closed', async () => {

@@ -164,13 +164,14 @@ export function lineBinding(
   id: string,
   role: ReturnType<typeof platformRoleProfile>['template'],
   label: string,
+  tools: readonly string[] = ['read'],
 ): S6AExtraBinding {
   const roleBinding = {
     schemaVersion: 1 as const, bindingId: id, templateId: role.templateId,
     templateRevision: role.templateRevision, bindingVersion: 1, policyRevision: 'legacy-template',
   };
   return {
-    binding: bindingOf(id, role, label, ['read']),
+    binding: bindingOf(id, role, label, [...tools]),
     workflow: {
       workspace: S6A_SCOPE, sessionRole: role, roleBinding,
       budget: { tokenBudget: 1_000_000, deadline: null },

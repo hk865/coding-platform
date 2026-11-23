@@ -181,7 +181,7 @@ export async function adviserRoundsOf(w: K3L3World, prefix = 'ucr:'): Promise<Ar
   const rounds: Array<{ message: SessionMessage; text: string }> = [];
   for (const message of await listed(w.world, 'inbox', w.adviser)) {
     const text = await readBody(w.world, message.ref, 'message');
-    if (message.intent === 'action_request' && text.startsWith(prefix)) rounds.push({ message, text });
+    if (message.sender.kind === 'host' && message.needsReply === true && text.startsWith(prefix)) rounds.push({ message, text });
   }
   return rounds;
 }
@@ -190,7 +190,7 @@ export async function adviserRoundsOf(w: K3L3World, prefix = 'ucr:'): Promise<Ar
 export async function adviserNoticesOf(w: K3L3World): Promise<string[]> {
   const notices: string[] = [];
   for (const message of await listed(w.world, 'inbox', w.adviser)) {
-    if (message.sender.kind === 'host' && message.intent === 'notify') notices.push(await readBody(w.world, message.ref, 'message'));
+    if (message.sender.kind === 'host' && message.needsReply !== true) notices.push(await readBody(w.world, message.ref, 'message'));
   }
   return notices;
 }
@@ -206,12 +206,34 @@ Promise<{ query: QueryJobRecord; source: SessionMessage }> {
     || value?.run.run.status === 'closed' || value?.run.run.executionState?.phase === 'settled';
   const query = await heartbeatUntil(w.world, () => readPlanningQuery(w.world, round.ref), ended, 32);
   if (query === null || !ended(query)) throw new Error(`K3L3: the adviser Query of ${round.ref.messageId} did not end`);
-  const source = await heartbeatUntil(w.world, () => readS7BMessage(w.world, round.ref),
-    message => message.response !== null || message.withdrawnAt !== null, 16);
-  if (source.response === null && source.withdrawnAt === null) {
-    throw new Error(`K3L3: the Host did not close the adviser round ${round.ref.messageId}`);
-  }
+  const settled = await heartbeatUntil(w.world, () => adviserRoundSettled(w, round.ref), value => value, 16);
+  if (!settled) throw new Error(`K3L3: the Host did not close the adviser round ${round.ref.messageId}`);
+  const source = await readS7BMessage(w.world, round.ref);
   return { query, source };
+}
+
+/**
+ * The round is settled when the Host replied or withdrew it, or (P2, `p2-frozen.md:165/:168`) when the committed
+ * formal `no_answer` notice ended it: the adviser's own message is then not withdrawn.
+ */
+async function adviserRoundSettled(w: K3L3World, messageRef: SessionMessage['ref']): Promise<boolean> {
+  const view = await w.world.post('messages/view', plain(S6A_SCOPE, messageRef));
+  const body = view.body as { status?: string; value?: { message: SessionMessage; roundEnding?: { kind: string } } };
+  if (body.status !== 'ready' || body.value === undefined) {
+    throw new Error(`K3L3: the adviser source view is not ready: ${JSON.stringify(body)}`);
+  }
+  return body.value.message.response !== null || body.value.message.withdrawnAt !== null
+    || body.value.roundEnding?.kind === 'no_answer';
+}
+
+/** The committed `no_answer` round ending of one adviser round, through the public `messages/view`. */
+export async function adviserRoundEndingOf(w: K3L3World, round: SessionMessage): Promise<'no_answer' | null> {
+  const view = await w.world.post('messages/view', plain(S6A_SCOPE, round.ref));
+  const body = view.body as { status?: string; value?: { roundEnding?: { kind: string } } };
+  if (body.status !== 'ready' || body.value === undefined) {
+    throw new Error(`K3L3: the adviser source view is not ready: ${JSON.stringify(body)}`);
+  }
+  return body.value.roundEnding?.kind === 'no_answer' ? 'no_answer' : null;
 }
 
 /** The frozen manifest of the round's prepared Query (`materials/open` of its bundle). */

@@ -8,7 +8,7 @@ import type { PromptTextsV1 } from '../../contracts/prompts/prompt-set.js';
 import type { RoleSpecResolutionV1 } from '../../contracts/role-spec-materials.js';
 import { messageOf } from '../../contracts/error-message.js';
 import { rejected } from '../../contracts/core/rejections.js';
-import { isRequestRound } from '../../contracts/query-job.js';
+import { isRequestRound, type QueryJobIntentV1 } from '../../contracts/query-job.js';
 import type { FrozenHandoffBriefV1 } from '../../contracts/handoff-brief.js';
 import { renderHandoffBriefZh } from '../../contracts/continuation-brief-render.js';
 import { sha256Hex } from '../../contracts/fingerprint.js';
@@ -61,6 +61,23 @@ async function readProjectModuleCards(
     afterCursor = read.value.nextCursor;
   } while (afterCursor !== null);
   return { status: 'ready', value: cards };
+}
+
+/**
+ * p2-frozen `:254`: the planning prompt names the message this round was opened from and who sent it. The recipe
+ * derives the one sentence from the intent's frozen facts; the renderer supplies only its separator.
+ */
+function interventionSourceLine(execution: QueryJobIntentV1['execution'] | undefined,
+    platformLabel: string): string | null {
+  const source = execution?.sourceMessageRef;
+  if (source === undefined) return null;
+  if (execution?.sourcePart === 'decision_answer') return `人对卡${source.messageId}的答复`;
+  const sender = execution?.sourceSender;
+  const label = sender === undefined ? null
+    : sender.kind === 'person' ? '人'
+      : sender.kind === 'platform' ? platformLabel : sender.sessionId;
+  const line = `来源消息${source.messageId}`;
+  return label === null ? line : `${line}，来自${label}`;
 }
 
 export async function assembleQueryContext(
@@ -207,7 +224,8 @@ export async function assembleQueryContext(
     required: { role: exploration ? roleSection + '\n' + input.question
       : consultationOnlySection === null ? roleSection : roleSection + '\n' + consultationOnlySection,
       goal: goalSection, task: taskSection },
-    ...(intervention ? { plan: input.facts.focusPlan === null ? null : queryPlanSummary(input.facts.focusPlan, texts), message: input.question } : {}),
+    ...(intervention ? { plan: input.facts.focusPlan === null ? null : queryPlanSummary(input.facts.focusPlan, texts), message: input.question,
+      source: interventionSourceLine(execution, S('delivery.sender.platform')) } : {}),
     optional: exploration ? { footprint: footprintRows }
       : planning && !intervention ? { footprint: footprintRows } : {},
     residentBudgetBytes,

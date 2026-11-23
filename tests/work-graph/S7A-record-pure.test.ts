@@ -36,13 +36,17 @@ const BODY: ArtifactRef = { kind: 'artifact', contentType: 'text/plain', digest:
 const HOST = { kind: 'host', actor: { kind: 'human', id: 'operator' } } as const;
 const GOAL: GoalRef = { aggregateType: 'Goal', projectId: PROJECT, goalId: 'g' };
 
-const NEW_FIELDS: ReadonlyArray<[string, unknown]> = [
+const SHARED_NEW_FIELDS: ReadonlyArray<[string, unknown]> = [
   ['taskRef', null], ['requestRoot', null], ['followupOf', null], ['deadline', null],
-  ['deadlineMs', null], ['release', null], ['delivery', 'queued'], ['deliveryEvidence', null],
-  ['expiredAt', null], ['withdrawnAt', null], ['waitCancelledAt', null], ['transferredTo', null],
-  ['originalRef', null], ['appliedAt', null], ['rejectedAt', null], ['approvedAt', null],
-  ['approvalRevision', null], ['applicationProof', null], ['pins', null], ['goalRef', null],
+  ['deadlineMs', null], ['answeredBy', 'line'], ['delivery', 'queued'],
+  ['deliveryEvidence', null], ['expiredAt', null], ['withdrawnAt', null], ['waitCancelledAt', null],
+  ['transferredTo', null], ['originalRef', null], ['appliedAt', null], ['rejectedAt', null],
+  ['applicationProof', null], ['goalRef', null],
 ];
+/** `createSessionMessageRecord` wakes its recipient. */
+const NEW_FIELDS: ReadonlyArray<[string, unknown]> = [...SHARED_NEW_FIELDS, ['wake', true]];
+/** A platform-identity synthetic answer never wakes a line. */
+const SYNTHETIC_NEW_FIELDS: ReadonlyArray<[string, unknown]> = [...SHARED_NEW_FIELDS, ['wake', false]];
 
 const DECISION_SOURCE = {
   kind: 'message' as const, key: 'message:m-1' as const,
@@ -66,7 +70,7 @@ describe('R-record-shape', () => {
     expect(createSessionMessageRecord(s7aRecordInput({ goalRef: GOAL })).goalRef).toEqual(GOAL);
   });
 
-  it('keeps approvalRevision null before approval and applicationProof apart from application', () => {
+  it('keeps applicationProof apart from application', () => {
     const application: DecisionApplicationV1 = {
       schemaVersion: 1, actor: { kind: 'human', id: 'operator' }, appliedAt: AT,
       receipt: { identityKey: 'app', fingerprint: 'app-f', cursor: makeCommitCursor(1) }, changes: [],
@@ -77,25 +81,22 @@ describe('R-record-shape', () => {
     };
     const before = { ...createSessionMessageRecord(s7aRecordInput()), application };
     const after = nextSessionMessageRecord(before, { kind: 'applied', appliedAt: AT, proof });
-    expect(before.approvalRevision).toBeNull();
     expect(after.application).toEqual(application);
     expect(after.applicationProof).toEqual(proof);
     expect(after.applicationProof).not.toBe(after.application);
   });
 
-  it('leaves the historical status triple alone and projects the eight new state fields', () => {
+  it('leaves the historical status triple alone and projects the new state fields', () => {
     const record = createSessionMessageRecord(s7aRecordInput());
     const state = messageMachineStateOf(record);
     expect({ status: record.status, readAt: record.readAt, response: record.response })
       .toEqual({ status: 'pending', readAt: null, response: null });
     if (state.status === 'absent') throw new Error('a fresh record is not absent');
     expect({
-      release: state.release, delivery: state.delivery, withdrawnAt: state.withdrawnAt,
-      appliedAt: state.appliedAt, rejectedAt: state.rejectedAt, approvedAt: state.approvedAt,
-      approvalRevision: state.approvalRevision, pins: state.pins,
+      needsReply: state.needsReply, delivery: state.delivery, withdrawnAt: state.withdrawnAt,
+      appliedAt: state.appliedAt, rejectedAt: state.rejectedAt,
     }).toEqual({
-      release: null, delivery: 'queued', withdrawnAt: null, appliedAt: null,
-      rejectedAt: null, approvedAt: null, approvalRevision: null, pins: null,
+      needsReply: false, delivery: 'queued', withdrawnAt: null, appliedAt: null, rejectedAt: null,
     });
   });
 
@@ -107,8 +108,6 @@ describe('R-record-shape', () => {
     evidence: 'input_accepted', consumesWait: false } });
   it.each([
     ['an accepted message part', accepted, /an accepted message part cannot be withdrawn/],
-    ['a denied release', createSessionMessageRecord(s7aRecordInput({ release: 'denied' })),
-      /a denied message cannot be withdrawn/],
     ['an applied message', createSessionMessageRecord(s7aRecordInput({ appliedAt: AT })),
       /an applied message cannot be withdrawn/],
   ] as const)('refuses to withdraw %s', (label, record, message) => {
@@ -120,6 +119,8 @@ describe('R-record-shape', () => {
       ref: MESSAGE_REF, sender: HOST, recipient: RECIPIENT, bodyRef: BODY, sourceRef: SOURCE,
       createdAt: AT, goalRef: null, decision: METADATA, response: ANSWER,
     });
-    for (const [field, value] of NEW_FIELDS) expect(synthetic).toHaveProperty(field, value);
+    for (const [field, value] of SYNTHETIC_NEW_FIELDS) {
+      expect(synthetic).toHaveProperty(field, value);
+    }
   });
 });

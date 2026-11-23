@@ -6,7 +6,7 @@ import type { SessionRef, VersionPin } from '../../contracts/core/identity.js';
 import type { SessionProvenanceV1 } from '../../contracts/core/session.js';
 import type { RunRef, RunSnapshot, TaskBudgetV1, TaskTriple } from '../../contracts/dispatch.js';
 import type { GoalRef, GoalSnapshot, WorkspaceRef } from '../../contracts/ledger.js';
-import type { PlanRevisionSnapshot, PlanRevisionRef, RuntimeTask, TaskScope } from '../../contracts/plan.js';
+import type { PlanRevisionDraft, PlanRevisionSnapshot, PlanRevisionRef, RuntimeTask, TaskScope } from '../../contracts/plan.js';
 import { revisionAssignments } from '../../contracts/plan.js';
 import type { TaskReductionRef } from '../../contracts/reduction.js';
 import type { GoalPhaseRef } from '../../contracts/goal-phase.js';
@@ -37,13 +37,17 @@ import {
 } from '../../contracts/unknown-call-advice.js';
 import { parseCommandRerunAdviceAnswer } from '../../contracts/command-rerun-advice.js';
 import { goalDecisionBasis } from '../../core/work-graph/tasks/goal-basis.js';
+import { actionRequestAnswerFacts } from '../../core/work-graph/tasks/action-request-answer.js';
 import type { CreateSessionRequest } from '../../core/agent-runtime/session-operations.js';
 import type { PrepareTaskExecutionRequest, StartTaskExecutionRequest } from '../../core/agent-runtime/execution-contracts.js';
 import type { ClaimTaskInput, RequeueTaskInput } from '../../core/work-graph/model/claim-contracts.js';
+import type { ActionRequestRef } from '../../contracts/action-request.js';
+import type { ActionRequestSnapshotV1 } from '../../core/work-graph/state/action-request.js';
 import type { TaskGraph, TaskRow } from '../../core/work-graph/model/plan-contracts.js';
 import type { ResponsibilityRecipientInputV1 } from '../../core/work-graph/tasks/responsibility-recipient.js';
 import type { GraphWrite } from '../../core/work-graph/model/task-contracts.js';
-import type { GoalDecisionCauseReadV1 } from '../../core/work-graph/model/decision-contracts.js';
+import type { GoalDecisionCauseReadV1, TaskClaimJudgmentV1 } from '../../core/work-graph/model/decision-contracts.js';
+import type { TaskClaimTargetBlockerV1 } from '../../contracts/work-line.js';
 import type { SessionCard } from '../../core/work-graph/model/session-contracts.js';
 import { runUnresolvedBlocker } from '../../core/work-graph/state/run-machine.js';
 import { lastHolderOf } from '../../core/work-graph/state/unknown-call-review.js';
@@ -66,8 +70,8 @@ import type { HandoffWorkflowDependencies } from './contracts.js';
 import { createSecretaryHandoffWorkflow } from './session-handoff.js';
 import { createConsultationConsumer, asRejection } from './consultation.js';
 import { createLineAsk } from './line-ask.js';
-import { createTaskGate, goalWaitBasisOf, type ReviewGate } from './task-gate.js';
-import { planOnlyTargetOf, planningAnswerShapeOf, refinementRoundOf, systemRoundSendInput } from './plan-round.js';
+import { createTaskGate, goalWaitBasisOf, type L46WaitV1, type ReviewGate } from './task-gate.js';
+import { planOnlyTargetOf, refinementRoundOf, systemRoundSendInput } from './plan-round.js';
 import { orderTasksByDependency } from './task-order.js';
 import { createSessionArchiveService } from './session-archive.js';
 import type { RequestSessionArchiveInput } from '../../contracts/core/session-archive.js';
@@ -79,13 +83,14 @@ import { createSessionChooser, roleReusable, type SessionChoice } from './sessio
 import type { PickBasisV1 } from '../../contracts/pick-basis.js';
 import type { ModuleOverlapTaskFactsV1, OverlapBasisV1 } from '../../core/work-graph/tasks/overlap-gates.js';
 import { moduleOverlapOf, overlapBasisDigest, splitNonOverlapping } from '../../core/work-graph/tasks/overlap-gates.js';
+import type { ModuleOverlapV1 } from '../../core/work-graph/tasks/overlap-gates.js';
 import { createDutyRecipient, reviewLineOf } from '../../core/work-graph/sessions/duty-recipient.js';
 import {
   decidePlanCandidate, standardChangeStateOf, type PlanCandidateFactsV1, type PlanCandidateSourceV1,
 } from '../../core/work-graph/state/plan-candidate.js';
 import { decisionActionPolicy, gateCoveredTaskIds } from '../../core/work-graph/state/decision-policy.js';
 import {
-  SYSTEM_ROUND_ACTOR, systemRoundContext, systemRoundOfText, systemRoundRequestId, type SystemRoundV1,
+  systemRoundContext, systemRoundRequestId, type SystemRoundV1,
 } from '../../contracts/plan-round.js';
 import { deviationRequestId, deviationText, deviationsOfGoal, taskRemindersOfGoal } from '../../contracts/plan-deviation.js';
 import type { FailingCheckOutputV1 } from '../../contracts/check-output.js';
@@ -93,18 +98,22 @@ import { controlIntentRefFor } from '../../core/work-graph/tasks/control-service
 import { reworkFenceOf } from '../../core/work-graph/state/task-failure.js';
 import { nodeInFlight } from '../../core/work-graph/state/task-node-commit.js';
 import type { ControlIntentSnapshotV1 } from '../../contracts/control-intent.js';
-import type { PlanProposal } from '../../core/work-graph/model/plan-contracts.js';
+import type { PlanProposal, PlanTaskPort } from '../../core/work-graph/model/plan-contracts.js';
 import type { ActivityBackfillBatchV1 } from './contracts.js';
-import { deriveSessionInputId, type SessionMessage, type SessionMessageSendInputV1 } from '../../core/work-graph/model/communication-contracts.js';
+import { deriveSessionInputId, readClosingNotice as readClosingNoticeReceipt,
+  type SessionMessage, type SessionMessageSendInputV1 } from '../../core/work-graph/model/communication-contracts.js';
 import {
-  effectiveReplyHandler, messageFactsOfRecord, waitFactsOfRecord, waitStateOf,
+  effectiveReplyHandler, isMessageAgentSender, messageFactsOfRecord, waitFactsOfRecord, waitStateOf,
   type DeliveryFactsV1, type DeliveryResponseWaitV1,
 } from '../../core/work-graph/state/message-machine.js';
 import { interventionPlanningQueryRefs } from '../../contracts/query-job.js';
-import { planSourceLineageOf, sentSystemRoundRef } from '../../core/work-graph/tasks/plan-lineage.js';
+import { candidateReplyTargetOf, candidateSourceLineOf, planSourceLineageOf, sentSystemRoundRef,
+  trustedSystemRoundOf, type CandidateSourceIncompleteV1, type CandidateSourceLineDeps }
+  from '../../core/work-graph/tasks/plan-lineage.js';
+import { deriveFuturePlanDelta } from '../../core/work-graph/tasks/plan-validation.js';
 import { sameRef } from '../../core/work-graph/state/ref-equality.js';
 import type { DeliveryEligibilityFactsV1 } from '../../core/work-graph/model/session-facts-contracts.js';
-import { createInterventionHandler } from './intervention.js';
+import { createInterventionHandler, type InterventionClosingReasonV1 } from './intervention.js';
 import { createCheckApproval } from './check-approval.js';
 import { parseCheckReviewAnswer } from '../../contracts/check-review.js';
 import { proposeFromPlanTurn } from './request-candidate.js';
@@ -146,11 +155,6 @@ export type Base = {
    * `apply_review_disposition` carries it forward, every other successor drops it.
    */
   failedCardRefs: FailedCardRefV1[];
-  /**
-   * 〔L5, R3-2〕 `book-7a.md:386–:389`: the message keys this release pass already found blocked, taken from the
-   * Host driver's `WorkflowAdvanceInternal.releaseSkip` (`B/contracts.ts:230`). Empty for every other caller.
-   */
-  releaseSkip: ReadonlySet<string>;
   /**
    * The Tasks a live Run watch is already advancing. The Goal-level selection
    * skips them; an explicit Task selection ignores the set.
@@ -276,6 +280,39 @@ export function settleReviewStep(
   return { kind: 'settle_review', request: graphWrite(base, 'settle_review',
     { reviewRef: review.ref, cause, ...(adviserAvailable ? { adviserAvailable: true } : {}) },
     [{ ref: review.ref, revision: review.revision }]) };
+}
+/** 2.5 作废的四种原因：owner 在同一份已采用计划上重读任务状态并核实它。 */
+type DispatchVoidKind = 'task_cancelled' | 'task_replaced' | 'task_completed' | 'person_stopped';
+const DISPATCH_VOID_REASONS: Record<DispatchVoidKind, string> = {
+  task_cancelled: 'the Task is cancelled',
+  task_replaced: 'the Task is superseded',
+  task_completed: 'the Task is completed',
+  person_stopped: 'the person stopped the Task',
+};
+/**
+ * 2.5 作废：一条 `open` 派活请求点名的任务再也领不到时，目标循环做一步、只调动作请求 owner 的 `settle` 记
+ * `void` 和原因；`basis` 是 owner 自己的作废依据（原因种类加这次读到的已采用计划）。请求记录版本进 pin，
+ * 同一次重放回原回执。
+ */
+function settleActionRequestStep(
+  base: Base, request: Pick<ActionRequestSnapshotV1, 'ref' | 'revision'>,
+  kind: DispatchVoidKind, planRevision: PlanRevisionRef,
+): WorkflowOperation {
+  return { kind: 'settle_action_request', request: graphWrite(base, 'settle_action_request', {
+    request: request.ref, reason: DISPATCH_VOID_REASONS[kind], basis: { kind, planRevision },
+  }, [{ ref: request.ref, revision: request.revision }]) };
+}
+/**
+ * 2.5 的作废判定：只看目标循环这次已读到的任务事实（取消、替代、完成、人叫停的点名 Run），不另读存储。
+ * 人叫停按控制意图的提交者认（人自己或目标扇出；书记硬停的平台取消不算），和动作请求 owner 的同一判定一致。
+ */
+function dispatchVoidKindOf(task: RuntimeTask, row: TaskRow): DispatchVoidKind | null {
+  if (task.disposition === 'cancelled') return 'task_cancelled';
+  if (task.disposition === 'superseded') return 'task_replaced';
+  if (row.effectivePhase === 'satisfied') return 'task_completed';
+  const stop = row.failure?.stop ?? null;
+  return stop !== null && stop.kind === 'cancel'
+    && (stop.requester === 'human' || stop.requester === 'goal_fan_out') ? 'person_stopped' : null;
 }
 /** K3 layering (009): apply the answer of the adviser round `requestId` to the record at the revision read. */
 function applyAdviserAnswerStep(base: Base, review: Pick<UnknownCallReviewV1, 'ref' | 'revision'>, requestId: string,
@@ -654,6 +691,8 @@ type WorkflowAdvanceValue = {
   /** K3 UR6/ruling 6: the blocked review card's formal source on a `waiting` result. */
   source?: DecisionSourceV1 | null;
   waitBasis?: GoalWaitBasisV1;
+  /** Design 5.1: the retryable overlap-note send (see the public result's `retry`). */
+  retry?: NonNullable<Extract<WorkflowAdvanceResult, { status: 'ready' }>['value']['retry']>;
 };
 /**
  * K3 UR7 rework 1: the driver-only carried set never travels inside `next`; it
@@ -684,8 +723,10 @@ export function waiting(receipt: WorkflowStepReceipt | null, reason: string,
     ...(source === undefined ? {} : { source }),
     ...(waitBasis === undefined ? {} : { waitBasis }) });
 }
-function completed(receipt: WorkflowStepReceipt | null, reason: string): WorkflowAdvanceResult {
-  return readyValue({ state: 'completed', receipt, next: null, reason, pick: null });
+function completed(receipt: WorkflowStepReceipt | null, reason: string, waitBasis?: GoalWaitBasisV1):
+WorkflowAdvanceResult {
+  return readyValue({ state: 'completed', receipt, next: null, reason, pick: null,
+    ...(waitBasis === undefined ? {} : { waitBasis }) });
 }
 
 function readRejection(result: { status: 'not_found' } | { status: 'not_ready' } | CoreRejection): CoreRejection {
@@ -693,8 +734,6 @@ function readRejection(result: { status: 'not_found' } | { status: 'not_ready' }
   if (result.status === 'not_found') return rejection('not_found', 'the requested fact does not exist');
   return rejection('incomplete', 'the requested read is not ready at the required watermark');
 }
-/** Book §3.8 item 3 (`book-7a.md:385`): one bounded candidate page — the port's own maximum (`decision-contracts.ts:531`). */
-const RELEASE_CANDIDATE_PAGE_LIMIT = 100;
 /**
  * §6.1.5's one candidate-wait basis: the same record kinds for every
  * candidate wait, so a wait and a card are registered by the same facts.
@@ -708,8 +747,10 @@ function planWaitBasisOf(goal: GoalSnapshot, reasons: readonly string[]): GoalWa
  * A Task claim pins the Goal, the Workspace, the Plan and the Session and guards the task facts it read
  * (`claim-service.ts`): any of them moving is a `revision_conflict`. After its one re-selection a claim that
  * conflicts again waits on all of them (the candidate wait's kinds cover the Plan, the Session and the task facts).
+ * 2.5 加派活请求和暂缓：按请求领取另守请求记录和派工三值，领取本身守暂缓记录（含 `openDispatch`）。
  */
-const CLAIM_CONFLICT_WAIT_KINDS = ['Goal', 'Workspace', ...PLAN_CANDIDATE_WAIT_KINDS] as const;
+const CLAIM_CONFLICT_WAIT_KINDS = ['Goal', 'Workspace', ...PLAN_CANDIDATE_WAIT_KINDS, 'CurrentPointer',
+  'DispatchCounter', 'ActionRequest', 'TaskClaimHold'] as const;
 
 function receiptReason(result: unknown, fallback: string): string {
   if (isRecord(result) && typeof result['reason'] === 'string' && result['reason'].length > 0) return result['reason'];
@@ -853,6 +894,172 @@ export function ownedInWorkspace(owned: Owned, workspaceId: string): Owned {
     ctx: handoffContextOf({ ...owned.ctx, workspaceId }, owned.ctx.principal as HostPrincipal) };
 }
 
+/** A dependency edge's identity for the existing-Task comparison: the complete edge, `requires` included. */
+function dependencyEdgeKey(edge: PlanRevisionSnapshot['executionDag']['dependsOn'][number]): string {
+  return canonicalJson(edge as unknown as JsonValue);
+}
+
+/**
+ * 2.5a A13: `touchesExistingTasks(base, draft)` — whether a future candidate changes a Task that already exists in
+ * its base Plan. Either an execution change (`changedTaskIds`), or a disposition change of this candidate (the
+ * plan-machine `dispositionChanges`; never `cancelledTaskIds`, which also lists Tasks the base already cancelled),
+ * or a DAG edge added/removed/changed under the complete edge whose dependent side is an old Task (old→new,
+ * old→old). Changing `requires` or an artifact label on an old→old edge therefore touches the old Task too. A new
+ * Task that depends on an old one stays a small change (121-112); two old Tasks gaining, losing or changing an edge
+ * does not. A delta the existing rules cannot derive is not a small change.
+ */
+export function touchesExistingTasks(base: PlanRevisionSnapshot, draft: PlanRevisionDraft): boolean {
+  const delta = deriveFuturePlanDelta(base, draft);
+  if (delta.status !== 'supported') return true;
+  // A `plan_only` placeholder is a plan slot, not a running/leased Task: filling or modifying it is the refinement
+  // the Goal's own `refine:` round asked for, and the review round still gates its adoption (PL-03/22). A disposition
+  // change on a placeholder is still a change to an existing Task.
+  const planOnlyTaskIds = new Set(base.tasks
+    .filter(task => task.taskKind === 'work' && task.executionIntent === 'plan_only')
+    .map(task => task.taskId));
+  const changed = delta.delta.changedTaskIds.some(taskId => !planOnlyTaskIds.has(taskId));
+  if (changed || delta.delta.dispositionChanges.length > 0) return true;
+  const oldTaskIds = new Set(base.tasks.map(task => task.taskId));
+  const before = new Set(base.executionDag.dependsOn.map(dependencyEdgeKey));
+  const after = new Set(draft.executionDag.dependsOn.map(dependencyEdgeKey));
+  return [...base.executionDag.dependsOn, ...draft.executionDag.dependsOn].some(edge =>
+    oldTaskIds.has(edge.taskId)
+    && before.has(dependencyEdgeKey(edge)) !== after.has(dependencyEdgeKey(edge)));
+}
+
+/**
+ * The A13 reads shared by the four automatic entrances and the Host settings queue: the author line, the Goal loop's
+ * one completeness read (`latestAgentCandidate`: every same-Goal candidate's lineage and request-round probe), the
+ * author line's duty (the existing `sessions` + `sessionDuty` read, as `check-approval.ts` reads it) and the candidate
+ * card. A narrow double without the completeness or duty read is `source_incomplete`, never "complete".
+ */
+export type AutoAdoptDependencies = Pick<WorkflowDependencies, 'plans' | 'requests' | 'readCandidateCard'
+  | 'latestAgentCandidate'> & Partial<Pick<WorkflowDependencies, 'sessions' | 'sessionDuty'>> & {
+  /** The mailbox reads `candidateSourceLineOf` takes. */
+  messages?: CandidateSourceLineDeps['messages'];
+};
+
+/** A13's card reasons. The card itself is the existing candidate card, never a new card kind. */
+export type AutoAdoptCardReasonV1 = 'touches_existing_tasks' | 'source_incomplete' | 'base_incomplete';
+
+/** The wait text for the target loop's pre-review A13 hit; every other entrance returns the same reason as an outcome. */
+const autoAdoptionCardWait: Record<AutoAdoptCardReasonV1, string> = {
+  touches_existing_tasks: 'the candidate touches existing tasks',
+  source_incomplete: 'the candidate source is incomplete',
+  base_incomplete: 'the candidate base is unreadable',
+};
+
+/**
+ * One automatic adoption through the single A13 decision (2.5a; design 3.6). The four automatic entrances call
+ * this instead of `applyPlanChange` directly. A replay is the owner's original receipt (an already-ended version is
+ * never judged again); a hit or an unreadable author/base leaves the candidate to the person as its existing card.
+ */
+export type AutoAdoptOutcomeV1 =
+  | { status: 'adopted'; receipt: Extract<WriteResult<PlanRevisionSnapshot>, { status: 'committed' }> }
+  | { status: 'refused'; result: CoreRejection }
+  | { status: 'card'; reason: AutoAdoptCardReasonV1; source: DecisionSourceV1 | null }
+  | { status: 'ended' };
+
+function autoAdoptionOutcome(result: WriteResult<PlanRevisionSnapshot>): AutoAdoptOutcomeV1 {
+  return result.status === 'committed' ? { status: 'adopted', receipt: result } : { status: 'refused', result };
+}
+
+/**
+ * The completeness one wrapper call or settings-queue re-read judges with: the Goal loop's own `latestAgentCandidate`
+ * read, taken again for the bound candidate's Goal (the successor enumeration and the request-round probe included),
+ * never a second walk. An unwired or unready read is incomplete, never "complete".
+ */
+async function sourceIncompleteOf(deps: AutoAdoptDependencies,
+    candidate: PlanProposal): Promise<readonly CandidateSourceIncompleteV1[]> {
+  if (deps.latestAgentCandidate === undefined) {
+    return [{ proposalRef: candidate.ref, failure: rejection('unsupported', 'latestAgentCandidate is not wired') }];
+  }
+  const read = await deps.latestAgentCandidate(candidate.goalRef);
+  return read.status === 'ready' ? read.value.incomplete : [{ proposalRef: candidate.ref, failure: read }];
+}
+
+/** The A13 reason this bound candidate may not be adopted automatically, or `null` when it may. */
+export async function autoAdoptionCardReason(ctx: CoreCallContext, deps: AutoAdoptDependencies,
+  candidate: PlanProposal, incomplete: readonly CandidateSourceIncompleteV1[]): Promise<AutoAdoptCardReasonV1 | null> {
+  // The Goal's completeness read named an unreadable lineage or request-round probe (or could not be read), so this
+  // candidate is not proven to be the successor-free version: the same "incomplete source -> card" rule applies,
+  // never an automatic adoption.
+  if (incomplete.length > 0) return 'source_incomplete';
+  // The trusted author is the line that wrote this version. An unwired or unreadable author read is incomplete:
+  // the caller shows the card and never adopts.
+  if (deps.messages === undefined || deps.requests === undefined) return 'source_incomplete';
+  const source = await candidateSourceLineOf(ctx, { messages: deps.messages, requests: deps.requests }, candidate);
+  if (source.status !== 'ready' || source.value.session === null) return 'source_incomplete';
+  // A first plan has no existing Task to touch.
+  if (candidate.basedOn === null) return null;
+  const base = await deps.plans.queryTaskGraph(ctx, { goalRef: candidate.goalRef, planRef: candidate.basedOn });
+  if (base.status !== 'ready') return 'base_incomplete';
+  if (!touchesExistingTasks(base.value.plan, candidate.draft)) return null;
+  // User 11-23 (cp2f7 P-A 1, replacing frozen 2.5a `:209`): "touches existing Tasks" stops only a candidate whose
+  // trusted author line is a secretary (the person's words turned into a change); an adviser's or executor's change
+  // goes on to the Goal loop's review and automatic adoption (design 3.6 `:418`, `:421`). The duty is read the way
+  // `check-approval.ts` reads the author's; an unwired or unreadable duty is an incomplete source, never "not a secretary".
+  if (deps.sessions === undefined || deps.sessionDuty === undefined) return 'source_incomplete';
+  const line = await deps.sessions.readSession(ctx, source.value.session, 'project');
+  if (line.status !== 'ready') return 'source_incomplete';
+  const duty = await deps.sessionDuty(line.value.record.role, ctx);
+  if (duty.status !== 'ready') return 'source_incomplete';
+  return duty.value === 'secretary' ? 'touches_existing_tasks' : null;
+}
+
+/**
+ * 2.5a: the same A13 decision taken again for the candidate version (`ref` + `revision` + `basedOn`) an automatic
+ * adoption was judged for. The Host's settings queue calls it before installing the candidate's checks and again
+ * before the adoption, so a candidate that moved while queued installs nothing; a moved or unreadable version is the
+ * owner's retriable refusal, and an A13 hit on the re-read stays the existing candidate card (shown by the wrapper
+ * on the next round).
+ */
+export async function autoAdoptionRefusalOfBound(ctx: CoreCallContext, deps: AutoAdoptDependencies,
+  bound: PlanProposal): Promise<CoreRejection | null> {
+  const read = await deps.plans.readPlanProposal(ctx, bound.ref);
+  if (read.status === 'rejected') return read;
+  if (read.status !== 'ready') return rejection('unavailable', 'the current plan candidate could not be read');
+  if (read.value.status !== 'candidate' || read.value.revision !== bound.revision) {
+    return rejection('revision_conflict', 'the proposal revision changed');
+  }
+  const reason = await autoAdoptionCardReason(ctx, deps, read.value, await sourceIncompleteOf(deps, read.value));
+  return reason === null ? null
+    : rejection('unavailable', `the plan candidate can no longer be adopted automatically: ${autoAdoptionCardWait[reason]}`);
+}
+
+/** The existing candidate card's decision source (the A13 card is this card; no new card kind). */
+async function candidateCardSourceOf(owned: Owned, deps: AutoAdoptDependencies,
+  candidate: PlanProposal): Promise<DecisionSourceV1 | null> {
+  if (deps.readCandidateCard === undefined) return null;
+  const card = await deps.readCandidateCard(candidate.goalRef, candidate.ref);
+  return card.status === 'ready' ? card.value.card.source : null;
+}
+
+/**
+ * 2.5a: the Workflow wrapper every automatic adoption goes through, bound to the current candidate version and
+ * `candidate.basedOn`. The owner's replay rule answers a candidate that already ended, before any A13 judgement.
+ */
+export async function autoAdoptCandidate(owned: Owned, deps: AutoAdoptDependencies,
+  request: Parameters<PlanTaskPort['applyPlanChange']>[1]): Promise<AutoAdoptOutcomeV1> {
+  const read = await deps.plans.readPlanProposal(owned.ctx, request.input.proposalRef);
+  if (read.status === 'not_found') return { status: 'ended' };
+  if (read.status !== 'ready') {
+    return { status: 'refused', result: read.status === 'rejected' ? read
+      : rejection('unavailable', 'the current plan candidate could not be read') };
+  }
+  const candidate = read.value;
+  // A replay is the original receipt: a version that already ended (adopted, replaced, abandoned) is not judged
+  // again and a moved revision is the owner's refusal.
+  if (candidate.status !== 'candidate' || candidate.revision !== request.input.expectedProposalRevision) {
+    return autoAdoptionOutcome(await deps.plans.applyPlanChange(automationContext(owned), request));
+  }
+  const reason = await autoAdoptionCardReason(owned.ctx, deps, candidate, await sourceIncompleteOf(deps, candidate));
+  if (reason !== null) {
+    return { status: 'card', reason, source: await candidateCardSourceOf(owned, deps, candidate) };
+  }
+  return autoAdoptionOutcome(await deps.plans.applyPlanChange(automationContext(owned), request));
+}
+
 function failedCardRefsFromInternal(
   internal: WorkflowAdvanceInternal | undefined, owned: Owned,
 ): { failedCardRefs: FailedCardRefV1[] } | { rejection: CoreRejection } {
@@ -927,7 +1134,6 @@ function baseFromInput(
   if ('rejection' in internalRefs) return { rejection: internalRefs.rejection };
   return { goalRef: goalRef as unknown as GoalRef, flowId, sessionHint, actor: owned.actor,
     taskId: rawTaskId === undefined ? null : rawTaskId, failedCardRefs: internalRefs.failedCardRefs,
-    releaseSkip: new Set<string>(internal?.releaseSkip ?? []),
     activeTaskIds: new Set<string>(internal?.activeTaskIds ?? []) };
 }
 
@@ -965,7 +1171,7 @@ function initialPlanningBase(
     return { rejection: rejection('invalid', 'handleGoalInput requires an executeWithinRequest boolean') };
   }
   return { goalRef: goalRef as unknown as GoalRef, flowId, sessionHint, actor: owned.actor,
-    taskId: null, failedCardRefs: [], releaseSkip: new Set(), executeWithinRequest: raw['executeWithinRequest'] };
+    taskId: null, failedCardRefs: [], executeWithinRequest: raw['executeWithinRequest'] };
 }
 
 // --------------------------------------------------------------------------
@@ -1142,7 +1348,7 @@ export function createWorkflow(deps: WorkflowDependencies & {
     owned: Owned, base: Base, goal: GoalSnapshot, planRef: PlanRevisionRef,
     task: RuntimeTask, binding: Binding, sessionId: string, sessionRevision: number,
     reusedSession: boolean, consumedWait?: ConsumedWaitV1, requeue?: WorkflowSessionRequeue,
-    review?: WorkflowSessionReview,
+    review?: WorkflowSessionReview, servedRequest?: { ref: ActionRequestRef; revision: number },
   ): Promise<{ operation: Extract<WorkflowOperation, { kind: 'claim_task' }> } | { rejection: CoreRejection }> {
     const workspacePin = await loadWorkspacePin(owned, goal.workspaceRef);
     if ('rejection' in workspacePin) return workspacePin;
@@ -1167,6 +1373,9 @@ export function createWorkflow(deps: WorkflowDependencies & {
       // claimed Task's responsible link in the same commit (the create path
       // already wrote its `initialLinks`; the claim checks for an open link).
       ...(reusedSession ? { openResponsibleLink: true } : {}),
+      // 2.5 第 5 步：目标循环因为一条 `open` 派活请求把这个任务排到前面而选中它时，带上读到的那条请求和它的版本；
+      // 领取 owner 在同一次提交里把它记成 `applied`、清 `openDispatch`、派工序号 +1 并守派工三值。别的领取不带。
+      ...(servedRequest === undefined ? {} : { servedRequest }),
     };
     return { operation: { kind: 'claim_task', request: graphWrite(base, 'claim_task', input, expected) } };
   }
@@ -1186,7 +1395,10 @@ export function createWorkflow(deps: WorkflowDependencies & {
       session.record.ref.sessionId, session.record.revision, true,
       row.execution === null ? undefined : { kind: 'intervention', messageRef });
     if ('rejection' in built) return built.rejection;
+    // Q6a: the intervention mark makes the claim owner release every hold reason in this same commit (the claim's
+    // card position still blocks). `consumedWait` above stays the continuation basis only.
     const result = await deps.claims.claimTask(owned.ctx, { ...built.operation.request,
+      input: { ...built.operation.request.input, intervention: { messageRef } },
       meta: { ...built.operation.request.meta,
         requestId: `intervention:${sessionMessageRefKey(messageRef)}:claim` } });
     if (result.status !== 'committed') return rejection(result.code, result.reason);
@@ -1363,8 +1575,10 @@ export function createWorkflow(deps: WorkflowDependencies & {
   /**
    * The read half of a sent system round (`readReviewState`'s chain after the send receipt): the message, its
    * intervention-planning Query and the answer. A Query not created or not ended is `waiting/<pending>`; an ended
-   * Query is `answered` when its frozen shape is `shape` and the answer `parses`, else `closed`; either is
-   * `settlement_pending` while the source message has no reply and is not withdrawn. A failed read is its rejection.
+   * Query is `closed` once the round's committed `no_answer` notice proves the formal no-answer conclusion, else
+   * `answered` when its frozen shape is `shape` and the answer `parses`, else `closed`; without that notice either
+   * is `settlement_pending` while the source message has no reply and is not withdrawn. A failed read is its
+   * rejection.
    */
   async function sentRoundStateOf(owned: Owned, goalRef: GoalRef, sent: SessionMessageRef,
     shape: 'exec_review' | 'unknown_call_advice' | 'command_rerun_advice' | 'check_review',
@@ -1391,6 +1605,12 @@ export function createWorkflow(deps: WorkflowDependencies & {
       if (answer.status !== 'ready') return readRejection(answer);
       answered = parses(answer.value.answer.answer);
     }
+    // A committed `no_answer` notice is the round's formal no-answer conclusion: it is closed even though the
+    // source keeps no reply and an agent source is never withdrawn.
+    const noAnswer = await readClosingNoticeWithHostSendRef(owned.ctx,
+      { sourceMessageRef: sent, part: 'message', reason: 'no_answer' });
+    if (noAnswer.status !== 'ready') return readRejection(noAnswer);
+    if (noAnswer.value) return { kind: 'closed' };
     if (message.value.response === null && message.value.withdrawnAt === null) {
       return { kind: 'settlement_pending', basis: reviewWaitBasisOf(goalRef, 'settlement_pending') };
     }
@@ -1536,8 +1756,8 @@ export function createWorkflow(deps: WorkflowDependencies & {
   /**
    * TASK-03 / W-21 (D-3, §4.3 "claim_requeued", §8 8.3): a requeued Task
    * (P4) is claimed with the TaskRequeue covering its selected Run, preferably
-   * in that Run's claim Session: reusable → claim there; busy → skip the Task
-   * this round (`null`); archived, of another role, `not_found`, or
+   * in that Run's claim Session: reusable → claim there; proven occupied →
+   * `line_busy(reason)` (B3-04: the rework and review callers project it); archived, of another role, `not_found`, or
    * unavailable because it is `missing`/`damaged` → the default selection
    * without a hint, and a new Session claims with the requeue too. A
    * cancelled or forbidden read is that rejection; any other state of the
@@ -1551,7 +1771,7 @@ export function createWorkflow(deps: WorkflowDependencies & {
     owned: Owned, base: Base, goal: GoalSnapshot, planRef: PlanRevisionRef, task: RuntimeTask, row: TaskRow,
     binding: Binding, afterRunRef: RunRef,
     continuation: { requeue?: WorkflowSessionRequeue; review?: WorkflowSessionReview },
-  ): Promise<WorkflowAdvanceResult | null> {
+  ): Promise<WorkflowAdvanceResult | { kind: 'line_busy'; reason: string }> {
     const requeue = continuation.requeue;
     const review = continuation.review;
     const afterRun = await deps.executions.readExecution(owned.ctx, afterRunRef);
@@ -1593,7 +1813,7 @@ export function createWorkflow(deps: WorkflowDependencies & {
             claimSessionRef, afterRunRef, requeue?.requeueRef ?? null, taskRef, planRef, continuation)));
         }
       } else if (record.occupancy !== null) {
-        return null;
+        return { kind: 'line_busy', reason: `the continuation Session ${record.ref.sessionId} is occupied` };
       } else {
         return waiting(null, `the afterRun claim Session is ${record.health}`
           + `${record.healthConclusion === undefined || record.healthConclusion === null ? '' : ` (${record.healthConclusion})`}`);
@@ -1677,11 +1897,13 @@ export function createWorkflow(deps: WorkflowDependencies & {
     const goal = goalRead === null ? null : goalRead.value.goal.desiredState;
     let taskBlocked = false;
     const taskRef = message.taskRef;
-    if (taskRef !== null) {
+    // Design 2.2: the L46 block read belongs only to the person's direct intervention (B20). An agent or
+    // platform message opens no claim, so the read would only hold its reply or text round hostage.
+    if (taskRef !== null && message.entry === 'person_intervention') {
       const blocked = await automationBlockedFor(owned, {
         goalRef: { aggregateType: 'Goal', projectId: taskRef.projectId, goalId: taskRef.goalId },
         flowId: '', sessionHint: null, actor: owned.actor, taskId: taskRef.taskId,
-        failedCardRefs: [], releaseSkip: new Set<string>(),
+        failedCardRefs: [],
       }, taskRef);
       if (blocked === null) {
         return rejection('unavailable', 'the automatic confirmation facts of the message Task are not readable');
@@ -1762,46 +1984,6 @@ export function createWorkflow(deps: WorkflowDependencies & {
   }
 
   /**
-   * 〔L5〕 Book §3.8 item 3 (`book-7a.md:384–:388`): the first candidate of this Goal that no block reason and no
-   * earlier refusal of this pass stops, with its approval identity from the message record itself (`approvalRevision`,
-   * never the current revision — `:368–:370`). Read-only: `perform` calls the owner. The pages run until one item is
-   * selectable (`:386`, rd7a2a-02); a read failure is the failure, never an empty page (`:551–:552`, rd7a2a-05).
-   */
-  async function releaseCandidatePerform(owned: Owned, base: Base): Promise<WorkflowAdvanceResult | null> {
-    const owner = deps.messageRelease;
-    const messages = deps.messages;
-    // Book `:383–:384`: without the owner (an old composition) the release step names nothing, and without the
-    // message read it has no approval identity (D8-5 (a)).
-    if (owner === undefined || messages === undefined) return null;
-    for (let after: string | null = null; ;) {
-      const page = await owner.readReleaseCandidates(owned.ctx, {
-        scope: { projectId: owned.projectId, workspaceId: owned.workspaceId },
-        goalRef: base.goalRef, after, limit: RELEASE_CANDIDATE_PAGE_LIMIT,
-      });
-      // A read failure is the failure (D8-10 (a), `decision-contracts.ts:552`), never "no candidate".
-      if (page.status !== 'ready') return readRejection(page);
-      for (const candidate of page.value.items) {
-        // A blocked item is stepped past and the pass continues (`book-7a.md:386`); the item this pass already
-        // refused is stepped past too, so one pass never asks for it twice (`:386–:389`).
-        if (candidate.blockedReason !== null) continue;
-        if (base.releaseSkip.has(sessionMessageRefKey(candidate.messageRef))) continue;
-        const read = await messages.readMessage(owned.ctx, candidate.messageRef);
-        if (read.status !== 'ready') return readRejection(read);
-        return advancing(null, makePerform(base, {
-          kind: 'release_message',
-          // D8-5 (a): the approval commit's revision, written by the approval (`message-machine.ts:1309`); the type
-          // forces this arm — only an approved message reaches the page (rd7a2a-18, list B 3).
-          request: { messageRef: candidate.messageRef, approvalRevision: read.value.approvalRevision! },
-        }));
-      }
-      // A blocked item does not stop the next page (`book-7a.md:386–:387`, rd7a2a-02); nothing selectable on any page
-      // is the ordinary selection's answer.
-      if (page.value.nextCursor === null) return null;
-      after = page.value.nextCursor;
-    }
-  }
-
-  /**
    * The picker's suggestion step. Resolving the Goal's adviser is the one duty
    * recipient read; a rejected or unreadable read propagates and is never "no
    * adviser". With an adviser the step sends one Host-system `action_request`;
@@ -1846,7 +2028,7 @@ export function createWorkflow(deps: WorkflowDependencies & {
       const request = {
         input: {
           recipient: { projectId: recipient.projectId, sessionId: recipient.sessionId },
-          text, intent: 'action_request' as const, goalRef: goal.ref,
+          text, needsReply: true, goalRef: goal.ref,
         },
         meta: { requestId: commandId, expected: [] },
       };
@@ -1865,12 +2047,13 @@ export function createWorkflow(deps: WorkflowDependencies & {
    * is never a refusal.
    */
   async function readHostSendReceipt(ctx: CoreCallContext, send: { requestId: string; arguments: unknown },
+    scope: { projectId: string; workspaceId: string },
   ): Promise<'committed' | 'not_committed' | 'undetermined'> {
     const lookup = deps.messages?.lookupHostSendCommit;
     if (lookup === undefined) return 'undetermined';
     const result = await lookup(ctx, { toolName: 'send_session_message',
       requestId: send.requestId, arguments: send.arguments,
-      scope: { projectId: ctx.projectId, workspaceId: ctx.workspaceId ?? '' } });
+      scope });
     return result.status === 'committed' ? 'committed'
       : result.status === 'not_committed' ? 'not_committed' : 'undetermined';
   }
@@ -1998,6 +2181,480 @@ export function createWorkflow(deps: WorkflowDependencies & {
     return unique.length === 0 ? null : goalWaitBasisOf(goal, unique, ['SessionMessage']);
   }
 
+  /**
+   * N1/§2.8: an `every_step` Goal takes one work node at a time. Its Goal loop selects nothing new while a completed
+   * node awaits the person's commit, or while a Run of its active Plan is live / under review / not yet settled. The
+   * card source's `TaskClaimabilityPort` reads the SAME judgment, including for an explicit Task selection (which
+   * skips it as a work handle): the occupancy is a Goal fact, never a Task one.
+   */
+  async function readGoalNodeOccupancy(owned: Owned, goal: GoalSnapshot):
+  Promise<ReadResult<{ reason: string; basis: GoalWaitBasisV1 } | null>> {
+    if (goal.settings.autonomy !== 'every_step' || deps.nodeCommits === undefined) {
+      return { status: 'ready', value: null };
+    }
+    const rows = await deps.nodeCommits.readNodeRows(ownedInWorkspace(owned, goal.workspaceRef.workspaceId).ctx,
+      { goalRef: goal.ref });
+    if (rows.status !== 'ready') return rows;
+    const first = rows.value.pending[0];
+    if (first !== undefined) {
+      return { status: 'ready', value: {
+        reason: `node_review_pending: the Task ${first.task.taskId} awaits the person's review and commit`,
+        basis: goalWaitBasisOf(goal, [`node_review_pending:${first.task.taskId}`],
+          ['TaskNodeCommit', 'TaskReduction', 'Run']),
+      } };
+    }
+    const inFlight = rows.value.rows.find(row =>
+      nodeInFlight({ taskKind: row.task.taskKind, effectivePhase: row.task.phase }));
+    if (rows.value.liveWork || inFlight !== undefined) {
+      return { status: 'ready', value: {
+        reason: `live_work: ${inFlight === undefined ? 'the Goal has live work'
+          : `the Task ${inFlight.task.taskId} is still in its checks`}; no new work is claimed until it ends`,
+        basis: goalWaitBasisOf(goal, ['live_work'],
+          ['Run', 'TaskReduction', 'TaskNodeCommit', 'VerificationRound', 'Evidence', 'UnknownCallReview']),
+      } };
+    }
+    return { status: 'ready', value: null };
+  }
+
+  /**
+   * §3.3 items 2, 5–7: the module-overlap gate judgment, factored so the ordinary selection and the read-only
+   * `TaskClaimabilityPort` run the SAME check. The caller performs the returned step; `pass` is the only arm that lets
+   * the Task be chosen, and every other arm is the `module_gate` blocker the card/task read reports.
+   */
+  type OverlapGateDecision =
+    | { kind: 'pass' }
+    | { kind: 'incomplete'; reason: string }
+    | { kind: 'step'; step: WorkflowOperation; reason: string }
+    | { kind: 'waiting'; reason: string };
+
+  async function readOverlapGateDecision(
+    owned: Owned, goal: GoalSnapshot, graph: TaskGraph, task: RuntimeTask, row: TaskRow,
+    overlap: ModuleOverlapV1,
+    taskRef: TaskTriple,
+  ): Promise<ReadResult<OverlapGateDecision>> {
+    const overlapOwner = deps.overlap;
+    if (!overlap.overlaps || overlapOwner === undefined) return { status: 'ready', value: { kind: 'pass' } };
+    const waitingAttempt = row.currentAttempt?.attemptId ?? 'none';
+    const planRevision = graph.plan.planRevision;
+    const running: OverlapBasisV1['running'] = [];
+    let incomplete: string | null = null;
+    for (const conflicting of graph.tasks) {
+      // The conflict set is the overlap rule's own `running` (planned files narrow it), never re-collected by module.
+      if (!overlap.running.some((ref) => ref.taskId === conflicting.ref.taskId)) continue;
+      const run = conflicting.execution;
+      if (run === null) {
+        incomplete = `overlap_gate_incomplete: the conflicting Run of ${conflicting.ref.taskId} is not readable`;
+        break;
+      }
+      let loaded;
+      try {
+        loaded = await deps.sourceAuthority.load(run);
+      } catch {
+        incomplete = `overlap_gate_incomplete: the conflicting Run of ${conflicting.ref.taskId} is not readable`;
+        break;
+      }
+      if (loaded.status !== 'found' || !('startedSince' in loaded.snapshot)) {
+        incomplete = `overlap_gate_incomplete: the conflicting Run of ${conflicting.ref.taskId} is not readable`;
+        break;
+      }
+      running.push({ task: conflicting.ref, run, startCursor: loaded.snapshot.startedSince });
+    }
+    if (incomplete !== null) return { status: 'ready', value: { kind: 'incomplete', reason: incomplete } };
+    const digest = overlapBasisDigest({ planRevision, waitingAttempt, running });
+    const gate = { aggregateType: 'ModuleOverlapGate' as const, projectId: owned.projectId,
+      goalId: goal.ref.goalId, taskId: task.taskId, moduleId: overlap.moduleId };
+    const openStep: WorkflowOperation = { kind: 'open_overlap_gate', request: {
+      goalRef: goal.ref, task: taskRef, moduleId: overlap.moduleId, running, planRevision, waitingAttempt } };
+    const gateRead = await overlapOwner.readOverlapGate(automationContext(owned), { gate });
+    if (gateRead.status === 'not_found') {
+      return { status: 'ready', value: { kind: 'step', step: openStep,
+        reason: `overlap_gate_pending: module ${overlap.moduleId} has no gate yet` } };
+    }
+    if (gateRead.status !== 'ready') return readRejection(gateRead);
+    if (gateRead.value.basisDigest !== digest) {
+      return { status: 'ready', value: { kind: 'step', step: openStep,
+        reason: `overlap_gate_pending: module ${overlap.moduleId} changed its gate basis` } };
+    }
+    const satisfaction = await overlapOwner.checkOverlapGate(automationContext(owned), { gate });
+    if (satisfaction.status !== 'ready') return readRejection(satisfaction);
+    if (satisfaction.value.status !== 'satisfied') {
+      const note = gateRead.value.noteRequest;
+      // The gate commits its saved ref BEFORE the mailbox send. A failed or interrupted send therefore leaves
+      // the ref without its message; that is not "the note is on its way". Read the recorded ref and ask for the
+      // request again, where the owner's receipt replay re-issues the same send idempotently.
+      let noteDelivered = note !== null;
+      if (note !== null && note.recipient !== null && deps.messages !== undefined) {
+        const noteRef = note.messageRef;
+        if (noteRef === undefined) {
+          noteDelivered = false;
+        } else {
+          const delivered = await deps.messages.readMessage(
+            ownedInWorkspace(owned, noteRef.workspaceId).ctx, noteRef);
+          if (delivered.status === 'not_found') noteDelivered = false;
+          else if (delivered.status !== 'ready') return readRejection(delivered);
+        }
+      }
+      if (!noteDelivered) {
+        return { status: 'ready', value: { kind: 'step', step: { kind: 'request_overlap_note', request: {
+          gate, revision: gateRead.value.revision, basisDigest: digest } },
+          reason: `overlap_gate_pending: module ${overlap.moduleId} has no note yet` } };
+      }
+      return { status: 'ready', value: { kind: 'waiting',
+        reason: `overlap_gate_pending: module ${overlap.moduleId} waits for its note or release` } };
+    }
+    return { status: 'ready', value: { kind: 'pass' } };
+  }
+
+  /**
+   * A-12: the overlap facts of one graph, aligned by `taskId`. The Goal loop and the read-only claim judgment derive
+   * every candidate's overlap from this one table, never from a sorted array's index.
+   */
+  function overlapFactsOf(graph: TaskGraph): Map<string, ModuleOverlapTaskFactsV1> {
+    const facts: ModuleOverlapTaskFactsV1[] = graph.tasks.map(row => ({
+      task: row.ref, effectivePhase: row.effectivePhase,
+      moduleId: row.definition.scope.kind === 'module' ? row.definition.scope.moduleRef : null,
+      ...(row.definition.plannedFiles === undefined ? {} : { plannedFiles: row.definition.plannedFiles }) }));
+    return new Map(facts.map(fact => [fact.task.taskId, fact] as const));
+  }
+
+  /**
+   * §2.8/§3.3: `claim-service`'s one effective claim-blocker read (the record, the claim owner's expiry judgment and
+   * the blocker) and the wait it names, read right before an actual claim: `classifyTaskClaim` and the review
+   * continuation's claim after its `create_session` or handover (`reviewClaimHeld`). `null` is no blocker; without
+   * the optional seam an old narrow double keeps today's owner-side refusal. A failed read is returned as-is.
+   */
+  async function claimHoldOf(owned: Owned, base: Base, goal: GoalSnapshot, taskId: string):
+    Promise<{ reason: string; basis: GoalWaitBasisV1 } | CoreRejection | null> {
+    const readBlocker = deps.claimHolds?.readEffectiveClaimBlocker;
+    if (readBlocker === undefined) return null;
+    const taskRef: TaskTriple = { projectId: owned.projectId, goalId: base.goalRef.goalId, taskId };
+    const read = await readBlocker(ownedInWorkspace(owned, goal.workspaceRef.workspaceId).ctx, { taskRef });
+    if (read.status !== 'ready') return read;
+    const blocker = read.blocker;
+    if (blocker === null) return null;
+    const reason = blocker.kind === 'stop_pending'
+      ? `claim_hold_stop_pending: stop request ${blocker.actionRef.requestId} awaits your approval`
+      : `claim_hold_held: the Task's claim waits for ${blocker.reason.reason}`;
+    return { reason, basis: goalWaitBasisOf(goal,
+      [blocker.kind === 'stop_pending' ? 'claim_hold_stop_pending' : 'claim_hold_held'],
+      ['TaskClaimHold', 'ActionRequest', 'Goal', 'PlanProposal', 'PlanRevision']) };
+  }
+
+  /**
+   * B3-02: a review continuation's claim, built right after its `create_session` or handover, meets the Task's hold
+   * or pending stop through the same `claimHoldOf` read before the claim is built. A Goal pass selects again (the
+   * shared classification remembers the wait and goes on with the other Tasks); a named Task waits with the basis.
+   * The performed step's receipt stays, and the claim owner's own guard still decides at commit.
+   */
+  async function reviewClaimHeld(owned: Owned, base: Base, goal: GoalSnapshot, taskId: string,
+    review: WorkflowSessionReview | undefined, receipt: WorkflowStepReceipt): Promise<WorkflowAdvanceResult | null> {
+    if (review === undefined) return null;
+    const hold = await claimHoldOf(owned, base, goal, taskId);
+    if (hold === null) return null;
+    if ('status' in hold) return waiting(receipt, receiptReason(hold, 'the Task claim hold is not readable'));
+    return base.taskId === null ? advancing(receipt, selectWorkStep(base))
+      : waiting(receipt, hold.reason, undefined, hold.basis);
+  }
+
+  /**
+   * §2.8/F06: the ONE read-only Task claim judgment. `selectOrdinary` executes what it returns; the
+   * `TaskClaimabilityPort` only projects it (`claimable` plus the three named blockers). It never performs a step or
+   * writes: every arm names the outcome the Goal loop would reach for this Task now.
+   */
+  type TaskClaimDecision =
+    | { kind: 'claim'; binding: Binding; session: SessionCard; consumedWait?: ConsumedWaitV1;
+        servedRequest?: { ref: ActionRequestRef; revision: number }; pick: PickBasisV1 | null;
+        /** The next step is a claim: the ordinary and the continuation claim share this one mark with a rework
+         *  claim's `result`, and F06 projects it instead of re-deriving `kind === 'claim'`. */
+        nextIsClaim: true }
+    | { kind: 'step'; step: WorkflowOperation; pick: PickBasisV1 | null; blocker?: TaskClaimTargetBlockerV1 }
+    | { kind: 'result'; result: WorkflowAdvanceResult; waitFallback: string;
+        atGoal: 'remember-wait-or-return' | 'remember-wait-or-continue';
+        /** A continuation/rework arm whose next operation is `claim_task` names the same next step. */
+        nextIsClaim: boolean }
+    | { kind: 'waiting'; reason: string; basis?: GoalWaitBasisV1; source?: DecisionSourceV1;
+        pick: PickBasisV1 | null; atGoal: 'remember' | 'return'; blocker?: TaskClaimTargetBlockerV1 }
+    | { kind: 'held'; held: L46WaitV1; root: boolean }
+    | { kind: 'no_line'; pick: PickBasisV1 | null }
+    | { kind: 'skip'; remembered?: { reason: string; basis?: GoalWaitBasisV1 } }
+    | { kind: 'rejection'; rejection: CoreRejection };
+
+  async function classifyTaskClaim(
+    owned: Owned, base: Base, config: WorkflowHostConfiguration, goal: GoalSnapshot, graph: TaskGraph,
+    task: RuntimeTask, row: TaskRow, held: L46WaitV1 | undefined, overlap: ModuleOverlapV1,
+    claimHold: { reason: string; basis: GoalWaitBasisV1 } | null,
+    openRequest: ActionRequestSnapshotV1 | null, activelyWatched: boolean,
+    /** True when the caller performs the claim this decision names (the Goal loop); false for the read-only F06
+     *  projection. A named Task's claim is the step the caller asked for: the claim owner applies the hold at its
+     *  commit (P1 H1/H3/H4/H5, D9, P2 T27), so the hold must not replace that step with a wait. */
+    claimAttempt: boolean,
+  ): Promise<TaskClaimDecision> {
+    // 2.5 作废：请求还在（`open` 或待批 `pending`），而任务已取消/替代/完成/人叫停过，就做一步 `settle` 记 `void`；
+    // 同一趟只调这一个 owner。
+    if (openRequest !== null) {
+      const voidKind = dispatchVoidKindOf(task, row);
+      if (voidKind !== null) {
+        return { kind: 'step', step: settleActionRequestStep(base, openRequest, voidKind, graph.plan.ref), pick: null };
+      }
+    }
+    // AR-02d/AR-03: only an `open` request is a priority and is served by this claim. A `pending` request is read only
+    // to be voided above; an ordinary claim settles it in the claim owner as `byRequest: false`.
+    const priorityRequest = openRequest?.state === 'open' ? openRequest : null;
+    /** B3-04: the one "line busy" wait the ordinary, continuation and rework claims share; F06 projects its blocker. */
+    const lineBusyWait = (reason: string, pick: PickBasisV1 | null): TaskClaimDecision => ({ kind: 'waiting', reason,
+      basis: goalWaitBasisOf(goal, ['session_available'], ['Session']), pick, atGoal: 'remember',
+      blocker: { kind: 'line_busy', reason } });
+    // §3.1: a live watch already advances this Task; the Goal-level selection skips it.
+    if (base.taskId === null && activelyWatched) return { kind: 'skip' };
+    // A named non-work Task can still be a block's dependent (a gate after its producer); work Tasks keep K3's
+    // review skip first, so their held check sits after it below.
+    if (held !== undefined && base.taskId !== null && task.taskKind !== 'work') {
+      return { kind: 'held', held, root: held.task.taskId === held.block.task.taskId };
+    }
+    if (task.taskKind !== 'work' || task.disposition !== 'active') return { kind: 'skip' };
+    if (task.executionIntent === 'plan_only') return { kind: 'skip' };
+    /**
+     * The shared `claimHoldOf` read, named right before an actual claim. A Goal-level pass remembers the wait and
+     * goes on with the next Task; the read-only projection reports the claim not yet possible. A named Task that the
+     * caller is about to claim builds the claim instead: the claim owner's own guard decides at its commit.
+     */
+    const claimHoldBlocked = async (): Promise<TaskClaimDecision | null> => {
+      if (claimAttempt && base.taskId !== null) return null;
+      const hold = await claimHoldOf(owned, base, goal, task.taskId);
+      if (hold === null) return null;
+      if ('status' in hold) return { kind: 'rejection', rejection: hold };
+      return base.taskId === null
+        ? { kind: 'skip', remembered: hold }
+        : { kind: 'waiting', reason: hold.reason, basis: hold.basis, pick: null, atGoal: 'return' };
+    };
+    // C8 (§4.3 "Workflow", §15.2 5.8, 5.9): the Task's automation verdict first. A `requeue`
+    // (or a `stopped/budget_exhausted` the binding's larger budget lifts) performs the
+    // automatic requeue; a `reverify` on a finalized head the automatic successor round
+    // (AV-7d; with `needsFinalize` the open head is finalized below first); `claim_requeued`
+    // is claimed below; `stopped` skips only this Task's rework (requeue, reverify, a claim
+    // by requeueRef), so a completed Run's round still opens, runs, finalizes and completes
+    // (AV-4, STEP5-FLIPS §14), except on an invalid chain (`round_ambiguous`, skipped below).
+    // K3 §3.4 (U4): every Task first consults its selected Run's review record,
+    // before any automatic requeue/reverify. `skip` stops only this Task (a
+    // named Task waits with the blocking source); `review` performs its one step.
+    const gate = await reviewGate(owned, base, config, goal, graph.plan, task, row);
+    if (gate.kind === 'waiting') {
+      return { kind: 'waiting', reason: gate.reason, pick: null, atGoal: 'remember' };
+    }
+    if (gate.kind === 'rejection') return { kind: 'rejection', rejection: gate.rejection };
+    if (gate.kind === 'review') {
+      // §3.3/§2.8: a review round also opens a Run by claiming, and the claim owner applies the Task's hold/pending
+      // stop BEFORE its review exemption (`task-machine.ts:903-912`). Judge that same blocker here with the one
+      // `claim-service` read, so a Goal pass remembers it and goes on instead of stopping at the commit; a named
+      // Task waits with the basis. Review settlement and the already-claimed Run keep their own steps.
+      if (gate.step.kind === 'claim_task') {
+        const reviewHold = await claimHoldBlocked();
+        if (reviewHold !== null) return reviewHold;
+      }
+      return { kind: 'step', step: gate.step, pick: null };
+    }
+    if (gate.kind === 'skip') {
+      const reason = `unknown_call_review_${gate.source}: the selected Run's review record blocks this Task`;
+      const basis = gate.waitBasis ?? goalWaitBasisOf(goal,
+        [`unknown_call_review:${gate.source}`], ['UnknownCallReview', 'Goal']);
+      return { kind: 'waiting', reason, basis, pick: null, atGoal: 'remember',
+        ...(gate.decisionSource === undefined ? {} : { source: gate.decisionSource }) };
+    }
+    // L46 §3.13 item 3: a blocked Task — or one waiting behind a block — is skipped at Goal scope and continues
+    // with the next Task; a named Task waits with the card's source, exactly as K3's review gate does above.
+    if (held !== undefined) {
+      return { kind: 'held', held, root: held.task.taskId === held.block.task.taskId };
+    }
+    const rework = automaticRequeue(config, owned, base, goal, graph.plan, task, row) ?? automaticReverify(base, row);
+    if (rework !== null) {
+      // §4.5: the Goal's current settings decide before any automatic rework;
+      // a gated step waits with its formal cause and writes nothing.
+      const gated = await automationConfirmation(base, goal, row, rework);
+      if (gated !== null) {
+        return { kind: 'result', result: gated, waitFallback: 'the automatic step is not confirmed',
+          atGoal: 'remember-wait-or-continue', nextIsClaim: false };
+      }
+      return { kind: 'step', step: rework, pick: null };
+    }
+    // D-3 (TASK-03): a requeued Task (P4) is claimed with its covering TaskRequeue,
+    // before the ended Run's round chain is resumed, while its verdict is
+    // `claim_requeued` (AV-3); any other verdict claims nothing.
+    if (row.requeueRef !== undefined && row.execution !== null) {
+      if (row.failure?.automation.verdict.kind !== 'claim_requeued') return { kind: 'skip' };
+      if (!row.eligibility.eligible) return { kind: 'skip' };
+      if (claimHold !== null) {
+        return { kind: 'skip', remembered: { reason: claimHold.reason, basis: claimHold.basis } };
+      }
+      const requeueHold = await claimHoldBlocked();
+      if (requeueHold !== null) return requeueHold;
+      const assignment = revisionAssignments(graph.plan).find((candidate) => candidate.taskId === task.taskId);
+      if (assignment === undefined) return { kind: 'skip' };
+      const binding = bindingForRole(config, owned.projectId, goal.workspaceRef.workspaceId, assignment.role);
+      if (binding === null) {
+        return { kind: 'rejection', rejection: rejection('unsupported',
+          `no trusted Workflow binding matches workspace ${goal.workspaceRef.workspaceId} and role ${assignment.role}`) };
+      }
+      // K3 L12: the continuation Session and the close start from the record's
+      // most recent holder (the original Run when it has no rounds).
+      const holder = await continuationHolder(owned, row.execution);
+      const claimed = await claimContinuation(owned, base, goal, graph.plan.ref, task, row, binding, holder,
+        { requeue: { requeueRef: row.requeueRef, budget: row.requeueBudget ?? null } });
+      if ('kind' in claimed) return lineBusyWait(claimed.reason, null);
+      const claimedNext = claimed.status === 'ready' ? claimed.value.next : null;
+      return { kind: 'result', result: claimed, waitFallback: 'the selected Task waits',
+        atGoal: 'remember-wait-or-return',
+        nextIsClaim: claimedNext !== null && claimedNext.kind === 'perform'
+          && claimedNext.operation.kind === 'claim_task' };
+    }
+    // §4.3 "stopped" (AV-6, FC-11, P10): an invalid round chain has no head to continue and VD-14
+    // opens nothing on it (GAP-52), so its chain is not read (that read would only wait) and the
+    // Task is skipped; the other Tasks continue.
+    if (isRoundAmbiguous(row)) return { kind: 'skip' };
+    // §15.2 5.9 (C5, C8): a finalized non-PASS chain head whose verdict performed no rework above
+    // (`stopped`: the cap, no new basis, an uncovered requirement, the chain limit, a person's stop)
+    // leaves nothing for the Workflow to advance on this Task; the other Tasks continue.
+    if (headFinalizedNonPass(row)) return { kind: 'skip' };
+    // A real claim that was persisted but never admitted to the Kernel (its
+    // first prepare was refused) is recoverable from the SAME Run. This is the
+    // ONE narrow unadmitted state, checked against the formal execution read;
+    // unknown/unreadable, authorized, entered, running and terminal executions
+    // keep the pre-existing rules below and are never restarted.
+    if (row.execution !== null && row.effectivePhase !== 'satisfied' && row.effectivePhase !== 'failed'
+      && await isUnadmittedStarting(owned, row.execution)) {
+      return { kind: 'step', step: { kind: 'prepare', request: prepareStep(base, row.execution) }, pick: null };
+    }
+    // A formally completed/ended Run whose Task is still open keeps its round
+    // chain (open or finalized). Resume the chain head (or open the root
+    // exactly once on an explicit not_found) BEFORE skipping the ended Run;
+    // an unknown chain read waits rather than falling through to an unrelated
+    // Work. Failed/cancelled/paused/running/unknown executions keep the
+    // existing rules below, and other same-Goal Tasks stay independently
+    // selectable. The graph Plan is the Goal's current adopted Plan (VD-7).
+    if (row.execution !== null && row.effectivePhase !== 'satisfied' && row.effectivePhase !== 'failed') {
+      const execution = await deps.executions.readExecution(owned.ctx, row.execution);
+      if (execution.status === 'ready' && sameCanonical(execution.value.run.ref, row.execution)
+        && normalEnd(execution.value.run).ok) {
+        const roundWaitBasis = goalWaitBasisOf(goal, ['formal_check', 'evidence', 'goal_gate'],
+          ['VerificationRound', 'Evidence', 'TaskEvidenceIndex', 'Run', 'Goal', 'PlanRevision']);
+        const resumed = await resumeRoundChain(owned, base, roundWaitBasis, execution.value.run, graph.plan.ref);
+        return { kind: 'result', result: resumed, waitFallback: 'the round chain head waits',
+          atGoal: 'remember-wait-or-return', nextIsClaim: false };
+      }
+    }
+    // An ended Run with no formal yield is never re-claimed. A real yielded Run
+    // with a durable continuation is the ONE continuable execution.
+    if (row.execution !== null && row.effectivePhase !== 'ready') return { kind: 'skip' };
+    if (row.effectivePhase === 'satisfied' || row.effectivePhase === 'failed') return { kind: 'skip' };
+    if (!row.eligibility.eligible) return { kind: 'skip' };
+    if (claimHold !== null) {
+      return { kind: 'skip', remembered: { reason: claimHold.reason, basis: claimHold.basis } };
+    }
+    const assignment = revisionAssignments(graph.plan).find((candidate) => candidate.taskId === task.taskId);
+    if (assignment === undefined) return { kind: 'skip' };
+    const binding = bindingForRole(config, owned.projectId, goal.workspaceRef.workspaceId, assignment.role);
+    if (binding === null) {
+      return { kind: 'rejection', rejection: rejection('unsupported',
+        `no trusted Workflow binding matches workspace ${goal.workspaceRef.workspaceId} and role ${assignment.role}`) };
+    }
+    const taskRef: TaskTriple = { projectId: owned.projectId, goalId: base.goalRef.goalId, taskId: task.taskId };
+    // §3.3 items 2, 5 and 6 (`book-7c.md`): an overlapping Task is dispatched only through its module gate.
+    // The non-overlapping segment was already tried; the gate is read at this Task's current basis before any
+    // Session is chosen. A conflicting Run without a real start cursor leaves the advance waiting/incomplete.
+    // The gate owner is an optional seam like the other narrow owner ports: without it an old world keeps the
+    // pre-gate selection, and the real composition installs N's port.
+    const gateDecision = await readOverlapGateDecision(owned, goal, graph, task, row, overlap, taskRef);
+    if (gateDecision.status !== 'ready') return { kind: 'rejection', rejection: readRejection(gateDecision) };
+    // §3.3 item 7: the gate's wait names its own release plus the conflicting Run's end and the note reads.
+    const gateWait = (): GoalWaitBasisV1 => goalWaitBasisOf(goal, ['overlap_gate_pending'],
+      ['Run', 'TaskLease', 'NoteHead', 'NoteVersion', 'CurrentPointer', 'ModuleOverlapGate']);
+    if (gateDecision.value.kind === 'step') {
+      return { kind: 'step', step: gateDecision.value.step, pick: null,
+        blocker: { kind: 'module_gate', reason: gateDecision.value.reason } };
+    }
+    if (gateDecision.value.kind === 'incomplete' || gateDecision.value.kind === 'waiting') {
+      return { kind: 'waiting', reason: gateDecision.value.reason, basis: gateWait(), pick: null,
+        atGoal: 'remember', blocker: { kind: 'module_gate', reason: gateDecision.value.reason } };
+    }
+    const ordinaryHold = await claimHoldBlocked();
+    if (ordinaryHold !== null) return ordinaryHold;
+    // A persisted yield fixes the originating Session before any default
+    // selection. Reopening the Host must never create or choose a substitute.
+    let consumedWait: ConsumedWaitV1 | undefined;
+    let chosen: SessionChoice;
+    // The chooser's basis is its own cross-type return value; the plain `SessionChoice`
+    // local drops it, so it is kept here and travels on the picker's ordinary exits.
+    let chosenBasis: PickBasisV1 | null = null;
+    if (row.execution !== null) {
+      // D11: the wait, not the latest Run, names the Run that yielded it. S's `wait` is the oldest
+      // unconsumed Work wait of the line and its `runRef` is that wait's `originalRun`. Without the
+      // Session-facts seam an old narrow double keeps the pre-D11 read.
+      let priorRunRef = row.execution;
+      if (deps.sessionFacts !== undefined) {
+        const selected = await deps.executions.readExecution(owned.ctx, row.execution);
+        if (selected.status !== 'ready') {
+          return { kind: 'waiting', reason: receiptReason(selected, 'the selected Run is not readable'),
+            pick: null, atGoal: 'return' };
+        }
+        // Rule W: the line facts (Session record, wait/reply indexes) are in the line's workspace.
+        const lineWorkspaceId = selected.value.session.workspaceId;
+        const factsCtx = lineWorkspaceId === owned.ctx.workspaceId
+          ? owned.ctx : { ...owned.ctx, workspaceId: lineWorkspaceId };
+        const facts = await deps.sessionFacts.readSessionFacts(factsCtx, selected.value.session.ref);
+        if (facts.status !== 'ready') {
+          return { kind: 'waiting', reason: receiptReason(facts, 'the continuation line facts are not readable'),
+            pick: null, atGoal: 'return' };
+        }
+        const wait = facts.value.wait;
+        if (wait === null) {
+          // A send still awaiting its release is no wait yet: the Goal goes on with its other Tasks.
+          return { kind: 'waiting', reason: 'the continuation line has no unconsumed Work wait',
+            basis: goalWaitBasisOf(goal, ['wait_reply'], ['SessionMessage', 'Run', 'TaskLease']),
+            pick: null, atGoal: 'remember' };
+        }
+        priorRunRef = wait.runRef;
+      }
+      const continuation = await readContinuation(owned, priorRunRef);
+      if ('rejection' in continuation) return { kind: 'rejection', rejection: continuation.rejection };
+      if ('waiting' in continuation) {
+        return { kind: 'waiting', reason: continuation.waiting,
+          basis: goalWaitBasisOf(goal, ['wait_reply'], ['SessionMessage', 'Run', 'TaskLease']),
+          pick: null, atGoal: 'remember' };
+      }
+      consumedWait = continuation.value;
+      // Rule W/M3: the original claim Session may be in another workspace of the project.
+      const original = await deps.sessions.readSession(owned.ctx, continuation.sessionRef, 'project');
+      if (original.status !== 'ready') {
+        return { kind: 'waiting', reason: 'the original continuation Session is not readable',
+          basis: goalWaitBasisOf(goal, ['session_available'], ['Session']), pick: null, atGoal: 'remember' };
+      }
+      // The continuation keeps the original claim Session's identity (the afterRun continuation shape).
+      if (!roleReusable(original.value, goal.workspaceRef.workspaceId, binding, { scope: 'project' })) {
+        // B3-04: an active line of this role the read Session proves occupied is the shared `line_busy` wait;
+        // an archived, unavailable or incompatible line keeps its plain wait.
+        const record = original.value.record;
+        if (record.lifecycle === 'active' && sameCanonical(record.role, binding.sessionRole) && record.occupancy !== null) {
+          return lineBusyWait(`the original continuation Session ${record.ref.sessionId} is occupied`, null);
+        }
+        return { kind: 'waiting', reason: 'the original continuation Session is busy, archived or incompatible',
+          basis: goalWaitBasisOf(goal, ['session_available'], ['Session']), pick: null, atGoal: 'remember' };
+      }
+      chosen = { kind: 'reuse', card: original.value };
+    } else {
+      const picked = await chooseSession(owned, goal, binding, base.sessionHint, taskRef,
+        row.definition.scope.kind === 'module' ? row.definition.scope.moduleRef : null,
+        priorityRequest?.preferredLine ?? null);
+      chosen = picked;
+      chosenBasis = picked.basis;
+    }
+    if (chosen.kind === 'rejection') return { kind: 'rejection', rejection: chosen.rejection };
+    if (chosen.kind === 'waiting') return lineBusyWait(chosen.reason, chosenBasis);
+    if (chosen.kind === 'create') return { kind: 'no_line', pick: chosenBasis };
+    return { kind: 'claim', binding, session: chosen.card, pick: chosenBasis, nextIsClaim: true,
+      ...(consumedWait === undefined ? {} : { consumedWait }),
+      ...(priorityRequest === null ? {}
+        : { servedRequest: { ref: priorityRequest.ref, revision: priorityRequest.revision } }) };
+  }
+
   async function selectOrdinary(
     owned: Owned, base: Base, config: WorkflowHostConfiguration, goal: GoalSnapshot, graph: TaskGraph,
     candidateWait: PlanCandidateWait | null,
@@ -2006,6 +2663,20 @@ export function createWorkflow(deps: WorkflowDependencies & {
   ): Promise<WorkflowAdvanceResult> {
     // 1. The first eligible active ordinary work in required-first / plan order.
     const ordered = orderTasks(graph.plan.tasks, graph.plan.executionDag?.dependsOn ?? []);
+    // 2.5: only a Goal-level selection reads this Goal's dispatch requests. The owner answers them in acceptance order
+    // (the request record's own cursor), and that order is the candidate order for their Tasks; every candidate still
+    // goes through the same judgment below, never loosened or tightened for a requested Task. A named Task's advance
+    // never reads them: the claim owner settles the `openDispatch` it meets as an ordinary claim (`byRequest: false`),
+    // so a named advance never takes the preferred line, `servedRequest` or the dispatch sequence.
+    const dispatchRead = base.taskId !== null || deps.actionRequests === undefined ? null
+      : await deps.actionRequests.listOpenDispatches(owned.ctx, { goalRef: base.goalRef });
+    if (dispatchRead !== null && dispatchRead.status !== 'ready') return readRejection(dispatchRead);
+    const dispatches = dispatchRead === null ? [] : dispatchRead.value;
+    // `pending` requests are not priority candidates: only `open` ones order the Tasks. Both states are kept in the
+    // map so a Task that can no longer be served voids its request before any claim.
+    const openDispatches = dispatches.filter(entry => entry.request.state === 'open');
+    const openDispatchOf = new Map<string, ActionRequestSnapshotV1>(
+      dispatches.map(entry => [entry.request.task.taskId, entry.request] as const));
     // L46 §3.13 item 1: one pass after the ordering and before the loop; a failed read is the advance's failure.
     const blockRead = await taskBlocks(owned, base, config, goal, graph, ordered);
     if (blockRead.status !== 'ready') return readRejection(blockRead);
@@ -2032,7 +2703,7 @@ export function createWorkflow(deps: WorkflowDependencies & {
     const gapWaitBasis = (): GoalWaitBasisV1 => mergeWaitBasis([
       goalWaitBasisOf(goal, ['plan_adoption', 'plan_change', 'task_claimable', 'formal_check', 'evidence'],
         ['PlanRevision', 'PlanProposal', 'Run', 'TaskLease', 'DispatchOutboxEntry', 'VerificationRound',
-          'Evidence', 'TaskEvidenceIndex']),
+          'Evidence', 'TaskEvidenceIndex', 'ActionRequest', 'TaskClaimHold']),
       ...collectedWaits,
     ]);
     /**
@@ -2068,6 +2739,7 @@ export function createWorkflow(deps: WorkflowDependencies & {
           if (await readHostSendReceipt(
             systemRoundContext({ projectId: owned.projectId, workspaceId: owned.workspaceId }, owned.ctx.signal),
             { requestId: request.value.meta.requestId, arguments: request.value.input },
+            { projectId: owned.projectId, workspaceId: owned.workspaceId },
           ) === 'committed') {
             // The round is already committed: keep the complete merge basis and wait.
             // The next pass sees the same gap and skips it; no self-wake guard is written.
@@ -2106,329 +2778,114 @@ export function createWorkflow(deps: WorkflowDependencies & {
     // A-12 (`book-7c.md` §3.3 item 2): the candidates split stably by the module-overlap rule, and the
     // non-overlapping segment keeps the whole existing order ahead of the gated one. The facts are aligned by
     // `taskId`, never by the sorted array's index.
-    const facts: ModuleOverlapTaskFactsV1[] = graph.tasks.map(row => ({
-      task: row.ref, effectivePhase: row.effectivePhase,
-      moduleId: row.definition.scope.kind === 'module' ? row.definition.scope.moduleRef : null,
-      ...(row.definition.plannedFiles === undefined ? {} : { plannedFiles: row.definition.plannedFiles }) }));
-    const factOf = new Map(facts.map(fact => [fact.task.taskId, fact] as const));
+    const factOf = overlapFactsOf(graph);
     const order = splitNonOverlapping(ordered.map(candidate => ({ candidate,
-      overlap: moduleOverlapOf({ waiting: factOf.get(candidate.taskId)!, others: facts }) })));
-    for (const { candidate: task, overlap } of [...order.nonOverlapping, ...order.overlapping]) {
+      overlap: moduleOverlapOf({ waiting: factOf.get(candidate.taskId)!, others: [...factOf.values()] }) })));
+    // 2.5 candidate order, one change only: the Tasks of this Goal's `open` dispatch requests come first in acceptance
+    // order, then today's order. Nothing else about the split or the judgment is rewritten.
+    const todayOrder = [...order.nonOverlapping, ...order.overlapping];
+    const requestFirst = openDispatches.flatMap(entry => {
+      const found = todayOrder.find(item => item.candidate.taskId === entry.request.task.taskId);
+      return found === undefined ? [] : [found];
+    });
+    const requestedIds = new Set(requestFirst.map(item => item.candidate.taskId));
+    const candidateOrder = [...requestFirst, ...todayOrder.filter(item => !requestedIds.has(item.candidate.taskId))];
+    for (const { candidate: task, overlap } of candidateOrder) {
       if (base.taskId !== null && task.taskId !== base.taskId) continue;
       const row = graph.tasks.find((candidate) => candidate.ref.taskId === task.taskId);
       if (row === undefined) continue;
-      // §3.1: a live watch already advances this Task; the Goal-level selection
-      // skips it (an explicit Task selection never does).
-      if (base.taskId === null && base.activeTaskIds?.has(task.taskId) === true) continue;
+      const openRequest = openDispatchOf.get(task.taskId) ?? null;
       const held = branch.get(task.taskId);
-      // A named non-work Task can still be a block's dependent (a gate after its producer); work Tasks keep K3's
-      // review skip first, so their held check sits after it below.
-      if (held !== undefined && base.taskId !== null && task.taskKind !== 'work') {
-        return waiting(null, held.reason, held.block.gate.value.decisionCause?.source ?? undefined,
-          held.block.wakeBasis);
-      }
-      if (task.taskKind !== 'work' || task.disposition !== 'active') continue;
-      if (task.executionIntent === 'plan_only') continue;
-      // C8 (§4.3 "Workflow", §15.2 5.8, 5.9): the Task's automation verdict first. A `requeue`
-      // (or a `stopped/budget_exhausted` the binding's larger budget lifts) performs the
-      // automatic requeue; a `reverify` on a finalized head the automatic successor round
-      // (AV-7d; with `needsFinalize` the open head is finalized below first); `claim_requeued`
-      // is claimed below; `stopped` skips only this Task's rework (requeue, reverify, a claim
-      // by requeueRef), so a completed Run's round still opens, runs, finalizes and completes
-      // (AV-4, STEP5-FLIPS §14), except on an invalid chain (`round_ambiguous`, skipped below).
-      // K3 §3.4 (U4): every Task first consults its selected Run's review record,
-      // before any automatic requeue/reverify. `skip` stops only this Task (a
-      // named Task waits with the blocking source); `review` performs its one step.
-      const gate = await reviewGate(owned, base, config, goal, graph.plan, task, row);
-      if (gate.kind === 'waiting') {
-        if (base.taskId === null) { rememberWaiting(gate.reason); continue; }
-        return waiting(null, gate.reason);
-      }
-      if (gate.kind === 'rejection') return gate.rejection;
-      if (gate.kind === 'review') return advancing(null, makePerform(base, gate.step));
-      if (gate.kind === 'skip') {
-        const reason = `unknown_call_review_${gate.source}: the selected Run's review record blocks this Task`;
-        const basis = gate.waitBasis ?? goalWaitBasisOf(goal,
-          [`unknown_call_review:${gate.source}`], ['UnknownCallReview', 'Goal']);
-        if (base.taskId !== null) return waiting(null, reason, gate.decisionSource, basis);
-        // DRV-07: a Goal-scope selection records the review wait and keeps
-        // looking, instead of dropping the basis with a bare `continue`.
-        rememberWaiting(reason, basis);
-        continue;
-      }
-      // L46 §3.13 item 3: a blocked Task — or one waiting behind a block — is skipped at Goal scope and continues
-      // with the next Task; a named Task waits with the card's source, exactly as K3's review gate does above.
-      if (held !== undefined) {
-        if (base.taskId !== null) {
-          return held.task.taskId === held.block.task.taskId ? held.block.gate
-            : waiting(null, held.reason, held.block.gate.value.decisionCause?.source ?? undefined,
-              held.block.wakeBasis);
-        }
-        rememberWaiting(held.reason, held.block.wakeBasis);
-        continue;
-      }
-      const rework = automaticRequeue(config, owned, base, goal, graph.plan, task, row) ?? automaticReverify(base, row);
-      if (rework !== null) {
-        // §4.5: the Goal's current settings decide before any automatic rework;
-        // a gated step waits with its formal cause and writes nothing.
-        const gated = await automationConfirmation(base, goal, row, rework);
-        if (gated !== null) {
-          if (base.taskId !== null) return gated;
-          if (gated.status === 'ready') {
-            rememberWaiting(gated.value.reason ?? 'the automatic step is not confirmed', gated.value.waitBasis);
+      const decision = await classifyTaskClaim(owned, base, config, goal, graph, task, row, held, overlap,
+        claimHold, openRequest, base.taskId === null && base.activeTaskIds?.has(task.taskId) === true, true);
+      switch (decision.kind) {
+        case 'skip':
+          if (decision.remembered !== undefined) {
+            rememberWaiting(decision.remembered.reason, decision.remembered.basis);
           }
           continue;
-        }
-        return advancing(null, makePerform(base, rework));
-      }
-      // D-3 (TASK-03): a requeued Task (P4) is claimed with its covering TaskRequeue,
-      // before the ended Run's round chain is resumed, while its verdict is
-      // `claim_requeued` (AV-3); any other verdict claims nothing.
-      if (row.requeueRef !== undefined && row.execution !== null) {
-        if (row.failure?.automation.verdict.kind !== 'claim_requeued') continue;
-        if (!row.eligibility.eligible) continue;
-        if (claimHold !== null) { rememberWaiting(claimHold.reason, claimHold.basis); continue; }
-        const assignment = revisionAssignments(graph.plan).find((candidate) => candidate.taskId === task.taskId);
-        if (assignment === undefined) continue;
-        const binding = bindingForRole(config, owned.projectId, goal.workspaceRef.workspaceId, assignment.role);
-        if (binding === null) {
-          return rejection('unsupported',
-            `no trusted Workflow binding matches workspace ${goal.workspaceRef.workspaceId} and role ${assignment.role}`);
-        }
-        // K3 L12: the continuation Session and the close start from the record's
-        // most recent holder (the original Run when it has no rounds).
-        const holder = await continuationHolder(owned, row.execution);
-        const claimed = await claimContinuation(owned, base, goal, graph.plan.ref, task, row, binding, holder,
-          { requeue: { requeueRef: row.requeueRef, budget: row.requeueBudget ?? null } });
-        if (claimed === null) continue;
-        if (base.taskId === null && claimed.status === 'ready' && claimed.value.state === 'waiting') {
-          rememberWaiting(claimed.value.reason ?? 'the selected Task waits', claimed.value.waitBasis);
-          continue;
-        }
-        return claimed;
-      }
-      // §4.3 "stopped" (AV-6, FC-11, P10): an invalid round chain has no head to continue and VD-14
-      // opens nothing on it (GAP-52), so its chain is not read (that read would only wait) and the
-      // Task is skipped; the other Tasks continue.
-      if (isRoundAmbiguous(row)) continue;
-      // §15.2 5.9 (C5, C8): a finalized non-PASS chain head whose verdict performed no rework above
-      // (`stopped`: the cap, no new basis, an uncovered requirement, the chain limit, a person's stop)
-      // leaves nothing for the Workflow to advance on this Task; the other Tasks continue.
-      if (headFinalizedNonPass(row)) continue;
-      // A real claim that was persisted but never admitted to the Kernel (its
-      // first prepare was refused) is recoverable from the SAME Run. This is the
-      // ONE narrow unadmitted state, checked against the formal execution read;
-      // unknown/unreadable, authorized, entered, running and terminal executions
-      // keep the pre-existing rules below and are never restarted.
-      if (row.execution !== null && row.effectivePhase !== 'satisfied' && row.effectivePhase !== 'failed'
-        && await isUnadmittedStarting(owned, row.execution)) {
-        return advancing(null, makePerform(base, { kind: 'prepare', request: prepareStep(base, row.execution) }));
-      }
-      // A formally completed/ended Run whose Task is still open keeps its round
-      // chain (open or finalized). Resume the chain head (or open the root
-      // exactly once on an explicit not_found) BEFORE skipping the ended Run;
-      // an unknown chain read waits rather than falling through to an unrelated
-      // Work. Failed/cancelled/paused/running/unknown executions keep the
-      // existing rules below, and other same-Goal Tasks stay independently
-      // selectable. The graph Plan is the Goal's current adopted Plan (VD-7).
-      if (row.execution !== null && row.effectivePhase !== 'satisfied' && row.effectivePhase !== 'failed') {
-        const execution = await deps.executions.readExecution(owned.ctx, row.execution);
-        if (execution.status === 'ready' && sameCanonical(execution.value.run.ref, row.execution)
-          && normalEnd(execution.value.run).ok) {
-          const resumed = await resumeRoundChain(owned, base, roundWaitBasis, execution.value.run, graph.plan.ref);
-          if (base.taskId === null && resumed.status === 'ready' && resumed.value.state === 'waiting') {
-            rememberWaiting(resumed.value.reason ?? 'the round chain head waits', resumed.value.waitBasis);
+        case 'rejection':
+          return decision.rejection;
+        case 'held':
+          if (base.taskId === null) {
+            rememberWaiting(decision.held.reason, decision.held.block.wakeBasis);
             continue;
           }
-          return resumed;
-        }
-      }
-      // An ended Run with no formal yield is never re-claimed. A real yielded Run
-      // with a durable continuation is the ONE continuable execution.
-      if (row.execution !== null && row.effectivePhase !== 'ready') continue;
-      if (row.effectivePhase === 'satisfied' || row.effectivePhase === 'failed') continue;
-      if (!row.eligibility.eligible) continue;
-      if (claimHold !== null) { rememberWaiting(claimHold.reason, claimHold.basis); continue; }
-      const assignment = revisionAssignments(graph.plan).find((candidate) => candidate.taskId === task.taskId);
-      if (assignment === undefined) continue;
-      const binding = bindingForRole(config, owned.projectId, goal.workspaceRef.workspaceId, assignment.role);
-      if (binding === null) {
-        return rejection('unsupported',
-          `no trusted Workflow binding matches workspace ${goal.workspaceRef.workspaceId} and role ${assignment.role}`);
-      }
-      const taskRef: TaskTriple = { projectId: owned.projectId, goalId: base.goalRef.goalId, taskId: task.taskId };
-      // §3.3 items 2, 5 and 6 (`book-7c.md`): an overlapping Task is dispatched only through its module gate.
-      // The non-overlapping segment was already tried; the gate is read at this Task's current basis before any
-      // Session is chosen. A conflicting Run without a real start cursor leaves the advance waiting/incomplete.
-      // The gate owner is an optional seam like the other narrow owner ports: without it an old world keeps the
-      // pre-gate selection, and the real composition installs N's port.
-      const overlapOwner = deps.overlap;
-      if (overlap.overlaps && overlapOwner !== undefined) {
-        const waitingAttempt = row.currentAttempt?.attemptId ?? 'none';
-        const planRevision = graph.plan.planRevision;
-        const running: OverlapBasisV1['running'] = [];
-        let incomplete: string | null = null;
-        for (const conflicting of graph.tasks) {
-          // The conflict set is the overlap rule's own `running` (planned files narrow it), never re-collected by module.
-          if (!overlap.running.some((ref) => ref.taskId === conflicting.ref.taskId)) continue;
-          const run = conflicting.execution;
-          if (run === null) {
-            incomplete = `overlap_gate_incomplete: the conflicting Run of ${conflicting.ref.taskId} is not readable`;
-            break;
+          return decision.root ? decision.held.block.gate
+            : waiting(null, decision.held.reason,
+              decision.held.block.gate.value.decisionCause?.source ?? undefined, decision.held.block.wakeBasis);
+        case 'waiting':
+          if (base.taskId !== null || decision.atGoal === 'return') {
+            return waiting(null, decision.reason, decision.source, decision.basis, decision.pick);
           }
-          let loaded;
-          try {
-            loaded = await deps.sourceAuthority.load(run);
-          } catch {
-            incomplete = `overlap_gate_incomplete: the conflicting Run of ${conflicting.ref.taskId} is not readable`;
-            break;
+          rememberWaiting(decision.reason, decision.basis);
+          continue;
+        case 'result': {
+          if (base.taskId !== null) return decision.result;
+          const waited = decision.result.status === 'ready' && decision.result.value.state === 'waiting'
+            ? decision.result.value : null;
+          if (waited !== null) {
+            rememberWaiting(waited.reason ?? decision.waitFallback, waited.waitBasis);
           }
-          if (loaded.status !== 'found' || !('startedSince' in loaded.snapshot)) {
-            incomplete = `overlap_gate_incomplete: the conflicting Run of ${conflicting.ref.taskId} is not readable`;
-            break;
-          }
-          running.push({ task: conflicting.ref, run, startCursor: loaded.snapshot.startedSince });
-        }
-        // §3.3 item 7: the gate's wait names its own release plus the conflicting Run's end and the note reads.
-        const gateWait = (): GoalWaitBasisV1 => goalWaitBasisOf(goal, ['overlap_gate_pending'],
-          ['Run', 'TaskLease', 'NoteHead', 'NoteVersion', 'CurrentPointer', 'ModuleOverlapGate']);
-        if (incomplete !== null) {
-          if (base.taskId !== null) return waiting(null, incomplete, undefined, gateWait());
-          rememberWaiting(incomplete, gateWait());
+          if (decision.atGoal === 'remember-wait-or-return' && waited === null) return decision.result;
           continue;
         }
-        const digest = overlapBasisDigest({ planRevision, waitingAttempt, running });
-        const gate = { aggregateType: 'ModuleOverlapGate' as const, projectId: owned.projectId,
-          goalId: goal.ref.goalId, taskId: task.taskId, moduleId: overlap.moduleId };
-        const openStep: WorkflowOperation = { kind: 'open_overlap_gate', request: {
-          goalRef: goal.ref, task: taskRef, moduleId: overlap.moduleId, running, planRevision, waitingAttempt } };
-        const gateRead = await overlapOwner.readOverlapGate(automationContext(owned), { gate });
-        if (gateRead.status === 'not_found') return advancing(null, makePerform(base, openStep), null, null);
-        if (gateRead.status !== 'ready') return readRejection(gateRead);
-        if (gateRead.value.basisDigest !== digest) {
-          return advancing(null, makePerform(base, openStep), null, null);
-        }
-        const satisfaction = await overlapOwner.checkOverlapGate(automationContext(owned), { gate });
-        if (satisfaction.status !== 'ready') return readRejection(satisfaction);
-        if (satisfaction.value.status !== 'satisfied') {
-          if (gateRead.value.noteRequest === null) {
-            return advancing(null, makePerform(base, { kind: 'request_overlap_note', request: {
-              gate, revision: gateRead.value.revision, basisDigest: digest } }), null, null);
+        case 'step':
+          return advancing(null, makePerform(base, decision.step), null, decision.pick);
+        case 'no_line': {
+          // A named Task skips the earlier hold read only while its next step really is `claim_task`. With no line
+          // the next step would be a member suggestion or creation, so the same `claimHoldOf` read decides first;
+          // a blocking cause returns its wait, never a member step. A qualified line still leaves the hold to the
+          // claim owner's guard at its commit.
+          if (base.taskId !== null) {
+            const hold = await claimHoldOf(owned, base, goal, task.taskId);
+            if (hold !== null && 'status' in hold) {
+              return waiting(null, receiptReason(hold, 'the Task claim hold is not readable'));
+            }
+            if (hold !== null) return waiting(null, hold.reason, undefined, hold.basis);
           }
-          const reason = `overlap_gate_pending: module ${overlap.moduleId} waits for its note or release`;
-          if (base.taskId !== null) return waiting(null, reason, undefined, gateWait());
-          rememberWaiting(reason, gateWait());
-          continue;
-        }
-      }
-      // A persisted yield fixes the originating Session before any default
-      // selection. Reopening the Host must never create or choose a substitute.
-      let consumedWait: ConsumedWaitV1 | undefined;
-      let chosen: SessionChoice;
-      // The chooser's basis is its own cross-type return value; the plain `SessionChoice`
-      // local drops it, so it is kept here and travels on the picker's ordinary exits.
-      let chosenBasis: PickBasisV1 | null = null;
-      if (row.execution !== null) {
-        // D11: the wait, not the latest Run, names the Run that yielded it. S's `wait` is the oldest
-        // unconsumed Work wait of the line and its `runRef` is that wait's `originalRun`. Without the
-        // Session-facts seam an old narrow double keeps the pre-D11 read.
-        let priorRunRef = row.execution;
-        if (deps.sessionFacts !== undefined) {
-          const selected = await deps.executions.readExecution(owned.ctx, row.execution);
-          if (selected.status !== 'ready') {
-            return waiting(null, receiptReason(selected, 'the selected Run is not readable'));
-          }
-          // Rule W: the line facts (Session record, wait/reply indexes) are in the line's workspace.
-          const lineWorkspaceId = selected.value.session.workspaceId;
-          const factsCtx = lineWorkspaceId === owned.ctx.workspaceId
-            ? owned.ctx : { ...owned.ctx, workspaceId: lineWorkspaceId };
-          const facts = await deps.sessionFacts.readSessionFacts(factsCtx, selected.value.session.ref);
-          if (facts.status !== 'ready') {
-            return waiting(null, receiptReason(facts, 'the continuation line facts are not readable'));
-          }
-          const wait = facts.value.wait;
-          if (wait === null) {
-            // A send still awaiting its release is no wait yet: the Goal goes on with its other Tasks.
-            const basis = goalWaitBasisOf(goal, ['wait_reply'], ['SessionMessage', 'Run', 'TaskLease']);
-            if (base.taskId === null) {
-              rememberWaiting('the continuation line has no unconsumed Work wait', basis);
+          const suggestion = await suggestStep(owned, goal, task, graph.plan.ref);
+          if ('rejection' in suggestion) return suggestion.rejection;
+          if (suggestion.send === null && suggestion.operation.kind === 'host_pick_member') {
+            // An existing operation, in any stage, performs no step; the task waits.
+            const commit = deps.members === undefined ? { status: 'missing' as const }
+              : await deps.members.readMemberRequestCommit(automationContext(owned),
+                { commandId: suggestion.operation.request.commandId });
+            if (commit.status === 'unavailable') return rejection('unavailable', commit.reason);
+            if (commit.status === 'committed') {
+              const basis = goalWaitBasisOf(goal, ['member_creation_pending'],
+                ['Session', 'CoreOperation', 'SessionMessage', 'TaskRequeue', 'PlanRevision', 'Goal']);
+              if (base.taskId !== null) return waiting(null, 'member_creation: no step', undefined, basis);
+              rememberWaiting('member_creation: no step', basis);
               continue;
             }
-            return waiting(null, 'the continuation line has no unconsumed Work wait', undefined, basis);
+            return advancing(null, makePerform(base, suggestion.operation), null, decision.pick);
           }
-          priorRunRef = wait.runRef;
-        }
-        const continuation = await readContinuation(owned, priorRunRef);
-        if ('rejection' in continuation) return continuation.rejection;
-        if ('waiting' in continuation) {
-          const basis = goalWaitBasisOf(goal, ['wait_reply'], ['SessionMessage', 'Run', 'TaskLease']);
-          if (base.taskId === null) { rememberWaiting(continuation.waiting, basis); continue; }
-          return waiting(null, continuation.waiting, undefined, basis);
-        }
-        consumedWait = continuation.value;
-        // Rule W/M3: the original claim Session may be in another workspace of the project.
-        const original = await deps.sessions.readSession(owned.ctx, continuation.sessionRef, 'project');
-        if (original.status !== 'ready') {
-          const basis = goalWaitBasisOf(goal, ['session_available'], ['Session']);
-          if (base.taskId === null) { rememberWaiting('the original continuation Session is not readable', basis); continue; }
-          return waiting(null, 'the original continuation Session is not readable', undefined, basis);
-        }
-        // The continuation keeps the original claim Session's identity (the afterRun continuation shape).
-        if (!roleReusable(original.value, goal.workspaceRef.workspaceId, binding, { scope: 'project' })) {
-          const basis = goalWaitBasisOf(goal, ['session_available'], ['Session']);
-          if (base.taskId === null) {
-            rememberWaiting('the original continuation Session is busy, archived or incompatible', basis);
+          if (suggestion.send === null) {
+            return advancing(null, makePerform(base, suggestion.operation), null, decision.pick);
+          }
+          if (await readHostSendReceipt(automationContext(owned), suggestion.send,
+            { projectId: owned.projectId, workspaceId: owned.workspaceId }) === 'committed') {
+            const basis = goalWaitBasisOf(goal, ['suggestion_committed'], ['Session', 'CoreOperation']);
+            if (base.taskId !== null) {
+              return waiting(null, 'suggestion_committed: the repeated pass performs no step', undefined, basis);
+            }
+            rememberWaiting('suggestion_committed: the repeated pass performs no step', basis);
             continue;
           }
-          return waiting(null, 'the original continuation Session is busy, archived or incompatible', undefined, basis);
+          return advancing(null, makePerform(base, suggestion.operation), null, decision.pick);
         }
-        chosen = { kind: 'reuse', card: original.value };
-      } else {
-        const picked = await chooseSession(owned, goal, binding, base.sessionHint, taskRef,
-          row.definition.scope.kind === 'module' ? row.definition.scope.moduleRef : null);
-        chosen = picked;
-        chosenBasis = picked.basis;
-      }
-      if (chosen.kind === 'rejection') return chosen.rejection;
-      if (chosen.kind === 'waiting') {
-        const basis = goalWaitBasisOf(goal, ['session_available'], ['Session']);
-        if (base.taskId === null) { rememberWaiting(chosen.reason, basis); continue; }
-        return waiting(null, chosen.reason, undefined, basis, chosenBasis);
-      }
-      if (chosen.kind === 'create') {
-        const suggestion = await suggestStep(owned, goal, task, graph.plan.ref);
-        if ('rejection' in suggestion) return suggestion.rejection;
-        if (suggestion.send === null && suggestion.operation.kind === 'host_pick_member') {
-          // An existing operation, in any stage, performs no step; the task waits.
-          const commit = deps.members === undefined ? { status: 'missing' as const }
-            : await deps.members.readMemberRequestCommit(automationContext(owned),
-              { commandId: suggestion.operation.request.commandId });
-          if (commit.status === 'unavailable') return rejection('unavailable', commit.reason);
-          if (commit.status === 'committed') {
-            const basis = goalWaitBasisOf(goal, ['member_creation_pending'],
-              ['Session', 'CoreOperation', 'SessionMessage', 'TaskRequeue', 'PlanRevision', 'Goal']);
-            if (base.taskId !== null) return waiting(null, 'member_creation: no step', undefined, basis);
-            rememberWaiting('member_creation: no step', basis);
-            continue;
-          }
-          return advancing(null, makePerform(base, suggestion.operation), null, chosenBasis);
+        case 'claim': {
+          const sessionRef: SessionRef = { projectId: owned.projectId,
+            sessionId: decision.session.record.ref.sessionId };
+          const built = await buildClaimOperation(owned, base, goal, graph.plan.ref, task, decision.binding,
+            sessionRef.sessionId, decision.session.record.revision, true, decision.consumedWait,
+            undefined, undefined, decision.servedRequest);
+          if ('rejection' in built) return built.rejection;
+          return advancing(null, makePerform({ ...base, sessionHint: sessionRef }, built.operation), null,
+            decision.pick);
         }
-        if (suggestion.send === null) return advancing(null, makePerform(base, suggestion.operation), null, chosenBasis);
-        if (await readHostSendReceipt(automationContext(owned), suggestion.send) === 'committed') {
-          const basis = goalWaitBasisOf(goal, ['suggestion_committed'], ['Session', 'CoreOperation']);
-          if (base.taskId !== null) {
-            return waiting(null, 'suggestion_committed: the repeated pass performs no step', undefined, basis);
-          }
-          rememberWaiting('suggestion_committed: the repeated pass performs no step', basis);
-          continue;
-        }
-        return advancing(null, makePerform(base, suggestion.operation), null, chosenBasis);
       }
-      const sessionRef: SessionRef = { projectId: owned.projectId, sessionId: chosen.card.record.ref.sessionId };
-      const built = await buildClaimOperation(owned, base, goal, graph.plan.ref, task, binding,
-        sessionRef.sessionId, chosen.card.record.revision, true, consumedWait);
-      if ('rejection' in built) return built.rejection;
-      return advancing(null, makePerform({ ...base, sessionHint: sessionRef }, built.operation), null, chosenBasis);
     }
 
     // An explicit Task selection never advances the Goal-level gate/completion:
@@ -2504,13 +2961,45 @@ export function createWorkflow(deps: WorkflowDependencies & {
   /**
    * §6.1.4 / §6.3.1: a candidate's formal Answer becomes the executor M's one
    * reply through P2's associate path. R is the candidate's source message; M is
-   * its Query's `repliesToMessageRef` or the chain root found by the one lineage
-   * walk. Both the ordinary adoption and the recovery scan read M first: a wait
-   * that is closed or already answered is skipped, never overwritten. A
-   * rejection passes through.
+   * its formal Query's `repliesToMessageRef`, read first, and only without it the
+   * chain root found by the one lineage walk. Both the ordinary adoption and the
+   * recovery scan read M first: a wait that is closed or already answered is
+   * skipped, never overwritten. A rejection passes through.
    */
+  /**
+   * A12: an abandoned candidate chain's executor M is replied by the chain tail's formal Answer on the Goal wake path
+   * (the ordinary selection and, before it reports completion, a COMPLETED Goal), never on the successor line's inbox
+   * or profile, so an archived successor line still gets its M answered. Only an M still open with no reply is
+   * written; no notice is resent and no round opens. R stays the source's own close-out. `wait` is a retriable wait
+   * (a chain that cannot be judged, or a reply that did not finish); `undecided` says a chain is still live.
+   */
+  async function replyAbandonedChains(owned: Owned, goal: GoalSnapshot):
+  Promise<{ wait: PlanCandidateWait | null; undecided: boolean }> {
+    if (deps.abandonedCandidateTailsOf === undefined) return { wait: null, undecided: false };
+    const abandoned = await deps.abandonedCandidateTailsOf(goal.ref);
+    // A candidate whose source cannot be read may hide a live branch of a chain, so no M is written this pass.
+    const unreadable = abandoned.status !== 'ready' ? readRejection(abandoned).reason
+      : abandoned.value.incomplete.length > 0 ? 'a candidate source is not readable' : null;
+    if (unreadable !== null || abandoned.status !== 'ready') {
+      return { undecided: false, wait: {
+        reason: `plan_candidate_waiting: the abandoned candidate chains are not readable: ${unreadable}`,
+        basis: planWaitBasisOf(goal, ['plan_candidate_waiting']),
+      } };
+    }
+    let wait: PlanCandidateWait | null = null;
+    for (const tail of abandoned.value.tails) {
+      if (tail.sourceMessageRef === null) continue;
+      const associated = await associateCandidateReply(owned, tail.sourceMessageRef, tail.sourcePart);
+      if (typeof associated !== 'string') {
+        wait = { reason: `plan_candidate_waiting: the abandoned candidate reply is not complete: ${associated.reason}`,
+          basis: planWaitBasisOf(goal, ['plan_candidate_waiting']) };
+      }
+    }
+    return { wait, undecided: abandoned.value.pending.some(tail => tail.sourceMessageRef !== null) };
+  }
+
   async function associateCandidateReply(
-    owned: Owned, sourceMessageRef: SessionMessageRef,
+    owned: Owned, sourceMessageRef: SessionMessageRef, sourcePart?: 'decision_answer',
   ): Promise<'skipped' | 'responded' | CoreRejection> {
     const mailbox = deps.messages;
     if (mailbox === undefined) {
@@ -2520,25 +3009,26 @@ export function createWorkflow(deps: WorkflowDependencies & {
     if (queries === undefined) {
       return rejection('unsupported', 'the planning Query owner is not wired');
     }
-    const lineage = await planSourceLineageOf(owned.ctx,
-      { messages: mailbox, queries, plans: deps.plans }, sourceMessageRef);
-    if (lineage.status !== 'ready') return readRejection(lineage);
     // The candidate's Query lives with the Goal (this Workflow's workspace); M lives in its own line's workspace.
-    const query = await queries.readQueryJob(owned.ctx,
-      interventionPlanningQueryRefs(sourceMessageRef, owned.workspaceId).queryJobRef);
-    if (query.status !== 'ready') return readRejection(query);
-    const replyTo = query.value.job.job.intent.execution.repliesToMessageRef
-      ?? lineage.value.rootMessage;
+    // B3-03: the Query's own reply slot is checked directly (with the frozen `sourcePart` in its identity); the source
+    // chain is walked only when M must be found through it, so an unreadable old source never blocks a slot the Query
+    // already names. The restart wake rebuild reads M through the same `candidateReplyTargetOf`.
+    const target = await candidateReplyTargetOf(owned.ctx,
+      { messages: mailbox, queries, plans: deps.plans,
+        ...(deps.unknownCallReviews === undefined
+          ? {} : { readReview: deps.unknownCallReviews.readReview }) }, sourceMessageRef, sourcePart, owned.workspaceId);
+    if (target.status !== 'ready') return readRejection(target);
+    const replyTo = target.value;
     const message = await mailbox.readMessage(ownedInWorkspace(owned, replyTo.workspaceId).ctx, replyTo);
     if (message.status !== 'ready') return readRejection(message);
-    if (message.value.response !== null
+    if (message.value.needsReply !== true || message.value.response !== null
       || waitStateOf(message.value, waitFactsOfRecord(message.value)).state !== 'open') {
       return 'skipped';
     }
     // §5.6: the closing's associate arm reads only the message and the two closing fields;
     // the planning Query's execution profile is not part of it.
     const answered = await intervention.handleIntervention(owned.ctx, {
-      messageRef: sourceMessageRef, completion: 'associate_answer', replyToOriginal: true,
+      messageRef: sourceMessageRef, completion: 'associate_answer', replySlot: 'original',
     });
     if (answered.status === 'responded') return 'responded';
     if (answered.status === 'rejected') return answered;
@@ -2617,8 +3107,9 @@ export function createWorkflow(deps: WorkflowDependencies & {
       if (adviser.copy !== null && deps.messages !== undefined) {
         // v4 :5459–:5466 (book :588–:591): one `notify` to the creator, deduped by (source operation, final
         // recipient); a reply still goes to the sender. It goes out before the round, so a sent round has its copy.
-        const copyInput: SessionMessageSendInputV1['input'] = { recipient: adviser.copy, intent: 'notify',
-          goalRef: goal.ref, text: `请知悉（抄送，不需要回复）：任务 ${deviation.taskRef.taskId} 的偏差已发给负责的参谋（${requestId}）。` };
+        const copyInput: SessionMessageSendInputV1['input'] = { recipient: adviser.copy,
+          goalRef: goal.ref, wake: false,
+          text: `请知悉（抄送，不需要回复）：任务 ${deviation.taskRef.taskId} 的偏差已发给负责的参谋（${requestId}）。` };
         const copied = await deps.messages.sendMessage(automationContext(owned), {
           input: copyInput, meta: { requestId: `recipient-copy:${requestId}:${plainSessionRefKey(adviser.copy)}`, expected: [] },
         });
@@ -2640,13 +3131,15 @@ export function createWorkflow(deps: WorkflowDependencies & {
         recipient: reminderAdviser.session,
         text: `${requestId}\n提醒（不需要开轮或改计划）：任务 ${reminder.taskRef.taskId} 在计划版本 `
           + `${reminder.planRevision} 的上下文增长量已达 ${reminder.growthTokens} tokens（${reminder.sizeClass} 档）。`,
-        intent: 'notify' as const, needsReply: false,
+        needsReply: false,
+        wake: false,
       };
       // PL §7.1 row 3: "already sent" is the sender identity's committed receipt,
       // not a message ref read in the sender's workspace. A reminder delivered
       // to another workspace therefore reads as sent; `undetermined` still sends
       // and the mailbox's identity receipt dedupes it.
-      if (await readHostSendReceipt(automationContext(owned), { requestId, arguments: input }) === 'committed') continue;
+      if (await readHostSendReceipt(automationContext(owned), { requestId, arguments: input },
+        { projectId: owned.projectId, workspaceId: owned.workspaceId }) === 'committed') continue;
       return advancing(null, makePerform(base, { kind: 'notify_plan_reminder', request: {
         input,
         meta: { requestId, expected: [] },
@@ -2713,7 +3206,9 @@ export function createWorkflow(deps: WorkflowDependencies & {
       return rejection('unsupported', 'the yielded-run cancel needs the mailbox and the planning Query read');
     }
     const lineage = await planSourceLineageOf(owned.ctx,
-      { messages: mailbox, queries, plans: deps.plans }, source);
+      { messages: mailbox, queries, plans: deps.plans,
+        ...(deps.unknownCallReviews === undefined
+          ? {} : { readReview: deps.unknownCallReviews.readReview }) }, source);
     if (lineage.status !== 'ready') return readRejection(lineage);
     const waiting = yielded.find(entry =>
       sameRef(entry.run.continuation!.messageRef, lineage.value.rootMessage));
@@ -2771,10 +3266,6 @@ export function createWorkflow(deps: WorkflowDependencies & {
       return waiting(null, `the Goal is ${goal.desiredState}; no work is selected while the Goal is not active`,
         undefined, goalWaitBasisOf(goal, ['goal_state'], ['Goal']));
     }
-    // `book-7a.md:380–:381`: the release step sits AFTER the active check and BEFORE the no-plan return; selection
-    // stays read-only. A page with nothing releasable falls through (`:386–:388`).
-    const releaseStep = await releaseCandidatePerform(owned, base);
-    if (releaseStep !== null) return releaseStep;
     if (goal.activePlanRevision === null) {
       return waiting(null, 'the Goal has no adopted Plan; no work was selected',
         undefined, goalWaitBasisOf(goal, ['plan_adoption'], ['PlanRevision', 'PlanProposal']));
@@ -2803,7 +3294,13 @@ export function createWorkflow(deps: WorkflowDependencies & {
     const graph = graphRead.value;
     if (graph.completion !== undefined && graph.completion.status === 'recorded'
       && graph.completion.selectedPlanMatches && graph.completion.snapshot.phase === 'COMPLETED') {
-      return completed(null, 'the Goal is formally COMPLETED');
+      // A12: an ended Query's source still settles after the Goal completes. The abandoned-chain reply runs first; a
+      // chain that cannot be judged or a reply that did not finish waits and is retried. A chain still undecided
+      // leaves one `PlanProposal` wait on the completed Goal, so its later abandonment wakes this pass again.
+      const abandoned = await replyAbandonedChains(owned, goal);
+      if (abandoned.wait !== null) return waiting(null, abandoned.wait.reason, undefined, abandoned.wait.basis);
+      return completed(null, 'the Goal is formally COMPLETED', abandoned.undecided
+        ? goalWaitBasisOf(goal, ['abandoned_candidate_reply_pending'], ['PlanProposal']) : undefined);
     }
     // Node-level review (121-45, N1): an `every_step` Goal takes one work node at a time. Its Goal loop selects
     // nothing while a completed node waits for the person's commit. While a Run of its active Plan is live, a node is
@@ -2811,24 +3308,10 @@ export function createWorkflow(deps: WorkflowDependencies & {
     // new: that node's own review, checks and settlement still advance here (after a restart no watch drives them).
     // A Task-scoped handle is not held: it ends once its own Task is satisfied.
     let claimHold: { reason: string; basis: GoalWaitBasisV1 } | null = null;
-    if (base.taskId === null && goal.settings.autonomy === 'every_step' && deps.nodeCommits !== undefined) {
-      const rows = await deps.nodeCommits.readNodeRows(ownedInWorkspace(owned, goal.workspaceRef.workspaceId).ctx,
-        { goalRef: base.goalRef });
-      if (rows.status !== 'ready') return readRejection(rows);
-      const first = rows.value.pending[0];
-      if (first !== undefined) {
-        return waiting(null, `node_review_pending: the Task ${first.task.taskId} awaits the person's review and commit`,
-          undefined, goalWaitBasisOf(goal, [`node_review_pending:${first.task.taskId}`],
-            ['TaskNodeCommit', 'TaskReduction', 'Run']));
-      }
-      const inFlight = rows.value.rows.find(row =>
-        nodeInFlight({ taskKind: row.task.taskKind, effectivePhase: row.task.phase }));
-      if (rows.value.liveWork || inFlight !== undefined) {
-        claimHold = { reason: `live_work: ${inFlight === undefined ? 'the Goal has live work'
-          : `the Task ${inFlight.task.taskId} is still in its checks`}; no new work is claimed until it ends`,
-          basis: goalWaitBasisOf(goal, ['live_work'],
-            ['Run', 'TaskReduction', 'TaskNodeCommit', 'VerificationRound', 'Evidence', 'UnknownCallReview']) };
-      }
+    if (base.taskId === null) {
+      const occupancy = await readGoalNodeOccupancy(owned, goal);
+      if (occupancy.status !== 'ready') return readRejection(occupancy);
+      claimHold = occupancy.value;
     }
 
     // An explicit Task selection ends THIS work handle once that Task is
@@ -2865,6 +3348,12 @@ export function createWorkflow(deps: WorkflowDependencies & {
         for (const group of entry.questionGroups) {
           // §6.1.2 step 3b: every question answered and no `planresume:` yet.
           if (!group.allAnswered || group.resumeMessageExists) continue;
+          // 2.3: a card-answer round froze `sourcePart: 'decision_answer'`, so its Query carries the part-aware
+          // identity; the same `interventionPlanningQueryRefs` part says whether this group is that round.
+          const cardAnswer = sameRef(
+            interventionPlanningQueryRefs(group.originalMessageRef, group.queryJobRef.workspaceId,
+              'decision_answer').queryJobRef,
+            group.queryJobRef);
           const round: SystemRoundV1 = {
             kind: 'planresume', goalRef: goal.ref,
             queryJobId: group.queryJobRef.queryJobId, originalMessageRef: group.originalMessageRef,
@@ -2877,20 +3366,26 @@ export function createWorkflow(deps: WorkflowDependencies & {
           const original = await deps.messages.readMessage(
             ownedInWorkspace(owned, group.originalMessageRef.workspaceId).ctx, group.originalMessageRef);
           if (original.status !== 'ready') return readRejection(original);
-          const recipient = original.value.recipient as SessionRef;
+          // A card-answer round's source is the user-addressed card; the continuation goes back to the asking
+          // line (the card's sender), not to the person the card was addressed to.
+          const recipient: SessionRef = cardAnswer && isMessageAgentSender(original.value.sender)
+            ? original.value.sender.sessionRef
+            : original.value.recipient as SessionRef;
           // 决定 121-149（MVP-BEHAVIOR B20“人答卡只保存答案，不续开模型轮”，PL 规格 :332 续轮发给原规划线）：
-          // 只有这条线收到 Host 系统轮会是 `plan_round` 时（参谋、秘书，形状规则只在 `planningAnswerShapeOf`）才发续轮。
-          // 执行者线收到的是 text 形状，没有规划说明和提交工具，只会落到 invalid_plan；它反问出的卡，人答完只保存答案，
-          // 要继续就再发消息。职责的读法同干预入口（读不出或 unknown 当没有职责）。这一组不发、不等、不写，同一趟接着往下选。
+          // 只有参谋、秘书线收到这条 `planresume` 系统轮才发续轮；执行者线收到的是 text 形状，没有规划说明和提交工具，
+          // 只会落到 invalid_plan；它反问出的卡，人答完只保存答案，要继续就再发消息。这里只判收件职责的资格，
+          // 不再把尚未发送的 round 交给要求已核结果的形状函数。职责的读法同干预入口（读不出或 unknown 当没有职责）。
           const line = await deps.sessions.readSession(owned.ctx, recipient, 'project');
           if (line.status !== 'ready') return readRejection(line);
           const dutyRead = deps.sessionDuty === undefined ? null : await deps.sessionDuty(line.value.record.role, owned.ctx);
           if (dutyRead !== null && dutyRead.status !== 'ready') return readRejection(dutyRead);
           const duty = dutyRead === null || dutyRead.value === 'unknown' ? null : dutyRead.value;
-          if (planningAnswerShapeOf({ sender: { kind: 'host', actor: SYSTEM_ROUND_ACTOR }, intent: 'action_request' },
-            duty, round.kind) !== 'plan_round') continue;
+          if (duty !== 'adviser' && duty !== 'secretary') continue;
           return advancing(null, makePerform(base, { kind: 'send_system_round', request: {
-            round, recipient, text: requestId.value, followupOf: group.originalMessageRef,
+            round, recipient, text: requestId.value,
+            // A card-answer round's source is the person-addressed card: it locates the original round but
+            // cannot be a follow-up target (the recipient is the card's sender line).
+            ...(cardAnswer ? {} : { followupOf: group.originalMessageRef }),
           } }), null, null, planWaitBasisOf(goal, ['plan_resume_pending']));
         }
       }
@@ -2905,8 +3400,17 @@ export function createWorkflow(deps: WorkflowDependencies & {
       if (accepted.status !== 'ready') return readRejection(accepted);
       for (const acceptedProposal of accepted.value) {
         if (acceptedProposal.sourceMessageRef === null) continue;
-        const associated = await associateCandidateReply(owned, acceptedProposal.sourceMessageRef);
-        if (typeof associated !== 'string') return readRejection(associated);
+        const associated = await associateCandidateReply(owned, acceptedProposal.sourceMessageRef,
+          acceptedProposal.sourcePart);
+        // B3-03: one accepted candidate's reply that cannot be completed now waits with a retriable reason and basis;
+        // the other accepted candidates, the latest candidate's card and the ordinary selection still go on.
+        if (typeof associated !== 'string') {
+          candidateWait = {
+            reason: `plan_candidate_waiting: the accepted candidate reply is not complete: ${associated.reason}`,
+            basis: planWaitBasisOf(goal, ['plan_candidate_waiting']),
+          };
+          continue;
+        }
         // The candidate wait stays with the pass: an ordinary step still wins, and
         // only a pass with no step waits on the merged basis.
         if (associated === 'responded') {
@@ -2916,12 +3420,14 @@ export function createWorkflow(deps: WorkflowDependencies & {
           };
         }
       }
+      const abandonedReplies = await replyAbandonedChains(owned, goal);
+      if (abandonedReplies.wait !== null) candidateWait = abandonedReplies.wait;
       if (deps.latestAgentCandidate === undefined) {
         return rejection('unsupported', 'latestAgentCandidate is not wired');
       }
       const latest = await deps.latestAgentCandidate(goal.ref);
       if (latest.status !== 'ready') return readRejection(latest);
-      if (latest.value !== null) {
+      if (latest.value.proposal !== null) {
         const candidateBasis = (reason: string): GoalWaitBasisV1 => planWaitBasisOf(goal, [reason]);
         /** `null` keeps the ordinary selection going (card/wait/not_found). */
         const planCandidateWaitStep = async (proposal: PlanProposal): Promise<WorkflowAdvanceResult | null> => {
@@ -2933,6 +3439,18 @@ export function createWorkflow(deps: WorkflowDependencies & {
           // the same pass continues selecting; the next pass re-reads it.
           if (cardRead.status === 'not_found') return null;
           if (cardRead.status !== 'ready') return readRejection(cardRead);
+          /** A source read that cannot finish leaves the candidate to its existing card, never a refused advance. */
+          const leaveCandidateCard = (reason: string): null => {
+            // The candidate waits on its existing card: no refinement round may compete with it (2.5a "命中直接出卡").
+            candidateWait = { reason: `plan_candidate_waiting: ${reason}`, inFlight: true,
+              basis: candidateBasis('plan_candidate_waiting'), source: cardRead.value.card.source };
+            return null;
+          };
+          // 2.5a A13 before the review round, the check-approval round and the cancel fence: a hit keeps this
+          // existing card and the ordinary selection continues. An incomplete source lineage is the same
+          // "source_incomplete" card, never a candidate that may still be adopted automatically.
+          const a13 = await autoAdoptionCardReason(owned.ctx, deps, proposal, latest.value.incomplete);
+          if (a13 !== null) return leaveCandidateCard(autoAdoptionCardWait[a13]);
           if (cardRead.value.exactReview.status !== 'ready') return readRejection(cardRead.value.exactReview);
           const review = cardRead.value.exactReview.value;
           if (deps.completedFixes === undefined) {
@@ -2962,14 +3480,21 @@ export function createWorkflow(deps: WorkflowDependencies & {
             }
             // The candidate's source lives in its line's workspace, maybe not this Goal's.
             const sourceRef = proposal.sourceMessageRef;
-            const body = await deps.messages.readMessageBody(ownedInWorkspace(owned, sourceRef.workspaceId).ctx,
+            const sourceCtx = ownedInWorkspace(owned, sourceRef.workspaceId).ctx;
+            const sourceMessage = await deps.messages.readMessage(sourceCtx, sourceRef);
+            if (sourceMessage.status !== 'ready') return leaveCandidateCard('the candidate source is unreadable');
+            const body = await deps.messages.readMessageBody(sourceCtx,
               { messageRef: sourceRef, part: 'message' });
-            if (body.status !== 'ready') return readRejection(body);
-            const head = systemRoundOfText(body.value.text);
-            source = head === null ? 'other'
-              : head.kind === 'refine' ? 'refine'
-                : head.kind === 'planfix' ? 'fix'
-                  : head.kind === 'planresume' ? 'planresume' : 'other';
+            if (body.status !== 'ready') return leaveCandidateCard('the candidate source is unreadable');
+            // 5.1: only a trusted system round names the candidate source kind; a bare head is ordinary text.
+            const head = await trustedSystemRoundOf(owned.ctx, { messages: deps.messages },
+              sourceMessage.value, body.value.text, owned.workspaceId);
+            if (head.status !== 'ready') return leaveCandidateCard('the candidate source is unreadable');
+            const round = head.value;
+            source = round === null ? 'other'
+              : round.kind === 'refine' ? 'refine'
+                : round.kind === 'planfix' ? 'fix'
+                  : round.kind === 'planresume' ? 'planresume' : 'other';
           }
           const diagnosis = cardRead.value.diagnosis;
           const diagnosisText = diagnosis === null ? '检查覆盖读不到'
@@ -3073,7 +3598,7 @@ export function createWorkflow(deps: WorkflowDependencies & {
             basis: candidateBasis('plan_candidate_waiting'), source: cardRead.value.card.source };
           return null;
         };
-        const candidateResult = await planCandidateWaitStep(latest.value);
+        const candidateResult = await planCandidateWaitStep(latest.value.proposal);
         if (candidateResult !== null) return candidateResult;
       }
     }
@@ -3327,6 +3852,8 @@ export function createWorkflow(deps: WorkflowDependencies & {
     if (card.status !== 'ready') {
       return waiting(receipt, receiptReason(card, 'the handover successor Session is not readable'));
     }
+    const held = await reviewClaimHeld(owned, base, goal, task.taskId, operation.review, receipt);
+    if (held !== null) return held;
     const built = await buildClaimOperation(owned, base, goal, graphRead.value.plan.ref, task, binding,
       operation.successor.sessionId, card.value.record.revision, false, undefined, operation.requeue, operation.review);
     if ('rejection' in built) return waiting(receipt, built.rejection.reason);
@@ -3596,6 +4123,8 @@ export function createWorkflow(deps: WorkflowDependencies & {
             { projectId: owned.projectId, sessionId: session.ref.sessionId });
           if (card.status === 'ready') claimRevision = card.value.record.revision;
         }
+        const held = await reviewClaimHeld(owned, base, goal, task.taskId, operation.review, receipt);
+        if (held !== null) return held;
         const built = await buildClaimOperation(owned, base, goal, graphRead.value.plan.ref, task, binding,
           session.ref.sessionId, claimRevision, false, undefined, operation.requeue, operation.review);
         if ('rejection' in built) return waiting(receipt, built.rejection.reason);
@@ -3619,31 +4148,17 @@ export function createWorkflow(deps: WorkflowDependencies & {
           if (next === null || next.kind !== 'perform' || next.operation.kind !== 'claim_task') return again;
           return await performStep(owned, { ...base, sessionHint: next.sessionHint }, next.operation, true);
         }
-        if (result.status !== 'committed') return waiting(receipt, result.reason);
+        if (result.status !== 'committed') {
+          // 2.5: a hold or stop that appeared between the selection's read and this commit is the same `busy`;
+          // its wait names the kinds the release/approval writes, so the driver registers the wake-up.
+          return result.code === 'busy'
+            ? waiting(receipt, result.reason, undefined,
+              goalWaitBasisOf({ ref: base.goalRef }, ['claim_conflict'], CLAIM_CONFLICT_WAIT_KINDS))
+            : waiting(receipt, result.reason);
+        }
         const claim = result.value;
         const nextBase: Base = { ...base, sessionHint: claim.sessionRef };
         return advancing(receipt, makePerform(nextBase, { kind: 'prepare', request: prepareStep(nextBase, claim.runRef) }));
-      }
-      // 〔L5〕 The one owner call. A refusal is the machine's or R2's own and is never retried here — it is this pass's
-      // "blocked" (`book-7a.md:386–:389`, R2-B-06).
-      case 'release_message': {
-        const owner = deps.messageRelease;
-        // A public `workflow/advance` can name any perform; without the owner the step is `unsupported`, as every
-        // other uninstalled entry of this file (`selectNext`'s configuration arm, :1337).
-        if (owner === undefined) return rejection('unsupported', 'the Workflow has no message release owner');
-        const released = await owner.releaseApproved(owned.ctx, operation.request);
-        const receipt: WorkflowStepReceipt = { kind: 'release_message', result: released };
-        // A committed release hands the Goal back to the one selection (`book-7a.md:380–:381`).
-        if (released.status === 'committed') return advancing(receipt, selectWorkStep(base));
-        // 〔a-06〕 The three refusals that mean "blocked this pass" (`book-7a.md:386`, `:389`): a stale item
-        // (`revision_conflict`), a Goal that is not active (`busy`, `message-release.ts:68`) and a missing item
-        // (`not_found`). The pass counts them as `blocked` and steps on (`A/host.ts`'s `releaseHandler`).
-        if (released.code === 'revision_conflict' || released.code === 'busy' || released.code === 'not_found') {
-          return waiting(receipt, `${released.code}: ${released.reason}`);
-        }
-        // Every other refusal of the port is the read's own failure, not "no work": it is returned as the rejection
-        // it is, exactly as `performStep` already answers for its other steps (`:547`'s return type).
-        return released;
       }
       case 'prepare': {
         const result = await deps.runtime.prepareExecution(owned.ctx, operation.request);
@@ -3810,6 +4325,18 @@ export function createWorkflow(deps: WorkflowDependencies & {
         const receipt: WorkflowStepReceipt = { kind: 'settle_review', result };
         // A commit (settled or the unfinished-round UCR-06) and the record revision
         // having moved both go back to the selection; every other refusal waits.
+        if (result.status === 'committed' || result.code === 'revision_conflict') {
+          return advancing(receipt, selectWorkStep(base));
+        }
+        return waiting(receipt, `${result.code}: ${result.reason}`);
+      }
+      case 'settle_action_request': {
+        const owner = deps.actionRequests;
+        if (owner === undefined) return rejection('unsupported', 'the ActionRequest owner is not installed');
+        // 2.5 作废：平台自动化身份调动作请求 owner；owner 在同一份已采用计划上重读任务状态并核实 `basis`。
+        // 提交了或记录版本已动都回到选择，让当前事实重判；其余拒绝按原文等待。
+        const result = await owner.settle(automationContext(owned), operation.request);
+        const receipt: WorkflowStepReceipt = { kind: 'settle_action_request', result };
         if (result.status === 'committed' || result.code === 'revision_conflict') {
           return advancing(receipt, selectWorkStep(base));
         }
@@ -4005,11 +4532,19 @@ export function createWorkflow(deps: WorkflowDependencies & {
         const result = await deps.overlap.requestOverlapNote(automationContext(owned), operation.request);
         const receipt: WorkflowStepReceipt = { kind: 'request_overlap_note', result };
         if (result.status === 'sent' || result.status === 'none') return advancing(receipt, selectWorkStep(base));
-        if (result.status === 'rejected') {
+        if (result.status === 'rejected' && result.code !== 'unavailable') {
           return waiting(receipt, receiptReason(result, 'the overlap note request was not sent'));
         }
-        // `unavailable` is not committed: the gate keeps waiting for a person's release.
-        return waiting(receipt, `the overlap note request was ${result.status}; the gate waits for a person's release`);
+        // A transient failure did not commit the send, and the gate record already holds the note's ref: the result
+        // is retryable. The driver backs off and reselects the Goal; the selection reads the gate again and, with the
+        // same basis still waiting and the note still missing, replays the same request id through the gate owner's
+        // receipt (design 5.1).
+        return readyValue({ state: 'waiting', receipt, next: null, pick: null,
+          reason: result.status === 'rejected'
+            ? receiptReason(result, 'the overlap note request was not sent')
+            : 'the overlap note request was not sent; it is retried after a back-off',
+          retry: { goalRef: { ...base.goalRef }, gate: { ...operation.request.gate },
+            basisDigest: operation.request.basisDigest } });
       }
       case 'send_system_round': {
         if (deps.send === undefined) {
@@ -4064,22 +4599,35 @@ export function createWorkflow(deps: WorkflowDependencies & {
         return advancing(receipt, selectWorkStep(base));
       }
       case 'adopt_plan': {
-        // §6.1.4: the request carries the fixed request id and the two expected pins.
-        const result = await deps.plans.applyPlanChange(automationContext(owned), operation.request);
-        const receipt: WorkflowStepReceipt = { kind: 'adopt_plan', result };
-        if (result.status === 'committed') {
+        // §6.1.4: the request carries the fixed request id and the two expected pins. 2.5a A13: the goal loop's
+        // automatic adoption goes through the one wrapper too (the same judgement before the review round above).
+        const outcome = await autoAdoptCandidate(owned, deps, operation.request);
+        if (outcome.status === 'ended') return advancing(null, selectWorkStep(base));
+        if (outcome.status === 'card') {
+          const cardGoal = await deps.plans.queryGoal(owned.ctx, base.goalRef);
+          if (cardGoal.status !== 'ready') return readRejection(cardGoal);
+          return await selectNext(owned, base, {
+            reason: `plan_candidate_waiting: ${outcome.reason}`,
+            basis: planWaitBasisOf(cardGoal.value.goal, ['plan_candidate_waiting']),
+            ...(outcome.source === null ? {} : { source: outcome.source }),
+          });
+        }
+        const receipt: WorkflowStepReceipt = { kind: 'adopt_plan',
+          result: outcome.status === 'adopted' ? outcome.receipt : outcome.result };
+        if (outcome.status === 'adopted') {
           // §6.1.4 line 1131 / §7.3.1 step 5: the committed candidate's formal
           // Answer becomes the executor M's one reply before the same selection.
+          // B3-03: a reply that cannot be completed now is left to the selection's accepted-candidate recovery
+          // (it reads every accepted candidate again); the adoption receipt is returned as usual.
           const committedProposal = await deps.plans.readPlanProposal(
             owned.ctx, operation.request.input.proposalRef);
-          if (committedProposal.status !== 'ready') return readRejection(committedProposal);
-          if (committedProposal.value.sourceMessageRef !== null) {
-            const associated = await associateCandidateReply(
-              owned, committedProposal.value.sourceMessageRef);
-            if (typeof associated !== 'string') return readRejection(associated);
+          if (committedProposal.status === 'ready' && committedProposal.value.sourceMessageRef !== null) {
+            await associateCandidateReply(
+              owned, committedProposal.value.sourceMessageRef, committedProposal.value.sourcePart);
           }
           return advancing(receipt, selectWorkStep(base));
         }
+        const result = outcome.result;
         const goalRead = await deps.plans.queryGoal(owned.ctx, base.goalRef);
         if (goalRead.status !== 'ready') return readRejection(goalRead);
         const goal = goalRead.value.goal;
@@ -4192,23 +4740,25 @@ export function createWorkflow(deps: WorkflowDependencies & {
       const source = decision['source'];
       const selection = decision['selection'];
       // B1 applies the review card kind; B3 adds the command-request kind through
-      // the SAME advance (K3 ruling 4/answer 7). The handed ref decides the kind.
+      // the SAME advance (K3 ruling 4/answer 7); 2.8/§3.10 adds the answered
+      // `action_release` card. The handed ref decides the kind.
       if (!isRecord(source) || !isRecord(selection) || selection['kind'] !== 'option') continue;
       const kind = source['kind'];
       if (kind !== 'unknown_call_review' && kind !== 'command_rerun_request'
-        && kind !== 'message_release' && kind !== 'repair_approval') continue;
+        && kind !== 'repair_approval' && kind !== 'action_release') continue;
       const handedRaw = handed as unknown as Record<string, unknown>;
-      // A `message_release` or `repair_approval` card carries neither a `reviewRef` nor a `requestRef`: `failedCardRefOf`
-      // (:406) and `addFailedCardRef` (:415) stay the two review kinds' and are not reached for it (no failed card exists).
-      const cardRef = kind === 'message_release' || kind === 'repair_approval' ? null
+      // A `repair_approval` card carries neither a `reviewRef` nor a `requestRef`; an `action_release` card carries
+      // only its request ref. `failedCardRefOf` and `addFailedCardRef` stay the two review kinds' and are not
+      // reached for either (no failed-card ref exists for them).
+      const cardRef = kind === 'repair_approval' ? null
         : kind === 'unknown_call_review' ? handedRaw['reviewRef'] : handedRaw['requestRef'];
       if (cardRef === undefined) {
         hardFailure = true;
         if (failure === null) failure = 'invalid: a handed-over answer has no card ref of its source kind';
         continue;
       }
-      const card = kind === 'message_release' || kind === 'repair_approval' ? null : failedCardRefOf(kind, cardRef);
-      if (kind !== 'message_release' && kind !== 'repair_approval' && card === null) {
+      const card = kind === 'repair_approval' || kind === 'action_release' ? null : failedCardRefOf(kind, cardRef);
+      if (kind !== 'repair_approval' && kind !== 'action_release' && card === null) {
         hardFailure = true;
         if (failure === null) failure = `invalid: a handed-over ${kind} answer has an incomplete card ref`;
         continue;
@@ -4218,6 +4768,18 @@ export function createWorkflow(deps: WorkflowDependencies & {
       if (card !== null && (base.failedCardRefs.some(existing => failedCardKey(existing) === failedCardKey(card))
         || failedCards.some(existing => failedCardKey(existing) === failedCardKey(card)))) continue;
       const expected = Array.isArray(source['pins']) ? source['pins'] as VersionPin[] : [];
+      // 2.8/§3.10: the `action_release` adapter's ② command identity carries the archived answer's own Host actor,
+      // so the replay hits the original owner receipt instead of re-admitting the round under the current operator.
+      let applicationCtx = owned.ctx;
+      if (kind === 'action_release') {
+        const facts = actionRequestAnswerFacts(message);
+        if (facts === null) {
+          hardFailure = true;
+          if (failure === null) failure = 'invalid: the handed-over action-release answer is not answerable';
+          continue;
+        }
+        applicationCtx = { ...owned.ctx, principal: { kind: 'host', actor: { ...facts.actor } } };
+      }
       // The identity is derived from the answer alone, so a crash re-drive sends
       // the same request and ② replays its answer-derived receipt.
       const requestId = 'wf-auto:card-application:' + sha256Hex(canonicalJson({
@@ -4228,7 +4790,7 @@ export function createWorkflow(deps: WorkflowDependencies & {
       // configured operator; the start-up advance runs as that operator. Using
       // the automation identity here would replay ② and then be refused
       // `forbidden` when the earlier ② was committed by the user's answer.
-      const result = await decisionActions.advanceReviewDisposition(owned.ctx, {
+      const result = await decisionActions.advanceReviewDisposition(applicationCtx, {
         input: { source: source as unknown as DecisionSourceV1,
           selection: selection as unknown as DecisionSelectionV1,
           decisionMessageRef: message.ref },
@@ -4445,11 +5007,109 @@ export function createWorkflow(deps: WorkflowDependencies & {
     return activityBackfill.backfillActivityRange(ctx, input);
   };
 
+  /**
+   * §2.8/F06: the target loop's ONE claim judgment, read-only. It runs the same occupancy/gate/line checks as
+   * `selectOrdinary`, but never performs a step: the card source and the task detail read the blockers named
+   * `module_gate`, `node_occupied` and `line_busy` without re-deriving them. `claimable` is the target loop's own
+   * verdict; a cause outside the three named ones makes it false with no blocker.
+   */
+  const readTaskClaimability = async (ctx: CoreCallContext, input: { goalRef: GoalRef; task: TaskTriple }):
+  Promise<ReadResult<TaskClaimJudgmentV1>> => {
+    if (!isRecord(input) || !isRecord(input.goalRef) || !isRecord(input.task)) {
+      return rejection('invalid', 'readTaskClaimability requires { goalRef, task }');
+    }
+    const goalRef: GoalRef = { aggregateType: 'Goal', projectId: input.goalRef.projectId, goalId: input.goalRef.goalId };
+    const taskRef: TaskTriple = { projectId: input.task.projectId, goalId: input.task.goalId, taskId: input.task.taskId };
+    if (!nonEmpty(goalRef.projectId) || !nonEmpty(goalRef.goalId) || !nonEmpty(taskRef.taskId)) {
+      return rejection('invalid', 'readTaskClaimability requires complete Goal and Task refs');
+    }
+    if (goalRef.projectId !== ctx.projectId || taskRef.projectId !== ctx.projectId) {
+      return rejection('forbidden', 'the Task belongs to another project');
+    }
+    if (taskRef.goalId !== goalRef.goalId) {
+      return rejection('invalid', 'the Task does not belong to the Goal');
+    }
+    const owned = ownContext(ctx);
+    if ('rejection' in owned) return owned.rejection;
+    const goalRead = await deps.plans.queryGoal(owned.ctx, goalRef, { scope: 'project' });
+    if (goalRead.status !== 'ready') return readRejection(goalRead);
+    const goal = goalRead.value.goal;
+    if (taskRef.goalId !== goal.ref.goalId) return rejection('invalid', 'the Task does not belong to the Goal');
+    const goalOwned = ownedInWorkspace(owned, goal.workspaceRef.workspaceId);
+    const graphRead = await deps.plans.queryTaskGraph(goalOwned.ctx, { goalRef: goal.ref });
+    if (graphRead.status !== 'ready') return readRejection(graphRead);
+    const graph = graphRead.value;
+    const task = graph.plan.tasks.find(candidate => candidate.taskId === taskRef.taskId);
+    const row = graph.tasks.find(candidate => candidate.ref.taskId === taskRef.taskId);
+    const blockers: TaskClaimTargetBlockerV1[] = [];
+    // The Goal-level occupancy is read even for an explicit Task selection: it is a Goal fact, not a Task one.
+    const occupancy = await readGoalNodeOccupancy(goalOwned, goal);
+    if (occupancy.status !== 'ready') return readRejection(occupancy);
+    if (occupancy.value !== null) {
+      blockers.push({ kind: 'node_occupied', reason: occupancy.value.reason });
+    }
+    if (task === undefined || row === undefined) {
+      return { status: 'ready', value: { blockers, claimable: false } };
+    }
+    const config = deps.configuration;
+    if (config === undefined) return { status: 'ready', value: { blockers, claimable: false } };
+    const factOf = overlapFactsOf(graph);
+    const fact = factOf.get(task.taskId);
+    if (fact === undefined) return { status: 'ready', value: { blockers, claimable: false } };
+    const base: Base = {
+      goalRef: goal.ref, flowId: '', sessionHint: null, actor: owned.actor, taskId: taskRef.taskId,
+      failedCardRefs: [],
+    };
+    const ordered = orderTasks(graph.plan.tasks, graph.plan.executionDag?.dependsOn ?? []);
+    const blockRead = await taskBlocks(goalOwned, base, config, goal, graph, ordered);
+    if (blockRead.status !== 'ready') return readRejection(blockRead);
+    // The request-specific half of the same judgment: a voidable `open` or `pending` dispatch is settled before any
+    // claim; only `open` is a priority and may be served by the claim.
+    let openRequest: ActionRequestSnapshotV1 | null = null;
+    if (deps.actionRequests !== undefined) {
+      const dispatchRead = await deps.actionRequests.listOpenDispatches(goalOwned.ctx, { goalRef: goal.ref });
+      if (dispatchRead.status !== 'ready') return readRejection(dispatchRead);
+      openRequest = dispatchRead.value.find(entry => entry.request.task.taskId === task.taskId)?.request ?? null;
+    }
+    // Every further judgment is the SAME read-only decision the Goal loop executes; the port only projects it. The
+    // occupancy read above is the Goal loop's own `claimHold` fact, so the shared pass receives it too, and `claimable`
+    // is the decision's own next-step mark (the ordinary/continuation claim and a pending rework claim agree).
+    const decision = await classifyTaskClaim(goalOwned, base, config, goal, graph, task, row,
+      blockRead.value.waiting.get(task.taskId),
+      moduleOverlapOf({ waiting: fact, others: [...factOf.values()] }), occupancy.value, openRequest, false, false);
+    if (decision.kind === 'rejection') return decision.rejection;
+    let claimable = (decision.kind === 'claim' || decision.kind === 'result') && decision.nextIsClaim;
+    const blocker = decision.kind === 'step' || decision.kind === 'waiting' ? decision.blocker
+      : decision.kind === 'no_line'
+        ? { kind: 'line_busy' as const, reason: 'no_line: no eligible line can claim this Task now' }
+        : undefined;
+    if (blocker !== undefined) blockers.push(blocker);
+    if (blockers.length > 0) claimable = false;
+    return { status: 'ready', value: { blockers, claimable } };
+  };
+
+  /**
+   * One round's fixed closing notice; the one receipt read lives in `model/communication-contracts.ts` so WorkGraph
+   * and Workflow share its identity and its non-Host / `not_found` behavior. This entry only binds the installed
+   * `readHostSendMessageRef`.
+   */
+  async function readClosingNoticeWithHostSendRef(ctx: CoreCallContext, input: {
+    sourceMessageRef: SessionMessageRef; part: 'message' | 'decision_answer';
+    reason?: InterventionClosingReasonV1;
+  }): Promise<ReadResult<boolean>> {
+    return readClosingNoticeReceipt(deps.messages?.readHostSendMessageRef, ctx, input);
+  }
+
+  const closingNotice = deps.messages?.readHostSendMessageRef === undefined ? undefined
+    : readClosingNoticeWithHostSendRef;
+
   return {
     handleGoalInput, advanceWork, consumeConsultation, askLine: askLineEntry, resolveDecision, orderGoalAdvances,
     backfillRecentActivity, backfillActivityRange,
     handleIntervention: intervention.handleIntervention,
     readDeliveryEligibilityFacts,
+    readTaskClaimability,
+    ...(closingNotice === undefined ? {} : { closingNotice }),
     // S1: one ended request round becomes this request's candidate; without the
     // request-candidate dependency the entry answers "unsupported" and writes nothing.
     proposeFromPlanTurn: (ctx, turn) => proposeFromPlanTurn(deps, ctx, turn, checkApproval),

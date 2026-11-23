@@ -35,18 +35,31 @@ afterEach(async () => {
   shared.bodies = undefined;
 });
 
-/** The one entry every sub-row asserts. */
-function expectOneEntry(message: SessionMessage): void {
+/** The message's own input: the recipient line's Work Run accepts the question at its safe point (MP-3). */
+const messageInput = { part: 'message', evidence: 'input_accepted', consumesWait: false } as const;
+
+/** The one query entry every sub-row asserts, next to that message input. */
+function expectOneResponse(message: SessionMessage): void {
+  const entries = message.acceptedInputs ?? [];
+  expect(entries).toHaveLength(2);
+  expect(entries.find(entry => entry.part === 'message')).toMatchObject(messageInput);
+  expect(entries.find(entry => entry.part === 'response'))
+    .toMatchObject({ part: 'response', evidence: 'query_entered', consumesWait: true });
+}
+
+/** Before the query enters: the message input is there and no query entry yet. */
+function expectOnlyMessageInput(message: SessionMessage): void {
   const entries = message.acceptedInputs ?? [];
   expect(entries).toHaveLength(1);
-  expect(entries[0]).toMatchObject({ part: 'response', evidence: 'query_entered', consumesWait: true });
+  expect(entries[0]).toMatchObject(messageInput);
 }
 
 async function expectAccepted(world: S6AHostWorld, ref: SessionMessage['ref']): Promise<SessionMessage> {
   let read: SessionMessage | null = null;
   await expect.poll(async () => {
     read = await readS7BMessage(world, ref);
-    return (read.acceptedInputs ?? []).length;
+    return (read.acceptedInputs ?? []).filter(entry => entry.part === 'response'
+      && entry.evidence === 'query_entered').length;
   }, { timeout: 20_000, interval: 20 }).toBe(1);
   if (read === null) throw new Error('S7B2: the message was never read');
   return read;
@@ -87,7 +100,7 @@ describe('S7B-2 R entered consumption', () => {
       driving.catch(() => undefined);
       const recovered = await driving;
       expect(s7b2WaitRounds(recovered.view, 'reply')).toHaveLength(1);
-      expectOneEntry(await expectAccepted(world, held.messages[0].ref));
+      expectOneResponse(await expectAccepted(world, held.messages[0].ref));
       return;
     }
 
@@ -101,12 +114,12 @@ describe('S7B-2 R entered consumption', () => {
       const reply = await replyOrExpireS7B2Round(world, { kind: 'reply', goal: held.goal,
         recipient: held.recipients[0], message: held.messages[0].ref, task: held.tasks[0], label });
       await kernel.reached;
-      expect((await readS7BMessage(world, reply.message.ref)).acceptedInputs ?? []).toEqual([]);
+      expectOnlyMessageInput(await readS7BMessage(world, reply.message.ref));
 
       await world.crash({ extraHostOptions: { requestDriver: 'off' } });
       const restarted = await world.waitForRequest(root,
         current => s7b2WaitRounds(current, 'reply')[0]?.status === 'queued', 'the restart leaves the reply round queued');
-      expect((await readS7BMessage(world, reply.message.ref)).acceptedInputs ?? []).toEqual([]);
+      expectOnlyMessageInput(await readS7BMessage(world, reply.message.ref));
 
       const retry = s7b2WaitRounds(restarted, 'reply')[0]!;
       expect(await claimWithSecretaryProfile(world, retry.ref, held.round.secretary, `${label}-retry-claim`))
@@ -117,10 +130,10 @@ describe('S7B-2 R entered consumption', () => {
       const retried = start(world, retryPrepared, `${label}-retry-start`);
       retried.catch(() => undefined);
       await retryKernel.reached;
-      expect((await readS7BMessage(world, reply.message.ref)).acceptedInputs ?? []).toEqual([]);
+      expectOnlyMessageInput(await readS7BMessage(world, reply.message.ref));
       retryKernel.release();
       expect(await retried).toMatchObject({ status: 'ready' });
-      expectOneEntry(await expectAccepted(world, reply.message.ref));
+      expectOneResponse(await expectAccepted(world, reply.message.ref));
       return;
     }
 
@@ -158,8 +171,10 @@ describe('S7B-2 R entered consumption', () => {
       expect(replies).toHaveLength(1);
       expect(replies[0]!.absorbedInto).toEqual(expiry.ref);
       const entries = (await readS7BMessage(world, late.message.ref)).acceptedInputs ?? [];
-      expect(entries).toHaveLength(1);
-      expect(entries[0]).toMatchObject({ part: 'response', evidence: 'query_entered' });
+      expect(entries).toHaveLength(2);
+      expect(entries.find(entry => entry.part === 'message')).toMatchObject(messageInput);
+      expect(entries.find(entry => entry.part === 'response'))
+        .toMatchObject({ part: 'response', evidence: 'query_entered' });
       return;
     }
 
@@ -185,7 +200,7 @@ describe('S7B-2 R entered consumption', () => {
         current => s7b2WaitRounds(current, 'reply')[0]?.status === 'ended', 'the late reply round ends');
       expect(s7b2WaitRounds(view, 'reply')).toHaveLength(1);
       const entries = (await readS7BMessage(world, late.message.ref)).acceptedInputs ?? [];
-      expect(entries).toHaveLength(2);
+      expect(entries).toHaveLength(3);
       expect(entries.find(entry => entry.part === 'response'))
         .toMatchObject({ evidence: 'query_entered', consumesWait: false });
       return;
@@ -196,9 +211,9 @@ describe('S7B-2 R entered consumption', () => {
       const reply = await replyOrExpireS7B2Round(world, { kind: 'reply', goal: held.goal,
         recipient: held.recipients[0], message: held.messages[0].ref, task: held.tasks[0], label });
       await gate.reached;
-      expect((await readS7BMessage(world, reply.message.ref)).acceptedInputs ?? []).toEqual([]);
+      expectOnlyMessageInput(await readS7BMessage(world, reply.message.ref));
       gate.release();
-      expectOneEntry(await expectAccepted(world, reply.message.ref));
+      expectOneResponse(await expectAccepted(world, reply.message.ref));
       return;
     }
 
@@ -210,8 +225,8 @@ describe('S7B-2 R entered consumption', () => {
       const rounds = s7b2WaitRounds(view, 'reply');
       const executing = rounds.filter(round => round.absorbedInto === null);
       expect(executing).toHaveLength(1);
-      expectOneEntry(await expectAccepted(world, replies[0].ref));
-      expectOneEntry(await expectAccepted(world, replies[1].ref));
+      expectOneResponse(await expectAccepted(world, replies[0].ref));
+      expectOneResponse(await expectAccepted(world, replies[1].ref));
       return;
     }
 
@@ -223,7 +238,7 @@ describe('S7B-2 R entered consumption', () => {
       const view = await world.waitForRequest(root, current => s7b2WaitRounds(current, 'reply')[0]?.status === 'ended',
         'the reply round ends');
       expect(s7b2WaitRounds(view, 'reply')).toHaveLength(1);
-      expectOneEntry(await readS7BMessage(world, reply.message.ref));
+      expectOneResponse(await readS7BMessage(world, reply.message.ref));
       return;
     }
 
@@ -242,6 +257,6 @@ describe('S7B-2 R entered consumption', () => {
     const view = await world.waitForRequest(root, current => current.rounds.every(round => round.status === 'ended'),
       'the raced reply round ends');
     expect(s7b2WaitRounds(view, 'reply')).toHaveLength(1);
-    expectOneEntry(await expectAccepted(world, reply.message.ref));
+    expectOneResponse(await expectAccepted(world, reply.message.ref));
   }, 180_000);
 });

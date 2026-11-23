@@ -114,8 +114,6 @@ function legacyDecisionActionPolicy(input: {
       // "countedNext>cap 时两档都是 needs_decision"; the existing fences stay.
       if (input.countedNext !== null && input.countedNext > input.cap) return 'needs_decision';
       return everyStep ? 'needs_decision' : 'automatic_notice';
-    case 'secretary_action':
-    case 'secretary_inquiry':
     case 'agent_dispatch':
     case 'agent_stop':
       return everyStep ? 'needs_decision' : 'automatic';
@@ -138,14 +136,14 @@ function legacyDecisionActionPolicy(input: {
   }
 }
 
-/** S5-AU-04: `notify` needs any formal duty; `decision_request` needs secretary/adviser/scribe. */
+/** S5-AU-04: `notify_person` needs any formal duty; `ask_person` needs secretary/adviser/scribe. */
 export function canSendUserMessage(input: {
   duties: readonly PlatformDutyV1[]; readOnlyCopy: boolean;
-  independentReview: boolean; intent: 'notify' | 'decision_request';
+  independentReview: boolean; kind: 'notify_person' | 'ask_person';
 }): boolean {
   // A read-only copy / independent reviewer is never a sender, whatever the duty.
   if (input.readOnlyCopy || input.independentReview) return false;
-  if (input.intent === 'notify') return input.duties.length > 0;
+  if (input.kind === 'notify_person') return input.duties.length > 0;
   return input.duties.some((duty) => DECISION_REQUEST_DUTIES.has(duty));
 }
 

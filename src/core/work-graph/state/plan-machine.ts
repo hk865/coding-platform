@@ -112,6 +112,8 @@ export type CandidatePlanProposal = {
   submittedBy?: PlanWriteProvenanceV1;
   /** The intervention message this candidate was proposed from; required, `null` for every other writer. */
   sourceMessageRef: SessionMessageRef | null;
+  /** The frozen source part of that message: `decision_answer` only for a card-answer round; absent otherwise. */
+  sourcePart?: 'decision_answer';
   /**
    * 121-136: the checks this candidate proposes for its own Tasks, installed when a person adopts it. Creation-only;
    * absent on every candidate recorded before it and on one that brings none.
@@ -141,6 +143,8 @@ export function newCandidateProposal(input: {
   catalogPin: KnowledgePinV1 | null;
   submittedBy: PlanWriteProvenanceV1 | null;
   sourceMessageRef: SessionMessageRef | null;
+  /** The frozen source part of that message: `decision_answer` only for a card-answer round; absent otherwise. */
+  sourcePart?: 'decision_answer' | undefined;
   /** 121-136: the candidate's own checks; absent or empty when it brings none. */
   checks?: readonly RegisteredCommandCheck[] | undefined;
 }): CandidatePlanProposal {
@@ -148,6 +152,7 @@ export function newCandidateProposal(input: {
     goalRef: input.goalRef, basedOn: input.basedOn, draft: input.draft, reason: input.reason,
     status: 'candidate', issues: input.issues, catalogPin: input.catalogPin,
     sourceMessageRef: input.sourceMessageRef,
+    ...(input.sourcePart === undefined ? {} : { sourcePart: input.sourcePart }),
     ...(input.checks === undefined || input.checks.length === 0 ? {} : { checks: structuredClone([...input.checks]) }) };
   return input.submittedBy === null ? candidate : { ...candidate, submittedBy: input.submittedBy };
 }
@@ -274,6 +279,8 @@ export type PlanProposalEvent =
     submittedBy: PlanWriteProvenanceV1 | null;
     /** The intervention message this candidate was proposed from; required, `null` for every other writer. */
     sourceMessageRef: SessionMessageRef | null;
+    /** The frozen source part of that message: `decision_answer` only for a card-answer round; absent otherwise. */
+    sourcePart?: 'decision_answer';
     /** 121-136: the checks the candidate proposes; absent when it brings none. */
     checks?: readonly RegisteredCommandCheck[];
     /**
@@ -313,6 +320,8 @@ export type PlanProposalEvent =
     submittedBy: PlanWriteProvenanceV1 | null;
     /** The intervention message this candidate was proposed from; required, `null` for every other writer. */
     sourceMessageRef: SessionMessageRef | null;
+    /** The frozen source part of that message: `decision_answer` only for a card-answer round; absent otherwise. */
+    sourcePart?: 'decision_answer';
     /** 121-136: the checks the replacement candidate proposes; absent when it brings none. */
     checks?: readonly RegisteredCommandCheck[];
     expectedHeadRevision: number;
@@ -1063,7 +1072,7 @@ function recordedStep(
     if (event.catalogPin === undefined) return UNREAD;
     const candidate = withRequestRef(newCandidateProposal({ ref: event.ref, goalRef: event.goalRef, basedOn: event.basedOn,
       draft: event.draft, reason: event.reason, issues: [], catalogPin: event.catalogPin,
-      submittedBy: event.submittedBy, sourceMessageRef: event.sourceMessageRef, checks: event.checks }), event.requestRef);
+      submittedBy: event.submittedBy, sourceMessageRef: event.sourceMessageRef, sourcePart: event.sourcePart, checks: event.checks }), event.requestRef);
     return sameRecordedCandidate(state, candidate)
       ? reject('duplicate', 'revision_conflict',
         `proposal ${event.ref.proposalId} is already recorded with the same content; only its original receipt replays`)
@@ -1147,7 +1156,7 @@ function onProposalRecorded(
   if (problem !== null) return problem;
   const candidate = withRequestRef(newCandidateProposal({ ref: event.ref, goalRef: event.goalRef, basedOn: event.basedOn,
     draft: event.draft, reason: event.reason, issues: event.issues, catalogPin: event.catalogPin,
-    submittedBy: event.submittedBy, sourceMessageRef: event.sourceMessageRef, checks: event.checks }), event.requestRef);
+    submittedBy: event.submittedBy, sourceMessageRef: event.sourceMessageRef, sourcePart: event.sourcePart, checks: event.checks }), event.requestRef);
   /** The writer's own CAS guards: `before` the Goal scope guards, `after` them (the source Plan). */
   let writerGuards: { before: PlanCommitGuard[]; after: PlanCommitGuard[] };
   switch (event.writer) {
@@ -1624,7 +1633,7 @@ function onProposalReplaced(
   if (modules !== null) return modules;
   const candidate = withRequestRef(newCandidateProposal({ ref: event.ref, goalRef: event.goalRef, basedOn: event.basedOn,
     draft: event.draft, reason: event.reason, issues: event.issues, catalogPin: event.catalogPin,
-    submittedBy: event.submittedBy, sourceMessageRef: event.sourceMessageRef, checks: event.checks }), event.requestRef);
+    submittedBy: event.submittedBy, sourceMessageRef: event.sourceMessageRef, sourcePart: event.sourcePart, checks: event.checks }), event.requestRef);
   const replaced: CandidatePlanProposal = { ...state, revision: state.revision + 1, status: 'not_adopted',
     notAdopted: { reason: 'replaced', requestedBy: event.requestedBy, at: event.at, replacedBy: candidate.ref } };
   const effects: PlanProposalEffect[] = [

@@ -206,7 +206,7 @@ describe('QRR-05, the platform refuses a call off the read-only list before it w
     // 和 L-R04 一样经系统上下文发 notify：人发的 notify 会被请求轮只收 notify 的供给滤掉。
     const notifyText = 'QRR 通知：这一轮接收了它';
     const sent = await world.dispatch('messages/send', world.systemContext(), { scope: S6A_SCOPE, request: {
-      input: { recipient: a.ref, text: notifyText, intent: 'notify', needsReply: false, goalRef: world.goals.first },
+      input: { recipient: a.ref, text: notifyText, needsReply: false, wake: false, goalRef: world.goals.first },
       meta: { requestId: 'qrr-refuse-notify', expected: [] } } }) as WriteResult<SessionMessage>;
     if (sent.status !== 'committed') throw new Error(`QRR: the notify was not sent: ${JSON.stringify(sent)}`);
     const readNotify = async (): Promise<SessionMessage> => {

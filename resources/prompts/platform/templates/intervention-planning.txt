@@ -1,3 +1,7 @@
 {{prelude}}
 
-{{role}}{{goal}}{{plan}}{{message}}
+{{role}}{{goal}}{{plan}}{{source}}{{message}}
+
+这一轮因上面这条来源消息而开。
+{{#tool:respond_session_message}}可以回复别的消息；{{/tool:respond_session_message}}{{#tool:send_session_message}}可以主动发信；{{/tool:send_session_message}}来源是要本轮作答的来信，由本轮结论回复；纯告知和已答的卡不用再回。
+本轮不领取任务，也不开始执行；只按本轮职责给出结论。

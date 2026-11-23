@@ -15,13 +15,14 @@ import type { PlanProposal } from '../../src/core/work-graph/model/plan-contract
 import type { GoalRef } from '../../src/contracts/ledger.js';
 import type { PlanRevisionDraft, PlanRevisionSnapshot } from '../../src/contracts/plan.js';
 import { advanceUntil, post, readExecution } from '../helpers/A2-restart-fixture.js';
+import { startGoalDriver } from '../helpers/DRV-fixture.js';
 import { plain } from '../helpers/AG2b-collaboration-fixture.js';
 import { createS6BLine } from '../helpers/S6B1-fixture.js';
 import type { S6AHostWorld } from '../helpers/S6A-host-fixture.js';
 import { OPERATOR, S6A_SCOPE, S6A_WORK_ROLE, type S6AExtraBinding } from '../helpers/S6A-request-fixture.js';
 import { bindingOf, checkConfiguration, ready, sessionOf, setS7AAutonomy } from '../helpers/S7A-fixture.js';
 import {
-  awaitPlanningAnswer, awaitProposal, heartbeatUntilModel, proposalRefOf, readProposal, settleHost,
+  awaitPlanningAnswer, awaitProposal, heartbeatUntil, heartbeatUntilModel, proposalRefOf, readProposal, settleHost,
 } from '../helpers/IV-host-fixture.js';
 import { readS7BMessage } from '../helpers/S7B-fixture.js';
 import { byIdentityPrefix, commitBarrier } from '../helpers/S6A-commit-barrier.js';
@@ -120,22 +121,25 @@ it('PL-34: the platform cancels A\'s yielded Run before adopting the replacement
   const adoptStep = await advanceUntil(world.ag2b,
     { schemaVersion: 1, goalRef: goal, flowId: 'pl-34-adopt', sessionHint: null, kind: 'select_work' },
     'adopt_plan');
-  // Restart window 2: fail the reply's real store commit once. The adoption
-  // lands, the proposal is accepted and M is still unanswered; the reopened
-  // Host's accepted-candidate scan then writes the one reply.
-  const replyFault = commitBarrier.failCommitOnce(byIdentityPrefix('session-message-respond_from_query_answer:'));
+  // Restart window 2. Since P2 a restarted Goal closes nothing until a person starts it (SMK3b/B-36, the reply-only
+  // close-out included: cp2oa `62dc16ee`; `cp2f7-rulings.md` P-B L2), so the adoption lands and M is still unanswered.
+  // The reopened Host waits again; once the person starts the Goal, the accepted-candidate scan writes the one reply,
+  // and its real store commit failing once on the way does not make a second one.
   const adoption = await post<{ status: string; code?: string }>(
     world.ag2b, 'workflow/advance', plain(S6A_SCOPE, adoptStep));
-  expect(adoption.status).toBe('rejected');
-  expect(adoption.code).toBe('unavailable');
-  replyFault.release();
-  expect((await readProposal(world, proposalRef)).status, 'the adoption landed before the reply failed').toBe('accepted');
+  expect(adoption.status, JSON.stringify(adoption)).toBe('ready');
+  expect((await readProposal(world, proposalRef)).status, 'the adoption landed before the reply').toBe('accepted');
   expect((await readS7BMessage(world, sent.message.ref)).response, 'M is still unanswered').toBeNull();
 
   await world.reopen();
   await settleHost(world);
   await advancePLGoal(world, goal, 'pl-34-restart-read');
-  const replied = await readS7BMessage(world, sent.message.ref);
+  expect((await readS7BMessage(world, sent.message.ref)).response, 'nothing closes before the person starts').toBeNull();
+  const replyFault = commitBarrier.failCommitOnce(byIdentityPrefix('session-message-respond_from_query_answer:'));
+  await startGoalDriver(world, goal, 'pl-34-restart-driver');
+  const replied = await heartbeatUntil(world, () => readS7BMessage(world, sent.message.ref),
+    message => message.response !== null, 40);
+  replyFault.release();
   expect(replied.response, 'M got its one reply').not.toBeNull();
   const repliedAgain = await readS7BMessage(world, sent.message.ref);
   expect(repliedAgain.response).toEqual(replied.response);

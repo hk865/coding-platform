@@ -69,6 +69,7 @@ import {
   sessionAggregateRefKey,
 } from '../sessions/session-record-codecs.js';
 import { activityGuardOf, planSessionActivityAdvance } from '../sessions/session-activity.js';
+import { isSecretaryRequestMessage } from '../state/message-machine.js';
 import {
   currentUnderstandingGeneration, endUnstartedRound, newRequestRound, setIntake,
   transitionUnderstandingCommand,
@@ -2121,11 +2122,20 @@ export function createRequestRoundService(deps: RequestRoundDependencies): Reque
           reason: `a workspace message is damaged: ${decoded.reason}` };
       }
       const message = decoded.value;
-      if (message.requestRoot === null) continue;
-      const kind = message.status === 'responded' ? 'reply'
-        : message.status === 'pending' && message.expiredAt !== null ? 'expiry' : null;
-      if (kind === null) continue;
-      found.push({ requestRoot: { ...message.requestRoot }, messageRef: { ...message.ref }, kind });
+      // The request queue owns only a secretary request's reply and expiry
+      // (`isSecretaryRequestMessage`, the one wait identity); every other
+      // message with a request root has no row here.
+      if (message.requestRoot === null || !isSecretaryRequestMessage(message)) continue;
+      // The reply and the expiry are independent formal facts of the same
+      // question. A late reply keeps `expiredAt`, so both rows are listed (the
+      // reply first) instead of one status hiding the other.
+      const requestRoot: QueryJobRef = { ...message.requestRoot };
+      if (message.status === 'responded') {
+        found.push({ requestRoot, messageRef: { ...message.ref }, kind: 'reply' });
+      }
+      if (message.expiredAt !== null) {
+        found.push({ requestRoot, messageRef: { ...message.ref }, kind: 'expiry' });
+      }
     }
     return { status: 'ready', value: {
       sources: found, continuation: page.value.next, wrapped: page.value.next === null,

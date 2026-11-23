@@ -1,4 +1,0 @@
-{
-  "description": "Read the current Session card (record, availability and work links) for one exact SessionRef. Read-only: it does not wake the Session, change occupancy, start a Run or load history.",
-  "parameters": {}
-}

@@ -15,7 +15,8 @@ import {
   S7B_DUE_WAITS_LOOKUP, decodeSessionMessageRecord, sessionMessageFromEvent, sessionMessageRefKey,
 } from '../sessions/message-record-codecs.js';
 import {
-  decideExpiry, waitFactsOfRecord, type ExpirySkipReason, type MessageExpiredChangeV1,
+  decideExpiry, isExpiryWaitMessage, waitFactsOfRecord, waitStateOf,
+  type ExpirySkipReason, type MessageExpiredChangeV1,
 } from '../state/message-machine.js';
 import {
   eventIdOf, mapReadResult, messageVersionAgainstReceipt, ownContext, readSessionMessageRecord,
@@ -115,7 +116,10 @@ export function createMessageExpiryOwner(deps: MessageExpiryOwnerDependencies): 
     try {
       page = await records.lookupOrdered({
         index: S7B_DUE_WAITS_LOOKUP,
-        values: [input.workspace.projectId, input.workspace.workspaceId, 'released', 'inquiry'],
+        // The due index's only equality parts are the workspace; the shared
+        // `isExpiryWaitMessage` and open-wait qualifications are applied to the
+        // deadline-ordered candidates, exactly as `decideExpiry` applies them.
+        values: [input.workspace.projectId, input.workspace.workspaceId],
         direction: 'asc',
         ...(input.page.after === null ? {} : { after: input.page.after }),
         limit: input.page.limit,
@@ -129,7 +133,10 @@ export function createMessageExpiryOwner(deps: MessageExpiryOwnerDependencies): 
       const decoded = decodeSessionMessageRecord(record);
       if (decoded.status !== 'decoded') return reject('unavailable', `a due-wait candidate is damaged: ${decoded.reason}`);
       const message = decoded.value;
-      if (message.waitAfterSend !== true || message.deadline === null || message.expiredAt !== null) continue;
+      // §3.7 item 1: the scan and `decideExpiry` share ONE qualification — a real wait, a deadline,
+      // and an open wait state (an answered, withdrawn, cancelled or consumed wait is not listed).
+      if (!isExpiryWaitMessage(message) || message.deadline === null
+        || waitStateOf(message, waitFactsOfRecord(message)).state !== 'open') continue;
       items.push({
         messageRef: message.ref, deadline: message.deadline,
         after: { order: message.deadline, refKey: sessionMessageRefKey(message.ref) },

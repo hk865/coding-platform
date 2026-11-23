@@ -45,6 +45,7 @@ import type { GoalDecisionCauseReader } from '../tasks/goal-decision-reader.js';
 import { createGoalDecisionCauseReader } from '../tasks/goal-decision-reader.js';
 import { readProposal } from '../tasks/plan-readers.js';
 import { decodeSessionMessageRecord } from '../sessions/message-record-codecs.js';
+import { isMessageAgentSender } from '../state/message-machine.js';
 import type { WorkspaceToolsPort } from '../../workspace/ports.js';
 import { readApplicationReceiptFacts } from './decision-application.js';
 import { clonePins, createSourceReadSupport, isAbsencePin, readStoredDecoded,
@@ -58,7 +59,7 @@ import { readGoalConflictSource } from './decision-source/goal-conflict.js';
 import { readNoteReviewSource } from './decision-source/note-review.js';
 import { readUnknownCallReviewSource } from './decision-source/unknown-call-review.js';
 import { readCommandRerunRequestSource } from './decision-source/command-rerun-request.js';
-import { readMessageReleaseSource } from './decision-source/message-release.js';
+import { readActionReleaseSource } from './decision-source/action-release.js';
 import { readMemberCreationSource } from './decision-source/member-creation.js';
 import { readHandoffApprovalSource } from './decision-source/handoff-approval.js';
 import { readMaintainerAssignmentSource } from './decision-source/module-maintainer-assignment.js';
@@ -444,8 +445,8 @@ export function createDecisionSourceFacts(
             return readUnknownCallReviewSource(support, ctx, identity, deps, goalRef);
           case 'command_rerun_request':
             return readCommandRerunRequestSource(support, ctx, identity, deps, goalRef);
-          case 'message_release':
-            return readMessageReleaseSource(support, identity, goalRef);
+          case 'action_release':
+            return readActionReleaseSource(support, identity, goalRef);
           case 'member_creation':
             return readMemberCreationSource(support, identity, goalRef);
           case 'rework_request':
@@ -561,7 +562,8 @@ export async function readSavedAnswerReaderSessions(
         decodeSessionMessageRecord, 'SessionMessage');
       if (read.status !== 'ready') return read;
       const sender = read.value.sender;
-      return { status: 'ready', value: sender.kind === 'work_run'
+      // The same formal sender line rule as the live source: every trusted agent sender kind.
+      return { status: 'ready', value: isMessageAgentSender(sender)
         ? [{ projectId: sender.sessionRef.projectId, sessionId: sender.sessionRef.sessionId }] : [] };
     }
     case 'candidate': {

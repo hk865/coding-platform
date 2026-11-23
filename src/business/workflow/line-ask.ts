@@ -68,7 +68,8 @@ export function createLineAsk(deps: LineAskDependencies):
 
     const sent = await deps.messages.sendMessage(owned.ctx, {
       input: {
-        recipient: input.sessionRef, text: input.question, intent: 'inquiry', needsReply: true,
+        recipient: input.sessionRef, text: input.question, needsReply: true,
+        answeredBy: 'copy', wake: false,
       },
       meta: { requestId: `queries-ask:${input.commandId}`, expected: [] },
     });

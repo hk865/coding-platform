@@ -499,6 +499,7 @@ button.deliv:hover .on { color: var(--text); }
             <sc-if value="{{e.isMsg}}" hint-placeholder-val="{{ false }}">
               <div class="msg-user">
                 <div class="bubble">{{e.text}}</div>
+                <sc-if value="{{e.hasFlags}}" hint-placeholder-val="{{ false }}"><span class="lv-rt"><span class="lv-dot" aria-hidden="true">·</span><span class="lv-w tx-plain">{{e.replyWord}}</span><span class="lv-dot" aria-hidden="true">·</span><span class="lv-w tx-plain">{{e.wakeWord}}</span></span></sc-if>
                 <span class="msg-time">{{e.t}}</span>
                 <sc-if value="{{e.canAdv}}" hint-placeholder-val="{{ true }}">
                   <button class="{{e.dvCls}}" type="button" onClick="{{e.advance}}" aria-label="{{e.dvLabel}}">
@@ -1410,23 +1411,26 @@ class Component extends DCLogic {
   }
 
   /* ------------------------------------------------------------ hover / focus cards: what each control and way of sending really does, and the tasks */
+  /* §2.8: the mini card's status line adds the read hold / dispatch / stop state;
+     a Task without that read adds nothing. */
+  taskNote(s) { return s && s.statusNote ? ' · ' + s.statusNote : ''; }
   taskCard(id, s) {
     const ctl = s.ctl || 'working'; const att = s.attempt || 1;
     const who = '执行者 · SSE 推送 · ' + this.selfWord(ctl);
     const row = (k, v, cls) => ({ k: k, v: v, cls: cls || '' });
     if (id === 'fe') {
-      return { hasSq: true, sq: 'sq z10 ' + this.sqAt('satisfied'), name: '前端拆分', tx: 'tx-satisfied', word: '已满足', why: '：第 2 次尝试 · 接续，验收通过',
+      return { hasSq: true, sq: 'sq z10 ' + this.sqAt('satisfied'), name: '前端拆分', tx: 'tx-satisfied', word: '已满足', why: '：第 2 次尝试 · 接续，验收通过' + this.taskNote(s),
         rows: [row('归属', '服务拆分'), row('负责', this.wlOwner('T27', 'main')), row('语义', '前端拆成 api、state、components、views 四层。', 'hc-sem')], hint: '点一下回到主画面' };
     }
     if (id === 'cr') {
-      return { hasSq: true, sq: 'sq z10 ' + this.sqAt('satisfied'), name: 'core-routes 拆分', tx: 'tx-satisfied', word: '已满足', why: '：第 1 次尝试，验收通过',
+      return { hasSq: true, sq: 'sq z10 ' + this.sqAt('satisfied'), name: 'core-routes 拆分', tx: 'tx-satisfied', word: '已满足', why: '：第 1 次尝试，验收通过' + this.taskNote(s),
         rows: [row('归属', '服务拆分'), row('负责', this.wlOwner('T26', 'main')), row('语义', '把 core-routes 按目标、任务、成员、文件拆成四组路由。', 'hc-sem')], hint: '点一下回到主画面' };
     }
     const taskSt = ctl === 'cancelled' ? 'cancelled' : ctl === 'paused' ? 'waiting' : 'running';
     const why = { working: att > 1 ? '：' + this.attWords(att) : '：第 1 次尝试，已改 ' + this.changes(s).n + ' 个文件', pausing: '：已请求暂停，等安全点',
       paused: '：停在安全点，改动已保存', cancelling: '：已请求取消，等安全点', cancelled: '：你取消了这次执行，可重新入队' }[ctl];
     const w = { running: '执行中', waiting: '已暂停，可继续', cancelled: '已取消' }[taskSt];
-    return { hasSq: true, sq: 'sq z10 ' + this.sqAt(taskSt), name: 'SSE 推送', tx: 'tx-' + taskSt, word: w, why: why,
+    return { hasSq: true, sq: 'sq z10 ' + this.sqAt(taskSt), name: 'SSE 推送', tx: 'tx-' + taskSt, word: w, why: why + this.taskNote(s),
       rows: [row('归属', '服务拆分'), row('负责', who + (att > 1 ? '，第 ' + att + ' 次尝试' : '')), row('语义', '用 SSE 把状态变化推给工作台，取代每秒轮询。', 'hc-sem')],
       hint: '点一下回到主画面' };
   }
@@ -2317,7 +2321,8 @@ class Component extends DCLogic {
         track: words.map((word, j) => ({ word: word, sep: j > 0, cls: j === words.length - 1 ? 'on' : '' })),
         canAdv: true, noAdv: false, dvCls: 'deliv' + (e.track.rejectedAt !== null ? ' is-rejected' : ''),
         dvLabel: '消息状态：只读', advance: () => {},
-        note: e.reply === null ? '' : '', hasReply: e.reply !== null, reply: e.reply || '' });
+        note: e.reply === null ? '' : '', hasReply: e.reply !== null, reply: e.reply || '',
+        hasFlags: true, replyWord: e.replyWord, wakeWord: e.wakeWord });
     };
     /* §2.9: an earlier record opens in the middle from rows already read; the
        cview state keeps that choice local and never asks for another read. */

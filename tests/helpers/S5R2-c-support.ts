@@ -29,6 +29,9 @@ import { createTaskClaimService } from '../../src/core/work-graph/tasks/claim-se
 import { setGoalControlFromHost } from '../../src/core/work-graph/tasks/goal-control.js';
 import { readGoalPhase } from '../../src/core/work-graph/tasks/plan-readers.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
+import { createQueryRoundResolver } from '../../src/core/work-graph/tasks/query-round.js';
+import { createQueryJobService } from '../../src/core/work-graph/queries/query-job-service.js';
+import { planSourceRootOf } from './task-claim-fixture.js';
 import { createWorkflow } from '../../src/business/workflow/workflow.js';
 import type { WorkspaceHostBindings } from '../../src/core/workspace/access.js';
 import { VerificationWorkspaceReader } from '../../src/core/workspace/verification-workspace-reader.js';
@@ -78,6 +81,7 @@ export async function assembleS5R2C(f: S5DecisionFixture) {
   } satisfies MessageDutiesFactsPort);
   const mailbox: SessionMailboxDependencies = { records: f.records, sessions, executions, roles, materials,
     defaultInquiryDeadlineMs: 86_400_000,
+    queryRounds: createQueryRoundResolver({ records: f.records, duties: unknownSessionDuty, bodies: f.bodies }),
     systemActor: f.operatorActor, now: f.now, newId: f.newId, duties };
   // Match create-platform.ts:628: both the message owner and Workflow receive
   // the real source reader WITH the real Plan service, including its retry seam.
@@ -159,7 +163,9 @@ export async function assembleS5R2C(f: S5DecisionFixture) {
     },
   });
   const workflow = createWorkflow({ tasks, plans, sessions,
-    claims: createTaskClaimService({ records: f.records, now: f.now, newId: f.newId, roles }),
+    claims: createTaskClaimService({ records: f.records, now: f.now, newId: f.newId, roles,
+      planSourceRoot: planSourceRootOf({ messages: messageMailbox, plans,
+        queries: createQueryJobService({ records: f.records, now: f.now, eventId: f.newId }) }) }),
     executions, runtime, evidence, checks, sourceAuthority: createSourceAuthorityReader({ authority }),
     goalSettings: settings, decisionMessages: decisions, decisionReads: real.reads,
     decisionDuties: duties, goalExecutedFiles: createGoalExecutedFilesReader({ records: f.records }),

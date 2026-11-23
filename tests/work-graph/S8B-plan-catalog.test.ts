@@ -291,9 +291,8 @@ it.each(CONTAINMENT)('B03-containment: $name', async ({ pairs }) => {
       child: { projectId, moduleId: child } })) } }) };
   const { answerRef, requests } = await world.answer(goal, answerOf(['root'], { baselineId: 's8b-answer-baseline',
     description: 'The answer boundary', constraints: [], catalog }));
-  expect(renderedText(requests)).toContain('containment is OPTIONAL: give a parent/child pair only when the real '
-    + 'sources show that one module contains the other; omit containment when you do not know (an omitted containment '
-    + 'means unknown, never flat); an explicit {parentOf:[]} means every module is flat');
+  expect(renderedText(requests)).toContain('containment only when the sources prove it '
+    + '(omitted = unknown, never flat; {parentOf:[]} = flat), never from paths/dependencies');
   await world.adoptInitial(await savedArchitecture(world, answerRef));
   expect((await world.architecture()).catalog.catalog).toStrictEqual(catalog);
 });

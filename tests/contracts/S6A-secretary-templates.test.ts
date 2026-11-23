@@ -27,13 +27,13 @@ const EXISTING_DIGESTS = {
     'work-input': 'f3ebad58e28d7f5a2d8bc8831b7974b03057c0590982d23fc325be933f5aed7a',
     'query-planning-input': 'ac29545b215361ea2ce479007f2c3ffcc3daa87a2bbacaf89957b49aa4022a77',
     'query-copy-input': '89ee28b2dc868787a7e41a063edadf9765e474e93b3bb477b038f93909808e20',
-    'initial-planning-answer': '3f554344a39bcf3d8f91db2b2cbefcfdea84c8bff1c1b0d5f589be61b683d6e9',
+    'initial-planning-answer': '9ec3414a3646292c52fc2c06b08cbb0e3952775b9c1af45780a7586d0a37a624',
     base: 'cee15946501a2db933e00e1ea9954e8332542ab130268cd32c6962c91061958c',
-    'skill-platform-work': '7900ad9ec942898d22a666e20a6a82d8e0e647291d226108325bfa1d84bdaa08',
-    'skill-platform-secretary': '70dde99ef1db48706385d58c1fec689ea6be77f1ba033cc8f7502dd79f999dfb',
-    'skill-platform-adviser': '5c823b9ff62bb22618c605f72511a89e5ab0654311c937b05783d8e16caeb062',
-    'skill-platform-scribe': '06eaa54bb819486d3b7e3e69bd4bdcfe0a5cfb7e5a73a893296500710ec7b65d',
-    'skill-platform-reviewer': '730e2ee4693fbd17776a2adfb5c6b8edaeab2c5ba7ed102aec0ba49aec9307a6',
+    'skill-platform-work': '77cab7d447ce03b66cd83f63a680303991ab6148b4ce38fb9eff106cd86c9093',
+    'skill-platform-secretary': 'eb6dc54774b250b7bb022245f3783b91b42cb812d74d11595edaf6b217cc08cd',
+    'skill-platform-adviser': 'ca1623d443071551cf7c32c2ef1c164f5f7a2e625d58461c2042739254b8c015',
+    'skill-platform-scribe': '0f564aed3d684fa56026ad0d17b820f5c41e5ced948036ee2db61bce9a445190',
+    'skill-platform-reviewer': 'ff28c4a70368a6c321019d758180a7c7c71ab194fc5e62a6c847572c8655f10d',
 } as const;
 
 const secretaryAnswerText = [
@@ -347,8 +347,8 @@ describe('SRV V4: the secretary Skill says what happens after its answer', () =>
     const lines = renderTemplate(PACK, 'skill-platform-secretary', {},
         ['submit_secretary_answer', 'submit_plan_round']).text.split('\n');
     it.each([
-        { cell: 'text only in the reply body changes nothing', parts: ['正文', '不会改动'] },
-        { cell: 'no "已改" without an adoption receipt', parts: ['采用的回执', '已改'] },
+        { cell: 'text only in the reply body changes nothing', parts: ['正文', '不改目标'] },
+        { cell: 'no "已改" without an adoption receipt', parts: ['采用回执', '已改'] },
     ])('carries the line: $cell', ({ parts }) => {
         expect(lines.some(line => parts.every(part => line.includes(part)))).toBe(true);
     });

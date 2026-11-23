@@ -4,10 +4,12 @@
 // `state/` and the WorkGraph model can depend on the SAME shapes without a
 // model import. It declares only pure data (string unions, literal snapshots
 // and the canonical source key); ports stay in `model/decision-contracts.ts`.
+import type { ActionRequestRef } from './action-request.js';
 import type { CommitCursor } from './command-event.js';
-import type { ModuleRef, VersionPin, WorkspaceScope } from './core/identity.js';
+import type { ModuleRef, SessionRef, VersionPin, WorkspaceScope } from './core/identity.js';
+import type { RunRef, TaskTriple } from './dispatch.js';
 import type { SessionMessageRef } from './core/session-message.js';
-import type { DispatchBasisV1, DispatchCurrentV1, GoalRef, WorkspaceRef } from './ledger.js';
+import type { DispatchBasisV1, GoalRef, WorkspaceRef } from './ledger.js';
 import type { InitializationBindingRef } from './initialization-binding.js';
 import type { PlanRevisionRef } from './plan.js';
 import type { QueryJobAnswerRef, QueryJobRef } from './query-job.js';
@@ -105,7 +107,8 @@ export function decisionSubjectKey(subject: DecisionSubjectV1): string { return 
 
 export type DecisionSourceV1 = {
   kind: 'message' | 'goal_cause' | 'candidate' | 'note_review'
-    | 'planning_question' | 'goal_conflict' | 'message_release' | 'unknown_call_review' | 'command_rerun_request'
+    | 'planning_question' | 'goal_conflict' | 'action_release'
+    | 'unknown_call_review' | 'command_rerun_request'
     | 'member_creation' | 'rework_request' | 'handoff_approval' | 'adviser_creation'
     | 'module_maintainer_assignment' | 'repair_approval' | 'structural_proposal' | 'role_capacity' | 'role_line_change';
   key: string; subject: DecisionSubjectV1; pins: VersionPin[];
@@ -138,10 +141,10 @@ export type UserDecisionBodyV1 = {
 export type DecisionActionV1 =
   | 'confirm_goal' | 'adopt_first_plan' | 'remember_user_preference'
   | 'refine_future' | 'system_requeue' | 'agent_requeue' | 'auto_reverify' | 'minor_semantic_patch'
-  | 'structural_patch' | 'change_goal' | 'exceed_budget' | 'escalate' | 'secretary_action' | 'secretary_inquiry'
+  | 'structural_patch' | 'change_goal' | 'exceed_budget' | 'escalate'
   | 'short_handoff' | 'secretary_too_long' | 'long_handoff' | 'change_duty' | 'role_line_split' | 'role_line_reuse'
   | 'create_member' | 'role_line_add' | 'module_maintainer' | 'goal_queue_assign' | 'short_change_duty'
-  // 问答轮的派活、叫停请求（通信与权限拆开）：出厂默认同 `secretary_action`；进规则可放的闭集（`RULE_ACTIONS`）随工具一起做。
+  // 问答轮的派活、叫停请求（通信与权限拆开）：每步确认出卡，否则自动；已收进规则可放的闭集（`RULE_ACTIONS`）。
   | 'agent_dispatch' | 'agent_stop';
 
 // ------------------------------------------------------------------------ //
@@ -164,31 +167,37 @@ export type DecisionChangeProofV1 = {
   basisRebases: GoalControlRebaseV1[];
 };
 
-export const MESSAGE_RELEASE_OPTIONS = { approve: 'approve', deny: 'deny' } as const;
-
-/** The `message_release` card's item; C names no W type and no port. */
-export type MessageReleaseCardItemV1 = {
-  messageRef: SessionMessageRef;
-  /** The message revision at which it became `awaiting`; the card's stable identity, not its CAS revision. */
-  creationRevision: number;
-  requestRoot: QueryJobRef | null;
-  release: 'awaiting' | 'approved' | 'released' | 'denied';
-  pins: DispatchBasisV1 | null;
-  deadline: string | null;
-  /** §3.8 item 4 / `book :392–:394`: the derived block beside the item's own facts; derived on every read, never stored. */
-  releaseBlock: MessageReleaseBlockV1 | null;
-};
+export const ACTION_RELEASE_OPTIONS = { approve: 'approve', deny: 'deny' } as const;
 
 /**
- * `book :392–:396` / `:517–:518`: why the read cannot release an approved, not withdrawn, not released message, and
- * the three values its `pins` are judged against. Derived on every read; never stored and never
- * in `GoalSnapshot`. R's `releaseCandidateBlockedReason` (`message-release.ts:313`) is the ONE projection that decides
- * the reason; `goal_not_active` is the paused Goal's reason and is never "过期".
+ * `p2-frozen.md:255` / `design-frozen.md:306-312`: the release card's item, one arm per action the request carries.
+ * Its source is the `ActionRequest` record (dispatch or stop), never a message; the item holds only what the card
+ * reads, while the derived blockers stay in the read projection.
  */
-export type MessageReleaseBlockV1 = {
-  blockedReason: 'stale_pins' | 'goal_not_active' | null;
-  current: DispatchCurrentV1 | null;
+type ActionReleaseCardCommonV1 = {
+  requestRef: ActionRequestRef;
+  /** The request revision at which it became `pending`; the card's stable identity, not its CAS revision. */
+  creationRevision: number;
+  requestRoot: QueryJobRef | null;
+  task: TaskTriple;
+  /** The line that asked (`ActionRequest.requester.session`). */
+  requester: SessionRef;
+  reason: string;
+  requestedAt: string;
 };
+export type ActionReleaseCardItemV1 =
+  | (ActionReleaseCardCommonV1 & {
+      kind: 'dispatch';
+      /** The three versions read at acceptance (`design-frozen.md:307`). */
+      expected: DispatchBasisV1;
+      preferredLine: SessionRef | null;
+    })
+  | (ActionReleaseCardCommonV1 & {
+      kind: 'stop';
+      /** The Run this stop was accepted against (`design-frozen.md:308`). */
+      run: RunRef;
+    });
+
 
 export type GoalFootprintV1 = {
   goalRef: GoalRef; planRef: PlanRevisionRef | null;
@@ -230,7 +239,7 @@ export type DecisionSourceIdentityV1 =
   | { kind: 'goal_cause'; goalRef: GoalRef; code: string; affected: VersionPin[] }
   | PlanningQuestionIdentityV1
   | { kind: 'note_review'; note: VersionPin }
-  | { kind: 'message_release'; messageRef: SessionMessageRef; revision: number }
+  | { kind: 'action_release'; requestRef: ActionRequestRef; revision: number }
   | { kind: 'goal_conflict'; pair: [
       { goalRef: GoalRef; activePlanRef: PlanRevisionRef | null },
       { goalRef: GoalRef; activePlanRef: PlanRevisionRef | null },
@@ -258,8 +267,8 @@ const compareText = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 
  * refs/versions (sorted by canonical ref, de-duplicated); planning_question =
  * answerRef + question index (+ the binding selector on a binding source);
  * note_review = note ref/revision;
- * message_release = messageRef + revision; goal_conflict = the UNORDERED Goal
- * pair sorted by ascending Goal key, each with its active Plan pointer. Goal
+ * action_release = requestRef + revision; goal_conflict = the UNORDERED
+ * Goal pair sorted by ascending Goal key, each with its active Plan pointer. Goal
  * revisions, order and CAS pins never enter the key, so a reorder never makes
  * another card for the same plan pair, and both entries (main conversation and
  * queue) derive the same key. Pure and total; the input is never a previous key.
@@ -286,8 +295,8 @@ export function decisionSourceKey(identity: DecisionSourceIdentityV1): string {
       } as never);
     case 'note_review':
       return canonicalJson({ kind: 'note_review', note: identity.note } as never);
-    case 'message_release':
-      return canonicalJson({ kind: 'message_release', messageRef: identity.messageRef, revision: identity.revision } as never);
+    case 'action_release':
+      return canonicalJson({ kind: 'action_release', requestRef: identity.requestRef, revision: identity.revision } as never);
     case 'goal_conflict': {
       const pair = [...identity.pair].sort((a, b) => compareText(goalKey(a.goalRef), goalKey(b.goalRef)));
       return canonicalJson({ kind: 'goal_conflict', pair } as never);
@@ -332,15 +341,13 @@ export function decisionSourceKey(identity: DecisionSourceIdentityV1): string {
 // ------------------------------------------------------------------------ //
 
 /**
- * The autonomy table's own closed set: the nine always-you names are excluded, leaving the 16 rule-coverable actions
- * (25 − 9, including `secretary_too_long` and `module_maintainer`).
+ * The autonomy table's own closed set: the nine always-you names are excluded, leaving the 16
+ * rule-coverable actions (including `secretary_too_long` and `module_maintainer`).
  */
 export type RuleActionV1 = Exclude<DecisionActionV1,
   | 'confirm_goal' | 'adopt_first_plan' | 'remember_user_preference'
-  | 'structural_patch' | 'change_goal' | 'exceed_budget' | 'escalate' | 'long_handoff' | 'change_duty'
-  // 派活、叫停进规则可放的闭集随工具一起做（改名 `secretary_action`、删 `secretary_inquiry` 同一步）；在那之前规则不放它们。
-  | 'agent_dispatch' | 'agent_stop'>;
+  | 'structural_patch' | 'change_goal' | 'exceed_budget' | 'escalate' | 'long_handoff' | 'change_duty'>;
 export const RULE_ACTIONS = ['refine_future', 'system_requeue', 'agent_requeue', 'auto_reverify',
-  'minor_semantic_patch', 'secretary_action', 'secretary_inquiry', 'short_handoff', 'secretary_too_long',
+  'minor_semantic_patch', 'agent_dispatch', 'agent_stop', 'short_handoff', 'secretary_too_long',
   'create_member', 'role_line_add', 'module_maintainer', 'role_line_split', 'role_line_reuse', 'goal_queue_assign',
   'short_change_duty'] as const satisfies readonly RuleActionV1[];

@@ -17,6 +17,7 @@ import type { RunRef, TaskTriple } from '../../src/contracts/dispatch.js';
 import type { GoalRef, GoalSnapshot } from '../../src/contracts/ledger.js';
 import type { PlanRevisionDraft, PlanRevisionSnapshot } from '../../src/contracts/plan.js';
 import type { SessionRef } from '../../src/contracts/core/identity.js';
+import type { HostPrincipal } from '../../src/contracts/core/call-context.js';
 import type { WriteNoteEnvelopeV1 } from '../../src/core/work-graph/model/note-contracts.js';
 import type { TaskRow } from '../../src/core/work-graph/model/plan-contracts.js';
 import type { WorkflowAdvanceInput, WorkflowStepReceipt } from '../../src/business/workflow/contracts.js';
@@ -29,6 +30,7 @@ import { platformRoleProfile } from '../../src/core/agent-runtime/role-profiles.
 import { workspaceOf } from '../../src/core/work-graph/tasks/request-service.js';
 import { createOverlapGateService, type OpenOverlapGateInputV1, type OpenOverlapGateResultV1,
   type OverlapGatePort, type OverlapGateServiceDependencies } from '../../src/core/work-graph/tasks/overlap-gates.js';
+import { messageRefOf, senderIdentityOf } from '../../src/core/work-graph/communication/mailbox-common.js';
 import { graphWrite, plain } from '../helpers/AG2b-collaboration-fixture.js';
 import { draftFrom } from '../scenarios/support/common.js';
 import { driveWorkflow, readExecution } from '../helpers/A2-restart-fixture.js';
@@ -60,6 +62,15 @@ function serviceOf(world: S6AHostWorld,
   return createOverlapGateService({
     records,
     resolveRecipient: (ctx, _goalRef, name) => duty.resolveDutyRecipient(ctx, { workspace: workspaceOf(ctx), duty: name }),
+    // The note's ref is the mailbox's own `messageRefOf`, in the recipient line's workspace (a joined Goal's adviser
+    // may sit outside the gate's); the Host principal is the one its send hashes into the message id.
+    noteMessageRefOf: async (ctx, recipient, requestId) => {
+      const read = await world.platform.sessions.readSession(ctx, recipient, 'project');
+      if (read.status !== 'ready') return read;
+      const { actor } = ctx.principal as HostPrincipal;
+      return { status: 'ready', value: messageRefOf({ projectId: ctx.projectId, workspaceId: ctx.workspaceId as string },
+        senderIdentityOf({ kind: 'host', actor: { ...actor } }), requestId, read.value.record.workspaceId) };
+    },
     sendMessage: (ctx, write) => world.platform.messages.sendMessage(ctx, write),
     // DR-02 wiring, not a stand-in: the Host's own current-version read, projected into the service's deps shape.
     readNotes: async (ctx, { moduleId }) => {
@@ -456,8 +467,8 @@ describe('N-owner', () => {
         close: () => store.backend.close() } });
       try {
         const running = await base.startRun();
-        // The send fault leaves the first open's gate at a real revision with no note request written; releasing it
-        // lets this row send once and then replay that exact platform-issued input.
+        // The note request record is written before its send (the ref is deterministic, A2-04), so a failed send
+        // leaves the request on the gate; releasing it lets this row re-issue once and then replay that exact input.
         const fault = commitBarrier.failCommitOnce(byIdentityPrefix('session-message-send:'));
         let opened: OpenOverlapGateResultV1;
         try {
@@ -467,7 +478,7 @@ describe('N-owner', () => {
         }
         expect(opened).toMatchObject({ status: 'opened', noteRequest: 'unavailable' });
         if (opened.status !== 'opened') return;
-        expect(opened.gate.noteRequest).toBeNull();
+        expect(opened.gate.noteRequest).toMatchObject({ duty: 'adviser', recipient: expect.anything() });
         const original = { gate: opened.gate.ref, revision: opened.gate.revision,
           basisDigest: opened.gate.basisDigest };
         const first = await base.service.requestOverlapNote(system(base), original);
@@ -597,7 +608,7 @@ describe('N-owner', () => {
         expect(reopened.gate.revision).toBeGreaterThan(released.gate.revision);
         expect(reopened.gate.basisDigest).not.toBe(released.gate.basisDigest);
         expect(reopened.gate.release).toBeNull();
-        expect(reopened.gate.noteRequest).toBeNull();
+        expect(reopened.gate.noteRequest).toMatchObject({ duty: 'adviser', recipient: expect.anything() });
         const check = await base.service.checkOverlapGate(system(base), { gate: gateRefOf(base) });
         expect(check).toEqual({ status: 'ready', value: { status: 'not_satisfied' } });
       } finally {

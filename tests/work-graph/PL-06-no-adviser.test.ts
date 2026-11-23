@@ -205,7 +205,7 @@ describe('PL-06 no_adviser', () => {
     expect(delivered[0]).toMatchObject({
       ref: expected.value,
       sender: { kind: 'host', actor: SYSTEM_ROUND_ACTOR },
-      intent: 'action_request', needsReply: true,
+      needsReply: true,
     });
   }, 120_000);
 });

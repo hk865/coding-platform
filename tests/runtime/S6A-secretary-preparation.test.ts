@@ -35,7 +35,7 @@ import {
   type SampleGoalPayload, type SampleNote, type SampleRound,
 } from '../helpers/S6A-prompt-samples.js';
 import {
-  S6A_GOAL_1, S6A_SCOPE, S6A_SECRETARY_PROFILE_ID, type S6ASession,
+  PREPARED_SECRETARY_TOOLS, S6A_GOAL_1, S6A_SCOPE, S6A_SECRETARY_PROFILE_ID, type S6ASession,
 } from '../helpers/S6A-request-fixture.js';
 import type { RequestSubmitResultV1 } from '../../src/business/workflow/request-intake.js';
 
@@ -151,7 +151,8 @@ function goalInputSample(memory: S6AMemory, since: string, text: string): Secret
   const architecture = memory.governance.architecture;
   const policy = memory.governance.policy;
   return {
-    role: { policyRevision: 's6a-secretary-binding@1', tools: ['read'], takesSessionHistory: false },
+    role: { policyRevision: 's6a-secretary-binding@1', tools: [...PREPARED_SECRETARY_TOOLS],
+      takesSessionHistory: false },
     workspace: { projectId: 'ag2b-collab-project', workspaceId: memory.workspace.workspaceId,
       revision: memory.workspace.revision },
     executionRoles: ['builder'],
@@ -250,7 +251,8 @@ describe.each(['memory', 'sqlite'] as const)('a no-goal request (%s)', backend =
     const understanding = memory.project.understanding;
     if (understanding === null) throw new Error('S6A: the memory fixture wrote no project understanding');
     const sample: SecretaryInputSample = {
-      role: { policyRevision: 's6a-secretary-binding@1', tools: ['read'], takesSessionHistory: false },
+      role: { policyRevision: 's6a-secretary-binding@1', tools: [...PREPARED_SECRETARY_TOOLS],
+        takesSessionHistory: false },
       workspace: { projectId: 'ag2b-collab-project', workspaceId: memory.workspace.workspaceId,
         revision: memory.workspace.revision },
       executionRoles: ['builder'],

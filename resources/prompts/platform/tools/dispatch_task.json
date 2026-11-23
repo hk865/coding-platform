@@ -1,0 +1,17 @@
+{
+  "description": "派活：请目标循环先做这个任务。你不是自己领，也不是让某条线立刻开工：请求留着，目标循环能领时先领它；领到哪条线看任务卡。谁能用：本轮挂了本工具的秘书、参谋；秘书请求轮可用。什么时候用：已采用计划里、启用、没做完的做事任务该先做，而它没在做、也没在等回复。不代替取消或改计划；叫停在跑的 Run 用 request_stop；撤暂缓用 release_hold 点名；不把 requested 说成已派、已开工。参数：taskRef 是任务三元组；reason 非空，写为什么现在做；expected 是目标卡 dispatchBasis 的三个值，省略时平台按当前值填，显式旧值回 revision_conflict 并带当前三值；preferredLine 是线引用，只在合格线里排第一，不在就不等。回执：requested（带 actionRef、blockedBy 和排队说明）表示请求收下了；needs_decision（带 actionRef、cardKey）表示每步确认，停下等人批；already_requested（带 actionRef）表示同一任务已有在等的请求，回原来那条；busy 表示现在不能请求，照原因等或换路。",
+  "parameters": {
+    "taskRef": "要派的任务三元组。",
+    "taskRef.projectId": "任务的项目 id。",
+    "taskRef.goalId": "任务所属目标 id；须对这个目标负责。",
+    "taskRef.taskId": "任务 id。",
+    "reason": "为什么现在先做这个任务；非空。",
+    "expected": "目标卡 dispatchBasis 三值；省略按当前值填，旧值回 revision_conflict。",
+    "expected.planRevision": "当前已采用计划的版本；没有是 null。",
+    "expected.pointerRevision": "当前理解指针版本；没有写 \"none\"。",
+    "expected.dispatchSequence": "这个目标的派工序号。",
+    "preferredLine": "熟悉的线；只在合格线里排第一，不在就不等。",
+    "preferredLine.projectId": "线所在的项目 id。",
+    "preferredLine.sessionId": "线的 Session id。"
+  }
+}

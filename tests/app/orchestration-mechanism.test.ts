@@ -15,7 +15,7 @@ import {
 } from '../../src/app/attention-observer.js';
 import { lineDelta } from '../../src/contracts/line-delta.js';
 import type { WorkLineListV1 } from '../../src/contracts/work-line.js';
-import { createSessionMailboxTools } from '../../src/core/agent-runtime/communication-tools.js';
+import { createActionTools, createSessionMailboxTools } from '../../src/core/agent-runtime/communication-tools.js';
 import { responsibleLinkRef } from '../../src/core/work-graph/sessions/session-responsibility-service.js';
 import type { SessionCard } from '../../src/core/work-graph/model/session-contracts.js';
 import type { SessionMessage, SessionMessageCommandPort } from '../../src/core/work-graph/model/communication-contracts.js';
@@ -126,7 +126,9 @@ function messageStub(): SessionMessage {
     followupOf: null,
     deadline: null,
     deadlineMs: null,
-    release: null,
+    needsReply: false,
+    wake: true,
+    answeredBy: 'line',
     delivery: 'queued',
     deliveryEvidence: null,
     expiredAt: null,
@@ -136,10 +138,7 @@ function messageStub(): SessionMessage {
     originalRef: null,
     appliedAt: null,
     rejectedAt: null,
-    approvedAt: null,
-    approvalRevision: null,
     applicationProof: null,
-    pins: null,
   };
 }
 
@@ -162,14 +161,14 @@ function mailboxToolHarness(): {
       return { status: 'committed', value: messageStub(), replayed: false, cursor: 'c-1' as never, sendStatus: 'sent' };
     },
     readMessage: notUsed('reads a message'),
+    readDecisionAnswerTaken: notUsed('reads a decision answer'),
+    readQueryRound: notUsed('reads a query round'),
     readMessageBody: notUsed('reads a body'),
     readInbox: notUsed('reads an inbox'),
     async readHostSystemOutbox() { return { status: 'ready', value: { items: [], next: null } }; },
     appendHostSystemOutbox: notUsed('appends to the Host system outbox'),
-    ackMessage: notUsed('acks'),
     respondMessage: notUsed('responds'),
     withdrawMessage: notUsed('withdraws'),
-    releaseMessage: notUsed('releases'),
     readMessageView: notUsed('reads a message view'),
     readInboxView: notUsed('reads an inbox view'),
   };
@@ -203,25 +202,25 @@ describe('unified SessionMailbox send intent', () => {
     const { tools, captured, waits } = mailboxToolHarness();
     const result = await callSend(tools, {
       recipient: { projectId: 'p', sessionId: 's-recipient' }, text: 'question',
-      intent: 'inquiry', needsReply: true, waitAfterSend: true,
+      needsReply: true, waitAfterSend: true,
     });
     expect(result.status).toBe('success');
-    expect(captured[0]?.input).toEqual({ recipient: { projectId: 'p', sessionId: 's-recipient' }, text: 'question', intent: 'inquiry', needsReply: true, waitAfterSend: true });
+    expect(captured[0]?.input).toEqual({ recipient: { projectId: 'p', sessionId: 's-recipient' }, text: 'question', needsReply: true, waitAfterSend: true });
     expect(waits).toHaveLength(1);
     expect(result.output).toMatchObject([{ kind: 'json', value: { waiting: true, response: null } }]);
   });
 
   it('never registers a wait for a plain fire-and-forget notice', async () => {
     const { tools, captured, waits } = mailboxToolHarness();
-    const result = await callSend(tools, { recipient: { projectId: 'p', sessionId: 's-recipient' }, text: 'notice', intent: 'notify', needsReply: false });
+    const result = await callSend(tools, { recipient: { projectId: 'p', sessionId: 's-recipient' }, text: 'notice', needsReply: false });
     expect(result.status).toBe('success');
-    expect(captured[0]?.input).toEqual({ recipient: { projectId: 'p', sessionId: 's-recipient' }, text: 'notice', intent: 'notify', needsReply: false });
+    expect(captured[0]?.input).toEqual({ recipient: { projectId: 'p', sessionId: 's-recipient' }, text: 'notice', needsReply: false });
     expect(waits).toHaveLength(0);
   });
 });
 
 // --------------------------------------------------------------------------
-// Real mailbox persistence of the unified send intent
+// Real mailbox persistence of the unified send fields
 // --------------------------------------------------------------------------
 
 describe('unified send intent against the real mailbox', () => {
@@ -230,7 +229,7 @@ describe('unified send intent against the real mailbox', () => {
     if (harness !== null) { const closing = harness; harness = null; await closing.close(); }
   });
 
-  it('persists and reads back intent/needsReply/waitAfterSend through the real service', async () => {
+  it('persists and reads back wake/needsReply/waitAfterSend and exposes the action owner', async () => {
     harness = await createC1Harness('memory');
     const waits: SessionMessage[] = [];
     const tools = createSessionMailboxTools({
@@ -243,16 +242,28 @@ describe('unified send intent against the real mailbox', () => {
     const definition = tools.create({} as WorkspaceSandbox).find(candidate => candidate.name === 'send_session_message')!;
     const call = {
       schemaVersion: 1, callId: 'real-send', name: 'send_session_message',
-      arguments: { recipient: harness.busySession, text: 'persisted question', intent: 'inquiry', needsReply: true, waitAfterSend: true },
+      arguments: { recipient: harness.busySession, text: 'persisted question', needsReply: true, waitAfterSend: true },
     } as unknown as ToolCall;
     const result = await definition.handler.execute(call, { signal: new AbortController().signal });
     expect(result.status).toBe('success');
     const value = (result.output[0] as { kind: 'json'; value: { message: SessionMessage } }).value.message;
-    expect(value).toMatchObject({ intent: 'inquiry', needsReply: true, waitAfterSend: true });
+    expect(value).toMatchObject({ needsReply: true, waitAfterSend: true });
     expect(waits).toHaveLength(1);
 
     const read = await harness.mailbox.readMessage(harness.ctxWork, value.ref);
-    expect(read).toMatchObject({ status: 'ready', value: { intent: 'inquiry', needsReply: true, waitAfterSend: true } });
+    expect(read).toMatchObject({ status: 'ready', value: { needsReply: true, waitAfterSend: true } });
+    // P2 §2.6: the action tools are their own assembly (`createActionTools`), not a mailbox handle's rows.
+    const notUsedAction = async (): Promise<never> => {
+      throw new Error('the orchestration stand-in never calls an action owner');
+    };
+    const actionTools = createActionTools({
+      actionRequests: { requestDispatch: notUsedAction, requestStop: notUsedAction },
+      claimHolds: { place: notUsedAction, release: notUsedAction },
+      context: harness.ctxWork,
+      requestIdForCall: call => 'orch:' + call.callId,
+    });
+    expect(actionTools.create({} as WorkspaceSandbox).map(tool => tool.name))
+      .toEqual(expect.arrayContaining(['dispatch_task', 'request_stop']));
   });
 });
 
@@ -404,12 +415,14 @@ it('delivers a real Host attention change into the original idle Session once', 
       const response = await f.corePost(host.base, 'messages/inbox', host.token,
         f.plain(f.AG2B_SCOPE, { recipient: adviser, page: { limit: 20 } }));
       const inbox = await response.json() as { status: string; value?: { items: SessionMessage[] } };
-      message = inbox.value?.items.find(item => item.intent === 'notify');
+      message = inbox.value?.items.find(item => item.sender.kind === 'host' && item.needsReply !== true);
       if (message !== undefined) break;
       await new Promise(resolve => setTimeout(resolve, 25));
     }
     expect(message, 'the attention change is delivered into the opening adviser\'s idle inbox').toBeDefined();
-    expect(message?.intent).toBe('notify');
+    // P2 §2.1 (`p2-frozen.md:100`, design 5.2): the platform's own notice is fixed `wake:false`; it opens no round.
+    expect(message?.wake).toBe(false);
+    expect(message?.needsReply).not.toBe(true);
     expect(message?.recipient).toEqual(adviser);
     expect(message?.delivery).toBe('queued');
     expect(message?.acceptedInputs ?? []).toEqual([]);
@@ -436,7 +449,10 @@ it('delivers a real Host attention change into the original idle Session once', 
   }
 }, 60_000);
 
-it('automatically answers an inquiry without making its sender wait', async () => {
+/* lead 11-23: the old auto-answered inquiry is P2's `ask_copy` (p2-frozen.md:133: only an `ask_copy` question opens a
+   copy, by the question's identity; :465-467: the copy rows move to `ask_copy` and check `answeredBy:'copy'`). A reply
+   opens no round (:151, :163), so the sender line's late-answer Query round of the old row is gone. */
+it('a copy answers an ask_copy question without making the asking Work wait, and the answer opens no round', async () => {
   const { mkdtemp, rm } = await import('node:fs/promises');
   const { tmpdir } = await import('node:os');
   const { join } = await import('node:path');
@@ -446,16 +462,17 @@ it('automatically answers an inquiry without making its sender wait', async () =
   let host: Awaited<ReturnType<typeof f.startAG2bHost>> | undefined;
   try {
     const replies: import('../helpers/B2-runtime-fixture.js').ScriptedReply[] = [
-      { kind: 'calls', calls: [{ callId: 'async-question', name: 'send_session_message', args: {} }] },
+      { kind: 'calls', calls: [{ callId: 'async-question', name: 'ask_copy', args: {} }] },
       { kind: 'text', text: 'Question sent; continue independently.' },
     ];
-    host = await f.startAG2bHost(publicDir, { replies });
+    // 设计 §6 执行者·做事轮“副 ✓”: the Work grant carries the copy tool (the AG2b default grant has none).
+    const workTools = ['read', 'write', 'send_session_message', 'ask_copy'];
+    host = await f.startAG2bHost(publicDir, { replies, workTools });
     await f.seedAG2bWorkGraph(host, undefined, { lineTaskIds: [] });
     const member = await f.createAG2bSession(host, 'nonwaiting-recipient');
     const sender = await f.createAG2bSession(host, 'nonwaiting-sender', f.AG2B_WORK_ROLE);
-    replies[0] = { kind: 'calls', calls: [{ callId: 'async-question', name: 'send_session_message', args: {
-      recipient: member.sessionRef, text: 'Please inspect the recorded context; no change is requested.',
-      intent: 'inquiry', needsReply: true, waitAfterSend: false,
+    replies[0] = { kind: 'calls', calls: [{ callId: 'async-question', name: 'ask_copy', args: {
+      line: member.sessionRef, question: 'Please inspect the recorded context; no change is requested.',
     } }] };
     type Advance = import('../../src/business/workflow/contracts.js').WorkflowAdvanceInput;
     let input: Advance | null = { schemaVersion: 1, goalRef: f.AG2B_GOAL_REF, flowId: 'nonwaiting-flow', kind: 'select_work', taskId: f.AG2B_WORK_TASK_ID, sessionHint: sender.sessionRef };
@@ -477,9 +494,11 @@ it('automatically answers an inquiry without making its sender wait', async () =
     const endedRun = await f.corePost(host.base, 'executions/read', host.token, f.plain(f.AG2B_SCOPE, original.value.sender.runRef));
     expect(await endedRun.json()).toMatchObject({ status: 'ready', value: { run: { status: 'ended', outcome: 'completed' } } });
     expect(original.value.response).toBeNull();
+    // The question is a copy question from the moment it is stored (frozen §2.1 :101).
+    expect(original.value.answeredBy).toBe('copy');
     const { root, database } = host;
     await host.host.close();
-    host = await f.startAG2bHost(publicDir, { root, database, builderQueryProfile: true,
+    host = await f.startAG2bHost(publicDir, { root, database, builderQueryProfile: true, workTools,
       replies: [{ kind: 'text', text: 'Read the late answer in my original context; no Work restart.' }],
       queryReplies: [{ kind: 'text', text: 'The saved context was inspected without changing the source.' }],
       // One consumer is the heartbeat period only; the all-Session walk reaches both lines.
@@ -493,31 +512,26 @@ it('automatically answers an inquiry without making its sender wait', async () =
         f.plain(f.AG2B_SCOPE, { recipient: member.sessionRef, page: { limit: 20 } }));
       const inbox = await response.json() as { value?: { items: SessionMessage[] } };
       message = inbox.value?.items.find(item => item.ref.messageId === original.value.ref.messageId);
-      if (message?.status === 'responded' && message.acceptedInputs?.some(input => input.part === 'response')) break;
+      if (message?.status === 'responded') break;
       await new Promise(resolve => setTimeout(resolve, 25));
     }
-    expect(message).toMatchObject({ intent: 'inquiry', status: 'responded', response: { sender: { kind: 'query_run' } } });
+    // The copy's formal answer is the question's one reply (frozen §2.3 :133, `respondFromQueryAnswer`).
+    expect(message).toMatchObject({ status: 'responded', answeredBy: 'copy', response: { sender: { kind: 'query_run' } } });
     expect(message?.waitAfterSend).not.toBe(true);
     expect(message?.consultationDerivation?.childSessionRef).not.toEqual(member.sessionRef);
     const responseSender = message?.response?.sender;
     expect(responseSender !== undefined && responseSender.kind !== 'host' ? responseSender.sessionRef : undefined)
       .toEqual(message?.consultationDerivation?.childSessionRef);
-    const accepted = message?.acceptedInputs?.find(input => input.part === 'response');
-    expect(accepted?.executionRef.aggregateType).toBe('QueryRun');
-    const senderCard = (await f.listSessions(host)).find(card => card.record.ref.sessionId === sender.sessionRef.sessionId)!;
-    expect(accepted?.kernel.kernelSessionId).toBe(senderCard.record.kernel.kernelSessionId);
-    expect(JSON.stringify(host.scripted.lastRequest()?.messages)).toContain('The saved context was inspected without changing the source.');
-    expect(host.scripted.calls()).toBe(1);
-    if (accepted?.executionRef.aggregateType !== 'QueryRun') throw Error('missing response Query');
-    const acceptedRef = accepted.executionRef;
-    const queryRead = await f.corePost(host.base, 'queries/read', host.token, f.plain(f.AG2B_SCOPE, {
-      aggregateType: 'QueryJob', projectId: acceptedRef.projectId, workspaceId: acceptedRef.workspaceId, queryJobId: acceptedRef.queryJobId,
-    }));
-    const query = await queryRead.json() as { value: { job: { job: { answerRefs: unknown[] } } } };
-    expect(query.value.job.job.answerRefs).toHaveLength(1);
     expect(host.queryScripted.calls()).toBe(1);
+    // The reply opens no round on the asking line (:151, :163): its ended Work takes it at its next round.
     await new Promise(resolve => setTimeout(resolve, 150));
     expect(host.queryScripted.calls()).toBe(1);
+    expect(host.scripted.calls()).toBe(0);
+    const settled = await f.corePost(host.base, 'messages/inbox', host.token,
+      f.plain(f.AG2B_SCOPE, { recipient: member.sessionRef, page: { limit: 20 } }));
+    const after = (await settled.json() as { value: { items: SessionMessage[] } }).value.items
+      .find(item => item.ref.messageId === original.value.ref.messageId);
+    expect(after?.acceptedInputs?.some(input => input.part === 'response') ?? false).toBe(false);
   } finally {
     await host?.host.close();
     if (host !== undefined) { await rm(host.root, { recursive: true, force: true }); await rm(host.database, { recursive: true, force: true }); }

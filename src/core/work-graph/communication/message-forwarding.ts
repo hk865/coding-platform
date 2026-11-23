@@ -2,24 +2,21 @@
  * The forward owner (§3.9 items 1–5): `messages/forward` and `waits/dispose` as the two R2 commands, plus the copy
  * owner's trusted entry. The reads are the mailbox's one record read and the one delivery derivation; the records are
  * the message machine's two constructors; the commit is the one command executor. This file adds no second owner, no
- * second record constructor and no release path: an unreleased original goes through 7A's `messages/release`.
+ * second record constructor; the forward table alone decides admission.
  *
  * The ordinary entry is the person's; the trusted entry is the copy owner's and admits the copy branch only. Both
  * paths judge the same pure table (`forwardMessageProblem`) and the transfer shares `destinationProblem` with it.
  */
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import { principalIdentity } from '../../../contracts/core/call-context.js';
-import type { RoleBindingRefV1 } from '../../../contracts/dispatch.js';
-import type { RoleConfigurationRef, SessionRef } from '../../../contracts/core/identity.js';
-import type { CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
+import type { SessionRef } from '../../../contracts/core/identity.js';
+import type { CoreRejection, WriteResult } from '../../../contracts/core/results.js';
 import { rejectedWithCurrent as reject } from '../../../contracts/core/rejections.js';
-import type { MessageDeliveryStateV1, SessionMessageIntentV1, SessionMessageRef } from '../../../contracts/core/session-message.js';
+import type { MessageDeliveryStateV1, SessionMessageRef } from '../../../contracts/core/session-message.js';
 import type { GoalRef, GoalSnapshot } from '../../../contracts/ledger.js';
-import type { PlatformDutyV1 } from '../../../contracts/platform-duty.js';
 import { canonicalJson, sameJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
 import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
 import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
-import type { MessageDutiesFactsPort } from '../model/decision-contracts.js';
 import type { SessionDirectoryPort } from '../model/session-contracts.js';
 import type {
   DisposeWaitInputV1, ForwardMessageInputV1, ForwardMessageResultV1, MessageForwardingPort, SessionMessage,
@@ -56,31 +53,8 @@ export { FORWARD_DESTINATION_GONE } from '../state/message-machine.js';
 export type MessageForwardingDependencies = {
   records: GoalRecordTransactionPort & RecordLookupPort;
   sessions: Pick<SessionDirectoryPort, 'readSession'>;
-  /** The one duties adapter (`W/configuration/message-duties-adapter.ts:51`); absent: a non-notify forward is `unsupported`. */
-  duties?: MessageDutiesFactsPort;
   now(): string;
 };
-
-/** `notify` → any; `inquiry` → any duty that can reply (every line can); `action_request` → never a secretary. */
-export function forwardDutyAllows(intent: SessionMessageIntentV1 | undefined,
-  duties: readonly PlatformDutyV1[]): boolean {
-  if (intent === undefined || intent === 'notify' || intent === 'inquiry') return true;
-  return duties.some((duty) => duty === 'executor' || duty === 'adviser' || duty === 'scribe');
-}
-
-/**
- * The duties adapter's input names the destination Session's own fixed role: the adapter reads that record and
- * refuses a binding that disagrees with it, so only `templateId`/`templateRevision` carry anything and the rest is
- * derived from the same role (never from the caller).
- */
-function dutyBinding(role: RoleConfigurationRef): RoleBindingRefV1 {
-  if (role.kind === 'role_spec') {
-    return { schemaVersion: 1, bindingId: `session-role:${role.pin.ref.roleId}`, templateId: role.pin.ref.roleId,
-      templateRevision: String(role.pin.ref.revision), bindingVersion: 1, policyRevision: role.pin.digest };
-  }
-  return { schemaVersion: 1, bindingId: `session-role:${role.templateId}`, templateId: role.templateId,
-    templateRevision: role.templateRevision, bindingVersion: 1, policyRevision: 'legacy-template' };
-}
 
 type ForwardReadFacts =
   | { kind: 'transferred'; existing: SessionMessage; sameDestination: boolean }
@@ -106,13 +80,12 @@ export function createMessageForwardingOwner(deps: MessageForwardingDependencies
   const records = deps.records;
 
   /**
-   * The one destination read both commands use (§3.9 item 3). A gone line is refused before its role or workspace is
-   * used, so a duty read cannot turn "gone" into another answer. A forward may receive in another workspace of the
-   * same project (7D1's same-project lift); a dispose keeps today's cross-workspace answer. The comparison is the real
-   * `SessionRecord.workspaceId`, never the caller's `SessionRef` (which has no workspace).
+   * The one destination read both commands use (§3.9 item 3). A gone line is refused before its workspace or
+   * eligibility is used. A forward may receive in another workspace of the same project (7D1's same-project lift);
+   * a dispose keeps today's cross-workspace answer. The comparison is the real `SessionRecord.workspaceId`, never
+   * the caller's `SessionRef` (which has no workspace). Every live destination line is admitted by this read.
    */
-  async function readDestination(owned: Owned, ctx: CoreCallContext, to: SessionRef,
-    intent: SessionMessageIntentV1 | undefined, receiving: 'forward' | 'dispose'): Promise<
+  async function readDestination(owned: Owned, to: SessionRef, receiving: 'forward' | 'dispose'): Promise<
     { ok: true; value: ForwardFactsV1['destination']; receivingWorkspaceId: string } | { ok: false; rejection: CoreRejection }> {
     // Only another PROJECT is refused by the destination read; a dispose keeps its existing not-found answer.
     if (to.projectId !== owned.projectId) {
@@ -137,30 +110,14 @@ export function createMessageForwardingOwner(deps: MessageForwardingDependencies
     }
     if (receiving === 'dispose' && target.value.workspaceId !== owned.workspaceId) {
       return { ok: true, receivingWorkspaceId: target.value.workspaceId,
-        value: { sameWorkspace: false, eligible: false, dutyAllows: true } };
+        value: { sameWorkspace: false, eligible: false } };
     }
     // A forward reads the target's own line: the TARGET's workspace is the receiving scope, so the one eligibility
-    // rule and the one duty read run on that line rather than on the caller's workspace.
+    // rule runs on that line rather than on the caller's workspace.
     const receivingOwned: Owned = { ...owned, workspaceId: target.value.workspaceId };
-    let dutyAllows = true;
-    if (intent !== undefined && intent !== 'notify') {
-      if (deps.duties === undefined) {
-        return { ok: false, rejection: reject('unsupported', 'the trusted duties adapter is not configured for a forward') };
-      }
-      let facts: ReadResult<{ duties: PlatformDutyV1[] }>;
-      try {
-        facts = await deps.duties.readMessageDutiesFacts({ ...ctx, workspaceId: target.value.workspaceId },
-          { sessionRef: to, roleBinding: dutyBinding(target.value.role) });
-      } catch {
-        return { ok: false, rejection: reject('unavailable', 'the destination duties could not be read') };
-      }
-      if (facts.status !== 'ready') return { ok: false, rejection: mapReadResult(facts) as CoreRejection };
-      dutyAllows = forwardDutyAllows(intent, facts.value.duties);
-    }
     return { ok: true, receivingWorkspaceId: target.value.workspaceId, value: {
       sameWorkspace: receiving === 'forward' || target.value.workspaceId === owned.workspaceId,
       eligible: replyTargetEligible(receivingOwned, target.value),
-      dutyAllows,
     } };
   }
 
@@ -229,7 +186,7 @@ export function createMessageForwardingOwner(deps: MessageForwardingDependencies
       };
     }
 
-    const destination = await readDestination(owned, ctx, input.to, before.intent, 'forward');
+    const destination = await readDestination(owned, input.to, 'forward');
     if (!destination.ok) return destination.rejection;
 
     const facts: ForwardFactsV1 = {
@@ -299,7 +256,9 @@ export function createMessageForwardingOwner(deps: MessageForwardingDependencies
           bodyRef: before.bodyRef,
           sourceRef: before.sourceRef,
           createdAt: at,
-          intent: before.intent ?? null,
+          wake: before.wake,
+          answeredBy: before.answeredBy,
+          // A forward copy is not the human direct-intervention entry, so it never carries `entry` (§2.1).
           needsReply: before.needsReply === true,
           waitAfterSend: before.waitAfterSend === true,
           goalRef: decision.copyGoalRef === null ? before.goalRef : decision.copyGoalRef,
@@ -308,7 +267,6 @@ export function createMessageForwardingOwner(deps: MessageForwardingDependencies
           requestRoot: null,
           deadline: before.deadline,
           deadlineMs: before.deadlineMs,
-          release: before.release,
           originalRef: before.ref,
         });
         const oldNext = nextSessionMessageRecord(before, { kind: 'forwarded', to: newRef, at });
@@ -417,7 +375,7 @@ export function createMessageForwardingOwner(deps: MessageForwardingDependencies
         }
         let destination: DisposeFactsV1['destination'] = null;
         if (mode === 'transfer') {
-          const read = await readDestination(owned, ctx, to as SessionRef, before.intent, 'dispose');
+          const read = await readDestination(owned, to as SessionRef, 'dispose');
           if (!read.ok) return read.rejection;
           destination = read.value;
         }

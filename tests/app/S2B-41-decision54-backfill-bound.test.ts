@@ -41,6 +41,9 @@ import { SESSION_MESSAGE_RECORD_SCHEMAS } from '../../src/core/work-graph/sessio
 import { createActivityBackfill } from '../../src/business/workflow/activity-backfill.js';
 import { createTaskRequeueService } from '../../src/core/work-graph/tasks/requeue-service.js';
 import { createSessionMailbox } from '../../src/core/work-graph/communication/mailbox-service.js';
+import { createQueryRoundResolver } from '../../src/core/work-graph/tasks/query-round.js';
+import { RawArtifactBodyStore } from '../../src/core/record-store/body-store.js';
+import { unknownSessionDuty } from '../helpers/session-duty-double.js';
 import { VerificationWorkspaceReader } from '../../src/core/workspace/verification-workspace-reader.js';
 import { B2_AT, createRuntimeHostDouble } from '../helpers/B2-runtime-fixture.js';
 import { deferred } from '../helpers/A2-restart-fixture.js';
@@ -206,6 +209,7 @@ it('2B-41 (BE3): the automatic backfill bounds A by its own closed Turn, exclude
     const mailbox = createSessionMailbox({ records: fx.records, sessions: fx.deps.sessions,
       defaultInquiryDeadlineMs: 86_400_000,
       executions: fx.deps.executions, roles: fx.deps.roles, materials: fx.deps.materials,
+      queryRounds: createQueryRoundResolver({ records: fx.records, duties: unknownSessionDuty, bodies: new RawArtifactBodyStore() }),
       systemActor: { kind: 'system', id: 's2b-41-mailbox' }, now: () => A_CLOSE_AT,
       newId: () => `s2b-41-mailbox-${++mailboxSeq}` });
     const requeueService = createTaskRequeueService({

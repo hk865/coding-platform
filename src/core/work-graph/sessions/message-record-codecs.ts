@@ -10,9 +10,9 @@
  *   - `SessionMessage@1` has the FULL `SessionMessageRef` as its canonical key
  *     and its body revision must equal the encoded record revision. Text is
  *     never inlined: only the body `ArtifactRef` is persisted.
- *   - `SessionMessageSent@1` / `SessionMessageRead@1` /
- *     `SessionMessageResponded@1` save the complete returned message metadata
- *     plus the real command actor/identity, so an idempotent replay can restore
+ *   - `SessionMessageSent@1` / `SessionMessageResponded@1` save the complete
+ *     returned message metadata plus the real command actor/identity, so an
+ *     idempotent replay can restore
  *     the ORIGINAL receipt through `eventAt` without re-deriving current state.
  *   - the two recipient lookup indexes are registered with the record codec;
  *     no hand-written SQL table or second index exists.
@@ -39,12 +39,12 @@ import type {
   DecodeResult, EncodedDomainEvent, EncodedRecord, RecordBackendSchemas,
 } from '../../record-store/ports.js';
 import { parseJsonObject } from '../../record-store/record-codec.js';
-import { dispatchBasisProblem } from '../model/message-payload.js';
 import { checkArtifactRef, checkPlainSessionRef, checkSessionBody, isNonZeroPlatformCursor, isPlatformCursor } from './session-record-codecs.js';
 import type { Slice1EventHeaderV1 } from './lifecycle-record-codecs.js';
 import type { SessionRecord } from '../../../contracts/core/session.js';
 import type { ArchiveStepRefV1 } from '../../../contracts/core/session-archive.js';
 import { SESSION_REPLY_BY_HANDLER_LOOKUP } from '../model/session-facts-contracts.js';
+import { isMessageAgentSenderKind } from '../state/message-machine.js';
 import type { SessionMessage } from '../model/communication-contracts.js';
 import type {
   MessageQueryAnswerSender, MessageSender,
@@ -61,7 +61,6 @@ export const SESSION_MESSAGE_SCHEMA_ID = 'SessionMessage@1';
 
 /** Replay event selectors. Each event restores its original receipt. */
 export const SESSION_MESSAGE_SENT_EVENT_TYPE = 'SessionMessageSent';
-export const SESSION_MESSAGE_READ_EVENT_TYPE = 'SessionMessageRead';
 export const SESSION_MESSAGE_RESPONDED_EVENT_TYPE = 'SessionMessageResponded';
 export const SESSION_MESSAGE_DERIVATION_EVENT_TYPE = 'SessionMessageConsultationDerived';
 export const SESSION_MESSAGE_INPUT_ACCEPTED_EVENT_TYPE = 'SessionMessageInputAccepted';
@@ -70,8 +69,6 @@ export const SESSION_MESSAGE_DECISION_ANSWERED_EVENT_TYPE = 'SessionMessageDecis
 export const SESSION_MESSAGE_DECISION_APPLIED_EVENT_TYPE = 'SessionMessageDecisionApplied';
 /** Persisted lifecycle events; every one carries the full message snapshot. */
 export const SESSION_MESSAGE_WITHDRAWN_EVENT_TYPE = 'SessionMessageWithdrawn';
-export const SESSION_MESSAGE_RELEASE_DECIDED_EVENT_TYPE = 'SessionMessageReleaseDecided';
-export const SESSION_MESSAGE_RELEASED_EVENT_TYPE = 'SessionMessageReleased';
 export const SESSION_MESSAGE_APPLIED_EVENT_TYPE = 'SessionMessageApplied';
 export const SESSION_MESSAGE_EXPIRED_EVENT_TYPE = 'SessionMessageExpired';
 export const SESSION_MESSAGE_EVENT_SCHEMA_VERSION = 1;
@@ -100,16 +97,18 @@ export const S5_PROJECT_ANSWERS_LOOKUP = 's5-project-answers';
 export const S2A_USER_MESSAGES_LOOKUP = 's2a-user-messages';
 /** K3 L28: every decision answer of one source kind for one Goal (the UR7b index). */
 export const K3_DECISION_ANSWER_BY_SOURCE_GOAL_LOOKUP = 'k3-decision-answer-by-source-goal';
-/** Approved release candidates of one workspace, oldest approval first. */
-export const S7A2_RELEASE_BY_WORKSPACE_LOOKUP = 's7a2-release-by-workspace';
-/** The same, narrowed to one Goal. */
-export const S7A2_RELEASE_BY_GOAL_LOOKUP = 's7a2-release-by-goal';
 /** One source goal's person interventions in creation order (7a:619). */
 export const S7A2_COPY_INTERVENTION_BY_GOAL_LOOKUP = 's7a2-copy-intervention-by-goal';
-/** §3.3 item 3: one sender Session's released/open waits, oldest first. */
+/** One sender Session's waits (`waitAfterSend && needsReply`), oldest first. */
 export const S7B_WAITS_BY_SENDER_SESSION_LOOKUP = 's7b-waits-by-sender-session';
-/** §3.7 item 4: due waits of one workspace, earliest deadline first. */
+/** Due waits of one workspace, earliest deadline first; the read applies the same eligibility as `decideExpiry`. */
 export const S7B_DUE_WAITS_LOOKUP = 's7b-due-waits';
+/**
+ * §2.3/1.2: one workspace's copy questions that have no reply and are not withdrawn. An answered or withdrawn question
+ * carries a non-null `response` / `withdrawnAt`, so it is never a candidate of the `[…, 'copy', null, null]` read; the
+ * owner still re-checks the decoded record.
+ */
+export const SESSION_PENDING_COPY_BY_WORKSPACE_LOOKUP = 'session-pending-copy-by-workspace';
 
 /**
  * Slice 5 notification origin wire (SPEC §2.5 line 289). The single
@@ -254,16 +253,6 @@ export const S2A_SESSION_MESSAGE_LOOKUP_INDEXES: readonly RecordLookupIndex[] = 
   },
 ];
 
-export const S7A2_RELEASE_CANDIDATE_LOOKUP_INDEXES: readonly RecordLookupIndex[] = [
-  { name: S7A2_RELEASE_BY_WORKSPACE_LOOKUP, aggregateType: 'SessionMessage',
-    paths: ['ref.projectId', 'ref.workspaceId', 'release'],
-    orderBy: { path: 'approvedAt', valueType: 'text' } },
-  { name: S7A2_RELEASE_BY_GOAL_LOOKUP, aggregateType: 'SessionMessage',
-    paths: ['ref.projectId', 'ref.workspaceId', 'release', 'goalRef.goalId'],
-    orderBy: { path: 'approvedAt', valueType: 'text' } },
-];
-
-/** Additive index, registered on the SAME SessionMessage aggregate codec. */
 export const S7A2_COPY_SESSION_MESSAGE_LOOKUP_INDEXES: readonly RecordLookupIndex[] = [
   { name: S7A2_COPY_INTERVENTION_BY_GOAL_LOOKUP, aggregateType: 'SessionMessage',
     paths: ['ref.projectId', 'ref.workspaceId', 'goalRef.goalId', 'sender.actor.kind'],
@@ -271,10 +260,21 @@ export const S7A2_COPY_SESSION_MESSAGE_LOOKUP_INDEXES: readonly RecordLookupInde
 ];
 
 export const S7B_SESSION_MESSAGE_LOOKUP_INDEXES: readonly RecordLookupIndex[] = [
+  // The wait reader filters on the stored `waitAfterSend && needsReply` facts; the two booleans are the key.
   { name: S7B_WAITS_BY_SENDER_SESSION_LOOKUP, aggregateType: 'SessionMessage',
-    paths: ['ref.projectId', 'ref.workspaceId', 'sender.sessionRef.sessionId', 'intent'], orderBy: { path: 'since', valueType: 'text' } },
+    paths: ['ref.projectId', 'ref.workspaceId', 'sender.sessionRef.sessionId', 'waitAfterSend', 'needsReply'],
+    orderBy: { path: 'since', valueType: 'text' } },
+  // The due set mixes ordinary waits (`waitAfterSend`) with secretary request questions (`secretary_round` +
+  // `needsReply` + a frozen deadline), so it cannot key on either flag; the ordered read and `decideExpiry` apply the
+  // same eligibility rule to the deadline-ordered candidates.
   { name: S7B_DUE_WAITS_LOOKUP, aggregateType: 'SessionMessage',
-    paths: ['ref.projectId', 'ref.workspaceId', 'release', 'intent'], orderBy: { path: 'deadline', valueType: 'text' } },
+    paths: ['ref.projectId', 'ref.workspaceId'], orderBy: { path: 'deadline', valueType: 'text' } },
+];
+
+/** The pending copy-question page (§2.3/1.2), keyset-paged by the full message ref key. */
+export const COPY_QUESTION_LOOKUP_INDEXES: readonly RecordLookupIndex[] = [
+  { name: SESSION_PENDING_COPY_BY_WORKSPACE_LOOKUP, aggregateType: 'SessionMessage',
+    paths: ['ref.projectId', 'ref.workspaceId', 'answeredBy', 'response', 'withdrawnAt'] },
 ];
 
 // --------------------------------------------------------------------------
@@ -307,30 +307,24 @@ export type HostSystemOutboxAppendedEventV1 = {
 // here for every existing importer (slice 5, SPEC §2.8).
 export type {
   SessionMessageSentEventV1,
-  SessionMessageReadEventV1,
   SessionMessageConsultationDerivedEventV1,
   SessionMessageInputAcceptedEventV1,
   SessionMessageRespondedEventV1,
   SessionMessageDecisionAnsweredEventV1,
   SessionMessageDecisionAppliedEventV1,
   SessionMessageWithdrawnEventV1,
-  SessionMessageReleaseDecidedEventV1,
-  SessionMessageReleasedEventV1,
   SessionMessageAppliedEventV1,
   SessionMessageExpiredEventV1,
   SessionMessageEventV1,
 } from '../model/communication-contracts.js';
 import type {
   SessionMessageSentEventV1,
-  SessionMessageReadEventV1,
   SessionMessageConsultationDerivedEventV1,
   SessionMessageInputAcceptedEventV1,
   SessionMessageRespondedEventV1,
   SessionMessageDecisionAnsweredEventV1,
   SessionMessageDecisionAppliedEventV1,
   SessionMessageWithdrawnEventV1,
-  SessionMessageReleaseDecidedEventV1,
-  SessionMessageReleasedEventV1,
   SessionMessageAppliedEventV1,
   SessionMessageExpiredEventV1,
   SessionMessageEventV1,
@@ -365,10 +359,9 @@ export type SessionMessageWaitDisposedEventV1 = Slice1EventHeaderV1 & {
 export type Problem = string | null;
 
 /**
- * The seventeen lifecycle fields this shape can describe. `pins` and
- * `applicationProof` are NOT here: `pointerRevision: number | 'none'` and the
- * open `AggregateRef` of `effect.ref` are outside its closed kinds, so they keep
- * the named pure checks below. One fragment serves the record and the event's
+ * The lifecycle fields this shape can describe. `applicationProof` is NOT here:
+ * the open `AggregateRef` of `effect.ref` is outside its closed kinds, so it keeps
+ * the named pure check below. One fragment serves the record and the event's
  * full snapshot.
  */
 export const SessionMessageFieldsShape = defineShape({ name: 'SessionMessageFields', fields: {
@@ -377,7 +370,9 @@ export const SessionMessageFieldsShape = defineShape({ name: 'SessionMessageFiel
   followupOf: f.nullable(f.ref(SessionMessageRefShape)),
   deadline: f.nullable(f.isoTime()),
   deadlineMs: f.nullable(f.finite({ min: 0, minExclusive: true })),
-  release: f.nullable(f.enumOf(['awaiting', 'approved', 'released', 'denied'] as const)),
+  wake: f.boolean(),
+  answeredBy: f.enumOf(['line', 'copy'] as const),
+  entry: f.optional(f.enumOf(['person_intervention'] as const)),
   delivery: f.enumOf(['queued', 'delivered'] as const),
   deliveryEvidence: f.nullable(f.object({
     executionRef: f.union('aggregateType', { Run: RunRefShape.fields, QueryRun: QueryRunRefShape.fields }),
@@ -390,8 +385,6 @@ export const SessionMessageFieldsShape = defineShape({ name: 'SessionMessageFiel
   originalRef: f.nullable(f.ref(SessionMessageRefShape)),
   appliedAt: f.nullable(f.isoTime()),
   rejectedAt: f.nullable(f.isoTime()),
-  approvedAt: f.nullable(f.isoTime()),
-  approvalRevision: f.nullable(f.integer({ min: 1 })),
 } });
 
 /**
@@ -402,9 +395,9 @@ export const SessionMessageFieldsShape = defineShape({ name: 'SessionMessageFiel
 function messageFieldsProblem(body: UnknownRecord): Problem {
   type SessionMessageFields = InferShape<(typeof SessionMessageFieldsShape)['fields']>;
   type PickSessionMessageFields = Pick<SessionMessage,
-    'taskRef' | 'requestRoot' | 'followupOf' | 'deadline' | 'deadlineMs' | 'release' | 'delivery'
-    | 'deliveryEvidence' | 'expiredAt' | 'withdrawnAt' | 'waitCancelledAt' | 'transferredTo' | 'originalRef'
-    | 'appliedAt' | 'rejectedAt' | 'approvedAt' | 'approvalRevision'>;
+    'taskRef' | 'requestRoot' | 'followupOf' | 'deadline' | 'deadlineMs' | 'wake' | 'answeredBy' | 'entry'
+    | 'delivery' | 'deliveryEvidence' | 'expiredAt' | 'withdrawnAt' | 'waitCancelledAt' | 'transferredTo'
+    | 'originalRef' | 'appliedAt' | 'rejectedAt'>;
   type MustHold<T extends true> = T;
   type FieldsMatchRecord = MustHold<
     [SessionMessageFields, PickSessionMessageFields] extends [PickSessionMessageFields, SessionMessageFields] ? true : false
@@ -419,16 +412,6 @@ function messageFieldsProblem(body: UnknownRecord): Problem {
 const APPLICATION_PROOF_EFFECT_KINDS: readonly string[] = [
   'claim_created', 'proposal_created', 'requeue', 'recheck', 'member_created',
 ];
-
-/**
- * `pins` is `DispatchBasisV1 | null` (`null` means none); a non-null basis is
- * checked by the payload model's one basis check.
- */
-function messagePinsProblem(value: unknown): Problem {
-  if (value === null) return null;
-  const problem = dispatchBasisProblem(value);
-  return problem === null ? null : `message pins ${problem}`;
-}
 
 /**
  * `applicationProof` carries the open `AggregateRef` of its effect, so its `ref`
@@ -603,9 +586,9 @@ export function checkQueryAnswerSender(value: unknown): Problem {
   return null;
 }
 
-/** A response slot accepts the original work_run reply or the derived
- * query_run Answer reply. The message `sender` itself stays host/work_run.
- * 问答轮自己的文字回复也是 `query_run`，但不带 `answerRef`：按有没有这个键分两种查。 */
+/** A response slot accepts the original work_run reply or the derived query_run Answer reply. The message's own
+ * sender can be host/work_run/query_run; a query_run text reply carries no `answerRef`, so the key decides which
+ * sender check runs. */
 export function checkResponseSender(value: unknown): Problem {
   if (!isRecord(value)) return 'message response sender must be an object';
   if (value['kind'] === 'query_run') {
@@ -788,9 +771,9 @@ function checkDecisionOptionShape(value: unknown): Problem {
 }
 
 const DECISION_SOURCE_KINDS: readonly string[] = [
-  'message', 'goal_cause', 'candidate', 'note_review', 'planning_question', 'goal_conflict', 'message_release',
-  'unknown_call_review', 'command_rerun_request', 'member_creation', 'rework_request', 'handoff_approval',
-  'adviser_creation', 'module_maintainer_assignment', 'repair_approval', 'structural_proposal',
+  'message', 'goal_cause', 'candidate', 'note_review', 'planning_question', 'goal_conflict',
+  'action_release', 'unknown_call_review', 'command_rerun_request', 'member_creation', 'rework_request',
+  'handoff_approval', 'adviser_creation', 'module_maintainer_assignment', 'repair_approval', 'structural_proposal',
   'role_capacity', 'role_line_change',
 ];
 
@@ -1004,16 +987,16 @@ function checkMessageResponse(value: unknown): Problem {
 const MESSAGE_KEYS: readonly string[] = [
   'ref', 'schemaVersion', 'revision', 'sender', 'recipient', 'bodyRef', 'sourceRef',
   'createdAt', 'status', 'readAt', 'response',
-  'intent', 'needsReply', 'waitAfterSend', 'consultationDerivation', 'acceptedInputs',
+  'needsReply', 'waitAfterSend', 'wake', 'answeredBy', 'entry', 'consultationDerivation', 'acceptedInputs',
   'replyHandler', 'archiveWaitDisposition',
   // Slice 5 additive fields (SPEC §2.3, §2.5).
   'goalRef', 'decision', 'application', 'since', 'noticeAutomationCap',
   // Wiring package 2 (spec §2.3 P02): the first-response commit position.
   'responseSince',
   // Lifecycle fields; appended so the historical key order stays intact.
-  'taskRef', 'requestRoot', 'followupOf', 'deadline', 'deadlineMs', 'release', 'delivery',
+  'taskRef', 'requestRoot', 'followupOf', 'deadline', 'deadlineMs', 'delivery',
   'deliveryEvidence', 'expiredAt', 'withdrawnAt', 'waitCancelledAt', 'transferredTo', 'originalRef',
-  'appliedAt', 'rejectedAt', 'approvedAt', 'approvalRevision', 'applicationProof', 'pins',
+  'appliedAt', 'rejectedAt', 'applicationProof',
 ];
 
 /** Slice 1 §2.5: the effective reply handler of a wait; absent reads as null. A person's transfer carries no archive pair. */
@@ -1072,11 +1055,6 @@ export function checkSessionMessageBody(body: UnknownRecord, requireBoundRespons
   }
   const readAt = body['readAt'];
   if (!(readAt === null || nonEmpty(readAt))) return 'SessionMessage readAt must be null or a non-empty string';
-  const intent = body['intent'];
-  if (intent !== undefined && intent !== 'notify' && intent !== 'inquiry'
-    && intent !== 'action_request' && intent !== 'decision_request') {
-    return 'SessionMessage intent is not recognized';
-  }
   if (body['needsReply'] !== undefined && typeof body['needsReply'] !== 'boolean') return 'SessionMessage needsReply must be boolean';
   if (body['waitAfterSend'] !== undefined && typeof body['waitAfterSend'] !== 'boolean') return 'SessionMessage waitAfterSend must be boolean';
   if (body['waitAfterSend'] === true && body['needsReply'] === false) {
@@ -1186,9 +1164,8 @@ export function checkSessionMessageBody(body: UnknownRecord, requireBoundRespons
       return 'SessionMessage responseSince must be a nonzero ledger commit cursor';
     }
     const senderValue = body['sender'];
-    if (!isRecord(senderValue)
-      || (senderValue['kind'] !== 'work_run' && senderValue['kind'] !== 'secretary_round')) {
-      return 'SessionMessage responseSince requires a work_run or secretary_round sender';
+    if (!isRecord(senderValue) || !isMessageAgentSenderKind(senderValue['kind'])) {
+      return 'SessionMessage responseSince requires a work_run, query_run or secretary_round sender';
     }
     if (body['response'] === null) return 'SessionMessage responseSince requires a saved response';
   }
@@ -1198,12 +1175,9 @@ export function checkSessionMessageBody(body: UnknownRecord, requireBoundRespons
       || noticeAutomationCap < 0 || noticeAutomationCap > MAX_AUTO_REWORK_LIMIT)) {
     return `SessionMessage noticeAutomationCap must be an integer between 0 and ${MAX_AUTO_REWORK_LIMIT}`;
   }
-  // The fragment checks only its own keys; the two open fields keep named checks.
+  // The fragment checks only its own keys; the open proof field keeps its named check.
   const fieldsProblem = messageFieldsProblem(body);
   if (fieldsProblem !== null) return `SessionMessage fields: ${fieldsProblem}`;
-  if (!Object.hasOwn(body, 'pins')) return 'SessionMessage.pins is missing';
-  const pinsProblem = messagePinsProblem(body['pins']);
-  if (pinsProblem !== null) return `SessionMessage pins: ${pinsProblem}`;
   if (!Object.hasOwn(body, 'applicationProof')) return 'SessionMessage.applicationProof is missing';
   const proofProblem = applicationProofProblem(body['applicationProof']);
   if (proofProblem !== null) return `SessionMessage applicationProof: ${proofProblem}`;
@@ -1227,18 +1201,9 @@ export function checkSessionMessageBody(body: UnknownRecord, requireBoundRespons
 const EVENT_KEYS: readonly string[] = [
   'eventId', 'eventType', 'schemaVersion', 'occurredAt', 'projectId', 'workspaceId', 'requestId', 'actor', 'message',
 ];
-/** Only the release decision carries the proof; every other event must not. */
-const EVENT_PROOF_KEYS: readonly string[] = [...EVENT_KEYS, 'proof'];
 
 function checkEventBody(body: UnknownRecord, eventType: string): Problem {
-  const allowedKeys = eventType === SESSION_MESSAGE_RELEASE_DECIDED_EVENT_TYPE ? EVENT_PROOF_KEYS : EVENT_KEYS;
-  if (!hasOnlyKeys(body, allowedKeys)) return `${eventType} carries unknown fields`;
-  if (eventType === SESSION_MESSAGE_RELEASE_DECIDED_EVENT_TYPE) {
-    if (!Object.hasOwn(body, 'proof')) return `${eventType} requires proof`;
-    const proof = body['proof'];
-    // The release-decision owner validates the proof's contents; the codec only fixes the slot.
-    if (proof !== null && !isRecord(proof)) return `${eventType} proof must be null or an object`;
-  }
+  if (!hasOnlyKeys(body, EVENT_KEYS)) return `${eventType} carries unknown fields`;
   if (body['eventType'] !== eventType) return `${eventType} eventType disagrees with the envelope`;
   if (body['schemaVersion'] !== SESSION_MESSAGE_EVENT_SCHEMA_VERSION) {
     return `${eventType} schemaVersion must be ${SESSION_MESSAGE_EVENT_SCHEMA_VERSION}`;
@@ -1268,10 +1233,6 @@ function checkEventBody(body: UnknownRecord, eventType: string): Problem {
   if (eventType === SESSION_MESSAGE_SENT_EVENT_TYPE
     && canonicalOf(body['actor']) !== canonicalOf(message['sender'])) {
     return 'SessionMessageSent actor must be the message sender';
-  }
-  if (eventType === SESSION_MESSAGE_READ_EVENT_TYPE
-    && (!isRecord(body['actor']) || body['actor']['kind'] !== 'work_run')) {
-    return `${eventType} actor must be the formal work_run command identity`;
   }
   if (eventType === SESSION_MESSAGE_DERIVATION_EVENT_TYPE
     && (!isRecord(body['actor']) || body['actor']['kind'] !== 'host')) {
@@ -1672,8 +1633,6 @@ export const SESSION_MESSAGE_RECORD_SCHEMAS: RecordBackendSchemas = {
   events: [
     { eventType: SESSION_MESSAGE_SENT_EVENT_TYPE, schemaVersion: SESSION_MESSAGE_EVENT_SCHEMA_VERSION,
       validate: (event) => validateEvent(event, SESSION_MESSAGE_SENT_EVENT_TYPE) },
-    { eventType: SESSION_MESSAGE_READ_EVENT_TYPE, schemaVersion: SESSION_MESSAGE_EVENT_SCHEMA_VERSION,
-      validate: (event) => validateEvent(event, SESSION_MESSAGE_READ_EVENT_TYPE) },
     { eventType: SESSION_MESSAGE_RESPONDED_EVENT_TYPE, schemaVersion: SESSION_MESSAGE_EVENT_SCHEMA_VERSION,
       validate: (event) => validateEvent(event, SESSION_MESSAGE_RESPONDED_EVENT_TYPE) },
     { eventType: SESSION_MESSAGE_DERIVATION_EVENT_TYPE, schemaVersion: SESSION_MESSAGE_EVENT_SCHEMA_VERSION,
@@ -1689,10 +1648,6 @@ export const SESSION_MESSAGE_RECORD_SCHEMAS: RecordBackendSchemas = {
       validate: (event) => validateEvent(event, SESSION_MESSAGE_DECISION_APPLIED_EVENT_TYPE) },
     { eventType: SESSION_MESSAGE_WITHDRAWN_EVENT_TYPE, schemaVersion: SESSION_MESSAGE_EVENT_SCHEMA_VERSION,
       validate: (event) => validateEvent(event, SESSION_MESSAGE_WITHDRAWN_EVENT_TYPE) },
-    { eventType: SESSION_MESSAGE_RELEASE_DECIDED_EVENT_TYPE, schemaVersion: SESSION_MESSAGE_EVENT_SCHEMA_VERSION,
-      validate: (event) => validateEvent(event, SESSION_MESSAGE_RELEASE_DECIDED_EVENT_TYPE) },
-    { eventType: SESSION_MESSAGE_RELEASED_EVENT_TYPE, schemaVersion: SESSION_MESSAGE_EVENT_SCHEMA_VERSION,
-      validate: (event) => validateEvent(event, SESSION_MESSAGE_RELEASED_EVENT_TYPE) },
     { eventType: SESSION_MESSAGE_APPLIED_EVENT_TYPE, schemaVersion: SESSION_MESSAGE_EVENT_SCHEMA_VERSION,
       validate: (event) => validateEvent(event, SESSION_MESSAGE_APPLIED_EVENT_TYPE) },
     { eventType: SESSION_MESSAGE_EXPIRED_EVENT_TYPE, schemaVersion: SESSION_MESSAGE_EVENT_SCHEMA_VERSION,
@@ -1700,9 +1655,9 @@ export const SESSION_MESSAGE_RECORD_SCHEMAS: RecordBackendSchemas = {
     hostSystemOutboxAppendedCodec.registration,
   ],
   lookups: [...SESSION_MESSAGE_LOOKUP_INDEXES, ...S5_SESSION_MESSAGE_LOOKUP_INDEXES, ...S2A_SESSION_MESSAGE_LOOKUP_INDEXES,
-    ...K3_SESSION_MESSAGE_LOOKUP_INDEXES, ...S7A2_RELEASE_CANDIDATE_LOOKUP_INDEXES,
+    ...K3_SESSION_MESSAGE_LOOKUP_INDEXES,
     ...S7A2_COPY_SESSION_MESSAGE_LOOKUP_INDEXES, ...S7B_SESSION_MESSAGE_LOOKUP_INDEXES,
-    ...HOST_OUTBOX_LOOKUP_INDEXES],
+    ...COPY_QUESTION_LOOKUP_INDEXES, ...HOST_OUTBOX_LOOKUP_INDEXES],
 };
 
 // --------------------------------------------------------------------------
@@ -1741,9 +1696,6 @@ function encodeMessageEvent(event: SessionMessageEventV1): EncodedDomainEvent {
 export function encodeSessionMessageSentEvent(event: SessionMessageSentEventV1): EncodedDomainEvent {
   return encodeMessageEvent(event);
 }
-export function encodeSessionMessageReadEvent(event: SessionMessageReadEventV1): EncodedDomainEvent {
-  return encodeMessageEvent(event);
-}
 export function encodeSessionMessageRespondedEvent(event: SessionMessageRespondedEventV1): EncodedDomainEvent {
   return encodeMessageEvent(event);
 }
@@ -1760,12 +1712,6 @@ export function encodeSessionMessageDecisionAppliedEvent(event: SessionMessageDe
   return encodeMessageEvent(event);
 }
 export function encodeSessionMessageWithdrawnEvent(event: SessionMessageWithdrawnEventV1): EncodedDomainEvent {
-  return encodeMessageEvent(event);
-}
-export function encodeSessionMessageReleaseDecidedEvent(event: SessionMessageReleaseDecidedEventV1): EncodedDomainEvent {
-  return encodeMessageEvent(event);
-}
-export function encodeSessionMessageReleasedEvent(event: SessionMessageReleasedEventV1): EncodedDomainEvent {
   return encodeMessageEvent(event);
 }
 export function encodeSessionMessageAppliedEvent(event: SessionMessageAppliedEventV1): EncodedDomainEvent {
@@ -1810,19 +1756,17 @@ export function decodeSessionMessageRecord(record: EncodedRecord): DecodeResult<
 }
 
 /**
- * Restores the ORIGINAL message of a recorded send/read/respond event. This is
+ * Restores the ORIGINAL message of a recorded send/respond event. This is
  * the only source a replay may use; it never re-derives current state.
  */
 export function sessionMessageFromEvent(event: EncodedDomainEvent): DecodeResult<SessionMessage> {
   const eventType = event.eventType;
-  if (eventType !== SESSION_MESSAGE_SENT_EVENT_TYPE && eventType !== SESSION_MESSAGE_READ_EVENT_TYPE
+  if (eventType !== SESSION_MESSAGE_SENT_EVENT_TYPE
     && eventType !== SESSION_MESSAGE_RESPONDED_EVENT_TYPE && eventType !== SESSION_MESSAGE_DERIVATION_EVENT_TYPE
     && eventType !== SESSION_MESSAGE_INPUT_ACCEPTED_EVENT_TYPE
     && eventType !== SESSION_MESSAGE_DECISION_ANSWERED_EVENT_TYPE
     && eventType !== SESSION_MESSAGE_DECISION_APPLIED_EVENT_TYPE
     && eventType !== SESSION_MESSAGE_WITHDRAWN_EVENT_TYPE
-    && eventType !== SESSION_MESSAGE_RELEASE_DECIDED_EVENT_TYPE
-    && eventType !== SESSION_MESSAGE_RELEASED_EVENT_TYPE
     && eventType !== SESSION_MESSAGE_APPLIED_EVENT_TYPE
     && eventType !== SESSION_MESSAGE_EXPIRED_EVENT_TYPE
     && eventType !== SESSION_MESSAGE_FORWARDED_EVENT_TYPE
@@ -1847,19 +1791,6 @@ export function sessionMessageFromEvent(event: EncodedDomainEvent): DecodeResult
   // decoder applies the §2.9 null default (SV01). Readers use `?? null`.
   const message = parsed.value['message'] as SessionMessage;
   return { status: 'decoded', value: message };
-}
-
-/** The typed release-decision event, with its proof slot (the codec fixes the slot, `:1076–:1087`). */
-export function sessionMessageReleaseDecidedEventFromEvent(
-  event: EncodedDomainEvent,
-): DecodeResult<SessionMessageReleaseDecidedEventV1> {
-  const checked = validateEvent(event, SESSION_MESSAGE_RELEASE_DECIDED_EVENT_TYPE);
-  if (checked.status !== 'decoded') return checked;
-  const parsed = parseJsonObject(event.json);
-  if (parsed.status === 'invalid') {
-    return invalid(`${SESSION_MESSAGE_RELEASE_DECIDED_EVENT_TYPE} event json is not an object`);
-  }
-  return { status: 'decoded', value: parsed.value as unknown as SessionMessageReleaseDecidedEventV1 };
 }
 
 export function archiveWaitDisposedEventFromEvent(

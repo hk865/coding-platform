@@ -17,20 +17,21 @@ import { systemRoundRequestId } from '../../src/contracts/plan-round.js';
 import { systemRoundMessageRef } from '../helpers/system-round-ref.js';
 import { WORKFLOW_AUTOMATION_ACTOR } from '../../src/contracts/task-requeue.js';
 import type { PlanProposal, PlanProposalWithAdoption } from '../../src/core/work-graph/model/plan-contracts.js';
-import { ag2bChecksConfiguration, graphWrite } from '../helpers/AG2b-collaboration-fixture.js';
+import { ag2bChecksConfiguration, graphWrite, plain } from '../helpers/AG2b-collaboration-fixture.js';
 import { startGoalDriver } from '../helpers/DRV-fixture.js';
 import { readPlanningQuery, readProposal } from '../helpers/IV-host-fixture.js';
 import { createPLAdviserLine } from '../helpers/PL-consumption-fixture.js';
+import { proposePLCandidateThroughRefine } from '../helpers/PL-forms-fixture.js';
 import {
-  adoptPLTwoStageSkeleton, createPLReviewerLine, openPLWorkflowWorld, plStageTwoDraft, requestHeads, settlePLGoal,
-  type PLWorkflowWorld,
+  adoptPLTwoStageSkeleton, createPLReviewerLine, openPLWorkflowWorld, plStageTwoDraft, requestHeads, satisfyPLTask,
+  settlePLGoal, type PLWorkflowWorld,
 } from '../helpers/PL-workflow-fixture.js';
 import { s6aCardsWorkspace, type S6ACardsWorkspace } from '../helpers/S6A-cards-fixture.js';
 import type { S6AHostWorld } from '../helpers/S6A-host-fixture.js';
 import { openS6AHostWorld } from '../helpers/S6A-host-fixture.js';
-import { OPERATOR, S6A_SCOPE } from '../helpers/S6A-request-fixture.js';
-import { adoptS6BPlan, governS6B } from '../helpers/S6B1-fixture.js';
-import { checkConfiguration, committed, ready, setS7AAutonomy } from '../helpers/S7A-fixture.js';
+import { OPERATOR, S6A_SCOPE, S6A_WORK_ROLE } from '../helpers/S6A-request-fixture.js';
+import { adoptS6BPlan, createS6BLine, governS6B } from '../helpers/S6B1-fixture.js';
+import { checkConfiguration, committed, ready, sessionOf, setS7AAutonomy } from '../helpers/S7A-fixture.js';
 import { proposeCandidate } from '../scenarios/support/S5-decisions.js';
 
 const worlds: S6AHostWorld[] = [];
@@ -40,12 +41,33 @@ afterEach(async () => {
   for (const world of worlds.splice(0)) await world.close().catch(() => undefined);
 });
 
-/** One real candidate on this world's adopted Plan, proposed through the shared S5 helper. */
+/**
+ * One real candidate on this world's adopted Plan, proposed through the shared S5 helper. With `sourced`, the
+ * two-stage skeleton's `plan_only` slot is filled through the adviser's real `refine:` answer: A-13
+ * (`p2-frozen.md:208/210/345`) reads a complete author lineage and the candidate still reaches its review.
+ */
 async function seedCandidate(world: S6AHostWorld, goal: GoalRef,
-  options: { govern?: boolean; label?: string; workspace?: S6ACardsWorkspace } = {}): Promise<PlanProposal> {
+  options: { govern?: boolean; label?: string; workspace?: S6ACardsWorkspace; sourced?: boolean } = {}):
+Promise<PlanProposal> {
   const ws = options.workspace ?? s6aCardsWorkspace(world, S6A_SCOPE);
   if (options.govern !== false) await governS6B(world, ws, world.goals);
   const label = options.label ?? 'pl25-card';
+  if (options.sourced === true) {
+    const skeleton = await adoptPLTwoStageSkeleton(ws, goal, { label: `${label}-sourced`, stageOneTaskIds: ['pl-a'] });
+    const adviser = await createPLAdviserLine(world, `${label}-adviser`);
+    // The Goal selects the refine only after stage 1's covered work has really ended and passed its check.
+    world.platform.registerCheckConfiguration({
+      configuration: ag2bChecksConfiguration({ actor: world.ag2b.actor, command: 'true' }),
+    });
+    const line = await sessionOf(world, await createS6BLine(ws, { label: `${label}-line`, role: S6A_WORK_ROLE,
+      tasks: skeleton.tasks.filter(task => task.taskId === 'pl-a') }));
+    await satisfyPLTask(world, goal, 'pl-a', line, label);
+    const written = await proposePLCandidateThroughRefine({ world, goal, basePlan: skeleton.plan,
+      draft: { ...plStageTwoDraft(skeleton.plan, goal, label), planId: `${label}-candidate` }, adviser,
+      target: { kind: 'stage', stageId: 'pl-stage-2' }, label: `${label}-candidate` });
+    return ready<PlanProposal>(await ws.post('plans/proposal', plain(S6A_SCOPE, written.ref)),
+      `the ${label} sourced candidate`);
+  }
   const adopted = await adoptS6BPlan(ws, goal, {
     label: `${label}-base`, taskIds: [`${label}-base-task`], role: 'builder',
   });
@@ -64,10 +86,9 @@ async function seedCandidate(world: S6AHostWorld, goal: GoalRef,
     taskRelations: structuredClone(base.taskRelations ?? []),
     inputRequirements: structuredClone(base.inputRequirements ?? []),
   };
-  const proposed = await proposeCandidate(world.platform, world.humanContext(), {
+  return proposeCandidate(world.platform, world.humanContext(), {
     goalRef: goal, basedOn: adopted.plan.ref, draft, requestRef: null, requestId: `${label}-propose`,
   });
-  return proposed;
 }
 
 describe('PL-25 candidate card facts', () => {
@@ -190,7 +211,7 @@ describe('PL-25 candidate card review states', () => {
     const goal = workflow.goal;
     const ws = workflow.main;
     const candidate = await seedCandidate(world, goal, {
-      govern: false, label: 'pl25-review', workspace: ws,
+      govern: false, label: 'pl25-review', workspace: ws, sourced: true,
     });
     world.platform.registerCheckConfiguration({
       configuration: ag2bChecksConfiguration({ actor: world.ag2b.actor, command: 'true' }),
@@ -258,7 +279,7 @@ describe('PL-25 candidate card review states', () => {
     const goal = workflow.goal;
     const ws = workflow.main;
     const candidate = await seedCandidate(world, goal, {
-      govern: false, label: 'pl25-invalid', workspace: ws,
+      govern: false, label: 'pl25-invalid', workspace: ws, sourced: true,
     });
     world.platform.registerCheckConfiguration({
       configuration: ag2bChecksConfiguration({ actor: world.ag2b.actor, command: 'true' }),

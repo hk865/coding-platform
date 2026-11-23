@@ -326,7 +326,7 @@ it('PS-04: a candidate that changes a yielded Task and a running Task stops only
   const B = 'ps-zbusy';
   let recipient: { projectId: string; sessionId: string } | undefined;
   const send = { callId: 'ps-04-send', name: 'send_session_message', args: {
-    recipient: {}, text: 'PS-04: a question nobody answers', intent: 'inquiry', needsReply: true, waitAfterSend: true,
+    recipient: {}, text: 'PS-04: a question nobody answers', needsReply: true, waitAfterSend: true,
   } as Record<string, unknown> };
   const h = await openHostScenario({ check: 'pass', automation: NO_REDRIVE, workIds: [Y, B], script: {
     replies: [{ kind: 'calls', calls: [send] }, { kind: 'text', text: 'PS-04: the busy Run never answers' }],

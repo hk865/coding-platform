@@ -44,7 +44,8 @@ import type { RoleBindingFactsPort } from '../model/configuration-contracts.js';
 import type { MessageCommandWritePort } from '../model/decision-contracts.js';
 import type { SecretaryProfileV1 } from '../model/request-contracts.js';
 import type { HandoffBriefPort } from '../model/session-handoff-contracts.js';
-import type { SessionMailboxPort } from '../model/communication-contracts.js';
+import type { SessionMailboxPort, SessionMessage } from '../model/communication-contracts.js';
+import type { ModuleOverlapGateRef } from '../../../contracts/module-overlap-gate.js';
 import type { DeliveryEligibilityFactsPort, SessionFactsPort } from '../model/session-facts-contracts.js';
 import type { GraphWrite } from '../model/task-contracts.js';
 
@@ -314,4 +315,16 @@ export type QueryJobDependencies = {
    * non-message delivery facts B produces and L injects; never a second rule.
    */
   eligibility?: DeliveryEligibilityFactsPort;
+  /**
+   * Design 5.1: the one overlap-note read (`overlapNoteOf`) the consumable view and the Workflow also use, injected by
+   * the root. The owner proves an `overlapNote` round itself at submit instead of trusting the caller's flag.
+   */
+  gateNotes?: OverlapNoteReadPort;
+};
+
+/** A module-overlap gate whose saved `noteRequest.messageRef` names the message, and the gate revision read. */
+export type OverlapNoteMatchV1 = { gate: ModuleOverlapGateRef; revision: number };
+/** The narrow gate-note read: the matching gate, or null when no gate asked for this message. */
+export type OverlapNoteReadPort = {
+  readGateNote(ctx: CoreCallContext, message: SessionMessage): Promise<ReadResult<OverlapNoteMatchV1 | null>>;
 };

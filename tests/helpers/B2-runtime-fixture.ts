@@ -179,6 +179,18 @@ export function createRuntimeHostDouble(input: {
   };
 }
 
+/**
+ * The required `DeliveryEligibilityFactsPort` for the low-level Runtime fixtures that compose no Workflow (the
+ * composition root's read is `create-platform.ts:2760` → `workflow.ts:1745`). Their messages name no Goal, no blocked
+ * Task and no outcome-unknown recipient; the port has the production shape and reads no store. A fixture that later
+ * needs a Goal or blocked Task must take the real Workflow read instead.
+ */
+export const deliveryFactsForFixture: RuntimeExecutionDependencies['deliveryFacts'] = {
+  async readDeliveryEligibilityFacts() {
+    return { status: 'ready', value: { goal: null, taskBlocked: false, recipientOutcomeUnknown: false } };
+  },
+};
+
 export async function createB2RuntimeFixture(options: {
   kind?: ClaimFixtureKind;
   scriptedReplies?: readonly ScriptedReply[];
@@ -301,7 +313,7 @@ export async function createB2RuntimeFixture(options: {
       ...(overrides.hostInstance===undefined?{}:{hostInstance:overrides.hostInstance}),now,eventId}):undefined;
     return {claims:claimFixture.makeService(records),executions,entry:overrides.entry??entry,modelRequests:overrides.modelRequests??modelRequests,
       roles,plans,sessions,materials,bodies,historyWriter:createExecutionHistoryService({records,now,eventId}),activity,graphHistory:createGraphExecutionHistoryReader({executions,history:activity}),sessionOperations,kernelStores:selectedKernelStores,
-      unknownCallReviews,
+      unknownCallReviews,deliveryFacts:deliveryFactsForFixture,
       readTaskClosure: async (_ctx: CoreCallContext, task: { projectId: string; goalId: string; taskId: string }) =>
         readTaskClosure(records, { aggregateType: 'Goal', projectId: task.projectId, goalId: task.goalId }, task.taskId),
       workspaceHost:overrides.workspaceHost??{

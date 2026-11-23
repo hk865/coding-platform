@@ -12,6 +12,7 @@
  */
 
 import type { TaskGraph } from '../../contracts/task-graph.js';
+import type { SessionRef } from '../../contracts/core/identity.js';
 import { asRecord, asText } from '../values.js';
 import { decisionCardCountPartial, goalDisplayState, isFinishedGoalDisplayPhase,
   type GoalDisplayPhaseCode, type TaskMapQueueRead } from './task-map.js';
@@ -62,6 +63,15 @@ export type NavGoal = {
 export type LineKey = { projectId: string; sessionId: string };
 export type NavLineKey = LineKey;
 
+/** §2.8: whose input message last woke a line. `senderName` is filled from the
+ * same navigation read once its rows are known; a sender Session this page has
+ * no line for stays a Session reference, and a Host message has none. */
+export type NavWakeBy = {
+  at: string;
+  senderName: string;
+  senderSessionRef: SessionRef | null;
+};
+
 /** One rail line (`LineRowV1`'s chrome fields, §2.4). */
 export type NavLine = {
   id: string;
@@ -92,6 +102,9 @@ export type NavLine = {
    * `lines/list` row; no board but Chain reads them. */
   responsibleNow: string[];
   lastActivityAt: string;
+  /** §2.8: the input message that last woke this line; null when the last
+   * activity was not an input message (or the line has no activity record). */
+  wokenBy: NavWakeBy | null;
 };
 
 export type NavInbox = {
@@ -180,6 +193,46 @@ export function dutyWordOf(duty: unknown): string {
   return DUTY_WORD[asText(duty)] ?? '未分组';
 }
 
+const WAKE_SENDER_KINDS = new Set(['work_run', 'query_run', 'secretary_round', 'host']);
+
+/** The JSON edge's SessionRef for the shared session → line-name lookup; a ref
+ * without both ids has no identity. */
+export function sessionRefAtEdge(value: unknown): SessionRef | null {
+  const row = asRecord(value);
+  const projectId = asText(row.projectId);
+  const sessionId = asText(row.sessionId);
+  return projectId === '' || sessionId === '' ? null : { projectId, sessionId };
+}
+
+/** §2.8: the read's wake fact, never the removed message `intent`; a Host
+ * message carries no sender Session and an unreadable fact is not guessed. */
+function navWakeByOf(value: unknown): NavWakeBy | null {
+  const row = asRecord(value);
+  const at = asText(row.at);
+  const kind = asText(row.senderKind);
+  if (at === '' || !WAKE_SENDER_KINDS.has(kind)) return null;
+  const senderSessionRef = sessionRefAtEdge(row.senderSessionRef);
+  if (kind !== 'host' && senderSessionRef === null) return null;
+  return { at, senderName: '', senderSessionRef };
+}
+
+/** §2.8: a sender Session's line name from the same navigation read; empty
+ * when this page has no line for it. A name is never guessed from a duty. */
+export function lineNameOfSession(lines: readonly NavLine[], ref: SessionRef | null): string {
+  if (ref === null) return '';
+  return lines.find((line) => line.key.projectId === ref.projectId
+    && line.key.sessionId === ref.sessionId)?.name ?? '';
+}
+
+/** §2.8: fill each row's sender name from the same page; a sender this page
+ * cannot name keeps its Session reference rather than a guessed name. */
+function withWakeNames(rows: NavLine[], known: readonly NavLine[]): NavLine[] {
+  return rows.map((line) => line.wokenBy === null ? line : {
+    ...line,
+    wokenBy: { ...line.wokenBy, senderName: lineNameOfSession(known, line.wokenBy.senderSessionRef) },
+  });
+}
+
 function navLineOf(entry: unknown, archived: boolean): NavLine {
   const row = asRecord(entry);
   const key = asRecord(row.key);
@@ -214,6 +267,7 @@ function navLineOf(entry: unknown, archived: boolean): NavLine {
     responsibleNow: (Array.isArray(row.responsibleNow) ? row.responsibleNow : [])
       .map((entry) => asText(asRecord(entry).title)).filter((title) => title !== ''),
     lastActivityAt: asText(row.lastActivityAt),
+    wokenBy: navWakeByOf(row.wokenBy),
   };
 }
 
@@ -234,6 +288,7 @@ function synthLine(): NavLine {
     status: '', st: 'idle', word: '', dot: 'dot s-idle', why: '', recent: '', short: '', task: null,
     goalId: '', scope: '', archivedTag: '',
     chainSessions: [], pinned: false, archived: false, synth: true, responsibleNow: [], lastActivityAt: '',
+    wokenBy: null,
   };
 }
 
@@ -313,9 +368,11 @@ export function adaptNav(
     };
   });
   const lineList = asRecord(reads.lines);
-  const lines = [synthLine(), ...(Array.isArray(lineList.rows) ? lineList.rows : []).map((entry) => navLineOf(entry, false))];
+  const rawLines = [synthLine(), ...(Array.isArray(lineList.rows) ? lineList.rows : []).map((entry) => navLineOf(entry, false))];
+  const lines = withWakeNames(rawLines, rawLines);
   const archivedRead = asRecord(reads.archived);
-  const archived = (Array.isArray(archivedRead.rows) ? archivedRead.rows : []).map((entry) => navLineOf(entry, true));
+  const rawArchived = (Array.isArray(archivedRead.rows) ? archivedRead.rows : []).map((entry) => navLineOf(entry, true));
+  const archived = withWakeNames(rawArchived, [...lines, ...rawArchived]);
   const counts = asRecord(lineList.counts);
   const working = countValue(counts.working);
   const standby = countValue(counts.standby);

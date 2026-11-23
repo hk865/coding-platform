@@ -50,7 +50,7 @@ it('PL-48: growth and lines coexist on one plan revision, each once, and the tex
     await step(fixture, 'pl48-notify', 'notify_plan_reminder'))), 'the PL-48 reminder');
   const inbox = ready<{ items: SessionMessage[] }>(await world.post('messages/inbox',
     plain(S6A_SCOPE, { recipient: adviser.ref, page: { limit: 50 } })), 'the adviser inbox');
-  expect(inbox.items.filter(message => message.intent === 'notify')).toHaveLength(1);
+  expect(inbox.items.filter(message => message.wake === false)).toHaveLength(1);
 
   // Task A: 21 real edited lines and 2.1M growth in one normally ended Run.
   const pair = await runSoftLineDeviationPair(fixture, {

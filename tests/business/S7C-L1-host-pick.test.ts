@@ -85,11 +85,14 @@ async function actionRequests(target: S7C1World): Promise<number> {
       recipient: { projectId: session.record.ref.projectId, sessionId: session.record.ref.sessionId },
       page: { limit: 100 },
     }));
-    const body = read.body as { status: string; value?: { items: readonly { intent?: string }[] } };
+    const body = read.body as { status: string; value?: { items: readonly {
+      needsReply?: boolean; sender?: { kind?: string; actor?: { kind?: string } } }[] } };
     if (body.status !== 'ready' || body.value === undefined) {
       throw new Error(`the inbox of ${session.record.ref.sessionId} is not readable: ${JSON.stringify(body)}`);
     }
-    count += body.value.items.filter(message => message.intent === 'action_request').length;
+    // P2: a system round is a stored `needsReply` host-system send, never an `action_request` intent.
+    count += body.value.items.filter(message => message.needsReply === true
+      && message.sender?.kind === 'host' && message.sender.actor?.kind === 'system').length;
   }
   return count;
 }

@@ -136,7 +136,7 @@ describe('R1/R2/R10 the adviser decides first; its allow lets one shell call thr
     await advanceK3L3(w, selectK3L3(w, 'k3l6r1-d'));
     const rounds = await adviserRoundsOf(w, 'crr:');
     expect(rounds).toHaveLength(1);
-    expect(rounds[0]!.message).toMatchObject({ intent: 'action_request', taskRef: w.task });
+    expect(rounds[0]!.message).toMatchObject({ needsReply: true, taskRef: w.task });
     expect(await crrCards(w)).toEqual([]);
     // The restart interrupted the Goal: the Host consumes the round only after the person continues it.
     await continueK3L3Goal(w, 'k3l6r1-again');

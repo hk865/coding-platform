@@ -1,10 +1,10 @@
 {
-  "description": "Withdraw a Session message you sent, before its recipient acts on it. A Work Run may withdraw only a message of its own Session, and only where send_session_message is granted; a secretary may withdraw a message of its own resolved request round. Give the message's full ref; do not send a revision, because the owner checks the sender and the current state itself and a message already answered is refused rather than withdrawn. A refusal is returned as the tool's result and does not mean the message was withdrawn.",
+  "description": "撤回：撤自己发出的、对方未读、未答、未投递的 Session 消息。谁能用：本轮挂了撤回工具，只撤自己发的信。发错了或不再需要对方看，趁还没送到。不撤别人发的；已送达的只能另发一条更正；发给人的卡和请知悉不用这个工具撤。参数：messageRef，完整消息引用，不带版本。回执：committed 表示撤了；被拒照原句读。会被拒：only an unread, unanswered, undelivered message can be withdrawn。",
   "parameters": {
-    "messageRef": "The full ref of the message to withdraw.",
-    "messageRef.aggregateType": "Always \"SessionMessage\".",
-    "messageRef.projectId": "The message's project id.",
-    "messageRef.workspaceId": "The message's workspace id.",
-    "messageRef.messageId": "The message id."
+    "messageRef": "要撤回的消息，完整引用。",
+    "messageRef.aggregateType": "固定写 \"SessionMessage\"。",
+    "messageRef.projectId": "消息的项目 id。",
+    "messageRef.workspaceId": "消息的工作区 id。",
+    "messageRef.messageId": "消息 id。"
   }
 }

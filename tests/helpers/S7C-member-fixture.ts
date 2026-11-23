@@ -244,7 +244,8 @@ export function claimOf(receipts: readonly WorkflowStepReceipt[]) {
 /** The answer message both M rows send from the module line. */
 export async function answerOf(target: S7C1World, label: string): Promise<SessionMessageRef> {
   const sent = valueOf<{ ref: SessionMessageRef }>((await target.world.post('messages/send',
-    graphWrite(S6A_SCOPE, { recipient: target.lines.module.ref, text: `S7C ${label}`, intent: 'notify' },
+    graphWrite(S6A_SCOPE, { recipient: target.lines.module.ref, text: `S7C ${label}`,
+      needsReply: false, wake: false },
       `s7c-answer-${label}`))).body, 'committed', `the ${label} answer`);
   return sent.ref;
 }
@@ -356,7 +357,7 @@ export async function openS7C1World(options: { backend?: S6ABackend; adviser?: b
     };
 
     const sent = await world.post('messages/send', graphWrite(S6A_SCOPE, {
-      recipient: moduleLine.ref, text: 'S7C input', intent: 'inquiry', needsReply: false,
+      recipient: moduleLine.ref, text: 'S7C input', needsReply: false,
     }, 's7c-input'));
     if (recordOf(sent.body)['status'] !== 'committed') throw new Error(`S7C: the input message did not commit: ${JSON.stringify(sent)}`);
 

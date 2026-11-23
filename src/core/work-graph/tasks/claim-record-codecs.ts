@@ -67,6 +67,11 @@ export const TASK_REWORK_EVENT_SCHEMA_VERSION = 1;
 export const S2A_REQUEUE_BY_PROJECT_LOOKUP = 's2a-requeue-by-project';
 /** Slice 2C L4 index 6: the latest (or paged) Work claim of a Session by generation. */
 export const S2C_WORK_CLAIM_BY_SESSION_GENERATION_LOOKUP = 's2c-work-claim-by-session-generation';
+/**
+ * §2.8/T37、S-2：一个项目的暂缓记录分页读（反馈按原因的完整请求根筛）。项目秘书可以给另一工作区里 Goal 的任务放暂缓，
+ * 同一请求根的暂缓要全读到；一个项目里的暂缓只有被挡过的任务那几条，和按工作区读同一个量级。
+ */
+export const TASK_CLAIM_HOLD_BY_PROJECT_LOOKUP = 'task-claim-hold-by-project';
 export const S2A_REQUEUE_LOOKUP_INDEXES: readonly RecordLookupIndex[] = [
   {
     name: S2A_REQUEUE_BY_PROJECT_LOOKUP,
@@ -905,6 +910,7 @@ export const TASK_CLAIM_RECORD_SCHEMAS: RecordBackendSchemas = {
     taskClaimHoldChangedCodec.registration,
   ],
   lookups: [
+    { name: TASK_CLAIM_HOLD_BY_PROJECT_LOOKUP, aggregateType: 'TaskClaimHold', paths: ['ref.projectId'] },
     { name: WORK_EXECUTION_BY_SESSION_LOOKUP, aggregateType: 'DispatchOutboxEntry',
       paths: ['claim.task.projectId', 'claim.workspaceId', 'claim.sessionRef.sessionId'] },
     { name: S2C_WORK_CLAIM_BY_SESSION_GENERATION_LOOKUP, aggregateType: 'DispatchOutboxEntry',

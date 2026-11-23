@@ -24,13 +24,13 @@ it('M-lookups: both indexes are registered once with exact paths and order', () 
   expect(registrationsOf(S7B_WAITS_BY_SENDER_SESSION_LOOKUP)).toEqual([{
     name: S7B_WAITS_BY_SENDER_SESSION_LOOKUP,
     aggregateType: 'SessionMessage',
-    paths: ['ref.projectId', 'ref.workspaceId', 'sender.sessionRef.sessionId', 'intent'],
+    paths: ['ref.projectId', 'ref.workspaceId', 'sender.sessionRef.sessionId', 'waitAfterSend', 'needsReply'],
     orderBy: { path: 'since', valueType: 'text' },
   }]);
   expect(registrationsOf(S7B_DUE_WAITS_LOOKUP)).toEqual([{
     name: S7B_DUE_WAITS_LOOKUP,
     aggregateType: 'SessionMessage',
-    paths: ['ref.projectId', 'ref.workspaceId', 'release', 'intent'],
+    paths: ['ref.projectId', 'ref.workspaceId'],
     orderBy: { path: 'deadline', valueType: 'text' },
   }]);
 });

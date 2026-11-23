@@ -36,6 +36,7 @@ import { createSessionDirectory } from '../../src/core/work-graph/sessions/sessi
 import { unknownSessionDuty } from './session-duty-double.js';
 import { createSessionLifecycleService } from '../../src/core/work-graph/sessions/session-lifecycle.js';
 import { createSessionFactsService } from '../../src/core/work-graph/tasks/session-facts.js';
+import { createQueryRoundResolver } from '../../src/core/work-graph/tasks/query-round.js';
 import { createRoleConfigurationService } from '../../src/core/work-graph/configuration/role-memory-service.js';
 import { createMaterialService } from '../../src/core/work-graph/materials/material-service.js';
 import { createSessionMailbox } from '../../src/core/work-graph/communication/mailbox-service.js';
@@ -230,6 +231,7 @@ export function workHistory(b2: B2ExecutionFixture) {
     authorizeConfiguration, now, eventId, newId: () => `fx2-entry-${++seq}` });
   const mailbox = createSessionMailbox({ records: base.records, sessions: sessionOwners(base).directory,
     defaultInquiryDeadlineMs: 86_400_000,
+    queryRounds: createQueryRoundResolver({ records: base.records, duties: unknownSessionDuty, bodies: b2.bodies }),
     executions: reads, roles, materials: createMaterialService({ bodies: b2.bodies,
       authority: createMaterialRecordReaders(base.records).authority, now }),
     runtimeAdmission: { bodies: b2.bodies, authorizeConfiguration },
@@ -276,7 +278,7 @@ export function workHistory(b2: B2ExecutionFixture) {
     ending: 'yield' | 'crash' = 'yield') {
     const admitted = await enter(claim);
     let message = committed(await mailbox.sendMessage(workContext(claim), {
-      input: { recipient: b2.secondClaim.sessionRef, text: 'm: please reply', intent: 'inquiry', needsReply: true, waitAfterSend: true },
+      input: { recipient: b2.secondClaim.sessionRef, text: 'm: please reply', needsReply: true, waitAfterSend: true },
       meta: { requestId: `fx2-send-${++seq}`, expected: [] } })).value;
     if (withResponse) {
       const responder = runningResponder ?? await enter(b2.secondClaim);
@@ -295,7 +297,8 @@ export function workHistory(b2: B2ExecutionFixture) {
   }
   async function copyMessage(source: SessionRef, child: SessionRef): Promise<SessionMessage> {
     const sent = committed(await mailbox.sendMessage(base.ctx, {
-      input: { recipient: source, text: 'Read the original history in an isolated copy', intent: 'inquiry', needsReply: true },
+      input: { recipient: source, text: 'Read the original history in an isolated copy', needsReply: true,
+        answeredBy: 'copy' as const, wake: false },
       meta: { requestId: `fx2-copy-send-${++seq}`, expected: [] } })).value;
     const record = ready(await sessionOwners(base).directory.readSession(base.ctx, source)).record;
     if (mailbox.recordConsultationDerivation === undefined) throw new Error('missing consultation entry');

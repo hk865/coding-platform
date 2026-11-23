@@ -72,7 +72,7 @@ import type { GoalDecisionBasisV1, GoalSettingsV1 } from '../../src/contracts/go
 import type { PlatformDutyV1 } from '../../src/contracts/platform-duty.js';
 import { PLATFORM_DUTIES } from '../../src/contracts/platform-duty.js';
 import { WORKFLOW_AUTOMATION_ACTOR } from '../../src/contracts/task-requeue.js';
-import { SESSION_MAILBOX_TOOL_NAMES, USER_DECISION_TOOL_NAMES } from '../../src/core/agent-runtime/communication-tools.js';
+import { PERSON_MESSAGE_TOOL_NAMES, SESSION_MAILBOX_TOOL_NAMES, USER_DECISION_TOOL_NAMES } from '../../src/core/agent-runtime/communication-tools.js';
 import { canonicalJson, sha256Hex } from '../../src/contracts/fingerprint.js';
 import type { EncodedDomainEvent, EncodedRecord, RecordBackendSchemas, RecordGuard, StoreCommitReceipt, UniqueClaimChange, CommitCursorBinding } from '../../src/core/record-store/ports.js';
 import type { OrderedLookupRequest, RecordOrderedLookupPort } from '../../src/core/record-store/lookup-ports.js';
@@ -157,6 +157,8 @@ import type {
 } from '../../src/core/work-graph/model/execution-entry-contracts.js';
 import { createExecutionEntryService } from '../../src/core/work-graph/tasks/execution-entry-service.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
+import { createQueryRoundResolver } from '../../src/core/work-graph/tasks/query-round.js';
+import { planSourceRootOf } from './task-claim-fixture.js';
 import { createKernelStoreRegistry } from '../../src/core/agent-runtime/kernel-store-locator.js';
 import { createSessionOperations } from '../../src/core/agent-runtime/session-operations.js';
 import type { RuntimeExecutionDependencies } from '../../src/core/agent-runtime/execution-contracts.js';
@@ -864,7 +866,13 @@ export async function openS5DecisionFixture(kind: S5FixtureKind = 'memory',
   // ---- real claim + execution entry: running Run RA, claimed Run RB ---------
   const reads = createRunStateReader({ records });
   const roles = createRoleConfigurationService({ records, now, eventId });
-  const claimService = createTaskClaimService({ records, roles, now, newId });
+  const lineageMailbox = createSessionMailbox({ records, sessions: sessionsPort, executions: reads, roles,
+    materials: createMaterialService({ bodies, authority: createMaterialRecordReaders(records).authority, now }),
+    queryRounds: createQueryRoundResolver({ records, duties: unknownSessionDuty, bodies }),
+    defaultInquiryDeadlineMs: 86_400_000, systemActor: { ...operatorActor }, now, newId });
+  const claimService = createTaskClaimService({ records, roles, now, newId,
+    planSourceRoot: planSourceRootOf({ messages: lineageMailbox, plans,
+      queries: createQueryJobService({ records, now, eventId }) }) });
   const roleBinding: RoleBindingRefV1 = { schemaVersion: 1, bindingId: 's5-binding', templateId: 'builder',
     templateRevision: '1', bindingVersion: 1, policyRevision: 'legacy-template' };
   /** The sending Session's formal template, matching the binding its Run is claimed with. */
@@ -874,7 +882,8 @@ export async function openS5DecisionFixture(kind: S5FixtureKind = 'memory',
   const s5Host = {
     configurationRevision: 's5-host-config-1',
     permissions: { policyRevision: 'legacy-template',
-      tools: ['read', ...preEntryTools, ...SESSION_MAILBOX_TOOL_NAMES, ...USER_DECISION_TOOL_NAMES] as string[], writeScope: [] as string[], createMember: false },
+      tools: ['read', ...preEntryTools, ...SESSION_MAILBOX_TOOL_NAMES, ...USER_DECISION_TOOL_NAMES,
+        ...PERSON_MESSAGE_TOOL_NAMES] as string[], writeScope: [] as string[], createMember: false },
     hostTemplate: { templateId: 'builder', revision: '1', digest: artifactBodyDigest('s5 trusted builder template') },
   };
   const authorizeConfiguration: AuthorizeConfiguration = async (callCtx, input) => {
@@ -1197,6 +1206,7 @@ export async function openS5DecisionFixture(kind: S5FixtureKind = 'memory',
   const messageDeps: SessionMailboxDependencies = {
     defaultInquiryDeadlineMs: 86_400_000,
     records, sessions: sessionsPort, executions: reads, roles, materials: messageMaterials,
+    queryRounds: createQueryRoundResolver({ records, duties, bodies }),
     systemActor: { ...operatorActor }, now, newId,
     duties: createMessageDutiesFactsAdapter({ roles, sessions: sessionsPort, legacyDuty }),
     runtimeAdmission: { bodies, authorizeConfiguration },

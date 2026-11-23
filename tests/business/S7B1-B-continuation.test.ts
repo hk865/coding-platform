@@ -1,11 +1,12 @@
 /**
  * B-continuation (SR8 §8.4; book-7b.md:1206; R4-16): the answered wait wakes the same handle and the continuation claim
  * creates a successor Run on the original Task/Session, read through the public execution read; the consultation entry
- * runs the one delivery rule on the message's real facts.
+ * takes only a copy question (P2: p2-frozen.md:133; it has no response part, cp2mp-rulings.md:33).
  *
  * R4-16's four expiry behaviours need a real `expiredAt`, produced through the published
  * `platform.messageExpiry.recordExpiry`: `wait_reply` wins over an expired deadline, the expiry continuation claims on
- * the original Task/Session, a late reply is ordinary input, and the driver's `awaitWake` wakes on `expired` into the
+ * the original Task/Session, a late reply is saved without a second continuation (P2: design-frozen.md:238; it waits
+ * for the sender line's next safe point, p2-frozen.md:151), and the driver's `awaitWake` wakes on `expired` into the
  * same expiry continuation. Every fact comes from the public Workflow, the published owner and the public reads; the
  * default 24 h inquiry deadline (`create-platform.ts:1075`) is passed by the fixture clock.
  */
@@ -61,7 +62,7 @@ describe('B-continuation (memory)', () => {
       await createS6BLine(main, { label: 's7b-b-wake-recipient', role: S6A_WORK_ROLE }));
     await world.scripted.script(sender, [
       { kind: 'calls', calls: [{ callId: 's7b-b-wake-send', name: 'send_session_message',
-        args: { recipient: recipient.ref, text: 'S7B wake question', intent: 'inquiry',
+        args: { recipient: recipient.ref, text: 'S7B wake question',
           needsReply: true, waitAfterSend: true } }] },
       { kind: 'text', text: 'S7B wake first turn' },
       { kind: 'text', text: 'S7B wake after the reply' },
@@ -106,7 +107,7 @@ describe('B-continuation (memory)', () => {
     await world.post('workflow/driver-stop', plain(S6A_SCOPE, { goalRef: goal, taskId: tasks[0]!.taskId }));
   }, 120_000);
 
-  it('the consultation entry runs the one delivery rule on the accepted response and refuses it as delivered', async () => {
+  it('the consultation entry has no response part and refuses the answered line question', async () => {
     const { world } = await openS7BWorld({ backend: 'memory' });
     worlds.push(world);
     const wait = await runS7BWait(world, { label: 'b-continuation-consultation' });
@@ -114,12 +115,18 @@ describe('B-continuation (memory)', () => {
       task: wait.tasks[1]!, label: 'b-continuation-consultation-reply' });
     await acceptS7BReply(world, { goal: wait.goal, sender: wait.sender, task: wait.tasks[0]!,
       run: wait.run, message: wait.message, label: 'b-continuation-consultation-accept' });
-    const answer = await world.post('workflow/consultation', plain(S6A_SCOPE, {
-      schemaVersion: 1, messageRef: wait.message, part: 'response', goalRef: wait.goal,
+    const input = { schemaVersion: 1, messageRef: wait.message, goalRef: wait.goal,
       roleBinding: S6A_WORK_ROLE_BINDING, runtimeBudget: AG2B_RUNTIME_BUDGET,
-      budget: AG2B_QUERY_BUDGET, consumerId: AG2B_CONSUMER_ID,
-    }));
-    expect(answer.body).toMatchObject({ status: 'rejected', code: 'invalid', reason: 'delivery_delivered' });
+      budget: AG2B_QUERY_BUDGET, consumerId: AG2B_CONSUMER_ID };
+    // P2 (cp2mp-rulings.md:33; p2-frozen.md:133, :151): a reply is never consulted, and the wait's question is a line
+    // question, not a copy question, so the entry refuses both before any Query exists.
+    expect((await world.post('workflow/consultation', plain(S6A_SCOPE, { ...input, part: 'response' }))).body)
+      .toMatchObject({ status: 'rejected', code: 'invalid', reason: 'consumeConsultation does not accept extra fields' });
+    expect((await world.post('workflow/consultation', plain(S6A_SCOPE, input))).body)
+      .toMatchObject({ status: 'rejected', code: 'invalid', reason: 'the consultation message is not a copy question' });
+    const saved = ready<SessionMessage>(await world.post('messages/read', plain(S6A_SCOPE, wait.message)),
+      'the accepted reply after the refusals');
+    expect((saved.acceptedInputs ?? []).filter(entry => entry.part === 'response')).toHaveLength(1);
   }, 120_000);
 
   it('chooses wait_reply over expiry when the saved reply and the passed deadline both exist', async () => {
@@ -191,7 +198,7 @@ describe('B-continuation (memory)', () => {
     });
   }, 120_000);
 
-  it('saves a late reply after the expiry continuation as ordinary input, not a second continuation claim', async () => {
+  it('saves a late reply after the expiry continuation without a second continuation claim', async () => {
     const { world, clock } = await openS7BWorld({ backend: 'memory' });
     worlds.push(world);
     const wait = await runS7BWait(world, { label: 'b-late-reply' });
@@ -210,23 +217,21 @@ describe('B-continuation (memory)', () => {
       'the late reply on the expired wait');
     expect(saved.expiredAt).not.toBeNull();
     expect(saved.status).toBe('responded');
-    // The saved late reply is ordinary input: the consultation consumes it, not the already-consumed wait.
-    await world.post('workflow/consultation', plain(S6A_SCOPE, {
-      schemaVersion: 1, messageRef: wait.message, part: 'response', goalRef: wait.goal,
-      roleBinding: S6A_WORK_ROLE_BINDING, runtimeBudget: AG2B_RUNTIME_BUDGET,
-      budget: AG2B_QUERY_BUDGET, consumerId: AG2B_CONSUMER_ID,
-    }));
+    // P2 (design-frozen.md:238; p2-frozen.md:151; cp2g3a-r1-rulings.md A06): the late reply is saved and does not reopen
+    // the wait; it opens no round and waits as ordinary input for the sender line's next safe point. The expiry claim
+    // stays the wait's one consumer, and re-driving the Task claims no second continuation.
+    const again: WorkflowStepReceipt[] = [];
+    await driveWorkflow(world.ag2b, { schemaVersion: 1, goalRef: wait.goal, flowId: 's7b-b-late-reply-again',
+      sessionHint: wait.sender.ref, kind: 'select_work', taskId: wait.tasks[0]!.taskId },
+    { stopBefore: 'open_checks', receipts: again });
+    expect(again.filter(receipt => receipt.kind === 'claim_task')).toHaveLength(0);
     const offered = ready<SessionMessage>(await world.post('messages/read', plain(S6A_SCOPE, wait.message)),
-      'the late reply offered as ordinary input');
+      'the late reply kept as ordinary input');
     const inputs = offered.acceptedInputs ?? [];
-    // The expiry claim is the wait's one consumer; the late reply is ordinary input, not a second claim.
     expect(inputs.filter(entry => entry.part === 'expiry')).toHaveLength(1);
-    const response = inputs.find(entry => entry.part === 'response');
-    expect(response).toMatchObject({ consumesWait: false });
+    expect(inputs.filter(entry => entry.part === 'response')).toEqual([]);
     expect(inputs.filter(entry => entry.consumesWait)).toHaveLength(1);
-    expect(inputs.find(entry => entry.consumesWait)).toMatchObject({ part: 'expiry' });
-    expect(inputs.some(entry => entry.part === 'response' && entry.executionRef.aggregateType === 'Run'
-      && entry.executionRef.runId === expiryRun.run.runId)).toBe(false);
+    expect(inputs.find(entry => entry.consumesWait)).toMatchObject({ part: 'expiry', executionRef: expiryRun.run });
     const record = ready<TaskExecutionRecord>(
       await world.post('executions/read', plain(S6A_SCOPE, expiryRun.run)), 'the expiry Run after the late reply');
     expect(record.run.consumedWait).toMatchObject({ kind: 'expiry', messageRef: wait.message });
@@ -245,7 +250,7 @@ describe('B-continuation (memory)', () => {
       { label: 's7b-b-expired-wake-recipient', role: S6A_WORK_ROLE }));
     await world.scripted.script(sender, [
       { kind: 'calls', calls: [{ callId: 's7b-b-expired-wake-send', name: 'send_session_message',
-        args: { recipient: recipient.ref, text: 'S7B expired wake question', intent: 'inquiry',
+        args: { recipient: recipient.ref, text: 'S7B expired wake question',
           needsReply: true, waitAfterSend: true } }] },
       { kind: 'text', text: 'S7B expired wake first turn' },
       { kind: 'text', text: 'S7B expired wake expiry turn' },

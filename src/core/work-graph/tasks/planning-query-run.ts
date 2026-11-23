@@ -8,8 +8,9 @@
  * its entered execution state, the QueryJob's intent, the bound manifest (for
  * the frozen `answerShape`, the Goal and the Plan) and the Session's duty.
  * A `plan_round`/`plan_review` shape is trusted as written; a `null` shape is
- * trusted only when the frozen intent says `text` (or nothing) and the source
- * message is a Host system `action_request` (the `overlap-note:` round).
+ * trusted only when the frozen intent says `text` with the gate's verified
+ * `overlapNote` proof (the `overlap-note:` round) or the round is an executor's
+ * own text round. A round frozen before `answerShape` existed is not a note.
  * Anything else is `forbidden`; a read failure is `unavailable`.
  *
  * `resolveNoteQueryRun` only dispatches, three ways: it re-reads the same chain,
@@ -37,7 +38,6 @@ import type { PlanRevisionRef } from '../../../contracts/plan.js';
 import type { QueryJobRef, QueryRunRef } from '../../../contracts/query-job.js';
 import { queryAnswerShapeOf } from '../../../contracts/query-job.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
-import { messageOf } from '../../../contracts/error-message.js';
 import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
 import type { SessionDutyReadPort } from '../model/work-line-contracts.js';
 import type { SessionMailboxPort } from '../model/communication-contracts.js';
@@ -51,7 +51,7 @@ import { coldStartOperationRef, type ColdStartActionV1 } from '../state/cold-sta
 import type { ColdStartExplorationQueryRefV1, RoleLineActionV1, WorkspaceJoinActionV1 } from '../state/role-line-action.js';
 import { workspaceJoinOperationRef } from '../state/workspace-join.js';
 import {
-  hostSystemActionRequest, roleExplorationBindingOf, type RoleExplorationBindingV1,
+  roleExplorationBindingOf, type RoleExplorationBindingV1,
 } from '../state/role-exploration.js';
 import { sessionRoleFactsRef } from '../state/role-facts.js';
 import { readOwnerRecord } from '../persistence/owner-record-read.js';
@@ -63,8 +63,8 @@ import { repairNoticeOf } from '../sessions/exploration-followup-service.js';
 export type PlanningQueryRunV1 = {
   principal: Extract<CorePrincipal, { kind: 'query_run' }>;
   session: SessionRef;
-  /** `scribe` only on its `scribe_review` round (121-112). */
-  duty: 'adviser' | 'secretary' | 'scribe';
+  /** `scribe` only on its `scribe_review` round (121-112); `executor` on its planning/text round (121-154). */
+  duty: 'adviser' | 'secretary' | 'scribe' | 'executor';
   scope: WorkspaceScope;
   round: QueryJobRef;
   run: QueryRunRef;
@@ -88,7 +88,7 @@ export type PlanningQueryRunDependencies = {
   duties: SessionDutyReadPort;
   /** The raw body store the bound manifest is read from. */
   bodies: QueryExecutionDependencies['bodies'];
-  /** The one source-message read used to recognise the `overlap-note:` round. */
+  /** The source-message read the exploration resolver uses; note admission reads the frozen intent. */
   messages: Pick<SessionMailboxPort, 'readMessage'>;
   /** The unchanged secretary resolver the dispatcher hands non-planning rounds to. */
   secretaryQueryRun: SecretaryQueryRunPort;
@@ -153,34 +153,35 @@ async function resolvePlanningQueryRun(
   }
   const trustedShape = answerShape === 'plan_round' || answerShape === 'plan_review'
     || answerShape === 'scribe_review';
-  if (!trustedShape) {
+  const line = await readRoundSessionDuty(ctx, deps, execution.sessionRef);
+  if (line.status !== 'ready') return line;
+  const duty = line.duty;
+  // An executor's planning/text round writes notes too (121-154 A10). Its text
+  // round has no shape (`answerShape: null`) and its source is the agent message
+  // that woke it, not only the gate's note request; the six general kinds are
+  // the planning rule's kinds, never a secretary's extra kinds.
+  const executorTextRound = !trustedShape && answerShape === null && duty === 'executor';
+  if (!trustedShape && !executorTextRound) {
     if (answerShape !== null) return rejected('forbidden', 'the QueryRun is not a planning note round');
-    // The `overlap-note:` round: `answerShape` is `text` (manifest `null`) and
-    // the source message is a Host system `action_request`.
-    let messageRead;
-    try {
-      messageRead = await deps.messages.readMessage(ctx, intent.sourceMessageRef);
-    } catch {
-      return unavailable('the planning source message cannot be read');
+    if (intent.answerShape !== 'text') {
+      return rejected('forbidden', 'the planning round is not a gate note request');
     }
-    if (messageRead.status !== 'ready') {
-      return unavailable(`the planning source message cannot be read: ${'reason' in messageRead ? messageRead.reason : messageRead.status}`);
-    }
-    if (!hostSystemActionRequest(messageRead.value)) {
-      return rejected('forbidden', 'the planning round is not a Host system action request');
+    // The frozen `text` shape is a gate note only when the Query carries the gate owner's verified proof
+    // (`overlapNote`, set after the saved `noteRequest.messageRef` matched). A Host human message without
+    // `entry` is text too and is not a note; the sender's identity proves nothing.
+    if (intent.overlapNote !== true) {
+      return rejected('forbidden', 'the planning round is not a gate note request');
     }
   }
 
-  const line = await readRoundSessionDuty(ctx, deps, execution.sessionRef);
-  if (line.status !== 'ready') return line;
   // Coordination: a note's source names its author's duty and scope, so the round's shape and the Session's duty
-  // must agree — the scribe writes only from its own review round, an adviser or secretary from a planning round.
-  const duty = line.duty;
+  // must agree — the scribe writes only from its own review round, an adviser, secretary or executor from a planning
+  // or text round.
   const admitted = answerShape === 'scribe_review' ? (duty === 'scribe' ? duty : null)
-    : duty === 'adviser' || duty === 'secretary' ? duty : null;
+    : duty === 'adviser' || duty === 'secretary' || duty === 'executor' ? duty : null;
   if (admitted === null) {
     return rejected('forbidden', answerShape === 'scribe_review'
-      ? 'the review round Session is not a scribe' : 'the round Session is not an adviser or secretary duty');
+      ? 'the review round Session is not a scribe' : 'the round Session is not an adviser, secretary or executor duty');
   }
 
   return { status: 'ready', value: toPlanningFacts(principal, read, admitted) };
@@ -285,7 +286,10 @@ async function resolveExplorationQueryRun(
     read.job.intent.correlationId);
   if (owner.status !== 'ready') return owner;
   const { action } = owner.value;
-  const entry = action.explorations.find(candidate => candidate.queryRunRef.runId === read.run.run.runId);
+  const entry = action.explorations.find(candidate =>
+    candidate.queryRunRef.projectId === read.run.ref.projectId
+    && candidate.queryRunRef.queryJobId === read.run.ref.queryJobId
+    && candidate.queryRunRef.runId === read.run.run.runId);
   if (entry === undefined) return rejected('forbidden', 'the QueryRun is not one this exploration operation opened');
   let messageRead;
   try {
@@ -306,9 +310,9 @@ async function resolveExplorationQueryRun(
 /**
  * The note owner's one entry: dispatch only. A `role_exploration` round goes to
  * the exploration resolver; a `plan_round`/`plan_review`/`scribe_review` manifest shape, or a
- * `null` shape whose source message is a Host system `action_request`, goes to
- * the planning resolver; every other round goes to the unchanged secretary
- * resolver.
+ * `null` shape, goes to the planning resolver, which accepts the `null` shape
+ * only for the frozen `text` gate note or an executor's text round; every other
+ * round goes to the unchanged secretary resolver.
  */
 export async function resolveNoteQueryRun(
   ctx: CoreCallContext, deps: PlanningQueryRunDependencies,
@@ -339,20 +343,12 @@ export async function resolveNoteQueryRun(
       }
       if (shape === null && (intent.answerShape === undefined || intent.answerShape === 'text')
         && intent.sourceMessageRef !== undefined && intent.sourceMessageRef !== null) {
-        let messageRead;
-        try {
-          messageRead = await deps.messages.readMessage(ctx, intent.sourceMessageRef);
-        } catch (error) {
-          return unavailable(`the planning source message read failed: ${messageOf(error)}`);
-        }
-        if (messageRead.status !== 'ready') {
-          return unavailable(`the planning source message cannot be read: ${'reason' in messageRead ? messageRead.reason : messageRead.status}`);
-        }
-        if (hostSystemActionRequest(messageRead.value)) {
-          const resolved = await resolvePlanningQueryRun(ctx, deps);
-          if (resolved.status !== 'ready') return resolved;
-          return { status: 'ready', value: { kind: 'planning', round: resolved.value } };
-        }
+        // The planning resolver owns the text-round check: the frozen `text`
+        // gate note for an adviser/secretary, and an executor's own
+        // planning/text round (121-154 A10).
+        const resolved = await resolvePlanningQueryRun(ctx, deps);
+        if (resolved.status !== 'ready') return resolved;
+        return { status: 'ready', value: { kind: 'planning', round: resolved.value } };
       }
     }
   }

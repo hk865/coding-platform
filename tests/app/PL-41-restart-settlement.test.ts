@@ -15,6 +15,7 @@ import type { SessionMessageRef } from '../../src/contracts/core/session-message
 import type { GoalRef } from '../../src/contracts/ledger.js';
 import { interventionPlanningQueryRefs } from '../../src/contracts/query-job.js';
 import type { QueryJobRecord } from '../../src/core/work-graph/queries/contracts.js';
+import type { SessionMessage } from '../../src/core/work-graph/model/communication-contracts.js';
 import { graphWrite, plain } from '../helpers/AG2b-collaboration-fixture.js';
 import { byIdentityPrefix, commitBarrier } from '../helpers/S6A-commit-barrier.js';
 import { committed, ready } from '../helpers/S7A-fixture.js';
@@ -68,6 +69,11 @@ async function expectReplyFromOriginalQuery(world: S6AHostWorld, messageRef: Ses
   expect(message.response?.sender).toMatchObject({ kind: 'query_run', answerRef: job.job.job.answerRefs.at(-1) });
   expect(await readBody(world, messageRef, 'response')).toBe(body);
 }
+
+/** The source's public view: the message and the round ending committed for it (`messages/view`). */
+const sourceViewOf = async (world: S6AHostWorld, messageRef: SessionMessageRef) =>
+  ready<{ message: SessionMessage; roundEnding?: { kind: string } }>(
+    await world.post('messages/view', plain(S6A_SCOPE, messageRef)), 'the source view');
 
 async function interruptedGoals(world: S6AHostWorld): Promise<string[]> {
   const report = ready<{ report: { interruptedGoals: { goalRef: GoalRef }[] } }>(await world.post(
@@ -125,8 +131,10 @@ describe('PL-41 (b): a settled Query\'s missing close-out is finished from the m
     // The source was not delivered again, the line has nothing to take, and a further pass changes nothing.
     await heartbeat(world);
     const added = (await listed(world, 'inbox', line)).filter(message => !inbox.includes(message.ref.messageId));
-    expect(added.map(message => [message.sender.kind, message.intent]))
-      .toEqual(Array.from({ length: closingNotices }, () => ['host', 'notify']));
+    // §2.1 (`p2-frozen.md:100`): the platform's own notice is fixed `wake:false` and asks no reply. A record keeps
+    // `needsReply` only when the send carried it (`createSessionMessageRecord`), so "no reply" is "not true".
+    expect(added.map(message => [message.sender.kind, message.wake, message.needsReply === true]))
+      .toEqual(Array.from({ length: closingNotices }, () => ['host', false, false]));
     expect((await consumeView(world, line))?.nextMessage).toBeNull();
     expect(await readS7BMessage(world, messageRef), 'the one ending stands').toEqual(closed);
     expect(await sessionQueries(world, line), 'still no second Query').toHaveLength(queries);
@@ -231,10 +239,12 @@ describe('PL-41 (a): a crash inside the review round', () => {
     await heartbeat(world);
     await heartbeat(world);
     expect(await sessionQueries(world, chain.reviewer), 'no second review round').toHaveLength(queries);
-    // The crash lost the review, so the round ends with no conclusion and the candidate waits for the person.
-    const closed = await heartbeatUntil(world, () => readS7BMessage(world, chain.reviewRef),
-      message => message.withdrawnAt !== null, 80);
-    expect(closed.withdrawnAt, 'the review round has its no-answer ending').not.toBeNull();
+    // The crash lost the review, so the round ends with no conclusion and the candidate waits for the person. The
+    // committed `no_answer` ending withdraws no agent or system source (`p2-frozen.md:168`); the view names it.
+    const closed = await heartbeatUntil(world, () => sourceViewOf(world, chain.reviewRef),
+      view => view.roundEnding !== undefined, 80);
+    expect(closed.roundEnding?.kind, 'the review round has its no-answer ending').toBe('no_answer');
+    expect(closed.message.withdrawnAt, 'the system round is not withdrawn').toBeNull();
     const parked = await waitDriver(world, goal, undefined, snapshot => snapshot.last?.status === 'ready'
       && snapshot.last.value.source?.kind === 'candidate', 'PL-41: the candidate card reaches the driver');
     expect(parked.last).toMatchObject({ status: 'ready', value: { state: 'waiting' } });
@@ -286,11 +296,12 @@ describe('PL-41 (c): an accepted candidate whose M is a real executor\'s wait', 
     expect(await readProposal(world, proposalRef)).toEqual(adopted);
     // Forward work goes on (the new Task's member request is its own message and Query); M gets no second one.
     // G7 W2: the pass that wrote the candidate also closed the adviser's round (`candidate`), so the inbox holds that
-    // Host `notify` too; a notify is never a planning Query's source.
+    // Host notice too; a platform notice is fixed `wake:false` and never a planning Query's source (`p2-frozen.md:100`,
+    // `:144`). The member request is a Host system message that does open its own Query.
     const inbox = await listed(world, 'inbox', adviser);
     expect(inbox.filter(message => message.sender.kind !== 'host').map(message => message.ref)).toEqual([m.message.ref]);
     expect((await sessionQueries(world, adviser)).map(run => run.ref.queryJobId).sort())
-      .toEqual(inbox.filter(message => message.intent !== 'notify')
+      .toEqual(inbox.filter(message => message.wake !== false)
         .map(message => interventionPlanningQueryRefs(message.ref).queryJobRef.queryJobId).sort());
     expect((await candidateCards(world, goal)).filter(card => card.state === 'waiting_answer')).toEqual([]);
   }, 120_000);

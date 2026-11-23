@@ -75,10 +75,11 @@ import { createExecutionHistoryReader } from '../../src/core/agent-runtime/obser
 import { createGraphExecutionHistoryReader } from '../../src/core/agent-runtime/graph-execution-history.js';
 import { createExecutionHistoryService } from '../../src/core/work-graph/tasks/execution-history-service.js';
 import { createSourceAuthorityReader } from '../../src/core/work-graph/source-authority-reader.js';
-import { createRuntimeHostDouble, createScriptedModel } from './B2-runtime-fixture.js';
+import { createRuntimeHostDouble, createScriptedModel, deliveryFactsForFixture } from './B2-runtime-fixture.js';
 import { createRunControlService } from '../../src/core/work-graph/tasks/control-service.js';
 import { createTaskRequeueService } from '../../src/core/work-graph/tasks/requeue-service.js';
 import { createSessionFactsService } from '../../src/core/work-graph/tasks/session-facts.js';
+import { createQueryRoundResolver } from '../../src/core/work-graph/tasks/query-round.js';
 
 import { createSessionResponsibilityBasisReader, createPlanReaders } from '../../src/core/work-graph/tasks/plan-readers.js';
 import { createPlanningQuestionReader } from '../../src/core/work-graph/tasks/planning-question-reader.js';
@@ -92,6 +93,7 @@ import type { SessionMailboxDependencies, SessionMailboxPort } from '../../src/c
 import type { PlanTaskPort } from '../../src/core/work-graph/model/plan-contracts.js';
 import { createSessionResponsibilityService } from '../../src/core/work-graph/sessions/session-responsibility-service.js';
 import { unknownSessionDuty } from './session-duty-double.js';
+import { recordConsultationCopy } from './S2C-L-runs-support.js';
 import { createSessionLifecycleService } from '../../src/core/work-graph/sessions/session-lifecycle.js';
 import { createSessionAnomalyService } from '../../src/core/work-graph/tasks/session-anomaly-service.js';
 import { createWorkflow } from '../../src/business/workflow/workflow.js';
@@ -380,7 +382,7 @@ export async function completeWork(f: B2ExecutionFixture, claim: TaskClaim = f.c
   expect((await f.read(claim)).session.occupancy).toBeNull();
 }
 export async function beginConsultation(b2: B2ExecutionFixture, requestId: string, from: SessionRef,
-  now: () => string, isolatedCopy = true) {
+  now: () => string, _isolatedCopy = true) {
     const base = b2.base;
     const records = base.records;
     const goalRef = base.goalRef;
@@ -389,6 +391,7 @@ export async function beginConsultation(b2: B2ExecutionFixture, requestId: strin
     const materialReads = createMaterialRecordReaders(records);
     const mailbox = createSessionMailbox({ records, sessions: base.sessionsPort,
       defaultInquiryDeadlineMs: 86_400_000,
+      queryRounds: createQueryRoundResolver({ records, duties: unknownSessionDuty, bodies: b2.bodies }),
       executions: createRunStateReader({ records }), roles: createRoleConfigurationService({ records, now, eventId }),
       materials: createMaterialService({ bodies: b2.bodies, authority: materialReads.authority, now }),
       systemActor: { kind: 'system', id: 'fx3-query' }, now, newId: eventId });
@@ -404,14 +407,13 @@ export async function beginConsultation(b2: B2ExecutionFixture, requestId: strin
     const question = `consultation ${requestId}`;
     const sent = await mailbox.sendMessage(base.ctx, {
       meta: { requestId: `s1-maintenance-send-${requestId}`, expected: [] },
-      input: { recipient: from, text: question, intent: 'inquiry', needsReply: true },
+      input: { recipient: from, text: question, needsReply: true, answeredBy: 'copy' as const, wake: false },
     });
     if (sent.status !== 'committed') throw new Error(`maintenance inquiry send failed: ${JSON.stringify(sent)}`);
     const messageRef = sent.value.ref;
 
-    let copy = from;
-    let derivation: NonNullable<SessionMessage['consultationDerivation']> | undefined;
-    if (isolatedCopy) {
+    // A consultation always answers on a real child line: the production path admits a new Session
+    // (`src/business/workflow/consultation.ts:355-360`), never a derivation from the line to itself.
     const admitted = await base.sessionsPort.admitSessionCreation(base.ctx, {
       meta: { requestId: `s1-maintenance-copy-admit-${requestId}`, expected: [] },
       input: { workspace: base.scope, kernelStore: { adapterId: KERNEL_ADAPTER, storeKey: KERNEL_STORE },
@@ -426,26 +428,18 @@ export async function beginConsultation(b2: B2ExecutionFixture, requestId: strin
         historyCursor: null, observedAt: now() },
     });
     if (registered.status !== 'committed') throw new Error(`maintenance copy registration failed: ${JSON.stringify(registered)}`);
-    copy = { projectId: registered.value.ref.projectId, sessionId: registered.value.ref.sessionId };
+    const copy: SessionRef = { projectId: registered.value.ref.projectId, sessionId: registered.value.ref.sessionId };
 
     const sourceCard = await base.sessionsPort.readSession(base.ctx, from);
     if (sourceCard.status !== 'ready') throw new Error(`maintenance copy source read failed: ${JSON.stringify(sourceCard)}`);
-    const foundMessage = await mailbox.readMessage(base.ctx, messageRef);
-    if (foundMessage.status !== 'ready') throw new Error(`maintenance copy message read failed: ${JSON.stringify(foundMessage)}`);
-    derivation = {
-      childSessionRef: copy, sourceSessionRef: from,
+    const derivation = await recordConsultationCopy(mailbox, base.ctx, {
+      messageRef, source: from,
       sourceKernel: { adapterId: sourceCard.value.record.kernel.adapterId,
         kernelSessionId: sourceCard.value.record.kernel.kernelSessionId },
-      throughPosition: 1,
-    };
-    const derived = await mailbox.recordConsultationDerivation!(base.ctx, {
-      meta: { requestId: `s1-maintenance-derivation-${requestId}`,
-        expected: [{ ref: messageRef, revision: foundMessage.value.revision }] },
-      input: { messageRef, derivation },
+      child: copy, throughPosition: 1,
+      requestId: `s1-maintenance-derivation-${requestId}`,
     });
-    if (derived.status !== 'committed') throw new Error(`maintenance copy derivation failed: ${JSON.stringify(derived)}`);
 
-    }
     const { queryJobRef, queryRunRef } = consultationQueryRefs(messageRef);
     const queryBudget = { maxTokens: null, deadline: null };
     const queryRuntimeBudget = structuredClone(DEFAULT_RUNTIME_BUDGET);
@@ -528,16 +522,8 @@ export async function beginConsultation(b2: B2ExecutionFixture, requestId: strin
     });
     if (entered.status !== 'committed') throw new Error(`maintenance copy query entered failed: ${JSON.stringify(entered)}`);
 
-    // query-execution.ts excludes derived copies from mailbox input supply:
-    // their question is in the manifest, so they never accept the source's inputId.
-    if (!isolatedCopy) {
-      const accepted = await mailbox.recordInputAccepted!(base.ctx, {
-        input: { messageRef, part: 'message', executionRef: queryRunRef, executionSessionRef: copy,
-          kernel: { ...kernel, position: 2 } },
-        meta: { requestId: `fx3-query-accepted-${requestId}`, expected: [await pinOf(messageRef)] },
-      });
-      if (accepted.status !== 'committed') throw new Error(`Query input acceptance failed: ${JSON.stringify(accepted)}`);
-    }
+    // query-execution.ts excludes derived copies from mailbox input supply: every consultation answers on a
+    // derived child line, so its question is in the manifest and it never accepts the source's inputId.
     return { sessionRef: copy, queryRunRef, messageRef, mailbox, queryExecution, async answer() {
     const answerText = `answer ${requestId}`;
     const answerBody = await b2.bodies.put({ body: answerText, contentType: 'text/plain; charset=utf-8',
@@ -659,6 +645,7 @@ export async function workflowForFixture(b2: B2ExecutionFixture, options: {
   const materials = createMaterialService({ bodies: b2.bodies, authority, now });
   const mailboxDeps: SessionMailboxDependencies = { records, sessions: base.sessionsPort, executions: reads, roles, materials,
     defaultInquiryDeadlineMs: 86_400_000,
+    queryRounds: createQueryRoundResolver({ records, duties: unknownSessionDuty, bodies: b2.bodies }),
     systemActor: { kind: 'system', id: prefix }, now, newId: eventId };
   const messages = createSessionMailbox(mailboxDeps);
   const workflowPlans = options.plans ?? base.plans;
@@ -705,6 +692,7 @@ export async function workflowForFixture(b2: B2ExecutionFixture, options: {
     graphHistory: createGraphExecutionHistoryReader({ executions: reads, history: activity }),
     sessionOperations, kernelStores, workspaceHost,
     sourceAuthority: () => createSourceAuthorityReader({ authority }),
+    deliveryFacts: deliveryFactsForFixture,
     host: createRuntimeHostDouble({ runRefs: options.allowedRuns ?? new Set<string>(), scripted,
       root: base.directory, skillRoot: join(base.directory, 'skills'), scope: base.scope,
       role: { kind: 'legacy_template', templateId: 'builder', templateRevision: '1' } }),

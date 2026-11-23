@@ -256,7 +256,7 @@ describe('WP2 context extensions provider (module side; E2 evidence in WP2-wirin
     // so they follow the sorted proposal ids.
     // 3 original unwired sources + the two new card kinds: 5 hint rows in every focus view.
     const hintRowKeys = [
-      'decision:not_available:message_release',
+      'decision:not_available:action_release',
       'decision:not_available:note_review',
       'decision:not_available:planning_question',
       'decision:not_available:repair_approval',
@@ -324,7 +324,7 @@ describe('WP2 context extensions provider (module side; E2 evidence in WP2-wirin
       'decision:not_available:goal_cause',
       'decision:not_available:note_review',
       'decision:not_available:planning_question',
-      'decision:not_available:message_release',
+      'decision:not_available:action_release',
       'decision:not_available:repair_approval',
       'decision:not_available:structural_proposal',
     ];

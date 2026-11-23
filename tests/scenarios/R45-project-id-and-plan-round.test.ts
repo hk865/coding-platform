@@ -36,7 +36,7 @@ describe('rejects: a cross-project id names the caller project', () => {
     const before = await inbox();
     const answer = await world.post('messages/send', graphWrite(S6A_SCOPE, {
       recipient: { projectId: 'r45-other-project', sessionId: line.ref.sessionId },
-      text: 'R45 cross-project message', intent: 'notify', needsReply: false, goalRef: goal,
+      text: 'R45 cross-project message', needsReply: false, wake: false, goalRef: goal,
     }, 'r45-t5-send'));
     expect(answer.body).toMatchObject({ status: 'rejected', code: 'forbidden',
       reason: 'the recipient Session belongs to another project; this project is ag2b-collab-project' });

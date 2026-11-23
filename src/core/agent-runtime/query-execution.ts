@@ -38,14 +38,16 @@ import { RuntimeModelCallRejected } from './model-call-access.js';
 import { runObservedModel } from './observed-model-run.js';
 import { readPromptTexts } from './prompt-set-texts.js';
 import { registerReadonlyCommandTool, READONLY_COMMAND_TOOL_NAME } from './readonly-command-tool.js';
-import { createMailboxInputSupply } from './execution-inputs.js';
+import { createMailboxInputSupply, type InputSupply } from './execution-inputs.js';
 import {
-  createSessionMailboxTools, SECRETARY_QUERY_MAILBOX_TOOL_NAMES, type SessionMailboxToolsHandle,
+  ACTION_TOOL_NAMES, ASK_COPY_TOOL_NAME, createActionTools, createAskCopyTool, createPersonMessageTools,
+  PERSON_MESSAGE_TOOL_NAMES, SESSION_MAILBOX_TOOL_NAMES, createSessionMailboxTools,
+  type SessionMailboxToolsHandle,
 } from './communication-tools.js';
 import { ARCHITECTURE_TOOL_NAMES, createArchitectureTools, type ArchitectureToolsHandle } from './architecture-tools.js';
 import { createMemberTools, CREATE_MEMBER_TOOL_NAME, type CreateMemberToolsHandle } from './member-tools.js';
 import { createReadRequestTools, READ_REQUESTS_TOOL_NAMES, type ReadRequestToolsHandle } from './request-read-tools.js';
-import { projectQueryConfiguration } from './query-preparation.js';
+import { adviserMemberRound, projectQueryConfiguration } from './query-preparation.js';
 import { createQueryObservation } from './query-observation.js';
 import { createQuerySourceCaptureFactory } from './source-capture-access.js';
 import { createSessionHistoryCursorOwner } from './session-operations.js';
@@ -54,7 +56,9 @@ import {
   COMPACTION_DEFAULTS, compactionAtStart, runSummaryCall, type CompactionWriteResult, type SummaryCallOptions,
 } from './compaction.js';
 import { renderTemplate } from '../../contracts/prompts/render-template.js';
-import { createQueryGraphToolGroup, finalToolNamesOf, type ToolGroup } from './tool-group-assembly.js';
+import {
+  createQueryGraphToolGroup, finalToolNamesOf, queryRoundCoordinationNames, queryRoundKindOf, roundWanted, type ToolGroup,
+} from './tool-group-assembly.js';
 import { goalRefFor } from '../work-graph/persistence/commit-compiler.js';
 import { createLinkCheckTools, LINK_CHECK_TOOL_NAMES } from './link-check-tool.js';
 import { createWebLookupTools, WEB_LOOKUP_TOOL_NAMES } from './web-lookup-tools.js';
@@ -305,6 +309,7 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
       const intentExecution = record.job.job.intent.execution;
       const explorationRound = intentExecution.kind === 'role_exploration';
       const consultationRound = intentExecution.kind === 'semantic_query' && intentExecution.consultation !== undefined;
+      const secretaryRound = manifest.request !== null;
       if (signal.aborted) return rejected('cancelled', 'the Query start was cancelled before the Host configuration read');
 
       if (deps.host.resolveQueryConfiguration === undefined) {
@@ -321,7 +326,7 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
       if (configured.status !== 'ready') return mapRead(configured);
       const projected = projectQueryConfiguration({
         host: configured.value, requested: binding.runtimeBudget, roleResolution: state.roleResolution,
-        secretaryRound: manifest.request !== null, explorationRound,
+        secretaryRound, explorationRound,
         execution: intentExecution, sessionRole: state.role,
       });
       if (projected.configurationRevision !== manifest.hostConfigurationRevision
@@ -349,36 +354,24 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
       }
       // The frozen answer shape decides the submit tools; note admission is the
       // separate question (spec §5.2.8): a request round keeps the secretary
-      // rule, every other Query goes through the planning rule, whose only
-      // extra source read is a shape-null `intervention_planning` Query.
+      // rule, every other Query goes through the planning rule. A gate's saved
+      // overlap-note is the one text-shaped adviser/secretary round
+      // (`planningAnswerShapeOf`); the Query carries the gate owner's verified
+      // proof (`overlapNote`, set only after the saved `noteRequest.messageRef`
+      // matched), so this driver reads that frozen flag and never the sender.
       const shape = manifest.answerShape;
-      let hostSystemPlanningSource = false;
-      if (shape === null && intentExecution.kind === 'intervention_planning') {
-        if (deps.messages === undefined) {
-          return rejected('unavailable', 'the planning source read is not bound');
-        }
-        let source;
-        try {
-          // The source lives in its recipient line's workspace, which may differ from the Query's (the Goal's).
-          const sourceRef = intentExecution.sourceMessageRef!;
-          source = await deps.messages.readMessage(hostContextIn(owned, sourceRef.workspaceId), sourceRef);
-        } catch (error) {
-          return rejected('unavailable', `the planning source message read failed: ${messageOf(error)}`);
-        }
-        if (source.status !== 'ready') {
-          return rejected('unavailable', 'the planning source message could not be read');
-        }
-        const message = source.value;
-        hostSystemPlanningSource = message.sender.kind === 'host'
-          && message.sender.actor.kind === 'system' && message.intent === 'action_request';
-      }
+      const gateTextNote = intentExecution.kind === 'intervention_planning'
+        && intentExecution.answerShape === 'text'
+        && intentExecution.overlapNote === true
+        && (projected.duty === 'adviser' || projected.duty === 'secretary');
       const noteAdmission: QueryNoteAdmissionV1 = manifest.request === null
         ? planningNoteAdmission({
             answerShape: shape,
             effectiveGoalId: manifest.goal === null ? null : manifest.goal.ref.goalId,
             planRef: manifest.focusPlan === null ? null : manifest.focusPlan.ref,
-            hostSystemPlanningSource,
+            hostSystemPlanningSource: gateTextNote,
             roleExploration: explorationRound,
+            executorTextRound: projected.duty === 'executor' && !consultationRound,
           })
         : secretaryNoteAdmission({
             requestRoot: manifest.request.requestRoot,
@@ -390,11 +383,18 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
       const graphDeps = deps.graphContext === undefined || deps.taskInputs === undefined || deps.notes?.memory === undefined
         ? null
         : { graph: deps.graphContext, inputs: deps.taskInputs, notes: deps.notes.memory };
+      // §2.6: the secretary's request round plus the adviser's one planning
+      // round; the same rule the projection and preparation freeze use.
+      const memberRound = secretaryRound || adviserMemberRound({
+        executionKind: intentExecution.kind, shape, duty: projected.duty,
+      });
       // Ruling 16: the one final tool list, compared with the frozen one before
       // any entry write. A difference is `forbidden`.
       const startToolNames = finalToolNamesOf({
         callKind: 'query',
         explorationRound,
+        readOnlyCopy: consultationRound,
+        adviserMemberRound: memberRound,
         noteAdmission,
         selected: manifest.permissions.tools,
         reviewPhase: null,
@@ -403,6 +403,9 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
         frozenSource: hasFileRead && currentAuthorization?.status === 'ready',
         materialTools: false,
         goalBound: manifest.goal !== null,
+        // The §2.6 round is named by the existing frozen facts: the request/planning
+        // note class, the frozen answer shape and the Host's own duty projection.
+        ...(projected.duty === null ? {} : { duty: projected.duty }),
         answerTools: shape,
         // The planning submit is part of the answer format, read back from the
         // same frozen pack the preparation wrote; the whole list is compared
@@ -410,13 +413,16 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
         answerPlanTool: manifest.promptSet.toolNames.includes('submit_secretary_answer')
           && manifest.promptSet.toolNames.includes('submit_plan_round'),
         owners: {
-          mailbox: false, decisionMessages: false, applicationReceipt: false,
-          sessions: false, plans: true,
+          mailbox: deps.messages !== undefined, decisionMessages: deps.decisionMessages !== undefined,
+          applicationReceipt: false,
+          plans: true,
           graph: graphDeps !== null,
           notes: noteAdmission.class !== 'none', unknownCallReviews: false, commandRerunRequests: false,
           linkCheck: deps.notes?.check !== undefined,
           webLookup: hostConfig.model.webLookup !== undefined,
           architectureProposals: deps.architectureProposals !== undefined,
+          actionRequests: deps.actionRequests !== undefined && deps.claimHolds !== undefined,
+          claimHolds: deps.actionRequests !== undefined && deps.claimHolds !== undefined,
         },
         // The read-only command is a Host-gated capability: the start reads the
         // real whole-workspace read policy again (the same fact preparation
@@ -494,12 +500,34 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
           subjectRunRef = packet.value.packet.subjectRunRef;
         }
       }
-      // Only a secretary request round selects the two mailbox names; `create_member` and `read_requests` follow the
-      // frozen list (the adviser's planning round also keeps the first, 121-114; an exploration round the second).
-      const secretaryMailboxNames: readonly string[] = manifest.request === null ? []
-        : SECRETARY_QUERY_MAILBOX_TOOL_NAMES.filter(name => frozenToolNames.includes(name));
-      const memberNames = frozenToolNames.includes(CREATE_MEMBER_TOOL_NAME) ? [CREATE_MEMBER_TOOL_NAME] : [];
-      const readRequestNames: readonly string[] = READ_REQUESTS_TOOL_NAMES.filter(name => frozenToolNames.includes(name));
+      // §2.6: the same round projection preparation used; every selected name
+      // is filtered through it, so this start can never widen the frozen round.
+      const roundKind = queryRoundKindOf({
+        duty: projected.duty ?? 'unknown', noteClass: noteAdmission.class, answerTools: shape,
+        explorationRound, readOnlyCopy: consultationRound,
+      });
+      const roundAllowed = queryRoundCoordinationNames(roundKind);
+      const frozenWanted = new Set(frozenToolNames);
+      const mailboxNames: readonly string[] = roundWanted(SESSION_MAILBOX_TOOL_NAMES, frozenWanted, roundAllowed);
+      const personNames: readonly string[] = roundWanted(PERSON_MESSAGE_TOOL_NAMES, frozenWanted, roundAllowed);
+      const askCopyNames: readonly string[] = roundWanted([ASK_COPY_TOOL_NAME], frozenWanted, roundAllowed);
+      const actionNames: readonly string[] = roundWanted(ACTION_TOOL_NAMES, frozenWanted, roundAllowed);
+      const queryDecisionNames: readonly string[] = roundWanted(['read_user_decision'], frozenWanted, roundAllowed);
+      const queryDecisionOwner = queryDecisionNames.length === 0 && personNames.length === 0 ? undefined : deps.decisionMessages;
+      const actionOwners = deps.actionRequests === undefined || deps.claimHolds === undefined ? null
+        : { actionRequests: deps.actionRequests, claimHolds: deps.claimHolds };
+      if ((actionNames.length > 0 && actionOwners === null) || (queryDecisionNames.length > 0 && queryDecisionOwner === undefined)
+        || (personNames.length > 0 && queryDecisionOwner === undefined)) {
+        return rejected('unsupported', 'the Query round selected an action or user-decision tool but no owner is bound');
+      }
+      if ((mailboxNames.length > 0 || askCopyNames.length > 0) && deps.messages === undefined) {
+        return rejected('unsupported', 'the Query round selected a mailbox tool but no SessionMailbox dependency is bound');
+      }
+      // The same member-round judgment: a frozen `create_member` is built only
+      // in the round the projection kept it for, never by note class alone.
+      const memberNames = memberRound
+        ? roundWanted([CREATE_MEMBER_TOOL_NAME], frozenWanted, roundAllowed) : [];
+      const readRequestNames: readonly string[] = roundWanted(READ_REQUESTS_TOOL_NAMES, frozenWanted, roundAllowed);
       // Only a role_exploration round may carry the structural proposal tool, bound to the same owner as Work's.
       const architectureNames: readonly string[] = explorationRound
         ? ARCHITECTURE_TOOL_NAMES.filter(name => frozenToolNames.includes(name)) : [];
@@ -515,7 +543,10 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
       if (grantedGraphNames.length > 0 || historyNames.length > 0 || grantedLinkCheckNames.length > 0
         || grantedWebNames.length > 0
         || noteAdmission.class !== 'none' || submitNames.length > 0
-        || secretaryMailboxNames.length > 0 || memberNames.length > 0 || readRequestNames.length > 0
+        || mailboxNames.length > 0 || personNames.length > 0 || askCopyNames.length > 0
+        || queryDecisionNames.length > 0
+        || actionNames.length > 0
+        || memberNames.length > 0 || readRequestNames.length > 0
         || architectureNames.length > 0 || whiteboardNames.length > 0) {
         // The original query_run tool context (spec §4.1: tool inputs never
         // obtain the Host context/reader). The narrow history proxy separately
@@ -618,14 +649,43 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
           });
         }
         let mailboxTools: SessionMailboxToolsHandle | null = null;
-        if (secretaryMailboxNames.length > 0) {
+        if (mailboxNames.length > 0 || queryDecisionNames.length > 0) {
           if (mailboxPort === undefined) {
-            return rejected('unsupported', 'the secretary Query selected a mailbox tool but no SessionMailbox dependency is bound');
+            return rejected('unsupported', 'the Query selected a mailbox tool but no SessionMailbox dependency is bound');
           }
           mailboxTools = createSessionMailboxTools({
             mailbox: mailboxPort,
+            ...(queryDecisionOwner === undefined ? {} : { decisionMessages: queryDecisionOwner }),
             context: toolContext,
             sessionRef: state.sessionRef,
+            requestIdForCall: (call: Readonly<ToolCall>): string => queryToolRequestIdForCall(queryRunRef, call),
+            texts: toolTexts,
+          });
+        }
+        let personTools: SessionMailboxToolsHandle | null = null;
+        if (personNames.length > 0 && queryDecisionOwner !== undefined && roundGoalRef !== null) {
+          personTools = createPersonMessageTools({
+            decisionMessages: queryDecisionOwner,
+            goalRef: roundGoalRef,
+            context: toolContext,
+            requestIdForCall: (call: Readonly<ToolCall>): string => queryToolRequestIdForCall(queryRunRef, call),
+            texts: toolTexts,
+          });
+        }
+        let askCopyTools: SessionMailboxToolsHandle | null = null;
+        if (askCopyNames.length > 0 && mailboxPort !== undefined) {
+          askCopyTools = createAskCopyTool({
+            mailbox: mailboxPort,
+            context: toolContext,
+            requestIdForCall: (call: Readonly<ToolCall>): string => queryToolRequestIdForCall(queryRunRef, call),
+            texts: toolTexts,
+          });
+        }
+        let actionTools: SessionMailboxToolsHandle | null = null;
+        if (actionNames.length > 0 && actionOwners !== null) {
+          actionTools = createActionTools({
+            ...actionOwners,
+            context: toolContext,
             requestIdForCall: (call: Readonly<ToolCall>): string => queryToolRequestIdForCall(queryRunRef, call),
             texts: toolTexts,
           });
@@ -695,7 +755,7 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
         const names = [
           ...grantedGraphNames, ...historyNames, ...grantedLinkCheckNames, ...grantedWebNames, ...whiteboardNames,
           ...noteNames, ...architectureNames,
-          ...secretaryMailboxNames,
+          ...mailboxNames, ...personNames, ...askCopyNames, ...queryDecisionNames, ...actionNames,
           ...memberNames, ...readRequestNames, ...submitNames,
         ];
         if (names.length > 0) {
@@ -708,7 +768,11 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
               ...(whiteboardTools?.create(workspace) ?? []).filter(definition => whiteboardNames.includes(definition.name)),
               ...(noteTools?.create(workspace) ?? []).filter(definition => noteNames.includes(definition.name)),
               ...(architectureTools?.create(workspace) ?? []),
-              ...(mailboxTools?.create(workspace) ?? []).filter(definition => secretaryMailboxNames.includes(definition.name)),
+              ...(mailboxTools?.create(workspace) ?? []).filter(definition =>
+                mailboxNames.includes(definition.name) || queryDecisionNames.includes(definition.name)),
+              ...(personTools?.create(workspace) ?? []).filter(definition => personNames.includes(definition.name)),
+              ...(askCopyTools?.create(workspace) ?? []).filter(definition => askCopyNames.includes(definition.name)),
+              ...(actionTools?.create(workspace) ?? []).filter(definition => actionNames.includes(definition.name)),
               ...(memberTools?.create(workspace) ?? []).filter(definition => memberNames.includes(definition.name)),
               ...(readRequestTools?.create(workspace) ?? []).filter(definition => readRequestNames.includes(definition.name)),
               ...(answerTools?.create(workspace) ?? []),
@@ -995,7 +1059,11 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
       // Ruling 14: the same pure rule runs at start. A Query with a formal basis
       // reads no boundary (C7); without one it reads the real completed boundary.
       let currentHistory;
-      if (manifest.sessionBasis !== undefined) {
+      if (manifest.takesSessionHistory === false) {
+        // The preparation already froze this round to its own turn (a formal
+        // review round); its older boundary is neither read nor allowed to block.
+        currentHistory = { mode: 'current_turn' as const, takesSessionHistory: false as const };
+      } else if (manifest.sessionBasis !== undefined) {
         currentHistory = sessionHistoryDecision({ callKind: 'query', sessionBasis: manifest.sessionBasis });
       } else {
         const cursorOwner = createSessionHistoryCursorOwner({ kernelStores: deps.kernelStores });
@@ -1009,9 +1077,6 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
         currentHistory = sessionHistoryDecision({ callKind: 'query',
           sessionBasis: undefined, completedBoundary: { cursor: boundary.cursor, position: boundary.position } });
       }
-      const historyDecision = !manifest.takesSessionHistory && currentHistory.takesSessionHistory
-        ? { mode: 'current_turn' as const, takesSessionHistory: false as const }
-        : currentHistory;
       // The options this round shares with its summary call (slice-K2-SPEC L18); the per-turn ones are below.
       const shared: SummaryCallOptions = {
         kernel: deps.kernel,
@@ -1049,9 +1114,9 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
       // record written or reused becomes this round's history boundary. A failed Kernel read is the same
       // `unavailable` as a failed boundary read.
       let compaction: CompactionWriteResult | null = null;
-      if (historyDecision.mode === 'session_history' && historyDecision.sourceSessionId === null) {
+      if (currentHistory.mode === 'session_history' && currentHistory.sourceSessionId === null) {
         compaction = await compactionAtStart({ ctx: owned, session: record.session,
-          cursor: historyDecision.throughPosition, windowTokens: manifest.runtimeBudget.contextWindowTokens,
+          cursor: currentHistory.throughPosition, windowTokens: manifest.runtimeBudget.contextWindowTokens,
           ratios: hostConfig.compaction ?? COMPACTION_DEFAULTS, kernelStores: deps.kernelStores, now: deps.now,
           ...(deps.workRunRefsOf === undefined ? {} : { readWorkRunRefs: deps.workRunRefsOf }),
           summarize: (boundary, cursor) => runSummaryCall({ options: shared, kernelStores: deps.kernelStores,
@@ -1060,10 +1125,10 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
             inputDigest: manifest.inputDigest, newId: deps.newId, now: deps.now }) });
         if (compaction.status === 'rejected') return compaction;
       }
-      const sessionContext = historyDecision.mode === 'session_history'
+      const sessionContext = currentHistory.mode === 'session_history'
         ? { version: 1 as const, mode: 'session_history' as const,
-          throughPosition: compaction?.status === 'compacted' ? compaction.position : historyDecision.throughPosition,
-          ...(historyDecision.sourceSessionId === null ? {} : { sourceSessionId: historyDecision.sourceSessionId }) }
+          throughPosition: compaction?.status === 'compacted' ? compaction.position : currentHistory.throughPosition,
+          ...(currentHistory.sourceSessionId === null ? {} : { sourceSessionId: currentHistory.sourceSessionId }) }
         : { version: 1 as const, mode: 'current_turn' as const };
 
       // SHT-2 (121-112): only a round that actually has the read-only command tool registers, so no other Query gains
@@ -1071,6 +1136,26 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
       const commandWatch = readonlyCommandTool === undefined ? undefined : deps.runningCommands?.watch({
         run: { kind: 'query', queryRunRef }, workspaceId: queryRunRef.workspaceId, sessionRef: state.sessionRef });
       const modelBarrier = commandWatch?.barrier(answerBarrier) ?? answerBarrier;
+      // Design 2.2: a non-copy, non-formal-review Query round takes the mailbox
+      // supply (a secretary request round included); a plan review, exec review
+      // and check review round takes none.
+      let mailboxSupply: InputSupply | undefined;
+      if (!(deps.messages === undefined || roundKind === 'copy'
+        || roundKind === 'reviewer_review' || roundKind === 'check_review')) {
+        // Rule W/M4: a Query's mail lives in its claimed Session's workspace, which
+        // may differ from the Goal workspace the Query runs in. The QueryRef keeps
+        // its own scope; only the mailbox read is re-scoped to the line.
+        const lineCtx = hostContextIn(owned, record.session.workspaceId);
+        mailboxSupply = createMailboxInputSupply({
+          messages: deps.messages, deliveryFacts: deps.deliveryFacts, context: () => lineCtx,
+          sessionRef: state.sessionRef,
+          texts: promptTexts.value, toolNames: manifest.promptSet.toolNames,
+          ...(deps.gateNotes === undefined ? {} : { gateNotes: deps.gateNotes }),
+          ...(deps.systemRounds === undefined ? {} : { systemRounds: deps.systemRounds }),
+          queryRound: { sourceMessageRef: intentExecution.kind === 'intervention_planning'
+            ? intentExecution.sourceMessageRef ?? null : null },
+        });
+      }
       let thrown: unknown;
       await commandRoute?.open();
       try {
@@ -1082,20 +1167,7 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
           ...(commandSandbox === undefined ? {} : { commandSandbox }),
           sessionId: record.session.kernel.kernelSessionId,
           input: manifest.input,
-          // A request round (all request kinds) takes the notify-only supply; it
-          // takes precedence over today's ordinary semantic-Query branch, and a
-          // consultation (a derivation, request === null) still gets none.
-          ...(manifest.request !== null
-            ? (deps.messages === undefined ? {} : {
-                inputSupply: createMailboxInputSupply({ messages: deps.messages, context: () => owned,
-                  sessionRef: state.sessionRef, runRef: queryRunRef,
-                  texts: promptTexts.value, toolNames: manifest.promptSet.toolNames, only: 'notify' }),
-              })
-            : (deps.messages === undefined || intentExecution.kind !== 'semantic_query' || intentExecution.consultation?.derivation !== undefined ? {} : {
-                inputSupply: createMailboxInputSupply({ messages: deps.messages, context: () => owned,
-                  sessionRef: state.sessionRef, runRef: queryRunRef,
-                  texts: promptTexts.value, toolNames: manifest.promptSet.toolNames }),
-              })),
+          ...(mailboxSupply === undefined ? {} : { inputSupply: mailboxSupply }),
           sessionContext,
           executionIdentity: { runId: kernel.runId, turnId: kernel.turnId },
           controlHooks: [

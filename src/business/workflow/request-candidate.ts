@@ -26,14 +26,17 @@ import {
 } from '../../core/work-graph/tasks/initial-plan.js';
 import { deriveFuturePlanDelta, planInCallerView } from '../../core/work-graph/tasks/plan-validation.js';
 import { mergeStageRefinement } from '../../core/work-graph/tasks/stage-segment.js';
+import { decisionActionPolicy } from '../../core/work-graph/state/decision-policy.js';
 import type { CheckApproval } from './check-approval.js';
-import { automationContext, ownContext } from './workflow.js';
+import { autoAdoptCandidate, ownContext, touchesExistingTasks } from './workflow.js';
 import type {
   PlanRoundEndResultV1, PlanTurnFactsV1, WorkflowDependencies,
 } from './ports.js';
 
 /** The Plan/request reads the entry takes; all are already on the injected Workflow bag. */
-type PlanTurnDependencies = Pick<WorkflowDependencies, 'plans' | 'requestCandidates' | 'requests'>;
+type PlanTurnDependencies = Pick<WorkflowDependencies,
+  'plans' | 'requestCandidates' | 'requests' | 'messages' | 'readCandidateCard' | 'latestAgentCandidate'
+  | 'sessions' | 'sessionDuty'>;
 
 function skipped(reason: string, transient = false): PlanRoundEndResultV1 {
   return { status: 'skipped', reason, transient };
@@ -59,15 +62,11 @@ const SMALL_ARRANGEMENT_MAX_NEW_TASKS = 3;
 function smallArrangement(source: PlanRevisionSnapshot, target: PlanRevisionDraft): boolean {
   const result = deriveFuturePlanDelta(source, target);
   if (result.status !== 'supported') return false;
-  const { addedTaskIds, changedTaskIds, dispositionOnlyTaskIds } = result.delta;
-  // cancelledTaskIds also lists every old non-active Task, changed or not (plan-validation.ts:421): not used here.
-  if (addedTaskIds.length < 1 || addedTaskIds.length > SMALL_ARRANGEMENT_MAX_NEW_TASKS
-    || changedTaskIds.length !== 0 || dispositionOnlyTaskIds.length !== 0) return false;
-  // "No existing Task changes" includes when it may start: an old Task must not gain a dependency on a new one.
-  const oldTaskIds = new Set(source.tasks.map(task => task.taskId));
-  const newTaskIds = new Set(addedTaskIds);
-  return !target.executionDag.dependsOn.some(edge =>
-    oldTaskIds.has(edge.taskId) && newTaskIds.has(edge.dependsOnId));
+  // The one existing-Task rule (2.5a A13): changed Tasks, this candidate's disposition changes and any old-side
+  // dependency edge added or removed. New Tasks depending on old Tasks stay a small change.
+  return result.delta.addedTaskIds.length >= 1
+    && result.delta.addedTaskIds.length <= SMALL_ARRANGEMENT_MAX_NEW_TASKS
+    && !touchesExistingTasks(source, target);
 }
 
 /** A small candidate the secretary arranged is adopted at once under the platform identity; anything else waits. */
@@ -77,6 +76,11 @@ async function adoptSmall(deps: PlanTurnDependencies, ctx: CoreCallContext,
   const goalRead = await deps.plans.queryGoal(ctx, candidate.goalRef);
   if (goalRead.status !== 'ready') return failureOfRead(goalRead);
   const goal = goalRead.value.goal;
+  // 121-112: the small-change exception exists only under the automatic autonomy. Under every-step the owner would
+  // refuse the adoption after the check-approval round already ran, so neither step starts and the candidate stays
+  // for the person. The owner rechecks the same policy at adoption.
+  if (decisionActionPolicy({ autonomy: goal.settings.autonomy, action: 'refine_future',
+    actorClass: 'system', countedNext: null, cap: 0 }) !== 'automatic') return { status: 'done' };
   // A candidate whose base is no longer the active plan is stale: the person decides, and a retry ends here.
   if (!sameJson(goal.activePlanRevision, candidate.basedOn)) return { status: 'done' };
   const source = await deps.plans.queryTaskGraph(ctx, { goalRef: goal.ref, planRef: candidate.basedOn });
@@ -95,14 +99,15 @@ async function adoptSmall(deps: PlanTurnDependencies, ctx: CoreCallContext,
     }
     if (approval.kind !== 'none') return { status: 'done' };
   }
-  const adopted = await deps.plans.applyPlanChange(automationContext(owned), {
+  // 2.5a A13: the secretary's small change goes through the same wrapper (author + existing-Task judgement).
+  const adopted = await autoAdoptCandidate(owned, deps, {
     input: { proposalRef: candidate.ref, expectedProposalRevision: candidate.revision, decisionRefs: [] },
     meta: { requestId: `${candidate.ref.proposalId}:adopt`, expected: [
       { ref: goal.ref, revision: goal.revision }, { ref: candidate.ref, revision: candidate.revision }] },
   });
-  if (adopted.status === 'committed') return { status: 'done' };
+  if (adopted.status !== 'refused') return { status: 'done' };
   // Owner refusals (every-step autonomy, a new objective, a cancelled Goal, guard 9) leave it for the person.
-  const failed = failureOf(adopted);
+  const failed = failureOf(adopted.result);
   if (failed.status === 'failed' && failed.transient) return failed;
   return { status: 'done' };
 }

@@ -93,6 +93,11 @@ import { roleSpecContentDigest, type RoleSpecContentV1 } from '../../src/contrac
 import { sha256Hex } from '../../src/contracts/fingerprint.js';
 import type { RuntimeBudget } from '../../src/contracts/runtime-budget.js';
 import { platformRoleProfile } from '../../src/core/agent-runtime/role-profiles.js';
+import {
+  ACTION_TOOL_NAMES, ASK_COPY_TOOL_NAME, PERSON_MESSAGE_TOOL_NAMES, SESSION_MAILBOX_TOOL_NAMES,
+  USER_DECISION_TOOL_NAMES,
+} from '../../src/core/agent-runtime/communication-tools.js';
+import { NOTE_TOOL_NAMES } from '../../src/core/agent-runtime/note-tool.js';
 import { createScriptedModel, type ScriptedModel, type ScriptedReply } from './B2-runtime-fixture.js';
 import {
   AG2B_CONSUMER_ID, AG2B_GOAL_REF, AG2B_PROJECT_REF, AG2B_QUERY_BUDGET, AG2B_QUERY_ROLE, AG2B_QUERY_ROLE_BINDING,
@@ -115,6 +120,28 @@ export const S6A_AT = '2026-10-23T09:00:00.000Z';
 /** The two goals, created in this order by `goals/create`. */
 export const S6A_GOAL_1: GoalRef = AG2B_GOAL_REF;
 export const S6A_GOAL_2: GoalRef = { aggregateType: 'Goal', projectId: S6A_SCOPE.projectId, goalId: 's6a-goal-2' };
+
+/**
+ * The P2 coordination families a Query round's Host grant may name (design §2.6, frozen `p2-frozen.md:218-235`).
+ * The round filter (`queryRoundCoordinationNames`) still drops what the round does not get, so a world may grant the
+ * union on every duty binding without widening a round. Mirrors the local workbench's own duty grants in
+ * `src/app/host.ts` (the action/mailbox/person families the P2 rows call through the scripted model).
+ */
+export const P2_COORDINATION_TOOL_NAMES: readonly string[] = [
+  'read',
+  ...SESSION_MAILBOX_TOOL_NAMES, ...PERSON_MESSAGE_TOOL_NAMES, ASK_COPY_TOOL_NAME,
+  ...USER_DECISION_TOOL_NAMES, ...ACTION_TOOL_NAMES, ...NOTE_TOOL_NAMES,
+  'create_member', 'read_requests',
+];
+
+/**
+ * The request round's prepared permission tools: the Host grant in grant order.
+ * No Query round selects `record_decision_application`, so the round projection
+ * drops it and the role section lists the other eighteen (design §6 request row;
+ * p2-frozen §2.6).
+ */
+export const PREPARED_SECRETARY_TOOLS =
+  P2_COORDINATION_TOOL_NAMES.filter(name => name !== 'record_decision_application');
 
 /** The platform secretary template; the duty resolver reads it as `secretary`. */
 export const S6A_SECRETARY_ROLE: Extract<RoleConfigurationRef, { kind: 'legacy_template' }> =
@@ -203,7 +230,8 @@ function runtimeConfigurationOf(configuration: S6AConfiguration, order: S6AProfi
   const built: WorkbenchRuntimeConfiguration = {
     schemaVersion: 1,
     bindings: [
-      binding('s6a-secretary-binding', S6A_SECRETARY_ROLE, SECRETARY_INSTRUCTION),
+      binding('s6a-secretary-binding', S6A_SECRETARY_ROLE, SECRETARY_INSTRUCTION,
+        [...P2_COORDINATION_TOOL_NAMES]),
       binding('s6a-plain-binding', S6A_PLAIN_ROLE, PLAIN_INSTRUCTION),
       binding('s6a-work-binding', S6A_WORK_ROLE, WORK_INSTRUCTION),
       ...(scribe ? [binding('s6a-scribe-binding', S6A_SCRIBE_ROLE, SCRIBE_INSTRUCTION, ['read', 'record_note'])] : []),
@@ -845,7 +873,8 @@ export async function openS6ARequestWorld(options: S6AWorldOptions): Promise<S6A
 
     async makeReadonlyCopy(source, label) {
       const sent = committedValue(await answer(ag2b(), 'messages/send', graphWrite(S6A_SCOPE, {
-        recipient: source.ref, text: `S6A copy question ${label}`, intent: 'inquiry', needsReply: true,
+        recipient: source.ref, text: `S6A copy question ${label}`, needsReply: true,
+        answeredBy: 'copy', wake: false,
       }, `s6a-copy-message-${label}`, [])), `the inquiry to ${source.label}`);
       const messageRef = sent['ref'] as SessionMessage['ref'];
       // The copy's one model call fails, so the copy ends with no answer and is not archived as an answered copy.

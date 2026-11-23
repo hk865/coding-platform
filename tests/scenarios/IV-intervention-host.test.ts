@@ -18,9 +18,9 @@ import { driveWorkflow, readExecution } from '../helpers/A2-restart-fixture.js';
 import { s6aCardsWorkspace } from '../helpers/S6A-cards-fixture.js';
 import type { S6AHostWorld } from '../helpers/S6A-host-fixture.js';
 import { S6A_SCOPE, S6A_WORK_ROLE, S6A_WORK_ROLE_BINDING } from '../helpers/S6A-request-fixture.js';
-import { adoptS6BPlan } from '../helpers/S6B1-fixture.js';
+import { adoptS6BPlan, governS6B } from '../helpers/S6B1-fixture.js';
 import { committed, pauseS7AGoal, ready, resumeS7AGoal, setS7AAutonomy } from '../helpers/S7A-fixture.js';
-import { approveS7A2Message, driveS7A2Release, sendS7A2PersonMessage, sendS7A2Request } from '../helpers/S7A2-fixture.js';
+import { sendS7A2PersonMessage } from '../helpers/S7A2-fixture.js';
 import { firstPlan, refinementPlan } from '../helpers/S7B-V-fixture.js';
 import { listed, readS7BMessage } from '../helpers/S7B-fixture.js';
 import { claimQuery } from '../helpers/request-claim-steps.js';
@@ -45,7 +45,8 @@ vi.mock('../../src/core/record-store/sqlite-record-store.js', async (importOrigi
 // The lead's fixed closing sentences, verbatim: one notice per reason, `questions` sends none.
 const INVALID_PLAN_NOTICE = '这次规划没有形成可采用的计划，模型的原回答在回复里。可以补充要求后重新发送。';
 const DECLINED_NOTICE = '这次规划的方案没有采用，原回答在回复里。可以补充要求后重新发送。';
-const NO_ANSWER_NOTICE = '这次规划已结束，没有留下可用的回答，这条消息已撤回。请补充要求后重新发送。';
+const CANDIDATE_NOTICE = '这次规划已写入候选，采用前可以继续补充要求。';
+const NO_ANSWER_NOTICE = '对方这一轮结束，没有回复。这条消息已撤回。请补充要求后重新发送。';
 
 const worlds: S6AHostWorld[] = [];
 afterEach(async () => {
@@ -119,18 +120,16 @@ describe('IV: intervention on an idle line through the real Host consume loop', 
     worlds.push(world);
     await settleHost(world);
     const { line } = await openLine(world, 'iv4-line');
-    // `sendS7A2Request` sends a released `action_request` only on a Goal with an active Plan; the line itself has
-    // no Task link, so the handler's no-task branch still runs. Every-step keeps the refinement a person card so
-    // the line stays free after the answer.
+    // P2 §2.7 deletes the message-release queue, so no approve/release step is needed. The source is the person's
+    // B20 direct-intervention message (`entry:'person_intervention'`), which gives this EXECUTOR line the planning
+    // shape (`plan-round.ts:148-150`); an agent's message to an executor would open only a text round
+    // (`plan-round.ts:154-156`), which is not the "claimed planning" this row is about.
     const ws = s6aCardsWorkspace(world, S6A_SCOPE);
     await adoptS6BPlan(ws, world.goals.second, { label: 'iv4-base', taskIds: ['iv4-base-task'],
       role: S6A_WORK_ROLE.templateId });
     await setS7AAutonomy(world, world.goals.second, 'every_step');
-    const source = await sendS7A2Request(world, { label: 'iv4-source', goal: world.goals.second,
-      recipient: line.ref, intent: 'action_request' });
-    const approved = await approveS7A2Message(world, source, 'iv4-source');
-    const released = await driveS7A2Release(world, { goal: world.goals.second, messageRef: approved.ref,
-      label: 'iv4-source' });
+    const source = await sendS7A2PersonMessage(world, { label: 'iv4-source', recipient: line.ref,
+      goal: world.goals.second });
     await world.scripted.script(line, [
       { kind: 'text', text: await refinementPlan(world, world.goals.second,
         { label: 'iv4-source', taskId: 'iv4-source-task', role: S6A_WORK_ROLE.templateId }) },
@@ -142,17 +141,19 @@ describe('IV: intervention on an idle line through the real Host consume loop', 
     // prepared commit, so the newer message comes while the source's Query is `claimed`.
     const prepared = world.gates.beforePrepared(line);
     const pass = await heartbeatUntilModel(world, prepared, 12);
-    const claimed = await readPlanningQuery(world, released.message.ref);
+    const claimed = await readPlanningQuery(world, source.ref);
     expect(claimed?.run.run.executionState?.phase, 'the source planning Query is claimed').toBe('claimed');
+    // A newer message (another B20 send) must queue behind the claimed planning, never displace it, and only get
+    // its own round after the source finishes.
     const newer = await sendS7A2PersonMessage(world, { label: 'iv4-newer', recipient: line.ref,
       goal: world.goals.second });
     const held = await consumeView(world, line);
     expect(held?.nextMessage?.messageRef, 'the claimed planning keeps its source ahead of the newer message')
-      .toEqual(released.message.ref);
+      .toEqual(source.ref);
     prepared.release();
     await pass.settled;
 
-    const answered = await awaitPlanningAnswer(world, released.message.ref);
+    const answered = await awaitPlanningAnswer(world, source.ref);
     expect(answered?.job.job.status, 'the current planning finishes first').toBe('answered');
     const after = await consumeView(world, line);
     expect(after?.nextMessage?.messageRef, 'the newer message stays queued').toEqual(newer.ref);
@@ -246,13 +247,32 @@ function replacementDraft(world: S6AHostWorld, label: string): Record<string, un
   return { ...plan, goalId: world.goals.second.goalId, planId: `iv-${label}`, planRevision: 1 };
 }
 
+/**
+ * IV-END-1's line: a secretary, so the goal loop's P2 `planresume` branch applies at all. That branch serves only the
+ * adviser/secretary planning lines (`p2-frozen` §2.3's `planresume` row); the executor's planning shape is P5
+ * (`design-frozen.md:118`, A17). Everything else is `openIdleLine`'s shape: the governance, one real line, one person
+ * message and the scripted first plan.
+ */
+async function openIdleSecretaryLine(world: S6AHostWorld, text: string, label: string) {
+  await governS6B(world, s6aCardsWorkspace(world, S6A_SCOPE), world.goals);
+  // The `planresume` branch is read only after `selectNext`'s active-Plan check (`workflow.ts:3258`), so the Goal
+  // needs an adopted Plan; `every_step` keeps the later candidates a person card, as IV-END-1b's world does.
+  await adoptS6BPlan(s6aCardsWorkspace(world, S6A_SCOPE), world.goals.second,
+    { label, taskIds: [`${label}-task`], role: S6A_WORK_ROLE.templateId });
+  await setS7AAutonomy(world, world.goals.second, 'every_step');
+  const line = await world.createSecretary(label);
+  const message = await sendS7A2PersonMessage(world, { label, recipient: line.ref, goal: world.goals.second });
+  await world.scripted.script(line, [{ kind: 'text', text }]);
+  return { line, messageRef: message.ref };
+}
+
 describe('IV-END-1 questions: the answer\'s summary replies and the question card opens no planning round', () => {
-  it('IV-END-1: the formal query_run reply, the Goal card, and a card answer without a new model round', async () => {
+  it('IV-END-1: the formal query_run reply, the Goal card, and the card answer waking one planresume round', async () => {
     const world = await openConsumeWorld({ label: 'iv-end-1' });
     worlds.push(world);
     await settleHost(world);
     const answer = questionsAnswer('IV questions', ['Which module owns the line?', 'Which check proves it?']);
-    const { line, messageRef } = await openIdleLine(world, answer, 'iv-end-1-line');
+    const { line, messageRef } = await openIdleSecretaryLine(world, answer, 'iv-end-1-line');
 
     const replied = await waitForResponse(world, messageRef);
     const queries = await sessionQueries(world, line);
@@ -282,20 +302,24 @@ describe('IV-END-1 questions: the answer\'s summary replies and the question car
     expect(after?.answerMessageRef, 'the card records its answer message').not.toBeNull();
     expect(await readBody(world, after!.answerMessageRef!, 'response'),
       'the saved card answer text').toBe('The coordinator module owns it');
-    // Answering a card only saves the answer: no new planning round and no new QueryJob.
-    await heartbeat(world);
-    await heartbeat(world);
-    expect((await world.scripted.requests(line)).length, 'no model round follows the card answer').toBe(callsBefore);
-    expect((await sessionQueries(world, line)).length, 'no QueryJob follows the card answer').toBe(queriesBefore);
-
-    // A NEW person message is the only way to continue; it takes its own Query.
-    await world.scripted.script(line, [{ kind: 'text', text: questionsAnswer('IV questions two', ['One more?']) }]);
-    const second = await sendS7A2PersonMessage(world, { label: 'iv-end-1-second', recipient: line.ref,
-      goal: world.goals.second });
-    await waitForResponse(world, second.ref);
-    const all = await sessionQueries(world, line);
-    expect(all, 'the second message has its own Query').toHaveLength(2);
-    expect(new Set(all.map(query => query.run.queryJobRef.queryJobId)).size, 'the two Queries differ').toBe(2);
+    // P2 §6 (IV-intervention-host:151, re-ruling 4): a card answer wakes the line. With every planning question
+    // answered the goal loop sends one `planresume:` planning round — a new Query and a new model request. The
+    // goal loop is the public `workflow/advance` step (the same one IV-END-1b drives); the Host consume loop then
+    // serves the system round on the line's own profile. Script that round's model reply before it opens.
+    await world.scripted.script(line, [{ kind: 'text', text: questionsAnswer('IV after the resume', ['One more?']) }]);
+    const secondCard = cards[1]!;
+    await answerCard(world, secondCard, 'iv-end-1-answer-2', 'The work line owns it');
+    await driveWorkflow(world.ag2b, { schemaVersion: 1, goalRef: world.goals.second, flowId: 'iv-end-1',
+      sessionHint: null, kind: 'select_work' }, { stopBefore: operation => operation.kind === 'claim_task' });
+    const woken = await heartbeatUntil(world, () => sessionQueries(world, line),
+      queries => queries.length > queriesBefore);
+    expect(woken, 'the card answers wake exactly one planning round').toHaveLength(queriesBefore + 1);
+    expect((await world.scripted.requests(line)).length, 'the waking round makes one model request')
+      .toBe(callsBefore + 1);
+    const resumedBodies = await Promise.all(
+      (await listed(world, 'inbox', line)).map(message => readBody(world, message.ref, 'message')));
+    expect(resumedBodies, 'the planning question carries planresume:')
+      .toEqual(expect.arrayContaining([expect.stringMatching(/^planresume:/)]));
   }, 120_000);
 
   // R7 补充裁定（B20）：执行者线反问出的卡全答完，目标循环不给这条线发 `planresume:`，答案只保存。目标要有计划，目标循环才走到这一支。
@@ -478,7 +502,14 @@ describe('IV-END-4 not_adopted: the candidate waits, then the ending replies the
       expect(replied.response?.sender.kind, 'the formal answer becomes the reply').toBe('query_run');
       expect(await readBody(world, messageRef, 'response'),
         'the reply is the answer\'s summary; replacedBy is not followed').toBe(`S7B3 V s7b3-v-${label}-a`);
-      expect(await notices(world, line, DECLINED_NOTICE), 'exactly one fixed declined notice').toHaveLength(1);
+      // A replaced candidate is not declined (lead A3-06, `cp2g3a-r3-opus-rulings.md:39`; `p2-frozen.md:167` closes on
+      // a decline or an adoption only): the chain's end is the pending replacement of this same round, so the round's
+      // one fixed notice is the candidate notice, and no declined notice is sent.
+      expect(await notices(world, line, ending === 'abandoned' ? DECLINED_NOTICE : CANDIDATE_NOTICE),
+        'exactly one fixed notice of the chain end').toHaveLength(1);
+      if (ending === 'replaced') {
+        expect(await notices(world, line, DECLINED_NOTICE), 'a replacement is not declined').toHaveLength(0);
+      }
 
       if (ending === 'abandoned') {
         expect(await sessionExecutions(world, line), 'the abandonment claims no Task').toEqual([]);

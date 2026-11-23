@@ -39,6 +39,8 @@ import { createExecutionHistoryReader } from '../../src/core/agent-runtime/obser
 import { createGraphExecutionHistoryReader } from '../../src/core/agent-runtime/graph-execution-history.js';
 import { createKernelStoreRegistry, type KernelStoreRegistry } from '../../src/core/agent-runtime/kernel-store-locator.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
+import { createQueryRoundResolver } from '../../src/core/work-graph/tasks/query-round.js';
+import { unknownSessionDuty } from './session-duty-double.js';
 import { createRoleConfigurationService } from '../../src/core/work-graph/configuration/role-memory-service.js';
 import { createUnknownCallReviewService } from '../../src/core/work-graph/tasks/unknown-call-review-service.js';
 import { createExecutionHistoryService } from '../../src/core/work-graph/tasks/execution-history-service.js';
@@ -60,7 +62,7 @@ import type {
 import type { GraphWrite } from '../../src/core/work-graph/model/task-contracts.js';
 import { preparationHost, prepareTaskForReal, type TaskClaimFixture } from './task-claim-fixture.js';
 import { B2_HOST } from './B2-execution-fixture.js';
-import { createScriptedModel, type ScriptedReply } from './B2-runtime-fixture.js';
+import { createScriptedModel, deliveryFactsForFixture, type ScriptedReply } from './B2-runtime-fixture.js';
 
 /** The Host tools every work Run of these fixtures may consume. */
 export const S2B_RUNTIME_HOST_TOOLS = ['read'] as const;
@@ -334,6 +336,7 @@ export async function createS2BRuntimeSteps(options: S2BRuntimeStepsOptions): Pr
   const mailbox = options.withMailbox === true
     ? createSessionMailbox({ records, sessions, executions, roles, materials,
       defaultInquiryDeadlineMs: 86_400_000,
+      queryRounds: createQueryRoundResolver({ records, duties: unknownSessionDuty, bodies }),
       runtimeAdmission: { bodies, authorizeConfiguration },
       systemActor: { kind: 'system', id: 's2b-runtime-steps' }, now, newId: eventId })
     : undefined;
@@ -357,6 +360,7 @@ export async function createS2BRuntimeSteps(options: S2BRuntimeStepsOptions): Pr
     historyWriter: createExecutionHistoryService({ records, now, eventId }),
     modelRequests, roles, plans: base.plans, sessions, materials, bodies, activity, graphHistory,
     sessionOperations, kernelStores, unknownCallReviews, sourceAuthority, workspaceHost, host, kernel, now, newId,
+    deliveryFacts: deliveryFactsForFixture,
     ...(mailbox === undefined ? {} : { messages: mailbox }), controls,
     ...(options.decisionMessages === undefined ? {} : { decisionMessages: options.decisionMessages }),
     readTaskClosure: async (_ctx, task) => readTaskClosure(records,

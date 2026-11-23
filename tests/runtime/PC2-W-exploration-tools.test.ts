@@ -16,16 +16,14 @@ const definitions = (texts?: Texts): ToolDefinition[] => createExplorationTools(
 const specification = (tools: ToolDefinition[]) => tools.map(tool => ({ name: tool.name, description: tool.description, inputSchema: z.toJSONSchema(tool.inputSchema) }));
 
 /**
- * The `pc1-final` specification, one hand-written JSON literal. Copied by hand
- * from `git show pc1-final:src/core/agent-runtime/exploration-tools.ts` (schema shape,
- * key order, constraints) and
- * `git show pc1-final:src/contracts/prompts/platform-pack.generated.ts`
- * (every description and parameter text).
+ * The tool specification: schema shape, key order and constraints are the
+ * pc1-final literal; every description and parameter text is read from the
+ * current platform pack, the one authority for those strings.
  */
 const DEFAULT_SPECIFICATION: readonly ToolSpecification[] = [
   {
     "name": "read_source",
-    "description": "Read a bounded source range within the pinned candidate source. Paths excluded from the candidate are unavailable. Returns the full-file digest and exact line range; use further ranges when truncated.",
+    "description": PLATFORM_PROMPT_PACK_V1.tools['read_source']!.description,
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
@@ -58,7 +56,7 @@ const DEFAULT_SPECIFICATION: readonly ToolSpecification[] = [
   },
   {
     "name": "cpp_index",
-    "description": "Query C/C++ project symbols, definitions, references, includes and static call candidates with libclang 18 and a required compile_commands.json. Compiler commands never execute; unknown flags and external include paths return explicit gaps. Only permission-filtered workspace files are exposed through a redirect-only VFS. One-based UTF-16 coordinates, source digests and analyzer identity accompany partial semantic results. In an observation, file-level edges come from a static C/C++ include scan only: runtime-only links are not edges, while system headers and git-ignored files are unresolved or absent. C/C++ is read for one target platform (x86_64-pc-linux-gnu when the database names none).",
+    "description": PLATFORM_PROMPT_PACK_V1.tools['cpp_index']!.description,
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
@@ -123,7 +121,7 @@ const DEFAULT_SPECIFICATION: readonly ToolSpecification[] = [
   },
   {
     "name": "python_index",
-    "description": "Query readable Python project symbols, definitions, references, imports and static call candidates using Jedi on an isolated source snapshot. Includes source digests, commit and unresolved relations. Workspace pyrightconfig.json, pyproject.toml and setup.cfg import roots and readable .py/.pyi dependencies are parsed as data. Source and config changes invalidate results. Project code never executes; external interpreter environments and complete dynamic call graphs are not covered. In an observation, file-level edges come from a static Python import scan only: runtime-only links are not edges, while the standard library, external packages and git-ignored files are unresolved or absent.",
+    "description": PLATFORM_PROMPT_PACK_V1.tools['python_index']!.description,
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
@@ -188,7 +186,7 @@ const DEFAULT_SPECIFICATION: readonly ToolSpecification[] = [
   },
   {
     "name": "project_source",
-    "description": "Read exact source materials through the frozen capture protocol. Actions: capture (one bounded capture; provider defaults to typescript, or text for a strict readable regular UTF-8/no-NUL text scope selected by prefix; optional configPath/prefix and optional previous capture for explicit changes; the trusted workspace root/revision/identity always come from the host, never from arguments), query (page a frozen capture with an opaque cursor: null on the first page, then the returned nextCursor; limit 1-200, default 100; paths lists only the files this capture retained, text is a literal line search with original line/UTF-16 columns and complete excerpts; semantic kinds are available only for a typescript capture), read (one exact file, at most 8192 bytes, either version working_tree for the current file, version capture for the exact frozen content of a retained capture, or version git with a full 40/64 lowercase commit id for one exact historical blob; a file outside the declared scope is refused rather than reported absent), compare (same-scope content diff of two captures: added/deleted/modified plus renamed only when one digest occurs exactly once in each complete manifest, marked identical_content and never a business identity claim; or two full Git commit ids with an optional prefix, compared by authorized regular-file blob id and mode; or one full Git commit id against one bounded current-working-tree observation of authorized regular UTF-8/no-NUL text, compared by raw-byte digest and owner-executable mode in either direction with an optional prefix and currentness not_rechecked; add duplicates: true to list candidates from that same call's after-side material — a new top-level definition, or a new string literal of at least 40 code points, that occurs elsewhere in the after pool — with two locations each and exact scanned/skipped counts reported apart from truncation (candidates only; the tool never judges whether two pieces are one rule); never by a ref or shell expression), verify (re-read the real scope now and confirm whether the capture still matches; a point-in-time answer, not a future guarantee), release (drop the capture when done). Coverage and change lists are returned as exact counts with at most five preview items of at most 160 code points each and an explicit truncated flag; the complete internal material is retained untrimmed. Pages are marked captured_source/not_rechecked unless verify says otherwise; captures cover only their declared scope (not the whole worktree) and a successful capture is not acceptance of the code.",
+    "description": PLATFORM_PROMPT_PACK_V1.tools['project_source']!.description,
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "oneOf": [
@@ -976,7 +974,7 @@ const DEFAULT_SPECIFICATION: readonly ToolSpecification[] = [
   },
   {
     "name": "code_index",
-    "description": "Query TS/JS declarations, definitions or semantic references within explicit readable files. Coordinates are one-based UTF-16. Returns source digests and partial coverage; no project config or external dependencies. Not a complete call graph. Use source_excerpt with a returned digest to fetch material.",
+    "description": PLATFORM_PROMPT_PACK_V1.tools['code_index']!.description,
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
@@ -1035,7 +1033,7 @@ const DEFAULT_SPECIFICATION: readonly ToolSpecification[] = [
   },
   {
     "name": "source_excerpt",
-    "description": "Read a bounded source range at an exact content digest from code_index or symbols. Returns stale if content changed; never silently substitutes newer source.",
+    "description": PLATFORM_PROMPT_PACK_V1.tools['source_excerpt']!.description,
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
@@ -1071,7 +1069,7 @@ const DEFAULT_SPECIFICATION: readonly ToolSpecification[] = [
   },
   {
     "name": "list_files",
-    "description": "List readable workspace file paths with bounded pagination. Includes installed/generated files; skips denied paths and symbolic links. No source execution.",
+    "description": PLATFORM_PROMPT_PACK_V1.tools['list_files']!.description,
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
@@ -1080,7 +1078,7 @@ const DEFAULT_SPECIFICATION: readonly ToolSpecification[] = [
           "type": "string",
           "minLength": 1,
           "maxLength": 1024,
-          "description": "Workspace-relative directory to enumerate recursively, not a file. Omit or use a single dot for the workspace root."
+          "description": PLATFORM_PROMPT_PACK_V1.tools['list_files']!.parameters['prefix']!
         },
         "offset": {
           "default": 0,
@@ -1104,7 +1102,7 @@ const DEFAULT_SPECIFICATION: readonly ToolSpecification[] = [
   },
   {
     "name": "search",
-    "description": "Search literal text in workspace source without running shell commands. Returns matching lines with file content digests; bounded files/results and explicit skipped coverage. Use paths to narrow a query.",
+    "description": PLATFORM_PROMPT_PACK_V1.tools['search']!.description,
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
@@ -1128,7 +1126,7 @@ const DEFAULT_SPECIFICATION: readonly ToolSpecification[] = [
           "type": "string",
           "minLength": 1,
           "maxLength": 1024,
-          "description": "Workspace-relative directory to search recursively, not a file. Omit or use a single dot for the workspace root. Use paths for individual search files."
+          "description": PLATFORM_PROMPT_PACK_V1.tools['search']!.parameters['prefix']!
         },
         "maxResults": {
           "default": 40,
@@ -1153,7 +1151,7 @@ const DEFAULT_SPECIFICATION: readonly ToolSpecification[] = [
   },
   {
     "name": "symbols",
-    "description": "Parse a file into declarations, imports and syntactic call sites using TypeScript/JavaScript AST or Python AST. Does not execute project code or resolve runtime behavior. Unsupported languages explicitly return text fallback.",
+    "description": PLATFORM_PROMPT_PACK_V1.tools['symbols']!.description,
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",

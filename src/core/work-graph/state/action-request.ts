@@ -26,12 +26,22 @@ import type { RunRef, TaskTriple } from '../../../contracts/dispatch.js';
 import { sameJson, type JsonValue } from '../../../contracts/fingerprint.js';
 import type { DispatchBasisV1, GoalDesiredState } from '../../../contracts/ledger.js';
 import { WORKFLOW_AUTOMATION_ACTOR } from '../../../contracts/task-requeue.js';
+import type { DecisionPolicyVerdictV1 } from './decision-policy.js';
 import { AGENT_REQUESTER_FIELD } from './rework-request.js';
 import type { TaskMachineState } from './task-machine.js';
 
 const id = f.string({ min: 1, unit: 'codePoints' });
 
-/** 受理那一轮的原始事实（Q4b）：只存不推；来源链根和失效由读的一方推。`requestRoot` 只有秘书请求轮有。 */
+/**
+ * 受理时 `decisionActionPolicy` 的四种判定。字段表要一个固定的值列表，这里用 `satisfies` 和
+ * `state/decision-policy.ts` 的 `DecisionPolicyVerdictV1` 锁在一起，不另写一份判定。
+ */
+export const ACTION_REQUEST_DECISION_VERDICTS = [
+  'user_only', 'needs_decision', 'automatic', 'automatic_notice',
+] as const satisfies readonly DecisionPolicyVerdictV1[];
+export type ActionRequestDecisionVerdictV1 = (typeof ACTION_REQUEST_DECISION_VERDICTS)[number];
+
+/** 受理那一轮的原始事实（Q4b）：只存不推；来源链根和失效由读的一方推。`requestRoot` 是这一轮或它来源消息的请求根，别处为 null。 */
 export const ROUND_BASIS_FIELDS = {
   requestRoot: f.nullable(f.ref(QueryJobRefShape)),
   sourceMessage: f.nullable(f.ref(SessionMessageRefShape)),
@@ -69,6 +79,8 @@ export const ACTION_REQUEST_BODY_FIELDS = {
   requester: AGENT_REQUESTER_FIELD,
   reason: id,
   requestedAt: f.isoTime(),
+  /** 受理时 `decisionActionPolicy` 的判定（卡 / 自动档 / 自动请知悉 / 只给人），不只留“要不要卡”的布尔。 */
+  decision: f.object({ verdict: f.enumOf(ACTION_REQUEST_DECISION_VERDICTS) }),
   state: f.enumOf(['pending', 'open', 'released', 'void', 'applied', 'denied', 'withdrawn'] as const),
   /** 放行卡的正式答复（你批或拒时）。 */
   answerRef: f.nullable(f.ref(SessionMessageRefShape)),
@@ -76,8 +88,9 @@ export const ACTION_REQUEST_BODY_FIELDS = {
   /** 派活：受理时的三值（模型给的或平台代填的 `DispatchBasisV1`，`number | 'none'` 没有字段种类能描述，存 JSON）。 */
   expected: f.nullable(f.json()),
   preferredLine: f.nullable(f.ref(SessionRefShape)),
-  /** 叫停：受理时冻结的 Run、租约、指针，和受理那一轮的原始事实。 */
+  /** 叫停：受理时冻结的 Run、租约、指针。 */
   frozen: f.nullable(f.object(FROZEN_FIELDS)),
+  /** 两种动作受理那一轮的原始事实（请求根、来源消息、轮）；请求根是请求反馈认来源的唯一依据。 */
   basis: f.nullable(f.object(ROUND_BASIS_FIELDS)),
   outcome: f.nullable(OUTCOME_FIELD),
 };
@@ -93,11 +106,19 @@ export type ActionRequestRequesterV1 = ActionRequestV1['requester'];
 export type RoundBasisV1 = NonNullable<ActionRequestV1['basis']>;
 export type StopFrozenV1 = NonNullable<ActionRequestV1['frozen']>;
 
+/** §2.8/T37：反馈按受理那一轮存下的完整请求根读回全部动作，不扫当前计划、不靠最近卡位。 */
+export const ACTION_REQUEST_BY_REQUEST_ROOT_LOOKUP = 'action-request-by-request-root';
+
 export const ACTION_REQUEST_FORMAT = defineRecord({
   name: 'ActionRequest',
   schemaId: 'ActionRequest@1',
   aggregateType: 'ActionRequest',
   fields: ACTION_REQUEST_FIELDS,
+  lookups: [{
+    name: ACTION_REQUEST_BY_REQUEST_ROOT_LOOKUP,
+    equal: ['basis.requestRoot.projectId', 'basis.requestRoot.workspaceId', 'basis.requestRoot.queryJobId'],
+    orderBy: { path: 'since', valueType: 'text' },
+  }],
 });
 
 /** 派活受理时 owner 读得到的挡着的原因（暂缓、叫停卡、目标暂停）；门、线忙等由目标循环判。事件里带它，重放回同一张回执。 */
@@ -120,17 +141,23 @@ export type ActionRequestChangeV1 = (typeof ACTION_REQUEST_CHANGES)[number];
 export type ActionRequestCommonInputV1 = {
   ref: ActionRequestRef; workspaceId: string; task: TaskTriple; requester: ActionRequestRequesterV1; reason: string;
   requestedAt: string;
+  /** 受理时同一份策略判定的结果；卡和自动档都记它。 */
+  decision: { verdict: ActionRequestDecisionVerdictV1 };
 };
 type ClosedByV1 = { commandId: string; at: string };
 
-/** AR-01 / AR-01d：派活受理。「每步确认」没有规则命中是 `pending`，自动档或规则命中是 `open`。 */
+/** AR-01 / AR-01d：派活受理。「每步确认」没有规则命中是 `pending`，自动档或规则命中是 `open`。`basis` 记受理那一轮
+ * 的请求根和来源，反馈按它认回原请求；受理 owner 必须给，只有不写记录的纯构造不传（记 null）。 */
 export function newDispatchRequest(
-  input: ActionRequestCommonInputV1 & { expected: DispatchBasisV1; preferredLine: SessionRef | null },
+  input: ActionRequestCommonInputV1 & {
+    expected: DispatchBasisV1; preferredLine: SessionRef | null; basis?: RoundBasisV1;
+  },
   state: 'pending' | 'open',
 ): PendingActionRequestV1 {
   return {
     ...input, revision: 1, schemaVersion: 1, kind: 'dispatch', expected: input.expected as unknown as JsonValue,
-    frozen: null, basis: null, state, answerRef: null, closedBy: null, outcome: null, since: null,
+    frozen: null, basis: input.basis === undefined ? null : { ...input.basis }, state, answerRef: null, closedBy: null,
+    outcome: null, since: null,
   };
 }
 
@@ -242,10 +269,11 @@ function releasedFields(verdict: StopReleaseV1, holdReasonId: string | null): Pi
  * 领不走）、不是启用、已完成：永远等不到；让出在等回复（P5、P18）：接续属于那条等待；租约还被持有（在跑的 Run、审查 Run
  * ——相位投影不算它——或结果未知、等审查的 Run 持有）：先等它放开；上一个 Run 已结束、没有待领返工（不是 P4）：先请返工
  * 或重验。其余挡着的（暂缓、待决卡、门、线忙、目标暂停）
- * 都收下，由目标循环在能领时先领它。`ranBefore` 是读到的选中 Run 存在，`leaseHeld` 是读到的 Lease 还没释放。
+ * 都收下，由目标循环在能领时先领它。`ranBefore` 是读到的选中 Run 存在，`leaseHeld` 是读到的 Lease 还没释放，
+ * `reviewPending` 是选中 Run 的结果未知、审查还没了结（P3 的同一事实）。
  */
 export function dispatchTaskProblem(
-  state: TaskMachineState, facts: { ranBefore: boolean; leaseHeld: boolean },
+  state: TaskMachineState, facts: { ranBefore: boolean; leaseHeld: boolean; reviewPending: boolean },
 ): CoreRejection | null {
   if (state === null) return rejected('invalid', 'the Task is not in the accepted plan; a dispatch request would never be served');
   // 门任务没有 Run，领取只认做事任务（`task-machine.ts` 的 `taskClaimProblem`），所以同那里的原句。
@@ -260,8 +288,9 @@ export function dispatchTaskProblem(
     return rejected('busy', 'the Task is waiting for a reply; its continuation belongs to that wait');
   }
   if (facts.leaseHeld) {
-    return rejected('busy', 'the Task is in progress; its lease is still held (by a running Run, a review Run, '
-      + 'or a Run whose outcome is unknown and awaits review)');
+    return facts.reviewPending
+      ? rejected('busy', 'the Task is in progress; its lease is still held (the last outcome is unknown and awaits review)')
+      : rejected('busy', 'the Task is in progress; its lease is still held by a running Run');
   }
   if (facts.ranBefore && state.row !== 'P4') {
     return rejected('invalid', 'the last Run of the Task ended without a pending rework; request a rework or recheck first');
@@ -298,7 +327,8 @@ export function stopRunCheckOf(
 
 /**
  * 叫停的放行判定（AR-01s、AR-02s 共用），取第一条：目标已取消 → 作废；租约已被别的 Run 持有 → 作废，永不对接任者
- * 送；你动过指针 → 放行、不写暂缓（你已接手）；书记硬停或 Run 已结束 → 放行、写暂缓、不送；其余 → 放行、写暂缓、待送。
+ * 送；目标已暂停 → 放行、不写暂缓（原 Run 已自然结束时暂停扇出不动它的指针，这条暂缓会挡住恢复后的领取）；
+ * 你动过指针 → 放行、不写暂缓（你已接手）；书记硬停或 Run 已结束 → 放行、写暂缓、不送；其余 → 放行、写暂缓、待送。
  * “在跑”只决定送不送：Run 结束了照样写暂缓，挡住检查没过之后的自动再领（A4）。
  */
 export function stopReleaseOf(input: {
@@ -306,6 +336,7 @@ export function stopReleaseOf(input: {
 }): StopReleaseV1 {
   if (input.goal === 'cancelled') return { kind: 'void', reason: 'goal_cancelled' };
   if (input.leaseHolderRunId !== input.frozen.run.runId) return { kind: 'void', reason: 'run_replaced' };
+  if (input.goal === 'paused') return { kind: 'released', writeHold: false, notSent: 'person_stopped' };
   const check = stopRunCheckOf(input.frozen.pointer, input.run);
   if (check === 'person_stopped') return { kind: 'released', writeHold: false, notSent: 'person_stopped' };
   return { kind: 'released', writeHold: true, notSent: check === 'run_ended' ? 'run_ended' : null };

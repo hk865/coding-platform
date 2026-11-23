@@ -20,10 +20,10 @@ import { openS6AHostWorld, type S6AHostWorld } from '../helpers/S6A-host-fixture
 import { S6A_SCOPE, S6A_WORK_ROLE } from '../helpers/S6A-request-fixture.js';
 import { adoptS6BPlan, createS6BLine, governS6B } from '../helpers/S6B1-fixture.js';
 import {
-  answerS7A2Card, readS7A2Card, sendS7A2PersonMessage, sendS7A2Request,
+  answerS7A2Card, readS7A2Card, sendS7A2PersonMessage, sendS7A2RequestWithDispatch,
 } from '../helpers/S7A2-fixture.js';
 import {
-  committed, openS7AQueryWorld, ready, setS7AAutonomy,
+  committed, openS7AQueryWorldWithActions, ready, seedS7AGoalPlan, setS7AAutonomy,
 } from '../helpers/S7A-fixture.js';
 
 const worlds: S6AHostWorld[] = [];
@@ -73,23 +73,24 @@ describe('L-routes: messages/apply over HTTP', () => {
 
 describe('L-routes: TE2 send -> decision answer -> mailbox read', () => {
   it('lists the release card, answers it over the route and reads the approval back', async () => {
-    const opened = await openS7AQueryWorld({ backend: 'memory' });
+    const opened = await openS7AQueryWorldWithActions({ backend: 'memory' });
     worlds.push(opened.world);
-    await setS7AAutonomy(opened.world, opened.goal, 'every_step');
-    const sent = await sendS7A2Request(opened.world, { label: 'routes-te2', goal: opened.goal,
-      recipient: opened.session.ref, intent: 'inquiry' });
-    expect(sent.release).toBe('awaiting');
-    const card = await readS7A2Card(opened.world, opened.goal);
-    expect(card.card.source.kind).toBe('message_release');
+    // The card comes from a persisted dispatch request, so the Goal needs its adopted Plan first.
+    const { goal } = await seedS7AGoalPlan(opened.world, { pointer: 'routes-te2' });
+    await setS7AAutonomy(opened.world, goal, 'every_step');
+    const sent = await sendS7A2RequestWithDispatch(opened.world, { label: 'routes-te2', goal,
+      recipient: opened.session.ref });
+    const card = await readS7A2Card(opened.world, goal);
+    expect(card.card.source).toMatchObject({ kind: 'action_release' });
+    expect(card.card.actionRelease?.ref).toMatchObject({ aggregateType: 'ActionRequest' });
+    expect(card.card.actionRelease?.action).toBe('dispatch');
 
     await answerS7A2Card(opened.world, { source: card.source, optionId: 'approve', label: 'routes-te2' });
     const read = ready<SessionMessage>(await opened.world.post('messages/read', plain(S6A_SCOPE, sent.ref)),
       'the answered message');
-    expect(read.release).toBe('approved');
-    expect(read.approvedAt).not.toBeNull();
+    expect(read.ref).toEqual(sent.ref);
     const inbox = ready<SessionMessagePage>(await opened.world.post('messages/inbox', plain(S6A_SCOPE,
       { recipient: opened.session.ref, page: { limit: 20 } })), 'the recipient inbox');
-    expect(inbox.items.find(item => item.ref.messageId === sent.ref.messageId)).toMatchObject({
-      release: 'approved', approvedAt: read.approvedAt });
+    expect(inbox.items.find(item => item.ref.messageId === sent.ref.messageId)).toMatchObject({ ref: sent.ref });
   });
 });

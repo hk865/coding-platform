@@ -55,7 +55,7 @@ export function k307HostConfig(options: { database: string; root: string }): Rec
         grant: {
           budget: AG2B_RUNTIME_BUDGET,
           hostTemplate: { templateId: 'builder', revision: '1', digest: sha256Hex(AG2B_WORK_INSTRUCTION) },
-          tools: ['read', 'write', 'find_related_sessions', 'read_session_card', 'send_session_message', 'shell'],
+          tools: ['read', 'write', 'send_session_message', 'shell'],
           writeScope: ['.'], skills: { resourceRoot: K307_SKILLS_ROOT, enabledIds: [] },
           systemInstruction: AG2B_WORK_INSTRUCTION, deniedPrefixes: [],
           // `shell` requires an explicit whole-workspace write scope and this flag

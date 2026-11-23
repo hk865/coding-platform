@@ -42,13 +42,14 @@ import type { PlanTaskPort } from '../model/plan-contracts.js';
 import type {
   LineBriefV1, LineChainEntryV1, LineConversationSourceV1, LineCountV1, LineExecutionItemV1,
   LineGateCheckV1, LineMessageStateV1, LineNameV1, LineParticipationV1,
-  LineRowV1, LineSegmentV1, RoleFactsReadPort, WorkLineDetailV1, WorkLineListV1, WorkLineSectionPageV1,
+  LineRowV1, LineSegmentV1, LineWokenByV1, RoleFactsReadPort, WorkLineDetailV1, WorkLineListV1, WorkLineSectionPageV1,
 } from '../../../contracts/work-line.js';
 import type { QueryExecutionStateV1, QueryRunRef } from '../../../contracts/query-job.js';
 import type { RoundSnapshot, VerificationRoundRef } from '../../../contracts/verification.js';
 import type { SessionDutyReadPort, WorkLineReadPort } from '../model/work-line-contracts.js';
 import type { DecisionCardV1, DecisionQueuePreparedReader, DecisionQueueWindowMoved, DecisionReadPort,
   PreparedDecisionQueue } from '../model/decision-contracts.js';
+import { queryEnteredKernel } from '../model/query-activity-plan.js';
 import { WINDOW_MAX_ATTEMPTS } from './decision-read-model.js';
 import type { SessionWaitV1 } from '../model/session-facts-contracts.js';
 import {
@@ -61,6 +62,7 @@ import { createSessionFactsService } from '../tasks/session-facts.js';
 import { RUN_BY_TASK_INDEX } from '../tasks/plan-readers.js';
 import { readRequeueWindow } from '../tasks/requeue-service.js';
 import { decodeSessionMessageRecord, sessionMessageRefKey, SESSION_MESSAGE_BY_RECIPIENT_LOOKUP } from '../sessions/message-record-codecs.js';
+import { sessionActivityCodec, sessionActivityRefOf } from '../sessions/session-activity.js';
 import { decodeNoticeOrigin } from '../persistence/decision-record-codecs.js';
 import { storeFailureCode } from '../persistence/read-result-failures.js';
 import {
@@ -75,7 +77,9 @@ import {
   readQueryJobGoal,
 } from '../tasks/line-clock.js';
 import { decodeControlIntentSnapshot } from '../persistence/control-record-codecs.js';
-import { decodeQueryRunSnapshotRecord, S2C_QUERY_RUN_BY_SESSION_GENERATION_LOOKUP } from '../queries/query-record-codecs.js';
+import {
+  decodeQueryJobSnapshot, decodeQueryRunSnapshotRecord, S2C_QUERY_RUN_BY_SESSION_GENERATION_LOOKUP,
+} from '../queries/query-record-codecs.js';
 import { canonicalRefKey, decodeWorkspaceSnapshot } from '../persistence/record-codecs.js';
 import { lookupAll, type LookupBatch } from '../persistence/lookup-all.js';
 import {
@@ -643,6 +647,8 @@ async function assembleOneLine(
   // earlier `null`. B4 then puts the row in no bucket.
   const problem = lineState.problem ?? history.problem ?? (inconsistentOccupancy
     ? { code: 'source_moving' as const, reason: 'the occupancy is inconsistent with an ended execution' } : null);
+  const wokenBy = await readWokenBy(deps.records, workspace, headRecord, latestQuery?.query ?? null);
+  if (wokenBy.status !== 'ready') return wokenBy;
 
   const facts: LineFactsV1 = {
     head: headRecord,
@@ -694,6 +700,7 @@ async function assembleOneLine(
     pinned: pinnedBy.length > 0,
     pinnedBy,
     lastActivityAt: facts.lastActivityAt,
+    wokenBy: wokenBy.value,
     sortKey: '',
     controls: deriveLineControls(facts, status),
     problem,
@@ -1889,15 +1896,98 @@ function deriveLastActivity(
   // L10: the latest of the head's creation, the last execution's endedAt →
   // startedAt → claim time, and each active copy's Query start. The one clock
   // rule lives in tasks/line-clock.ts; this reader only gathers its instants.
+  // A QueryRun that never entered the Kernel contributes no instant: recovery
+  // records an `endedAt` for a `not_entered` round too, so its start/end would
+  // push the clock forward without a round ever opening. The proof is the
+  // one WorkGraph entry rule (`queryEnteredKernel`: the observed Kernel
+  // `history`), not the platform's begin ticket.
   const instants: (string | null | undefined)[] = [];
   const runFacts = holder !== null && holder.kind === 'run' ? holder.run : latestWork;
   if (runFacts !== null) {
     instants.push(runFacts.run.endedAt ?? runFacts.run.startedAt ?? runFacts.claimedAt ?? null);
   }
-  if (holder !== null && holder.kind === 'query') instants.push(holder.query.run.endedAt ?? holder.query.run.startedAt);
-  if (latestQuery !== null) instants.push(latestQuery.query.run.endedAt ?? latestQuery.query.run.startedAt);
+  const queryInstant = (query: QueryRunSnapshot): string | null =>
+    queryEnteredKernel(query) ? query.run.endedAt ?? query.run.startedAt ?? null : null;
+  if (holder !== null && holder.kind === 'query') instants.push(queryInstant(holder.query));
+  if (latestQuery !== null) instants.push(queryInstant(latestQuery.query));
   for (const copy of copies) instants.push(copy.startedAt);
   return latestActivityAt(head.createdAt, instants);
+}
+
+/**
+ * §2.8 line card: the sender of the message whose round last woke this line. A message-input activity names it
+ * directly. A request round's ending writes only `round_ended` (a planning round writes no activity at all), so the
+ * head's latest QueryRun — the occupancy or last one, the same read the line's clocks use — supplies that round's
+ * source message and start, but only once the Kernel really entered that round (`queryEnteredKernel`); a round the
+ * platform only began (`entering`) has woken nobody yet. A `decision_answer` round names the person's formal answer:
+ * the card's own sender is the line being woken. A damaged activity, QueryJob or message is a failed read, never
+ * `null`.
+ */
+async function readWokenBy(
+  records: WorkLineStore, workspace: WorkspaceScope, head: SessionRecord, latest: QueryRunSnapshot | null,
+): Promise<ReadResult<LineWokenByV1 | null>> {
+  const activityKey = canonicalJson(sessionActivityRefOf(head.ref) as unknown as JsonValue);
+  const activityRead = await records.readMany([activityKey]);
+  if (activityRead.status !== 'ready') return rejectionOf(activityRead);
+  const activityRecord = activityRead.value.records.find((record) => record.refKey === activityKey);
+  const activity = activityRecord === undefined ? null : sessionActivityCodec.decode(activityRecord);
+  if (activity !== null && activity.status !== 'decoded') {
+    return { status: 'rejected', code: 'unavailable', reason: `the Session activity is damaged: ${activity.reason}` };
+  }
+  if (activity !== null && activity.value.kind === 'input'
+    && activity.value.source.aggregateType === 'SessionMessage') {
+    return wokenByMessageOf(records, activity.value.source, activity.value.lastActivityAt, null);
+  }
+  let failure: { code: string; reason: string } | null = null;
+  const query = latest ?? await readLatestQueryRun(records, workspace, head, (problem) => {
+    failure ??= problem;
+  });
+  if (failure !== null) return rejectionOf(failure);
+  if (query === null || !queryEnteredKernel(query)) return { status: 'ready', value: null };
+  const at = query.run.startedAt;
+  if (at === null) return { status: 'ready', value: null };
+  const jobKey = canonicalJson(query.run.queryJobRef as unknown as JsonValue);
+  const jobRead = await records.readMany([jobKey]);
+  if (jobRead.status !== 'ready') return rejectionOf(jobRead);
+  const jobRecord = jobRead.value.records.find((record) => record.refKey === jobKey);
+  if (jobRecord === undefined) {
+    return { status: 'rejected', code: 'unavailable', reason: 'the latest QueryRun names a QueryJob that is not readable' };
+  }
+  const job = decodeQueryJobSnapshot(jobRecord);
+  if (job.status !== 'decoded') {
+    return { status: 'rejected', code: 'unavailable', reason: `the latest QueryJob is damaged: ${job.reason}` };
+  }
+  const execution = job.value.job.intent.execution;
+  const source = execution.sourceMessageRef;
+  if (source === undefined) return { status: 'ready', value: null };
+  return wokenByMessageOf(records, source, at,
+    execution.sourcePart === 'decision_answer' ? 'decision_answer' : null);
+}
+
+/** The stored sender of one waking message; `decision_answer` takes the formal answer's sender (the person). */
+async function wokenByMessageOf(
+  records: WorkLineStore, messageRef: SessionMessageRef, at: string, part: 'decision_answer' | null,
+): Promise<ReadResult<LineWokenByV1 | null>> {
+  const messageKey = sessionMessageRefKey(messageRef);
+  const messageRead = await records.readMany([messageKey]);
+  if (messageRead.status !== 'ready') return rejectionOf(messageRead);
+  const messageRecord = messageRead.value.records.find((record) => record.refKey === messageKey);
+  if (messageRecord === undefined) {
+    return { status: 'rejected', code: 'unavailable', reason: 'the waking message is not readable' };
+  }
+  const message = decodeSessionMessageRecord(messageRecord);
+  if (message.status !== 'decoded') {
+    return { status: 'rejected', code: 'unavailable', reason: `the waking message is damaged: ${message.reason}` };
+  }
+  const response = message.value.response;
+  const sender = part === 'decision_answer' && response !== null && response.sender.kind === 'host'
+    ? response.sender : message.value.sender;
+  return { status: 'ready', value: {
+    at,
+    messageRef: { ...messageRef },
+    senderKind: sender.kind,
+    senderSessionRef: 'sessionRef' in sender ? { ...sender.sessionRef } : null,
+  } };
 }
 
 // -------------------------------------------------------------------------- //
@@ -2902,8 +2992,9 @@ async function readMessagesSection(
       const facts: MessageDeliveryFactsV1 = {
         ref: message.ref,
         status: message.status,
-        release: message.release,
         withdrawnAt: message.withdrawnAt,
+        response: message.response,
+        answeredBy: message.answeredBy,
         ...(message.acceptedInputs === undefined ? {} : { acceptedInputs: message.acceptedInputs }),
       };
       const derived = deriveMessageDelivery(facts, recipientLine);
@@ -2911,7 +3002,8 @@ async function readMessagesSection(
         messageRef: message.ref,
         revision: message.revision,
         createdAt: message.createdAt,
-        release: message.release,
+        needsReply: message.needsReply === true,
+        wake: message.wake,
         delivery: derived.delivery.delivery,
         deliveredTo: derived.delivery.deliveredTo,
         evidence: derived.delivery.evidence,

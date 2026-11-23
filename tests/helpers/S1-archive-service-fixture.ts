@@ -35,6 +35,7 @@ import { SESSION_MESSAGE_RECORD_SCHEMAS } from '../../src/core/work-graph/sessio
 import { SESSION_ACTIVITY_SCHEMAS } from '../../src/core/work-graph/sessions/session-activity.js';
 import { plainSessionRefToAggregate } from '../../src/core/work-graph/sessions/session-record-codecs.js';
 import { createSessionFactsService } from '../../src/core/work-graph/tasks/session-facts.js';
+import { createQueryRoundResolver } from '../../src/core/work-graph/tasks/query-round.js';
 import { createSessionAnomalyService } from '../../src/core/work-graph/tasks/session-anomaly-service.js';
 import { SESSION_ANOMALY_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/session-anomaly-codecs.js';
 import { createRunControlService } from '../../src/core/work-graph/tasks/control-service.js';
@@ -58,7 +59,7 @@ export const key = (value: object): string => canonicalJson(value as JsonValue);
 export const CRASHED = { eventType: 'run_crashed', payload: { kind: 'crashed', error: 'ordinary tool failure' } } as const;
 export const COMPLETED = { eventType: 'run_completed', payload: { kind: 'completed', exitCode: 0 } } as const;
 export const CANCELLED = { eventType: 'run_cancelled', payload: { kind: 'cancelled', reason: 'archive stopped this Run' } } as const;
-const GRANT = { ...B2_HOST.permissions, tools: [...B2_HOST.permissions.tools, 'send_session_message', 'respond_session_message'] };
+const GRANT = { ...B2_HOST.permissions, tools: [...B2_HOST.permissions.tools, 'send_session_message', 'respond_session_message', 'ask_copy'] };
 
 export function committed<T>(result: WriteResult<T>) {
   expect(result, JSON.stringify(result)).toMatchObject({ status: 'committed' });
@@ -152,6 +153,7 @@ export async function createArchiveServiceFixture(kind: ClaimFixtureKind) {
   function mailboxOn() {
     const box = createSessionMailbox({ records, sessions, executions: reads, roles, materials,
       defaultInquiryDeadlineMs: 86_400_000,
+      queryRounds: createQueryRoundResolver({ records, duties: unknownSessionDuty, bodies: b2.bodies }),
       runtimeAdmission: { bodies: b2.bodies, authorizeConfiguration },
       systemActor: { kind: 'system', id: 'fx1-materials' }, now, newId: id });
     if (!box.disposeArchiveWait || !box.readUndeliveredReplies || !box.readRoutedReplies || !box.recordInputAccepted) {
@@ -221,7 +223,7 @@ export async function createArchiveServiceFixture(kind: ClaimFixtureKind) {
   }
   async function send(claim = b2.claim, recipient = D) {
     return committed(await mailbox.sendMessage(workCtx(claim), { input: { recipient, text: 'Which file should this work use?',
-      intent: 'inquiry', needsReply: true, waitAfterSend: true }, meta: { requestId: id(), expected: [] } })).value;
+      needsReply: true, waitAfterSend: true }, meta: { requestId: id(), expected: [] } })).value;
   }
   async function yieldWait(message: SessionMessage, claim = b2.claim, endPosition = 4) {
     return end(claim, { eventType: 'run_yielded', payload: { kind: 'yielded', yield: {

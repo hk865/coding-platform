@@ -52,7 +52,7 @@ function unbooked(record: TaskExecutionRecord): TaskExecutionRecord {
 
 async function yieldedRun(sends: 1): Promise<{ fx: C2RuntimePlatformFixture; record: TaskExecutionRecord }> {
   const calls = Array.from({ length: sends }, (_, index) => ({ callId: `a2-w10-send-${index + 1}`, name: 'send_session_message',
-    args: { recipient: {}, text: `A2 W-10 question ${index + 1}`, intent: 'inquiry', needsReply: true, waitAfterSend: true } }));
+    args: { recipient: {}, text: `A2 W-10 question ${index + 1}`, needsReply: true, waitAfterSend: true } }));
   const replies: ScriptedReply[] = [{ kind: 'calls', calls }, { kind: 'text', text: 'never reached: the Run yields' }];
   const fx = await createC2RuntimePlatform({ toolNames: ['send_session_message'], scriptedReplies: replies });
   fixtures.push(fx);
@@ -115,7 +115,7 @@ it('W-10 (RD-3 condition 2): a waiting send the stored message does not tie to t
 
 it('the frozen Kernel never yields a Turn with a second waiting send still unsettled (why L-5\'s "several sends" branch is guarded, not reached)', async () => {
   const calls = [1, 2].map(index => ({ callId: `a2-w10-pair-${index}`, name: 'send_session_message',
-    args: { recipient: {}, text: `A2 W-10 pair ${index}`, intent: 'inquiry', needsReply: true, waitAfterSend: true } }));
+    args: { recipient: {}, text: `A2 W-10 pair ${index}`, needsReply: true, waitAfterSend: true } }));
   const fx = await createC2RuntimePlatform({ toolNames: ['send_session_message'],
     scriptedReplies: [{ kind: 'calls', calls }, { kind: 'text', text: 'never reached' }] });
   fixtures.push(fx);

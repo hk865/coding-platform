@@ -49,6 +49,7 @@ const COMMON = {
   requester: { kind: 'query_run' as const, actor: { kind: 'agent' as const, id: 'p1-line-a', queryRunRef: QUERY_RUN },
     session: { projectId: 'p1', sessionId: 's-a' }, queryRun: QUERY_RUN, duty: 'adviser' as const },
   reason: 'p1 reason', requestedAt: '2026-11-20T00:00:00.000Z',
+  decision: { verdict: 'needs_decision' as const },
 };
 const EXPECTED = { planRevision: 1, pointerRevision: 'none' as const, dispatchSequence: 0 };
 const BASIS = { requestRoot: null, sourceMessage: null,
@@ -133,10 +134,10 @@ type Verdict = { outcome: 'void'; reason: 'goal_cancelled' | 'run_replaced' }
 
 /** Adapter: the release judgment (`stopReleaseOf`) over what the owner read, normalised. */
 function releaseVerdict(read: {
-  goalCancelled: boolean; leaseHolder: RunRef | null; runEnded: boolean;
+  goalCancelled: boolean; goalPaused?: boolean; leaseHolder: RunRef | null; runEnded: boolean;
   pointer: { ref: ControlIntentRef; submittedBy: ActorRef } | null;
 }): Verdict {
-  const verdict = stopReleaseOf({ goal: read.goalCancelled ? 'cancelled' : 'active',
+  const verdict = stopReleaseOf({ goal: read.goalCancelled ? 'cancelled' : read.goalPaused === true ? 'paused' : 'active',
     leaseHolderRunId: read.leaseHolder?.runId ?? null, frozen: FROZEN,
     run: { ended: read.runEnded, pointer: read.pointer?.ref ?? null, pointerBy: read.pointer?.submittedBy ?? null } });
   return verdict.kind === 'void' ? { outcome: 'void', reason: verdict.reason }
@@ -153,6 +154,9 @@ describe('U2: the stop release judgment (2.3), first matching row wins', () => {
       { ...still, leaseHolder: OTHER_RUN, pointer: { ref: POINTER, submittedBy: PERSON } },
       { outcome: 'void', reason: 'run_replaced' }],
     ['a person paused the Run (and it ended)', { ...still, runEnded: true, pointer: { ref: POINTER, submittedBy: PERSON } },
+      { outcome: 'released', notSent: 'person_stopped', stopHold: false }],
+    ['the Goal is paused, so the stop is released without a hold',
+      { ...still, goalPaused: true, leaseHolder: RUN },
       { outcome: 'released', notSent: 'person_stopped', stopHold: false }],
     ['the Goal fan-out paused the Run', { ...still, pointer: { ref: POINTER, submittedBy: GOAL_FAN_OUT_ACTOR } },
       { outcome: 'released', notSent: 'person_stopped', stopHold: false }],
@@ -172,7 +176,7 @@ describe('U2: the stop release judgment (2.3), first matching row wins', () => {
 describe('C1: the dispatch acceptance and a lease the phase does not count (review table, second half)', () => {
   it('a P6 Task (its last Run failed) whose lease another Run holds: busy (in progress)', () => {
     const problem = dispatchTaskProblem({ taskKind: 'work', disposition: 'active', row: 'P6', phase: 'failed',
-      cause: { code: 'run_failed' } }, { ranBefore: true, leaseHeld: true });
+      cause: { code: 'run_failed' } }, { ranBefore: true, leaseHeld: true, reviewPending: false });
     expect(problem).toMatchObject({ status: 'rejected', code: 'busy' });
     expect(problem?.reason).toContain('in progress');
   });

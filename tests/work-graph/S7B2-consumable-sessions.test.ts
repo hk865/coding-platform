@@ -162,7 +162,8 @@ describe('C-candidates (b) on sqlite: the crash and restart busy reasons', () =>
 });
 describe('C-candidates (b) on memory: the offers', () => {
   it.each([
-    ['idleInquiry', ['inquiry'], 'inquiry'],
+    // P2 §2.2: a Host human message without `entry` opens no round; the line's offer is the no-turn notify.
+    ['idleInquiry', ['notify'], null],
     ['notifyOnly', ['notify'], null],
     ['pausedGoalPerson', [], null],
   ] as const)('%s: kinds %j and nextMessage %s', async (name, kinds, nextKind) => {
@@ -175,13 +176,13 @@ describe('C-candidates (b) on memory: the offers', () => {
   it('idlePerson: the offer is the real person message', async () => {
     const opened = await directoryWorld('memory');
     const item = itemOf(await readPage(opened.world, null, 50), opened.sessions.idlePerson!.key);
-    expect(item.kinds).toEqual(['person_message', 'inquiry']);
+    expect(item.kinds).toEqual(['person_message', 'notify']);
     expect(item.nextMessage?.kind).toBe('person_message');
     const inbox = await opened.world.post('messages/inbox', plain(S6A_SCOPE, {
       recipient: opened.sessions.idlePerson!.session.ref, page: { limit: 10 } }));
     expect(inbox.httpStatus).toBe(200);
     const read = ready<SessionMessagePage>(inbox.body, 'the inbox read');
-    const person = read.items.find(message => message.intent === 'action_request');
+    const person = read.items.find(message => message.entry === 'person_intervention');
     expect(person).toBeDefined();
     expect(item.nextMessage?.messageRef).toEqual(person?.ref);
   }, 180_000);

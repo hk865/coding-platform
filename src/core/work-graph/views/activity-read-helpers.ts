@@ -17,6 +17,7 @@ import type { DispatchOutboxRef, RunRef, RunSnapshot } from '../../../contracts/
 import type { GoalRef } from '../../../contracts/ledger.js';
 import type { RoundSnapshot } from '../../../contracts/verification.js';
 import type { QueryJobSnapshot, QueryRunRef, QueryRunSnapshot } from '../../../contracts/query-job.js';
+import { queryEnteredKernel } from '../model/query-activity-plan.js';
 import { isRequestRound } from '../../../contracts/query-job.js';
 import type {
   LineReadingV1, QueryActivitySnapshot, RunActivityFactsV1, RunActivitySnapshot, RunUsageReadingV1,
@@ -204,13 +205,12 @@ export function runMissingActivityFacts(run: RunSnapshot | null, since: string |
  */
 export function queryMissingActivityFacts(run: QueryRunSnapshot | null, querySince: string | null): MissingActivityFacts {
   if (run === null) return { kind: 'absent', endedAt: null, neverEntered: false, since: querySince };
-  const state = run.run.executionState;
   return {
     kind: run.run.endedAt === null ? 'open' : 'ended',
     endedAt: run.run.endedAt,
-    // The QueryRun's own proof that it never entered the Kernel: no execution
-    // state, no entry, or the platform's `not_entered` outcome.
-    neverEntered: state === undefined || state.entry === null || run.run.outcome === 'not_entered',
+    // The QueryRun's own proof that it never entered the Kernel is the negation of the one entry rule (the begin
+    // `entry` ticket exists from `entering`, before any Turn does).
+    neverEntered: !queryEnteredKernel(run),
     since: querySince,
   };
 }

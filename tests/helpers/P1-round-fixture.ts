@@ -87,7 +87,6 @@ export async function openP1World(options: {
     let runB: RunRef | null = null;
     let endB = async (): Promise<void> => { throw new Error('P1: the world has no running tB'); };
     if (options.running === true) {
-      await world.scripted.script(E, [{ kind: 'fail', message: 'P1 tB failed' }]);
       const gate = await world.gates.modelRequest(E);
       const bReceipts: WorkflowStepReceipt[] = [];
       const drive = driveWorkflow(world.ag2b, await claimStep(E, tB, 'tb'),
@@ -96,7 +95,9 @@ export async function openP1World(options: {
       ended.catch(() => undefined);
       await Promise.race([gate.reached, ended]);
       runB = claimOf(bReceipts);
-      endB = async () => { gate.release(); await drive; };
+      // T4: the Run's own replies (the caller's `send_session_message`) must be consumed before the Run ends;
+      // queueing the closing `fail` only here keeps the FIFO order send-then-fail.
+      endB = async () => { await world.scripted.script(E, [{ kind: 'fail', message: 'P1 tB failed' }]); gate.release(); await drive; };
       releases.push(endB);
     }
     // Only now: under every step, tC's stopped rework would have become a confirmation card.
@@ -112,7 +113,7 @@ export async function openP1World(options: {
           const model = await world.gates.modelRequest(line);
           const claim = index === 0 ? null : world.gates.beforeClaim(line);
           const sent = committed<SessionMessage>(await world.post('messages/send', graphWrite(S6A_SCOPE, {
-            recipient: line.ref, text: `P1 ${label} opens round ${String(index)}`, intent: 'action_request',
+            recipient: line.ref, text: `P1 ${label} opens round ${String(index)}`, entry: 'person_intervention',
             needsReply: true, goalRef: goal }, `p1-open-${label}-${String(index)}`)), `the ${label} opening message`);
           opened.push({ line, model, claim, source: sent.ref });
         }

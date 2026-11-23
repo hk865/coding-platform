@@ -3,6 +3,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { TaskClaim } from '../../src/contracts/core/task-claim.js';
 import type { SessionMessage } from '../../src/core/work-graph/model/communication-contracts.js';
 import { createTaskClaimService } from '../../src/core/work-graph/tasks/claim-service.js';
+import { createQueryJobService } from '../../src/core/work-graph/queries/query-job-service.js';
+import { createRunSupport } from '../helpers/S2C-L-runs-support.js';
+import { planSourceRootOf } from '../helpers/task-claim-fixture.js';
 import { createRoleConfigurationService } from '../../src/core/work-graph/configuration/role-memory-service.js';
 import { createB2ExecutionFixture, type B2ExecutionFixture } from '../helpers/B2-execution-fixture.js';
 import { t0, t1, ready, committed, s1Schemas, observeStore, sessionOwners, workHistory,
@@ -28,6 +31,8 @@ async function consume(f: Fixture, previous: TaskClaim, message: SessionMessage,
   let id = 0;
   const ids = [runId, `${runId}-attempt`, `${runId}-event`];
   const service = createTaskClaimService({ records: f.base.records,
+    planSourceRoot: planSourceRootOf({ messages: createRunSupport(f.base).mailbox(), plans: f.base.plans,
+      queries: createQueryJobService({ records: f.base.records, now: () => t1, eventId: () => `${runId}-query-${++id}` }) }),
     roles: createRoleConfigurationService({ records: f.base.records, now: () => t1, eventId: () => `${runId}-role-${++id}` }),
     now: () => t1, newId: () => ids.shift() ?? `${runId}-extra-${++id}` });
   const request = await f.base.buildRequest({ input: { sessionRef: previous.sessionRef }, requestId: `${runId}-claim` });
@@ -56,6 +61,13 @@ async function expectBusyClaims(f: Fixture) {
   expect(ready(await f.directory.readSession(f.base.ctx, f.b2.claim.sessionRef)).record.occupancy).toBeNull();
 }
 
+/**
+ * P2 (cp2mp-rulings.md MP-11; design-frozen.md:238): a message that needs a reply and names no deadline freezes
+ * the platform default (24 h in this fixture) counted from when it was sent, so the wait reads that deadline.
+ */
+const defaultDeadlineOf = (message: { createdAt: string }): string =>
+  new Date(Date.parse(message.createdAt) + 86_400_000).toISOString();
+
 describe.each(['memory', 'sqlite'] as const)('S1 Session facts reader (%s)', kind => {
   it('SV06 a real newer Query pointer does not hide the previous Work wait', async () => {
     const f = await open(kind);
@@ -73,7 +85,7 @@ describe.each(['memory', 'sqlite'] as const)('S1 Session facts reader (%s)', kin
     expect(value.waits[0]).toEqual({ messageRef: message.ref, rootRef: message.ref,
       waitingSession: f.b2.claim.sessionRef, originalRun: f.b2.claim.runRef,
       requestRoot: null, recipient: f.b2.secondClaim.sessionRef, state: { state: 'open', reason: null },
-      deadline: t1, expiredAt: null, complete: true });
+      deadline: defaultDeadlineOf(message), expiredAt: null, complete: true });
   });
 
   it('SV07 latest Work follows generation even when runId sorts in reverse', async () => {
@@ -97,7 +109,7 @@ describe.each(['memory', 'sqlite'] as const)('S1 Session facts reader (%s)', kin
     expect(value.waits[0]).toEqual({ messageRef: message.ref, rootRef: message.ref,
       waitingSession: f.b2.claim.sessionRef, originalRun: f.b2.claim.runRef,
       requestRoot: null, recipient: f.b2.secondClaim.sessionRef, state: { state: 'answered', reason: null },
-      deadline: t1, expiredAt: null, complete: true });
+      deadline: defaultDeadlineOf(message), expiredAt: null, complete: true });
     await expectBusyClaims(f);
   });
 
@@ -122,7 +134,7 @@ describe.each(['memory', 'sqlite'] as const)('S1 Session facts reader (%s)', kin
     expect(value.waits[0]).toEqual({ messageRef: message.ref, rootRef: message.ref,
       waitingSession: f.b2.claim.sessionRef, originalRun: f.b2.claim.runRef,
       requestRoot: null, recipient: f.b2.secondClaim.sessionRef, state: { state: 'open', reason: null },
-      deadline: t1, expiredAt: null, complete: true });
+      deadline: defaultDeadlineOf(message), expiredAt: null, complete: true });
     expect(value.wait).toBeNull();
   });
 

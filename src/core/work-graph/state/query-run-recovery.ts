@@ -353,7 +353,7 @@ export const PLATFORM_ATTESTED_READ_TOOLS: ReadonlySet<string> = new Set([
   'list_files', 'search', 'symbols', 'code_index', 'project_source', 'python_index', 'cpp_index', 'source_excerpt',
   'read_source', 'read_material',
   'read_session_inbox', 'read_session_message', 'read_session_message_body', 'read_user_decision',
-  'query_task_graph', 'query_ready_tasks', 'find_related_sessions', 'read_session_card', 'read_requests',
+  'query_task_graph', 'query_ready_tasks', 'read_requests',
   'read_execution_history', 'look_graph', 'find_graph', 'check_links',
 ]);
 /**

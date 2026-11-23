@@ -3,7 +3,7 @@
  * commit of the Host's closing notice.
  * Named mutations: the exec settlement through the normal entry (COMPLETED first → `requestNewGoal`; red at
  * `answer_ready`); P2-3 ① the archive guard's settlement fact dropped (red at `archive_settlement_pending`); ② the
- * consumable view's settlement offer on an archive-requested line dropped (red at `withdrawnAt`); ③ an unreadable
+ * consumable view's settlement offer on an archive-requested line dropped (red at the settled source); ③ an unreadable
  * settlement fact let through (red at `incomplete`); ④ the archive-requested line's offers not limited to settlements
  * (red at `kinds`: the person's message heads the line).
  * Today (no G3) red at: the world's guard "sent no exec review round". P2-3 on the G3 tree before its fix: ① the early
@@ -15,14 +15,15 @@ import { SESSION_MESSAGE_BY_RECIPIENT_LOOKUP } from '../../src/core/work-graph/s
 import { driveWorkflow } from '../helpers/A2-restart-fixture.js';
 import { graphWrite, plain } from '../helpers/AG2b-collaboration-fixture.js';
 import {
-  consumeView, notices, readPlanningQuery, sessionQueries, waitForResponse, waitForWithdrawn,
+  consumeView, heartbeatUntil, notices, readPlanningQuery, sessionQueries, waitForResponse,
 } from '../helpers/IV-host-fixture.js';
+import { readS7BMessage } from '../helpers/S7B-fixture.js';
 import { sendS7A2PersonMessage } from '../helpers/S7A2-fixture.js';
 import { byIdentityPrefix, commitBarrier } from '../helpers/S6A-commit-barrier.js';
 import { S6A_SCOPE } from '../helpers/S6A-request-fixture.js';
 import {
   advanceS9Review, answerS9Review, bookS9Review, completeS9Task, finalizeS9Review, openS9ReviewWorld,
-  s9ReviewerProfile, type S9ReviewWorld,
+  readS9ReviewSourceSettled, s9ReviewerProfile, type S9ReviewWorld,
 } from '../helpers/S9-review-fixture.js';
 
 vi.mock('../../src/core/record-store/in-memory-record-store.js', async importOriginal =>
@@ -31,8 +32,18 @@ vi.mock('../../src/core/record-store/in-memory-record-store.js', async importOri
 const worlds: S9ReviewWorld[] = [];
 afterEach(async () => { commitBarrier.reset(); for (const world of worlds.splice(0)) await world.close(); });
 
-const NO_ANSWER_NOTICE = '这次规划已结束，没有留下可用的回答，这条消息已撤回。请补充要求后重新发送。';
+const NO_ANSWER_NOTICE = '对方这一轮结束，没有回复。请补充要求后重新发送。';
 const failClosingNotice = (): void => { commitBarrier.failCommitOnce(byIdentityPrefix('session-message-send:')); };
+
+/**
+ * P2 (`p2-frozen.md:165`, `:168`): the Host settles a review source without a verdict by the formal `no_answer` (its
+ * one fixed notice ends the round); only the person's B20 source is withdrawn, so this source stays not withdrawn.
+ */
+async function settledWithoutWithdraw(world: S9ReviewWorld['world'], messageRef: Parameters<typeof readS7BMessage>[1]) {
+  expect(await heartbeatUntil(world, () => readS9ReviewSourceSettled(world, messageRef), settled => settled, 24))
+    .toBe(true);
+  expect((await readS7BMessage(world, messageRef)).withdrawnAt).toBeNull();
+}
 
 /** The consumable view's offer for the reviewer line, then the one intervention entry on it. */
 async function settle(review: S9ReviewWorld) {
@@ -88,7 +99,7 @@ describe('W4-settle: the review source settles before the completed-Goal branch'
       value: { state: 'advance', next: { operation: { kind: 'record_review' } } } });
   }, 180_000);
 
-  it('P2-3 ②: archive-line keeps its request until the Host withdraws the source; the continuation archives', async () => {
+  it('P2-3 ②: archive-line keeps its request until the Host settles the source; the continuation archives', async () => {
     const review = await openS9ReviewWorld();
     worlds.push(review);
     const { world } = review;
@@ -100,7 +111,7 @@ describe('W4-settle: the review source settles before the completed-Goal branch'
       .toMatchObject({ status: 'ready', value: { state: 'partial', rejection: { code: 'busy' } } });
     expect((await world.readSession(line)).record).toMatchObject({ lifecycle: 'active',
       archiveRequest: { requestId: 's9-p23-line' } });
-    expect((await waitForWithdrawn(world, query.messageRef)).withdrawnAt).not.toBeNull();
+    await settledWithoutWithdraw(world, query.messageRef);
     expect(await notices(world, line, NO_ANSWER_NOTICE)).toHaveLength(1);
     expect((await world.post('sessions/archive-continue', plain(S6A_SCOPE, { sessionRef: line.ref,
       archiveRequestId: 's9-p23-line' }))).body).toMatchObject({ status: 'ready', value: { state: 'archived' } });
@@ -135,14 +146,14 @@ describe('W4-settle: the review source settles before the completed-Goal branch'
       nextMessage: { kind: 'action_request', messageRef: query.messageRef } });
   }, 120_000);
 
-  it('closed without a verdict: no_answer, the one fixed notice, then the source withdrawn', async () => {
+  it('closed without a verdict: no_answer and the one fixed notice settle the source, which is not withdrawn', async () => {
     const review = await openS9ReviewWorld();
     worlds.push(review);
     const query = await answerS9Review(review, 'none', { settle: false, beforeEnd: failClosingNotice });
     const { offer, result } = await settle(review);
     expect(offer).toMatchObject({ kind: 'action_request', messageRef: query.messageRef });
     expect(result).toMatchObject({ status: 'no_answer' });
-    expect((await waitForWithdrawn(review.world, query.messageRef)).withdrawnAt).not.toBeNull();
+    await settledWithoutWithdraw(review.world, query.messageRef);
     expect(await notices(review.world, review.reviewLine!, NO_ANSWER_NOTICE)).toHaveLength(1);
     // K3L-3 (Astra): the withdrawn exec_review round is a verdict shape; the planning question reader skips it, so
     // the person's decision queue still reads instead of answering `source_stale` for the whole page.

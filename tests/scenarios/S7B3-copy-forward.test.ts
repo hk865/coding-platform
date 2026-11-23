@@ -4,8 +4,10 @@ import { plain } from '../helpers/AG2b-collaboration-fixture.js';
 import { s6aCardsWorkspace } from '../helpers/S6A-cards-fixture.js';
 import { S6A_SCOPE, S6A_WORK_ROLE } from '../helpers/S6A-request-fixture.js';
 import { adoptS6BPlan } from '../helpers/S6B1-fixture.js';
-import { committed, openS7AWorkWorld, ready, runS7ASameSessionAgain } from '../helpers/S7A-fixture.js';
-import { createCancelledS7A2Goal, sendS7A2PersonMessage } from '../helpers/S7A2-fixture.js';
+import {
+  cancelS7AGoal, committed, openS7AWorkWorld, ready, runS7ASameSessionAgain, seedS7AGoalPlan,
+} from '../helpers/S7A-fixture.js';
+import { sendS7A2PersonMessage } from '../helpers/S7A2-fixture.js';
 import { inboxOf } from '../helpers/S7B-F-support.js';
 import { readS7BMessage } from '../helpers/S7B-fixture.js';
 
@@ -13,12 +15,17 @@ it('(copy-forward) the ticked interventions are forwarded once to the original l
   const { world, line } = await openS7AWorkWorld({ backend: 'memory' });
   try {
     const main = s6aCardsWorkspace(world, S6A_SCOPE);
-    const source = await createCancelledS7A2Goal(world);
-    const a = await sendS7A2PersonMessage(world, { label: 's7b3-a', recipient: line.ref, goal: source.goal.ref });
+    // design:245 / p2-frozen:115: the source Goal refuses sends once cancelled and never delivers what it stored
+    // before, so both interventions are stored AND delivered (the line's next Run) while it is alive; the copy branch
+    // forwards only a delivered intervention (book-7b:611-612). The cancel then makes it the copy source, and the
+    // forwarding pins the live copy Goal.
+    const source = await seedS7AGoalPlan(world);
+    const a = await sendS7A2PersonMessage(world, { label: 's7b3-a', recipient: line.ref, goal: source.goal });
     world.clock.advance(1000);
-    const b = await sendS7A2PersonMessage(world, { label: 's7b3-b', recipient: line.ref, goal: source.goal.ref });
+    const b = await sendS7A2PersonMessage(world, { label: 's7b3-b', recipient: line.ref, goal: source.goal });
     await runS7ASameSessionAgain(world, line);
-    const draft = ready<GoalCopyDraftResultV1>(await world.post('goals/copy-draft', plain(S6A_SCOPE, { goalRef: source.goal.ref })), 'the copy draft');
+    await cancelS7AGoal(world, source.goal);
+    const draft = ready<GoalCopyDraftResultV1>(await world.post('goals/copy-draft', plain(S6A_SCOPE, { goalRef: source.goal })), 'the copy draft');
     expect((draft.interventions.available ? draft.interventions.candidates : []).map(candidate => candidate.messageRef)).toEqual([a.ref, b.ref]);
     const input: GoalCopyConfirmInputV1 = { commandId: 's7b3-copy-forward', sourceGoalRef: draft.source.goal,
       expectedSourceRevision: draft.source.revision, selectedInterventions: [a.ref, b.ref] };

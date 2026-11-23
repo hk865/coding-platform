@@ -26,7 +26,7 @@ import type {
   ChecksConfigurationPinV1, ChecksConfirmationV1, ChecksSaveResultV1, ChecksSettingsSourceV1,
 } from '../contracts/initialization-adoption.js';
 import { rejected } from '../contracts/core/rejections.js';
-import type { CoreError, ReadResult, WriteResult } from '../contracts/core/results.js';
+import type { CoreError, CoreRejection, ReadResult, WriteResult } from '../contracts/core/results.js';
 import type { PlanProposalRef } from '../core/work-graph/model/plan-contracts.js';
 import type {
   ChecksConfirmationPort, StoredChecksStateV1,
@@ -78,6 +78,7 @@ import type {
 import type { WorkbenchRuntimeProviderDependencies } from './runtime-configuration.js';
 import type {
   CheckApprovalV1,
+  CheckApproverV1,
   ChecksAdoptionEntryPort,
   DirectoryListing,
   HostSettingsPort,
@@ -844,10 +845,26 @@ function toStoredModel(model: HostSettingsModelDefinition): HostSettingsStoredMo
 
 export const WORKSPACE_REMOVED_REASON = 'the workspace was removed';
 
+/**
+ * 2.5a A13: the Host's optional judgement of the candidate version an automatic adoption is bound to. The settings
+ * queue calls it before installing the candidate's checks and again before the adoption; `null` passes, a rejection
+ * stops the adoption with the owner's retriable answer (`settlePlanAdoption` rolls back after an install).
+ */
+export type PlanAdoptionJudgeV1 = () => Promise<CoreRejection | null>;
+
+/** The checks entry with that optional judgement beside the existing adopt/replay pair (the port itself is unchanged). */
+export type ChecksAdoptionEntryPortWithJudge = Omit<ChecksAdoptionEntryPort, 'adoptWithPlanChecks'> & {
+  adoptWithPlanChecks<T>(ctx: CoreCallContext,
+    input: { scope: CoreScope; proposalRef: PlanProposalRef; checks: readonly RegisteredCommandCheck[];
+      approval: CheckApproverV1 },
+    adopt: { replay: () => Promise<WriteResult<T> | { status: 'not_found' }>; apply: () => Promise<WriteResult<T>> },
+    judge?: PlanAdoptionJudgeV1): Promise<WriteResult<T>>;
+};
+
 export async function createHostSettings(
   options: HostSettingsOptions,
   callbacks: HostSettingsCallbacks,
-): Promise<HostSettingsPort & ChecksAdoptionEntryPort> {
+): Promise<HostSettingsPort & ChecksAdoptionEntryPortWithJudge> {
   const settingsDirectory = options.settingsDirectory;
   if (!nonEmpty(settingsDirectory)) throw new Error('host settings require an explicit persistent directory');
   const assembly = options.assembly;
@@ -1673,18 +1690,20 @@ export async function createHostSettings(
   };
 
   /**
-   * 121-136 A3: a person's adoption of a plan that brings its own checks, as one recoverable whole under the settings
-   * queue, in the initialization adoption's order: record with the state before, install, adopt, close. Inside the
-   * queue, in order: an earlier adoption of this workspace left pending settles; the adoption owner's original receipt
-   * answers a replay (`replay`), with no read of the current checks and no install; a candidate whose adoption has
-   * ended (adopted, not adopted, stale) gets the owner's own answer from `apply` with nothing installed; a plan whose
-   * checks are all installed already (`proposedCheckSplit`) is the plain `apply`, with no install grant. Otherwise the
-   * plan's checks pass the proposal validation a saved Answer's do (`trustedCheckProposal`); the ones not installed are
-   * saved with the plan, the approver and the time in the same write as the pending record (`planAdoption`), then
-   * installed, and `apply` adopts with the request's own identity. Committed closes the record; any other answer
-   * settles it (`settlePlanAdoption`), and a settle that cannot finish answers that it is pending.
+   * 121-136 A3: an adoption of a plan that brings its own checks, as one recoverable whole under the settings queue,
+   * in the initialization adoption's order: record with the state before, install, adopt, close. Inside the queue, in
+   * order: an earlier adoption of this workspace left pending settles; the adoption owner's original receipt answers a
+   * replay (`replay`), with no read of the current checks and no install; a candidate whose adoption has ended (adopted,
+   * not adopted, stale) gets the owner's own answer from `apply` with nothing installed; a plan whose checks are all
+   * installed already (`proposedCheckSplit`) is the plain `apply`, with no install grant. Otherwise the plan's checks
+   * pass the proposal validation a saved Answer's do (`trustedCheckProposal`); the ones not installed are saved with the
+   * plan, the approver and the time in the same write as the pending record (`planAdoption`), then installed, and `apply`
+   * adopts with the request's own identity. Committed closes the record; any other answer settles it
+   * (`settlePlanAdoption`), and a settle that cannot finish answers that it is pending. The Host's platform adoption
+   * also passes `judge`, the A13 decision bound to its candidate version: it runs before the install and again before
+   * `apply`, so a candidate that moved while queued is not installed, and a post-install refusal settles the record.
    */
-  const adoptWithPlanChecks: ChecksAdoptionEntryPort['adoptWithPlanChecks'] = (ctx, input, { replay, apply }) =>
+  const adoptWithPlanChecks: ChecksAdoptionEntryPortWithJudge['adoptWithPlanChecks'] = (ctx, input, { replay, apply }, judge) =>
     serialize(async () => {
     const { scope, proposalRef } = input;
     const notInstalled = (code: CoreError, reason: string) => rejected(code, `the plan's checks `
@@ -1703,6 +1722,10 @@ export async function createHostSettings(
     catch { read = unavailable('the plan candidate could not be read'); }
     if (read.status !== 'ready') return notInstalled(read.code, read.reason);
     if (read.value.adoption !== 'open') return await apply();
+    // 2.5a A13: the queue reads the candidate again for its checks, so the judgement bound to the version the
+    // wrapper judged runs before anything is installed; a moved or now-refused version installs nothing.
+    const refusedBefore = judge === undefined ? null : await judge();
+    if (refusedBefore !== null) return refusedBefore;
     const installed = await adoption.confirmInstalledChecks(ctx, { scope });
     if (installed.status !== 'ready') return notInstalled('unavailable', 'the installed checks could not be read');
     const { added, conflicts } = proposedCheckSplit(installed.value.checks, read.value.checks);
@@ -1756,6 +1779,10 @@ export async function createHostSettings(
       return await settlePlanAdoption(scope, true)
         ?? notInstalled('unavailable', 'the Host configuration was not confirmed; retry the same adoption');
     }
+    // 2.5a A13: the same bound judgement again before the adoption; the checks are installed by now, so a refusal
+    // settles them and the candidate stays the existing card (the next round shows it).
+    const refusedAfter = judge === undefined ? null : await judge();
+    if (refusedAfter !== null) return await settlePlanAdoption(scope, true) ?? refusedAfter;
     const result = await apply();
     if (result.status !== 'committed') return await settlePlanAdoption(scope, true) ?? result;
     await closePlanAdoption(scope);

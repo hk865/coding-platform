@@ -28,6 +28,7 @@ import type { RuntimeExecutionPort } from '../core/agent-runtime/ports.js';
 import { createExecutionEntryService, readManifestFromEnvelope } from '../core/work-graph/tasks/execution-entry-service.js';
 import { createModelCallService, createModelRequestReadPort } from '../core/work-graph/tasks/model-call-service.js';
 import { createSessionMailbox, createMessageWriteOwner } from '../core/work-graph/communication/mailbox-service.js';
+import { messageRefOf, senderIdentityOf } from '../core/work-graph/communication/mailbox-common.js';
 import { createMessageExpiryOwner, type MessageExpiryPort } from '../core/work-graph/communication/message-expiry.js';
 import { createDecisionMessageService } from '../core/work-graph/communication/decision-service.js';
 import { createDecisionSourceFacts, type DecisionSourceFactsDependencies } from '../core/work-graph/communication/decision-source-facts.js';
@@ -66,7 +67,7 @@ import { platformRoleProfile } from '../core/agent-runtime/role-profiles.js';
 import {
   candidateCardFacts, createCollectionCardSource, createCommandRerunRequestCardSource, createDecisionReadModel,
   createGoalCauseCardSource, createMemberCreationCardSource, createNoteReviewCardSource,
-  createPlanningQuestionCardSource, createUnknownCallReviewCardSource, createMessageReleaseCardSource,
+  createPlanningQuestionCardSource, createUnknownCallReviewCardSource, createActionReleaseCardSource,
   createMaintainerAssignmentCardSource, createRoleCapacityCardSource, createRoleLineChangeCardSource,
 } from '../core/work-graph/views/decision-read-model.js';
 import { createPlanAdoptionNoticeSource } from '../core/work-graph/views/plan-adoption-notices.js';
@@ -97,14 +98,12 @@ import { createNoticePositionComparator } from '../core/work-graph/views/notice-
 import { createNoticeDisplayToken } from '../core/work-graph/views/notice-display-token.js';
 import type {
   DecisionMessagePort, DecisionNoticeSourcePort, DecisionReadPort, GoalListReadPort, GoalSettingsPort, NoteDecisionSourcePort,
-  RequestCandidatePort, WorkspaceDecisionSettingsPort,
-  MessageReleaseCandidatesPort, MessageReleasePort, MessageReleasedActionsPort,
+  RequestCandidatePort, TaskClaimabilityPort, WorkspaceDecisionSettingsPort,
 } from '../core/work-graph/model/decision-contracts.js';
 import type {
   SessionMailboxPort, SessionMessageCommandPort,
 } from '../core/work-graph/model/communication-contracts.js';
-import type { MessageForwardingPort } from '../core/work-graph/model/communication-contracts.js';
-import type { MessageReleaseApprovedHookV1 } from '../core/work-graph/communication/decision-change-proof.js';
+import type { MessageForwardingPort, SystemRoundSourceReadPort } from '../core/work-graph/model/communication-contracts.js';
 import {
   SESSION_MESSAGE_MAX_TEXT_BYTES, SESSION_MESSAGE_RECORD_SCHEMAS,
 } from '../core/work-graph/sessions/message-record-codecs.js';
@@ -114,8 +113,9 @@ import type { CommandReviewDeps } from '../business/workflow/command-review.js';
 import type { NoteAnchorV1 } from '../contracts/note.js';
 import { servingBinding, servedRoleIds } from '../business/workflow/role-bindings.js';
 import {
+  createActionReleaseApplicationAdapter,
   createCommandRerunRequestApplicationAdapter, createMemberCreationApplicationAdapter,
-  createMessageReleaseApplicationAdapter, createReworkRequestApplicationAdapter,
+  createReworkRequestApplicationAdapter,
   createMaintainerAssignmentApplicationAdapter, createRoleCapacityApplicationAdapter,
   createRoleLineChangeApplicationAdapter,
 } from '../business/workflow/decision-actions.js';
@@ -190,10 +190,10 @@ import { createRunStateReader } from '../core/work-graph/tasks/run-state-service
 import { failingCheckOutputsOf, type CheckOutputDeps } from '../core/work-graph/tasks/check-outputs.js';
 import type { ExecutionReadPort } from '../core/work-graph/model/execution-read-contracts.js';
 import { createExecutionHistoryReader } from '../core/agent-runtime/observation-recovery.js';
-import { createTaskClaimService } from '../core/work-graph/tasks/claim-service.js';
+import { createTaskClaimService, readEffectiveClaimBlocker } from '../core/work-graph/tasks/claim-service.js';
 import { createTaskRequeueService } from '../core/work-graph/tasks/requeue-service.js';
 import { TASK_CLAIM_RECORD_SCHEMAS, decodeDispatchOutboxEntry, dispatchOutboxRefKey } from '../core/work-graph/tasks/claim-record-codecs.js';
-import type { TaskClaimPort } from '../core/work-graph/model/claim-contracts.js';
+import type { PlanSourceRootPort, TaskClaimPort } from '../core/work-graph/model/claim-contracts.js';
 import type { RoleBindingFacts, RoleBindingFactsPort, RoleConfigurationPort } from '../core/work-graph/model/configuration-contracts.js';
 import type { PreClaimAuthorizationPortV1 } from '../core/work-graph/model/pick-ports.js';
 import { hostRolePermissionsAdmitted, projectRunPermissions } from '../core/work-graph/tasks/pick-authorization.js';
@@ -210,6 +210,7 @@ import { PLATFORM_PROMPT_PACK_V1 } from '../contracts/prompts/platform-pack.gene
 import { createPlanService, createRequestCandidateService } from '../core/work-graph/tasks/plan-service.js';
 import type { PlanServiceDependencies } from '../core/work-graph/tasks/plan-service.js';
 import type { CandidateSourceLineDeps } from '../core/work-graph/tasks/plan-lineage.js';
+import { overlapNoteOf, planSourceLineageOf, trustedSystemRoundOfMessage } from '../core/work-graph/tasks/plan-lineage.js';
 import { createPlanAdoptionStop } from './plan-adoption-stop.js';
 import { PLAN_RECORD_SCHEMAS } from '../core/work-graph/persistence/plan-record-codecs.js';
 import { DECISION_RECORD_SCHEMAS } from '../core/work-graph/persistence/decision-record-codecs.js';
@@ -331,8 +332,6 @@ import { GOAL_COPY_RECORD_SCHEMAS, createCopiedInterventionForwarding,
   createGoalCopyService } from '../core/work-graph/tasks/goal-copy-service.js';
 import { createCopyInterventionPorts } from '../core/work-graph/communication/copy-retraction.js';
 import { createMessageForwardingOwner } from '../core/work-graph/communication/message-forwarding.js';
-import { createMessageReleaseApplication } from '../core/work-graph/communication/decision-change-proof.js';
-import { createMessageReleaseOwner } from '../core/work-graph/communication/message-release.js';
 import { createMessageApplyOwner, type MessageApplyPort } from '../core/work-graph/communication/message-apply.js';
 import type { CopyInterventionReadPort } from '../core/work-graph/model/goal-copy-contracts.js';
 import { createRequestTailFragment } from '../core/work-graph/tasks/request-tail-fragment.js';
@@ -430,7 +429,7 @@ import type {
   CompletionPolicyConfigurationPort, ProjectRegistrationPort,
 } from '../core/work-graph/configuration/project-bootstrap-contracts.js';
 import { PROJECT_BOOTSTRAP_RECORD_SCHEMAS } from '../core/work-graph/configuration/project-bootstrap-record-codecs.js';
-import type { AuthorizeQueryConfiguration, QueryJobPort } from '../core/work-graph/queries/contracts.js';
+import type { AuthorizeQueryConfiguration, OverlapNoteReadPort, QueryJobPort } from '../core/work-graph/queries/contracts.js';
 import { QUERY_JOB_RECORD_SCHEMAS } from '../core/work-graph/queries/query-record-codecs.js';
 import { createConsultationFactsReader } from '../core/work-graph/queries/platform-facts.js';
 import { createObservedArchitecture } from '../core/work-graph/architecture/architecture-service.js';
@@ -687,7 +686,6 @@ export type TargetPlatformOptions = {
     advance(ctx: CoreCallContext, input: QueryStageAdvanceInput): Promise<QueryStageOutcome>;
     wake(scope: WorkspaceScope): void;
   };
-  onMessageReleaseApproved?: MessageReleaseApprovedHookV1;
   /**
    * Slice 5 §3.2/§2.6: the exact configured operator of this Host. It is the
    * Host's real start actor (a human or system actor, never a platform
@@ -1615,7 +1613,20 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
     // `goals/dispatch-basis` and `look_graph` answer from one window (the pointer adapter keeps `tasks/` free of `notes/`).
     const dispatchBasis = createDispatchBasisReader({ records: backend.records,
       pointer: createGoalPointerFacts({ records: backend.records }) });
-    const mailboxDependencies = { records: backend.records, sessions: sessionDirectory,
+    // Design 5.1: the one `overlapNoteOf` read over the Plan service and the gate owner built below; the reply slot,
+    // the Query owner's submit and both input supplies ask it, so a gate's note request is told apart in one place.
+    const gateNotes: OverlapNoteReadPort = { readGateNote: (ctx, message) => overlapNoteOf(ctx, { plans: planService,
+      gates: { readOverlapGates: (gateCtx, input) => overlapGates.readOverlapGates(gateCtx, input) } }, message) };
+    // Design 2.2/2.6: the one trusted-system-round read the consumable view also makes, over the same mailbox, Plan
+    // service and review read; the reply slot and both input supplies ask it.
+    const systemRounds: SystemRoundSourceReadPort = { readSystemRoundSource: (ctx, message) =>
+      trustedSystemRoundOfMessage(ctx, { messages: mailbox, plans: planService,
+        readReview: (reviewCtx, input) => unknownCallReviews.readReview(reviewCtx, input) }, message) };
+    // A Work supply carries the execution principal; these reads admit only the Host, so a non-Host caller reads under
+    // a trusted Host context at the message's own workspace, with the safe point's signal.
+    const hostReadContext = (ctx: CoreCallContext, workspaceId: string): CoreCallContext =>
+      ctx.principal.kind === 'host' ? ctx : hostSystemContext({ ...ctx, workspaceId }, WORKFLOW_AUTOMATION_ACTOR);
+    const mailboxDependencies = { records: backend.records, sessions: sessionDirectory, gateNotes, systemRounds,
       executions: executionReader, roles: roleService, materials: rawMaterials,
       // The Host-send receipt read (D-L1-3) is identity-only, from the store's own
       // identity port; it never turns a committed send into a second write.
@@ -1642,8 +1653,7 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
     // G's L46 upstream read and P's copy-forward trigger share the ONE mailbox, records and duties owner; no second
     // records/mailbox/forwarding instance is built here.
     const messageForwardingOwner = createMessageForwardingOwner({
-      records: backend.records, sessions: sessionDirectory,
-      duties: messageDuties, now,
+      records: backend.records, sessions: sessionDirectory, now,
     });
     const copiedInterventionForwarding = createCopiedInterventionForwarding({
       records: backend.records, mailbox,
@@ -1651,24 +1661,10 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
     });
     const messageWrites = createMessageWriteOwner(mailboxDependencies);
     const messageExpiry = createMessageExpiryOwner({ records: backend.records, writes: messageWrites, now });
-    // R's release owner and G's trusted entry share the ONE message writer and the ONE basis read; the copy ports take
-    // the mailbox itself. The Workflow gets the raw pair (rd7a2c-03), never the tracked surface.
-    const messageReleaseOwner = createMessageReleaseOwner({ records: backend.records, writes: messageWrites,
-      dispatchBasis, now });
-    const messageReleaseApplication = createMessageReleaseApplication({ records: backend.records,
-      writes: messageWrites, now });
-    const rawMessageRelease = { ...messageReleaseOwner, ...messageReleaseApplication };
+    // G's trusted entry and the copy ports share the ONE mailbox and message writer; the Workflow gets the raw
+    // writer (rd7a2c-03), never the tracked surface.
     const copyInterventions = createCopyInterventionPorts({ records: backend.records, mailbox });
     const messageApply = createMessageApplyOwner({ records: backend.records, messageWrites, now });
-    /** R's two-branch release and candidate read, G's trusted entry: one owner group, every member drained. */
-    const messageRelease: MessageReleasePort & MessageReleaseCandidatesPort & MessageReleasedActionsPort = {
-      releaseApproved: (...args) => trackedCall(() => messageReleaseOwner.releaseApproved(...args), unavailable),
-      readReleaseCandidates: (...args) =>
-        trackedCall(() => messageReleaseOwner.readReleaseCandidates(...args), unavailable),
-      readReleasedActions: (...args) => trackedCall(() => messageReleaseOwner.readReleasedActions(...args), unavailable),
-      applyMessageRelease: (...args) =>
-        trackedCall(() => messageReleaseApplication.applyMessageRelease(...args), unavailable),
-    };
     // R5b.2: the ONE internal Query writer shares this records/roles/bodies
     // instance. It is injected into the QueryJob claim/read adapter and the
     // Runtime thin path, never published as a public terminal port. Without a
@@ -1688,6 +1684,9 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       ...(queryExecution === undefined ? {} : { execution: queryExecution }),
       consultations: { readMessage: mailbox.readMessage.bind(mailbox), readMessageBody: mailbox.readMessageBody.bind(mailbox) },
       eligibility: { readDeliveryEligibilityFacts: (...args) => rawWorkflow.readDeliveryEligibilityFacts!(...args) },
+      // Design 5.1: the owner proves an overlap-note round with the same `overlapNoteOf` read the consumable view and
+      // the Workflow use.
+      gateNotes,
     });
     /**
      * The one catalog-revision capability set: the human revise route, the repair
@@ -1704,27 +1703,27 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       knowledge: knowledgeLines,
       taskFacts: {
         async read(records, projectId) {
-          const goals = await readGoalsByProject(records, projectId);
-          if (goals.status !== 'ready') return goals;
-          const plans: CatalogPlanFactsV1[] = [];
-          for (const goal of goals.goals) {
+          const goalFacts = await readGoalsByProject(records, projectId);
+          if (goalFacts.status !== 'ready') return goalFacts;
+          const planFacts: CatalogPlanFactsV1[] = [];
+          for (const goal of goalFacts.goals) {
             const window = await readGoalPlanWindow(records, goal.ref);
             if (window.status !== 'ready') return window;
             const plan = window.plan;
             if (plan === null) {
-              plans.push({ goalRef: goal.ref, revision: window.goal.revision, planRef: null, tasks: [] });
+              planFacts.push({ goalRef: goal.ref, revision: window.goal.revision, planRef: null, tasks: [] });
               continue;
             }
             const facts = await readCanonicalTaskFacts(records, goal.ref, plan);
             if (facts.status !== 'ready') return facts;
-            plans.push({ goalRef: goal.ref, revision: window.goal.revision, planRef: plan.ref,
+            planFacts.push({ goalRef: goal.ref, revision: window.goal.revision, planRef: plan.ref,
               tasks: plan.tasks.map(task => ({
                 taskId: task.taskId,
                 moduleIds: task.scope.kind === 'module' ? [task.scope.moduleRef] : [],
                 closure: taskClosureOf(plan, facts.value, task.taskId).cause ?? 'open',
               })) });
           }
-          return { status: 'ready', value: { plans, watermark: goals.readThrough } };
+          return { status: 'ready', value: { plans: planFacts, watermark: goalFacts.readThrough } };
         },
       },
       responsibility: {
@@ -1747,7 +1746,7 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
             return { status: 'rejected', code: 'unavailable',
               reason: `the project responsible-link read failed: ${messageOf(error)}` };
           }
-          const sessions = new Map<string, SessionRecord>();
+          const sessionRecords = new Map<string, SessionRecord>();
           const links = new Map<string, SessionWorkLink>();
           const guards: { refKey: string; expectedRevision: number | null }[] = [];
           const archived = new Set<string>();
@@ -1763,7 +1762,7 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
             // directory's old open read excluded archived Sessions, so no move
             // and no guard applies to them.
             if (archived.has(link.ref.sessionId)) continue;
-            if (!sessions.has(link.ref.sessionId)) {
+            if (!sessionRecords.has(link.ref.sessionId)) {
               const sessionKey = sessionAggregateRefKey(plainSessionRefToAggregate({
                 projectId: link.ref.projectId, sessionId: link.ref.sessionId }));
               const read = await records.readMany([sessionKey]);
@@ -1787,7 +1786,7 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
                 archived.add(session.value.ref.sessionId);
                 continue;
               }
-              sessions.set(session.value.ref.sessionId, session.value);
+              sessionRecords.set(session.value.ref.sessionId, session.value);
               guards.push({ refKey: sessionKey, expectedRevision: session.value.revision });
             }
             links.set(canonicalKey(link.ref), link);
@@ -1807,7 +1806,7 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
                 target: { kind: 'module', ref: destination }, relation: 'responsible',
               };
               const key = canonicalKey(destinationRef);
-              if (links.has(key) || !sessions.has(destinationRef.sessionId)) continue;
+              if (links.has(key) || !sessionRecords.has(destinationRef.sessionId)) continue;
               const linkKey = sessionWorkLinkRefKey(destinationRef);
               const read = await records.readMany([linkKey]);
               if (read.status !== 'ready') {
@@ -1825,7 +1824,7 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
               guards.push({ refKey: linkKey, expectedRevision: destinationLink.value.revision });
             }
           }
-          return { status: 'ready', value: { sessions, links, guards, activeRevision: pointer.value } };
+          return { status: 'ready', value: { sessions: sessionRecords, links, guards, activeRevision: pointer.value } };
         },
         contribution(input) {
           const projectId = input.projectId;
@@ -2123,8 +2122,21 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       records: backend.records, requests: commandRerunRequests, reviews: unknownCallReviews,
       executions: executionReader,
       readKernelCommandFacts: (ctx, input) => readKernelCommandFacts({ kernelStores, kernel }, ctx, input) });
-    // G's `message_release` card: a derived source like the other five; no card table is created.
-    const messageReleaseCards = createMessageReleaseCardSource({ records: backend.records, dispatchBasis });
+    // 暂缓失效和原请求反馈共用的来源链根：只比同来源，非 Host 调用方也按平台 Host 读；在链的 Goal 工作区查（设计 :554）。
+    const planSourceRoot: PlanSourceRootPort = { messageRoot: async (ctx, source, goalWorkspaceId) => {
+      const reader = ctx.principal.kind === 'host' ? ctx : hostSystemContext(ctx, WORKFLOW_AUTOMATION_ACTOR);
+      const lineage = await planSourceLineageOf(reader, { messages: mailbox, queries: queryJobs, plans: planService,
+        readReview: (callCtx, input) => unknownCallReviews.readReview(callCtx, input) }, source, goalWorkspaceId);
+      return lineage.status === 'ready' ? { status: 'ready', value: lineage.value.rootMessage } : lineage;
+    } };
+    // §2.8/F06: the ONE instance the action card source and the node detail both read; it forwards to the
+    // Workflow's target-loop judgment (declared below) so no view re-derives the gate/node/line rules.
+    const taskClaimability: TaskClaimabilityPort = {
+      readTaskClaimability: (...args) => rawWorkflow.readTaskClaimability!(...args),
+    };
+    // The `action_release` card source: a derived source like the other five; no card table is created.
+    const actionReleaseCards = createActionReleaseCardSource({ records: backend.records, planSourceRoot,
+      taskClaimability });
     const noteReviewNotices = createNoteReviewNoticeSource({ records: backend.records });
     // The handoff notices are a read projection of the handoff operations' own saved writes: one item per operation,
     // no stored notice and no new writer.
@@ -2211,7 +2223,7 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
         { workspace: input.workspace, source: input.source }),
     });
     const decisionCardSources = [goalCauseCards, planningQuestionCards, noteReviewCards, unknownCallReviewCards,
-      commandRerunRequestCards, messageReleaseCards, handoffApprovalCards, adviserCreationCards,
+      commandRerunRequestCards, actionReleaseCards, handoffApprovalCards, adviserCreationCards,
       createMemberCreationCardSource({ records: backend.records }),
       createMaintainerAssignmentCardSource({ records: backend.records }),
       createRepairApprovalSource({ records: backend.records, knowledge: knowledgeLines, observation: observed,
@@ -2230,15 +2242,16 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       displayTokens,
       // §6.3.1: the source-lineage walk over the SAME mailbox/Query/Plan owners
       // the plan readers were built from; no second reader is created here.
-      lineage: { messages: mailbox, queries: queryJobs, plans: planService },
+      lineage: { messages: mailbox, queries: queryJobs, plans: planService,
+        readReview: (callCtx, input) => unknownCallReviews.readReview(callCtx, input) },
     });
     // The main read and `requests/read`'s ONE whole-page run of the decision read model's assembly. It is built
     // before the Runtime dependencies because Q's `read_requests` tool receives this owner.
     const rawMainSurface = createMainSurfaceReadModel({ records: backend.records, requests: rawRequestFacts,
-      decisions: rawDecisionReads });
+      decisions: rawDecisionReads, planSourceRoot });
     // 按请求领取读派工三值用同一个 `dispatchBasis`（邮箱、图读者、动作 owner 共用的那一个）。
     const claimService = createTaskClaimService({ records: backend.records, roles: roleService,
-      bodies, dispatchBasis, now, newId: randomUUID });
+      bodies, dispatchBasis, now, newId: randomUUID, planSourceRoot });
     // The ONE verification workspace reader: the evidence owner captures rounds
     // with it and the requeue owner takes its digest-only source (LA-5).
     const verificationWorkspaceReader = new VerificationWorkspaceReader();
@@ -2656,6 +2669,42 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       readTaskRequeueByIdentity: (...args) => trackedCall(
         () => requeueService.readTaskRequeueByIdentity(...args), unavailable),
     };
+    // §2.5: the one project allocation read and the L35 resolver the claim-hold owner takes; the same
+    // `roleLineAllocation` instance the allocation route and the cold-start chooser publish.
+    const allocationReader = createRoleLineAllocationReader({ records: backend.records, lookups: backend.records });
+    const roleLineAllocation: RoleLineAllocationReadPort = {
+      readRoleLineAllocation: (...args) => trackedCall(() => allocationReader.readRoleLineAllocation(...args), unavailable),
+    };
+    const responsibilityRecipient = createResponsibilityRecipient({
+      records: backend.records, duty: sessionDutyResolver, catalog, allocation: roleLineAllocation });
+    // 通信与权限拆开（121-152）：动作请求和暂缓领取两个 owner。问答轮身份用同一个 `queryRounds`，派活三值用同一个
+    // `dispatchBasis`，书记原因的负责参谋用上面这个 L35 解析，送停交 control owner；调用方（工具、答卡、目标循环）随 P2 接。
+    const claimHoldOwner = createClaimHoldService({ records: backend.records, queryRounds, duty: sessionDutyResolver,
+      recipients: responsibilityRecipient, ...(operatorActor === undefined ? {} : { operatorActor }), now,
+      eventId: randomUUID });
+    const actionRequestOwner = createActionRequestService({ records: backend.records, queryRounds,
+      duty: sessionDutyResolver, dispatchBasis, autonomyRules, allocation: roleLineAllocation, control: rawControls,
+      planSourceRoot, ...(operatorActor === undefined ? {} : { operatorActor }), now, eventId: randomUUID });
+    const actionRequests: ActionRequestPort = {
+      requestDispatch: (...args) => trackedCall(() => actionRequestOwner.requestDispatch(...args), unavailable),
+      requestStop: (...args) => trackedCall(() => actionRequestOwner.requestStop(...args), unavailable),
+      approve: (...args) => trackedCall(() => actionRequestOwner.approve(...args), unavailable),
+      deny: (...args) => trackedCall(() => actionRequestOwner.deny(...args), unavailable),
+      withdraw: (...args) => trackedCall(() => actionRequestOwner.withdraw(...args), unavailable),
+      settle: (...args) => trackedCall(() => actionRequestOwner.settle(...args), unavailable),
+      deliverStop: (...args) => trackedCall(() => actionRequestOwner.deliverStop(...args), unavailable),
+      readRequest: (...args) => trackedCall(() => actionRequestOwner.readRequest(...args), unavailable),
+      listOpenDispatches: (...args) => trackedCall(() => actionRequestOwner.listOpenDispatches(...args), unavailable),
+      listOpenDispatchesInProject: (...args) =>
+        trackedCall(() => actionRequestOwner.listOpenDispatchesInProject(...args), unavailable),
+    };
+    const claimHolds: ClaimHoldPort = {
+      place: (...args) => trackedCall(() => claimHoldOwner.place(...args), unavailable),
+      placeScribeStop: (...args) => trackedCall(() => claimHoldOwner.placeScribeStop(...args), unavailable),
+      release: (...args) => trackedCall(() => claimHoldOwner.release(...args), unavailable),
+      releaseAll: (...args) => trackedCall(() => claimHoldOwner.releaseAll(...args), unavailable),
+      readHold: (...args) => trackedCall(() => claimHoldOwner.readHold(...args), unavailable),
+    };
     let runtime = createAgentRuntime();
     if (options.runtime !== undefined) {
       const host = runtimeBindings!;
@@ -2736,11 +2785,36 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
         // configured, the generated platform pack otherwise.
         modelRequestReads: createModelRequestReadPort(entryDependencies),
         promptPacks: options.promptPacks ?? createPlatformPromptPackSource(),
-        roles: roleService, plans: planService, messages: mailbox, sessions: sessionDirectory,
+        roles: roleService, plans: planService,
+        // The Runtime's message dependency is the send/respond/read surface; the retired release command is gone.
+        messages: mailbox,
+        // Design 2.2: the Workflow's one delivery-facts read, so the safe-point supply uses the same eligibility rule;
+        // it, the gate-note read (5.1) and the trusted-system-round read (2.2/2.6) run under `hostReadContext`.
+        deliveryFacts: { readDeliveryEligibilityFacts: (ctx, input) => rawWorkflow.readDeliveryEligibilityFacts!(
+          hostReadContext(ctx, input.messageRef.workspaceId), input) },
+        gateNotes: { readGateNote: (ctx, message) => gateNotes.readGateNote(hostReadContext(ctx, message.ref.workspaceId), message) },
+        systemRounds: { readSystemRoundSource: (ctx, message) =>
+          systemRounds.readSystemRoundSource(hostReadContext(ctx, message.ref.workspaceId), message) },
+        sessions: sessionDirectory,
         expiryCount: (ctx, input) => messageExpiry.readExpiryCount(ctx, input),
         // Slice 5 §4.6: the SAME user-decision owner the platform publishes, so
         // the three user tools call the real owners and never fail closed.
         decisionMessages: rawDecisionMessages,
+        // §2.6: the two P1 action owners the Query round's `dispatch_task`/`hold_claim`/`release_hold`/`request_stop`
+        // tools call; the same tracked ports the route/answer/goal-loop callers see. The runtime's stop entry also
+        // delivers an automatic release through the same published `deliverStop` (3.4); the tool keeps its receipt.
+        actionRequests: {
+          requestDispatch: actionRequests.requestDispatch,
+          requestStop: async (ctx, request) => {
+            const result = await actionRequests.requestStop(ctx, request);
+            if (result.status === 'released' && result.notSent === null) {
+              await actionRequests.deliverStop(hostSystemContext(ctx, WORKFLOW_AUTOMATION_ACTOR),
+                { request: result.actionRef });
+            }
+            return result;
+          },
+        },
+        claimHolds,
         // The same plan-application receipt reader the Workflow gets, shared with the whiteboard tools.
         applicationReceipt,
         materials: rawMaterials, bodies, activity: executionHistory, graphHistory, sessionOperations,
@@ -3052,13 +3126,13 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       openArtifact: (...args) => trackedCall(() => rawMaterials.openArtifact(...args), unavailable),
     };
     // The published messages surface: the narrow mailbox port's reads and old writes, with `ackMessage` unpublished,
-    // plus the full command port's send/respond and its release/withdraw commands and the two derived view reads. Every
+    // plus the full command port's send/respond and withdraw command and the two derived view reads. Every
     // published member drains through the ONE trackedCall/close path; the owners themselves stay private.
     type PublishedMessages =
-      Omit<SessionMailboxPort, 'ackMessage' | 'sendMessage' | 'respondMessage'>
-      & Required<Pick<SessionMailboxPort, 'readOutbox'>>
+      Omit<SessionMailboxPort, 'ackMessage' | 'sendMessage' | 'respondMessage' | 'readQueryRound'>
+      & Required<Pick<SessionMailboxPort, 'readOutbox' | 'readPendingCopyQuestions'>>
       & Pick<SessionMessageCommandPort,
-        'sendMessage' | 'respondMessage' | 'withdrawMessage' | 'releaseMessage' | 'readMessageView' | 'readInboxView'>
+        'sendMessage' | 'respondMessage' | 'withdrawMessage' | 'readMessageView' | 'readInboxView'>
       & Pick<MessageApplyPort, 'applyMessage'>;
     const messages: PublishedMessages = {
       sendMessage: (...args) => trackedCall(() => mailbox.sendMessage(...args), unavailable),
@@ -3068,6 +3142,8 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       readHostSendMessageRef: (...args) => trackedCall(() => mailbox.readHostSendMessageRef!(...args), unavailable),
       readInbox: (...args) => trackedCall(() => mailbox.readInbox(...args), unavailable),
       readOutbox: (...args) => trackedCall(() => mailbox.readOutbox(...args), unavailable),
+      // §2.3/1.2: the Host pages the workspace's unanswered copy questions by question identity.
+      readPendingCopyQuestions: (...args) => trackedCall(() => mailbox.readPendingCopyQuestions(...args), unavailable),
       // The Host system sender's own outbox: the read and the internal append are
       // the SAME mailbox instance and drain through the one trackedCall. The
       // append is Host-only in the owner and is bound by no HTTP route.
@@ -3081,7 +3157,6 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       // notice set. No other mailbox method is published here.
       recordInputAccepted: (...args) => trackedCall(() => mailbox.recordInputAccepted!(...args), unavailable),
       withdrawMessage: (...args) => trackedCall(() => mailbox.withdrawMessage(...args), unavailable),
-      releaseMessage: (...args) => trackedCall(() => mailbox.releaseMessage(...args), unavailable),
       readMessageView: (...args) => trackedCall(() => mailbox.readMessageView(...args), unavailable),
       readInboxView: (...args) => trackedCall(() => mailbox.readInboxView(...args), unavailable),
       // P's applier: the proof is the caller's, compared in the owner; the route adds nothing.
@@ -3822,9 +3897,6 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       reanchorSessionResponsibility: sessionResponsibility.reanchorSessionResponsibility.bind(sessionResponsibility),
       readTransferReceipt: sessionResponsibility.readTransferReceipt.bind(sessionResponsibility),
     };
-    // The approval hook's receive side: G calls it; R's Host binds the sink to `armMessageRelease(scope)`.
-    const onMessageReleaseApproved: MessageReleaseApprovedHookV1 = approved =>
-      options.onMessageReleaseApproved?.(approved);
     // R's ONE rework-request owner: the pending-card page the Task block reads and the person's approved
     // application entry. Both approved owner entries are the platform's existing requeue/evidence instances.
     // The public EvidencePort keeps the approved-recheck entry optional for older compositions while the concrete
@@ -3853,6 +3925,16 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
         return read.status !== 'ready' ? read : { status: 'ready', value: read.value.kind === 'session' ? read.value.session : null };
       },
       sendMessage: mailbox.sendMessage,
+      // The note's ref is the mailbox's own `messageRefOf`, in the recipient line's workspace (a joined Goal's adviser
+      // may sit outside the gate's). The gate's note runs under the Workflow automation, the Host principal the send
+      // hashes into the message id; every caller of the gate owner is that Host system call.
+      noteMessageRefOf: async (ctx, recipient, requestId) => {
+        const read = await sessionDirectory.readSession(ctx, recipient, 'project');
+        if (read.status !== 'ready') return read;
+        const { actor } = ctx.principal as Extract<CoreCallContext['principal'], { kind: 'host' }>;
+        return { status: 'ready', value: messageRefOf({ projectId: ctx.projectId, workspaceId: ctx.workspaceId as string },
+          senderIdentityOf({ kind: 'host', actor: { ...actor } }), requestId, read.value.record.workspaceId) };
+      },
       readNotes: async (ctx, input) => {
         const notes: NoteVersionSnapshot[] = [];
         let cursor: string | null = null;
@@ -3927,7 +4009,10 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       repairAnswers: async (ctx, input) => {
         const read = await readUnappliedAnswers({ records: backend.records }, ctx,
           { kind: 'repair_approval', goalRef: input.goalRef });
-        return read.status === 'ready' ? read.value.answers : [];
+        return read.status === 'ready'
+          ? read.value.answers.flatMap(answer => answer.kind === 'repair_approval'
+            ? [{ kind: 'repair_approval' as const, answerMessageRef: answer.answerMessageRef }] : [])
+          : [];
       },
       sourceAuthority,
       // Slice 1 (spec §3.3): the new optional narrow ports. The SAME
@@ -4038,9 +4123,6 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
         return { status: 'ready', value: cards };
       },
       overlap: overlapGates,
-      // Book §3.8 item 3: the release owner, the bounded candidate page and the trusted answer entry. R's Host and the
-      // approval hook arm the same queue; the Workflow only selects and performs.
-      messageRelease: rawMessageRelease,
       // G's L46 pre-pass reads the legacy exact artifacts through the ONE context-input owner; P's copy forwarder is
       // the copy owner built above (one port shape: `Promise<CoreRejection | null>`).
       taskInputs: taskInputsOwner,
@@ -4068,6 +4150,7 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       // association; it is never a second mailbox or a new service.
       consultations: {
         messages: { readMessage: mailbox.readMessage.bind(mailbox), readMessageBody: mailbox.readMessageBody.bind(mailbox),
+          readHostSendMessageRef: mailbox.readHostSendMessageRef!.bind(mailbox),
           respondFromQueryAnswer: mailbox.respondFromQueryAnswer.bind(mailbox),
           recordConsultationDerivation: mailbox.recordConsultationDerivation!.bind(mailbox) },
         queries: queryJobs,
@@ -4164,10 +4247,15 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
         // K3 L19a (ruling 4): the `command_rerun_request` answer application
         // beside B1's row, over the SAME CRR owner.
         command_rerun_request: createCommandRerunRequestApplicationAdapter(commandRerunRequests),
-        // G's `message_release` row: the trusted entry, then the approval signal after a committed approval.
-        message_release: createMessageReleaseApplicationAdapter({
-          applyMessageRelease: messageReleaseApplication.applyMessageRelease,
-          onApproved: onMessageReleaseApproved }),
+        // 2.8/§3.10: the `action_release` answer applies through the SAME ActionRequest owner the card source,
+        // tools and routes publish; the adapter derives the command from the saved answer and records the owner's
+        // own commit as step ③'s formal receipt.
+        action_release: createActionReleaseApplicationAdapter({
+          approve: (...args) => actionRequestOwner.approve(...args),
+          deny: (...args) => actionRequestOwner.deny(...args),
+          deliverStop: (...args) => actionRequestOwner.deliverStop(...args),
+          applicationReceipt,
+        }),
         // The member_creation and rework_request rows: M's stored member decision and R's one approved-request
         // entry. The factories take exactly M's decision pick and R's application deps; no second application
         // flow is added here.
@@ -4246,6 +4334,9 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       planChecks: (scope) => planReadersOwner.planChecks(scope),
       planCandidates: (scope, ctx, goalRef) => planReadersOwner.planCandidates(scope, ctx, goalRef),
       acceptedCandidatesOf: (goalRef) => planReadersOwner.acceptedCandidatesOf(goalRef),
+      // A12: the one chain-end read's successor relation and the Goal loop's abandoned-chain recovery.
+      candidateSuccessorsOf: (goalRef) => planReadersOwner.candidateSuccessorsOf(goalRef),
+      abandonedCandidateTailsOf: (goalRef) => planReadersOwner.abandonedCandidateTailsOf(goalRef),
       exportBooks: exportBooksPort,
       readCandidateCard: (goalRef, proposalRef) => candidateCardFacts({
         records: backend.records,
@@ -4324,6 +4415,14 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       // Plan service the rest of the root injects.
       plans: planService,
       eligibility: { readDeliveryEligibilityFacts: (...args) => rawWorkflow.readDeliveryEligibilityFacts!(...args) },
+      // The optional facts the consumable view reads: the line's bound wait, the overlap gate's saved note
+      // message, the unknown-call review the trusted system round compares, and the round's fixed closing notice
+      // (read by the Workflow through the same source-and-part identity the writer uses).
+      closingNotice: (ctx, input) => rawWorkflow.closingNotice!(ctx, input),
+      sessionFacts,
+      overlapGates: { readOverlapGates: (ctx, input) => overlapGates.readOverlapGates(ctx, input) },
+      candidateSuccessors: (goalRef) => planReadersOwner.candidateSuccessorsOf(goalRef),
+      readReview: (ctx, input) => unknownCallReviews.readReview(ctx, input),
     });
     const consumableSessions: Pick<ConsumableSessionsPort, 'readConsumableSessions'> = {
       readConsumableSessions: (...args) =>
@@ -4454,9 +4553,9 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
         // kinds and the Workflow drives each by its own source ref.
         readCommandRerunRequestAnswers: (ctx: CoreCallContext, { goalRef }: { goalRef: GoalRef }) =>
           readUnappliedAnswers({ records: backend.records }, ctx, { kind: 'command_rerun_request', goalRef }),
-        // G-late's `message_release` answers through the SAME `k3-decision-answer-by-source-goal` reader.
-        readMessageReleaseAnswers: (ctx: CoreCallContext, { goalRef }: { goalRef: GoalRef }) =>
-          readUnappliedAnswers({ records: backend.records }, ctx, { kind: 'message_release', goalRef }),
+        // 2.8/§3.10: the `action_release` answers the start-up replays through the Workflow's registered adapter.
+        readActionReleaseAnswers: (ctx: CoreCallContext, { goalRef }: { goalRef: GoalRef }) =>
+          readUnappliedAnswers({ records: backend.records }, ctx, { kind: 'action_release', goalRef }),
         // The repair answers the start-up step hands back through the same reader.
         readRepairAnswers: (ctx: CoreCallContext, { goalRef }: { goalRef: GoalRef }) =>
           readUnappliedAnswers({ records: backend.records }, ctx, { kind: 'repair_approval', goalRef }),
@@ -4669,6 +4768,10 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       roleFacts: createRoleFactsRead({ records: backend.records }),
     };
     const workLines: WorkLineReadPort = createWorkLineReader(workLineDeps);
+    // The chooser reads only each line's last activity, never its cards, so its line list leaves the decision queue
+    // out. With the queue it would call itself without end: the action card source reads the target loop's claim
+    // judgment (F06), which runs the chooser, whose line list reads the action cards again.
+    const { decisions: _chooserSkipsCards, ...chooserLineDeps } = workLineDeps;
     const nodeDetail: NodeDetailReadPort = createNodeDetailReader({
       records: backend.records,
       plans: planService,
@@ -4680,8 +4783,10 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       // module summary pass its line refs through their one brief assembly.
       maintainerOf: moduleMaintainers.maintainerOf,
       notes: listNotes,
-      // The task read's responsible adviser (L42), the same L35 resolver.
-      advisers: lateRecipients,
+      // The task read's responsible adviser (L42), the same L35 resolver; the hold expiry's one source-chain root.
+      advisers: lateRecipients, planSourceRoot,
+      // §2.8: the SAME target-loop claim judgment the action card source reads.
+      taskClaimability,
     });
     const lineSettings: WorkLineSettingsPort = createLineSettingsService({
       records: backend.records,
@@ -4698,7 +4803,7 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
     // The Workflow holds its dependency bag by reference, so this is installed before the platform is published.
     const pickReads: PickReadsV1 = {
       ...(preClaimAuthorization === null ? {} : { authorization: preClaimAuthorization }),
-      activity: { lines: workLines, record: createSessionActivityReader({ records: backend.records }) },
+      activity: { lines: createWorkLineReader(chooserLineDeps), record: createSessionActivityReader({ records: backend.records }) },
       goalRuns: (ctx, goalRef) => readGoalRunsForCount(backend.records, goalRef),
     };
     workflowDependencies.pick = pickReads;
@@ -4846,10 +4951,6 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       create: (...args) => trackedCall(() => autonomyRules.create(...args), unavailable),
       revoke: (...args) => trackedCall(() => autonomyRules.revoke(...args), unavailable),
       update: (...args) => trackedCall(() => autonomyRules.update(...args), unavailable),
-    };
-    const allocationReader = createRoleLineAllocationReader({ records: backend.records, lookups: backend.records });
-    const roleLineAllocation: RoleLineAllocationReadPort = {
-      readRoleLineAllocation: (...args) => trackedCall(() => allocationReader.readRoleLineAllocation(...args), unavailable),
     };
     // C1 (L-9 :1806): the cold start's standby pick, a chooser of its own. "Too long" is the line's input basis
     // against its own context window (the table's 500000 ceiling when the window cannot be read), as the
@@ -4999,38 +5100,22 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
     const trackedRoleLineRead: RoleLineReadPort = {
       readRoleLines: (ctx, input) => trackedCall(() => roleLineRead.readRoleLines(ctx, input), unavailable),
     };
-    // O4b M23 (TS-20 ①): the one L35 resolver; the Workflow, the Host's two sends, the goal-cause and adviser-creation
-    // reads and O5a-2's two readers share it.
-    const responsibilityRecipient = createResponsibilityRecipient({
-      records: backend.records, duty: sessionDutyResolver, catalog, allocation: roleLineAllocation });
-    // 通信与权限拆开（121-152）：动作请求和暂缓领取两个 owner。问答轮身份用同一个 `queryRounds`，派活三值用同一个
-    // `dispatchBasis`，书记原因的负责参谋用上面这个 L35 解析，送停交 control owner；调用方（工具、答卡、目标循环）随 P2 接。
-    const claimHoldOwner = createClaimHoldService({ records: backend.records, queryRounds, duty: sessionDutyResolver,
-      recipients: responsibilityRecipient, ...(operatorActor === undefined ? {} : { operatorActor }), now,
-      eventId: randomUUID });
-    const actionRequestOwner = createActionRequestService({ records: backend.records, queryRounds,
-      duty: sessionDutyResolver, dispatchBasis, autonomyRules, control: rawControls,
-      ...(operatorActor === undefined ? {} : { operatorActor }), now, eventId: randomUUID });
-    const actionRequests: ActionRequestPort = {
-      requestDispatch: (...args) => trackedCall(() => actionRequestOwner.requestDispatch(...args), unavailable),
-      requestStop: (...args) => trackedCall(() => actionRequestOwner.requestStop(...args), unavailable),
-      approve: (...args) => trackedCall(() => actionRequestOwner.approve(...args), unavailable),
-      deny: (...args) => trackedCall(() => actionRequestOwner.deny(...args), unavailable),
-      withdraw: (...args) => trackedCall(() => actionRequestOwner.withdraw(...args), unavailable),
-      settle: (...args) => trackedCall(() => actionRequestOwner.settle(...args), unavailable),
-      deliverStop: (...args) => trackedCall(() => actionRequestOwner.deliverStop(...args), unavailable),
-      readRequest: (...args) => trackedCall(() => actionRequestOwner.readRequest(...args), unavailable),
-    };
-    const claimHolds: ClaimHoldPort = {
-      place: (...args) => trackedCall(() => claimHoldOwner.place(...args), unavailable),
-      placeScribeStop: (...args) => trackedCall(() => claimHoldOwner.placeScribeStop(...args), unavailable),
-      release: (...args) => trackedCall(() => claimHoldOwner.release(...args), unavailable),
-      releaseAll: (...args) => trackedCall(() => claimHoldOwner.releaseAll(...args), unavailable),
-      readHold: (...args) => trackedCall(() => claimHoldOwner.readHold(...args), unavailable),
-    };
     // 2.6：task-gate 的 `requeue_task` 在门上读同一个暂缓 owner 的书记原因（门在调用时读 `deps.claimHolds`）。Workflow 拿原始
     // owner，不拿公开面的 `trackedCall` 包装：关停排空时在跑的门不能被“platform is closing”拒成读不出（同上面邮箱、放行的规矩）。
-    workflowDependencies.claimHolds = { readHold: (...args) => claimHoldOwner.readHold(...args) };
+    workflowDependencies.claimHolds = {
+      readHold: (...args) => claimHoldOwner.readHold(...args),
+      // Q4b/§2.8：目标循环的只读卡位判断是 claim-service 的正本（读记录 + 领取 owner 的失效判断 + 卡位），
+      // 组合根只把同一个来源链根接进去；任务卡和任务的详情读仍用同一份暂缓记录。
+      readEffectiveClaimBlocker: (ctx, input) =>
+        readEffectiveClaimBlocker(backend.records, ctx, input.taskRef, planSourceRoot),
+    };
+    // §2.5: the target loop reads this Goal's `open` dispatch requests and settles a stale one. The Workflow reads
+    // `deps.actionRequests` at call time, so this publishes the same raw owner late (never a second instance; the
+    // same rule as the claim hold above).
+    workflowDependencies.actionRequests = {
+      listOpenDispatches: (...args) => actionRequestOwner.listOpenDispatches(...args),
+      settle: (...args) => actionRequestOwner.settle(...args),
+    };
     const projectNoticeWriter = (input: Parameters<typeof notifyProject>[1]): ReturnType<typeof notifyProject> =>
       trackedCall(() => notifyProject({ records: backend.records, now }, input), unavailable);
     // 7D2 WD: the one withdraw/remove owner over this project's registration, reconcile candidates, region links,
@@ -5078,6 +5163,9 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       messages: mailbox,
       queries: queryJobs,
       plans: planService,
+      // The same review read the fresh A13 walk takes: the enumeration and every decision card must judge an
+      // `unknown_call` round exactly as the adoption step does.
+      readReview: (callCtx, input) => unknownCallReviews.readReview(callCtx, input),
       questions: planningQuestionReader,
       decisions: rawDecisionMessages,
       goals: {
@@ -5098,6 +5186,11 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       planFixRead: (...args) => trackedCall(() => planReadersOwner.planFixRead(...args), unavailable),
       acceptedCandidatesOf: (...args) =>
         trackedCall(() => planReadersOwner.acceptedCandidatesOf(...args), unavailable),
+      candidateSuccessorsOf: (...args) =>
+        trackedCall(() => planReadersOwner.candidateSuccessorsOf(...args), unavailable),
+      abandonedCandidateTailsOf: (...args) =>
+        trackedCall(() => planReadersOwner.abandonedCandidateTailsOf(...args), unavailable),
+      completedGoalsOf: (...args) => trackedCall(() => planReadersOwner.completedGoalsOf(...args), unavailable),
       readPlanReview: (...args) => trackedCall(() => planReadersOwner.readPlanReview(...args), unavailable),
     };
     let closing: Promise<void> | undefined;
@@ -5160,7 +5253,7 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       markJoinedCheckout: (...args) => trackedCall(() => knowledgeOps.markJoinedCheckout(...args), unavailable),
     };
     const platform = {
-      goals, plans, claims, executions, sessions, materials, messages, messageRelease, controls, evidence, checks, roles, architecture, projects, completionPolicies,
+      goals, plans, claims, executions, sessions, materials, messages, controls, evidence, checks, roles, architecture, projects, completionPolicies,
       // 7D2 WD: the project's withdraw/remove owner; the Host settings assembly reads it by property.
       workspaces: workspaceRemoval,
       messageExpiry: messageExpiryPort,
@@ -5393,7 +5486,7 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       'reworkNotices', 'recipients', 'roleLimits', 'roleLineAllocation', 'projectNoticeWriter', 'autonomyRules',
       'moduleMaintainers', 'actionRequests', 'claimHolds',
       'sessionArchive', 'readHandoffFence', 'listUnfinishedOperations', 'readSecretaryHandoffBasis',
-      'bindings', 'initializationAdoption', 'confirmInstalledChecks', 'messageRelease', 'messageForwarding', 'disconnect', 'messageExpiry',
+      'bindings', 'initializationAdoption', 'confirmInstalledChecks', 'messageForwarding', 'disconnect', 'messageExpiry',
       'consumableSessions', 'readCandidateCard', 'roleLineOperations', 'roleLines', 'roleLineOperationsRead',
       'explorationControl', 'explorationFollowUp',
       'goalAdviserQueue', 'runtimeInFlight', 'roleLineRead', 'nodeCommits', 'delivery', 'goalDelivery', 'workspaces'] as const) {

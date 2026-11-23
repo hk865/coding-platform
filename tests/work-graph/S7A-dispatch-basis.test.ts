@@ -169,9 +169,11 @@ describe('dispatch basis facts', () => {
       { refKey: pointerKeys(goal).refKey, expectedRevision: state.expectedRevision },
       { refKey: counterKey(goal), expectedRevision: null },
     ]);
-    expect(await basis().readDispatchBasis(world.humanContext(), { goalRef: goal })).toEqual({
-      status: 'ready', value: { planRevision, pointerRevision: state.revision, dispatchSequence: 0 },
-    });
+    // P2 §6 (S7A-dispatch-basis:172): the three values are read from `readDispatchFacts` (the action side), not from
+    // a message's pins. With no dispatch request yet the counter, and so its `lastActionRef`, is absent.
+    const actionSide = readyBasis(await basis().readDispatchFacts(world.humanContext(), { goalRef: goal }));
+    expect(actionSide.values).toEqual({ planRevision, pointerRevision: state.revision, dispatchSequence: 0 });
+    expect(actionSide.counter.record).toBeNull();
   });
 
   it.each<[string, (goal: GoalRef) => string]>([
@@ -249,7 +251,7 @@ describe('dispatch basis facts', () => {
     // A2: the platform's own captured records object fails every pointer read of this one look; the failure is
     // the graph read's rejection, never a null field.
     // 121-146（Q）：卡片读先读上下文索引（graph-context-reader.ts 的 readIndexes），索引里决定队列的
-    // message_release 来源也读这份依据；来源读失败现在标 read_failed、不让整次读失败。只失败一次会被这个来源
+    // action_release 来源也读这份依据；来源读失败现在标 read_failed、不让整次读失败。只失败一次会被这个来源
     // 用掉，卡片自己的依据读就读成了；所以这次读里每次指针读都失败，测的仍是卡片依据读失败时整页拒。
     const platformRecords = captured.platformRecords as GoalRecordTransactionPort;
     const pointerRefKey = pointerKeys(goal).refKey;

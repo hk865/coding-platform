@@ -14,7 +14,7 @@ import type { DecisionMessagePort, MessageCommandWritePort, SessionMessageCommit
 import type { EncodedDomainEvent, RecordGuard, UniqueClaimChange } from '../../record-store/ports.js';
 import type { TaskClaimOutbox } from '../model/claim-contracts.js';
 import type { TaskExecutionRecord } from '../model/execution-read-contracts.js';
-import type { MessageEffect, MessageGuardContext, MessageTransition, SessionMessageEventType, MessageWithdrawnChangeV1, MessageReleaseDecidedChangeV1 } from '../state/message-machine.js';
+import type { MessageEffect, MessageGuardContext, MessageTransition, SessionMessageEventType, MessageWithdrawnChangeV1 } from '../state/message-machine.js';
 
 export type Unknown = Record<string, unknown>;
 
@@ -63,15 +63,6 @@ export type WithdrawDecision = {
   actor: MessageSender;
   guards: readonly RecordGuard[];
   horizon: CommitCursor;
-};
-
-export type ReleaseFacts = { message: SessionMessage; actor: MessageSender };
-
-export type ReleaseDecision = {
-  before: SessionMessage;
-  change: MessageReleaseDecidedChangeV1;
-  at: string;
-  actor: MessageSender;
 };
 
 // --------------------------------------------------------------------------
@@ -172,7 +163,7 @@ export type ReplyCursorV1 = {
  * legacy `SessionRef` `sendMessage` admission.
  */
 export type SessionMailboxWithUserSend = SessionMessageCommandPort
-  & Required<Pick<SessionMailboxPort, 'respondFromQueryAnswer' | 'readOutbox'>>
+  & Required<Pick<SessionMailboxPort, 'respondFromQueryAnswer' | 'readOutbox' | 'readPendingCopyQuestions'>>
   & Pick<DecisionMessagePort, 'sendUserMessage'>;
 
 export type MessageBodySender = MessageSender | MessageQueryAnswerSender | DecisionHostSenderV1;
@@ -224,8 +215,8 @@ export type MessageWrite = {
    * A refusal reply's `rejectedAt` is the commit's own clock instant, the same
    * fact the change carries; the machine state holds only that the slot is
    * taken, so the owner's instant overlays the accepted state before the
-   * canonical comparison. A send's release and pins are the machine's own
-   * accepted state (`sendRelease`), so they need no overlay.
+   * canonical comparison. A send's record is the machine's own accepted state,
+   * so it needs no overlay.
    */
   acceptedRejectedAt?: true;
   /**

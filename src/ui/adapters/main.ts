@@ -11,16 +11,16 @@
 import type { SessionRef } from '../../contracts/core/identity.js';
 import type { DecisionSubjectV1 } from '../../contracts/goal-decisions.js';
 import type { QueryJobRef, RequestReferenceV1 } from '../../contracts/query-job.js';
-import type { LineExecutionItemV1 } from '../../contracts/work-line.js';
+import type { LineExecutionItemV1, LineMessageStateV1 } from '../../contracts/work-line.js';
 import type { SessionMessageReadV1, MessageBody } from '../../contracts/mailbox.js';
 import { asRecord, asText } from '../values.js';
-import { localShortAt } from './task-map.js';
+import { holdKindWordOf, localShortAt, planRefText, planVersionText, stopRunText } from './task-map.js';
 import { subjectGoalId, type DecideData } from './decide.js';
 import { taskProgressOf } from './goals.js';
 import {
-  messageBodyKey, runWordOf, type MemberCopySource, type MemberLine, type MemberWriteBasis,
+  messageBodyKey, messageFlagsOf, runWordOf, type MemberCopySource, type MemberLine, type MemberWriteBasis,
 } from './member.js';
-import type { NavData, NavGoal } from './nav.js';
+import { lineNameOfSession, sessionRefAtEdge, type NavData, type NavGoal } from './nav.js';
 import type { AuxPanelData } from './aux-panel.js';
 
 /** One file quote of a user bubble (`RequestReferenceV1`'s four fields). */
@@ -60,10 +60,14 @@ export type LvEntry = {
   res: string; word: string; tx: string; label: string; gap: string;
   asker: string | null; steps: number; edits: number; checks: number;
   live: boolean;
+  /** §2.8: the stored message's wake word; only a line message has it. */
+  wakeWord?: string;
 };
 export type LvAct = {
   id: string; start: string; day: string; time: string;
   text: string; stage: 0 | 1 | 2; res: 'applied' | 'rejected' | null; why: string; reply: string;
+  /** §2.8: the stored message's two words; only a line message has them. */
+  replyWord?: string; wakeWord?: string;
 };
 export type LvRecord = {
   entries: LvEntry[]; acts: LvAct[];
@@ -101,6 +105,22 @@ export type MainData = NavData & {
   line: MainLineRecord | null;
   /** Main B §2.3: the right panel's current tab read, or null when closed. */
   aux: AuxPanelData | null;
+  /** §2.8/T37: the newest original request's own `requests/read` feedback, or
+   * null when it has no plan change and no action behind it. */
+  requestFeedback: MainRequestFeedback | null;
+};
+
+/**
+ * §2.8/T37: the request surface's own feedback (`requests/read`'s `feedback`),
+ * shown beside the original request's bubbles instead of only its round
+ * answers. The rows carry complete Chinese sentences: the board binds them and
+ * never sees a route field name.
+ */
+export type MainRequestFeedback = {
+  /** The original request root the feedback was read from (the bubble key). */
+  root: string;
+  title: string;
+  rows: { k: string; v: string }[];
 };
 
 /** One read round, the fields §2.4 draws (`RequestRoundViewV1`). The plan page
@@ -135,6 +155,96 @@ export type MainPageV1 = {
 
 /** The continuation `main/read` returns; the UI keeps its boundary shape. */
 export type MainPageCursorV1 = { phase: 'goal' | 'pre'; since: string; rootKey: string };
+
+function feedbackRequestStateText(state: string): string {
+  switch (state) {
+    case 'pending': return '等你答复这张卡';
+    case 'open': return '已批准，等平台安排领取';
+    case 'applied': return '已领取';
+    case 'released': return '已放行';
+    case 'void': return '已作废';
+    case 'denied': return '你已拒绝';
+    case 'withdrawn': return '已撤回';
+    default: return '状态暂时读不到';
+  }
+}
+
+/** §2.8: one feedback action as the request surface's one row: the task, the
+ * reason and how it ended, in the shared words the task cards also use. */
+function feedbackActionRow(
+  action: Record<string, unknown>, nav: NavData, taskTitleOf: (task: unknown) => string,
+): { k: string; v: string } | null {
+  const kind = asText(action.kind);
+  const task = taskTitleOf(action.task);
+  if (task === '') return null;
+  const reason = asText(action.reason);
+  const reasonText = reason === '' ? '' : '：' + reason;
+  if (kind === 'hold') {
+    const word = holdKindWordOf(action.holdKind);
+    const line = lineNameOfSession(nav.lines, sessionRefAtEdge(action.heldBy));
+    const by = line === '' ? '' : '，由“' + line + '”提出';
+    const held = asText(action.holdState) === 'held';
+    const state = held ? (word === '叫停' ? '仍叫停' : '仍暂缓') : '已解除';
+    return { k: word, v: '「' + task + '」' + reasonText + '（' + state + by + '）' };
+  }
+  if (kind === 'dispatch') {
+    const planVersion = asRecord(action.planVersion);
+    const version = typeof planVersion.planRevision === 'number'
+      ? '，请求时' + planVersionText(planVersion.planRevision) : '';
+    const state = asText(action.requestState);
+    const claimed = lineNameOfSession(nav.lines, sessionRefAtEdge(asRecord(action.claimedBy).session));
+    const stateText = state === 'applied'
+      ? (claimed === '' ? '已领取' : '已由“' + claimed + '”领取')
+      : feedbackRequestStateText(state);
+    return { k: '派活', v: '「' + task + '」' + reasonText + version + '（' + stateText + '）' };
+  }
+  if (kind === 'stop') {
+    const runId = asText(asRecord(action.stopRun).runId);
+    const taskId = asText(asRecord(action.task).taskId);
+    const hit = nav.tasks?.tasks.find((row) => row.ref.taskId === taskId);
+    const taskRow = hit === undefined ? null : asRecord(hit);
+    const runText = runId === '' ? '' : '，要停的运行 ' + stopRunText(action.stopRun, taskRow);
+    const state = asText(action.requestState);
+    const notSent = asText(action.notSent);
+    const stateText = state === 'released'
+      ? notSent === 'person_stopped' ? '你已接手，没有送停'
+        : notSent === 'run_ended' ? '运行已结束，没有送停' : '已送出'
+      : feedbackRequestStateText(state);
+    return { k: '叫停', v: '「' + task + '」' + reasonText + runText + '（' + stateText + '）' };
+  }
+  return null;
+}
+
+/** §2.8/T37: turns `requests/read`'s feedback into the block the request
+ * surface draws; a request with no plan change and no action behind it has no
+ * block. */
+export function mainRequestFeedbackOf(read: unknown, nav: NavData, root: string): MainRequestFeedback | null {
+  const feedback = asRecord(asRecord(read).feedback);
+  const affected = Array.isArray(feedback.affectedTasks) ? feedback.affectedTasks : [];
+  const actions = Array.isArray(feedback.actions) ? feedback.actions : [];
+  const planRevision = asRecord(feedback.planRevision);
+  if (affected.length === 0 && actions.length === 0 && Object.keys(planRevision).length === 0) return null;
+  const titles = new Map<string, string>();
+  for (const row of nav.tasks?.tasks ?? []) titles.set(row.ref.taskId, row.definition.title);
+  const taskTitleOf = (task: unknown): string => {
+    const id = asText(asRecord(task).taskId);
+    if (id === '') return '';
+    return titles.get(id) ?? '一个不在当前计划里的任务';
+  };
+  const rows: { k: string; v: string }[] = [];
+  const planId = asText(planRevision.planId);
+  if (planId !== '') {
+    const current = nav.tasks?.plan ?? null;
+    rows.push({ k: '计划版本', v: planRefText(planId, current) });
+  }
+  const names = affected.map(taskTitleOf).filter((name) => name !== '');
+  if (names.length > 0) rows.push({ k: '受影响的任务', v: names.join('、') });
+  for (const action of actions) {
+    const row = feedbackActionRow(asRecord(action), nav, taskTitleOf);
+    if (row !== null) rows.push(row);
+  }
+  return rows.length === 0 ? null : { root, title: '这条请求的处理', rows };
+}
 
 /** The composite identity of one request root: the dedupe key across pages and
  * the one place the page's pending bubbles get the key they match. */
@@ -254,6 +364,7 @@ function runTx(status: string, outcome: string | null): string {
  * projection is Main's (day/sep stay in `lvView`). */
 export function lvRecordOf(f: {
   executions: LineExecutionItemV1[];
+  messages: LineMessageStateV1[];
   messageViews: SessionMessageReadV1[];
   bodies: Record<string, MessageBody>;
   copies: MemberCopySource[];
@@ -262,6 +373,7 @@ export function lvRecordOf(f: {
   const line = f.line;
   const entries: LvEntry[] = [];
   const acts: LvAct[] = [];
+  const messageStates = new Map(f.messages.map((state) => [state.messageRef.messageId, state]));
   const taskId = line.taskRef?.taskId ?? '';
   const executions = f.executions.slice().sort((a, b) => a.generation - b.generation);
   for (const item of executions) {
@@ -305,8 +417,10 @@ export function lvRecordOf(f: {
     const toLine = !('kind' in recipient) && recipient.projectId === line.key.projectId
       && recipient.sessionId === line.key.sessionId;
     const human = message.sender.kind === 'host' && message.sender.actor.kind === 'human';
+    const lineState = messageStates.get(message.ref.messageId);
+    const flags = lineState === undefined ? null : messageFlagsOf(lineState);
     if (human && toLine) {
-      acts.push({
+      const act: LvAct = {
         id: message.ref.messageId, start: localShortAt(at), day: stamp.day, time: stamp.time,
         text, stage,
         res: rejectedAt !== null ? 'rejected' : appliedAt !== null ? 'applied' : null,
@@ -314,13 +428,19 @@ export function lvRecordOf(f: {
            so a rejected one carries none and `recAct` says only 被拒绝 */
         why: rejectedAt !== null ? '' : appliedAt !== null ? '已生效' : '',
         reply,
-      });
+      };
+      if (flags !== null) {
+        act.replyWord = flags.replyWord;
+        act.wakeWord = flags.wakeWord;
+      }
+      acts.push(act);
       continue;
     }
     entries.push({
       id: message.ref.messageId, kind: 'talk', task: taskId, taskName: line.title,
       att: 1, seg: 1, round: 0, start: localShortAt(at), end: '', day: stamp.day, time: stamp.time, dur: '',
-      res: '', word: '', tx: 'tx-plain', label: text, gap: '', asker: null,
+      res: '', word: flags === null ? '' : flags.replyWord, tx: 'tx-plain', label: text, gap: '', asker: null,
+      ...(flags === null ? {} : { wakeWord: flags.wakeWord }),
       steps: 0, edits: 0, checks: 0, live: false,
     });
   }
@@ -351,6 +471,7 @@ export function adaptMain(input: {
   nav: NavData; pages: MainPageV1[]; decisions: DecideData | null;
   older: MainPageCursorV1 | null; track: MainTrackRow[] | null;
   line?: MainLineRecord | null; aux?: AuxPanelData | null;
+  requestFeedback: MainRequestFeedback | null;
 }): MainData {
   const page = input.pages[0] ?? null;
   const notices = page === null ? [] : page.notices;
@@ -368,6 +489,7 @@ export function adaptMain(input: {
     progress: taskProgressOf(input.nav.tasks),
     line: input.line ?? null,
     aux: input.aux ?? null,
+    requestFeedback: input.requestFeedback,
   };
 }
 

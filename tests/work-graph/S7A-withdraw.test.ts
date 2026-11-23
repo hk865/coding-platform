@@ -134,16 +134,8 @@ describe('X-withdraw: who and the open offer', () => {
       .toMatchObject({ status: 'rejected', code: 'unsupported' });
   });
 
-  it('refuses a read message and a responded message', async () => {
+  it('refuses a responded message', async () => {
     const h = await openC1World();
-    const readMessage = await sent(h, h.ctxHost, h.busySession, 'xw-read-send');
-    const acked = await h.mailbox.ackMessage(h.ctxWork, {
-      input: { messageRef: readMessage.ref }, meta: { requestId: 'xw-ack', expected: [withdrawPin(readMessage.ref, 1)] },
-    });
-    expect(acked).toMatchObject({ status: 'committed', value: { status: 'read' } });
-    expect(await withdraw(h, h.ctxHost, readMessage.ref, 'xw-read'))
-      .toMatchObject({ status: 'rejected', code: 'invalid' });
-
     const replied = await sent(h, h.ctxHost, h.busySession, 'xw-respond-send');
     expect(await h.mailbox.respondMessage(h.ctxWork, {
       input: { messageRef: replied.ref, text: 'done' },
@@ -228,7 +220,7 @@ describe('X-withdraw: the Host restart (SQLite only)', () => {
     worlds.push(world);
     // `action_request`, because the input supply never offers `inquiry` bodies.
     const sent = committed<SessionMessage>(await world.post('messages/send',
-      graphWrite(S6A_SCOPE, { recipient: line.ref, text: 'S7A restart withdraw', intent: 'action_request', needsReply: true },
+      graphWrite(S6A_SCOPE, { recipient: line.ref, text: 'S7A restart withdraw', needsReply: true },
         's7a-restart-send')), 'the person send');
     const hold = holdS7ACommitter(world, commit => commit.identityKey.startsWith('input-accepted:')
       && commit.events.some(event => event.eventType === 'SessionMessageInputAccepted'));

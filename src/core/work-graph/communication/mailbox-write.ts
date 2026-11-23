@@ -3,7 +3,6 @@ import type { CommitCursor } from '../../../contracts/command-event.js';
 import { canonicalJson, canonicalOf, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
-import type { DecisionChangeProofV1 } from '../../../contracts/goal-decisions.js';
 import type { CoreError, CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
 import { rejectedWithCurrent as reject } from '../../../contracts/core/rejections.js';
 import { isRecord as isObject, nonEmpty } from '../../../contracts/validation/common.js';
@@ -19,7 +18,7 @@ import {
   encodeSessionMessageRecord,
   sessionMessageFromEvent, sessionMessageRefKey,
   encodeSessionMessageInputAcceptedEvent,
-  encodeSessionMessageWithdrawnEvent, encodeSessionMessageReleaseDecidedEvent, encodeSessionMessageReleasedEvent,
+  encodeSessionMessageWithdrawnEvent,
   encodeSessionMessageAppliedEvent,
   encodeSessionMessageExpiredEvent,
   type SessionMessageEventV1,
@@ -28,7 +27,6 @@ import type { NoticeOriginWireV1 } from '../persistence/decision-record-codecs.j
 import {
   bindMessageResponseCursor, messageMachineStateOf, nextSessionMessageRecord,
   type MessageEffect, type MessageEvent, type MessageGuardContext, type SessionMessageEventType,
-  type MessageReleaseDecidedChangeV1,
 } from '../state/message-machine.js';
 import { unreachable } from '../state/transition.js';
 import { mergeGuards } from '../persistence/record-guards.js';
@@ -126,8 +124,7 @@ export function companionContributionOf(raw: unknown):
 /**
  * The one snapshot event a lifecycle command appends. The command names its
  * operation, envelope and change; the event type and the message are the
- * operation's. A release writes the change's own proof (a direct release's
- * change carries `null`; a trusted caller's decision change carries its proof).
+ * operation's.
  */
 function lifecycleEventOf(command: SessionMessageWriteCommandV1, message: SessionMessage): EncodedDomainEvent {
   const envelope = command.event;
@@ -138,15 +135,12 @@ function lifecycleEventOf(command: SessionMessageWriteCommandV1, message: Sessio
   };
   switch (command.operation) {
     case 'message.withdraw': return encodeSessionMessageWithdrawnEvent({ ...base, eventType: 'SessionMessageWithdrawn' });
-    case 'message.release':
-      return encodeSessionMessageReleaseDecidedEvent({ ...base, eventType: 'SessionMessageReleaseDecided',
-        proof: command.change.proof });
-    case 'message.releaseApproved': return encodeSessionMessageReleasedEvent({ ...base, eventType: 'SessionMessageReleased' });
     case 'message.apply': return encodeSessionMessageAppliedEvent({ ...base, eventType: 'SessionMessageApplied' });
     case 'message.recordExpiry': return encodeSessionMessageExpiredEvent({ ...base, eventType: 'SessionMessageExpired' });
     case 'message.inputAccepted':
       return encodeSessionMessageInputAcceptedEvent({ ...base, eventType: 'SessionMessageInputAccepted' });
-    default: return unreachable(command, 'message write operation');
+    // The retired release lifecycle is no longer a command this owner writes.
+    default: throw new Error('the mailbox owner no longer writes the retired release lifecycle command');
   }
 }
 
@@ -154,13 +148,12 @@ function lifecycleEventOf(command: SessionMessageWriteCommandV1, message: Sessio
 function lifecycleMachineEventOf(command: SessionMessageWriteCommandV1): MessageEvent {
   switch (command.operation) {
     case 'message.withdraw': return { type: 'message_withdrawn' };
-    case 'message.release': return { type: 'message_release_decided', allow: command.change.allow };
-    case 'message.releaseApproved': return { type: 'message_released' };
     case 'message.apply': return { type: 'message_applied' };
     case 'message.recordExpiry': return { type: 'message_expired' };
     case 'message.inputAccepted':
       return { type: 'input_accepted', part: command.change.input.part, inputId: command.change.input.inputId };
-    default: return unreachable(command, 'message write operation');
+    // The retired release lifecycle is no longer a command this owner writes.
+    default: throw new Error('the mailbox owner no longer writes the retired release lifecycle command');
   }
 }
 
@@ -168,9 +161,8 @@ function lifecycleMachineEventOf(command: SessionMessageWriteCommandV1): Message
  * The one non-committing prepared fragment for a lifecycle command. It reads
  * the notice origin, builds the next record through the machine's constructor,
  * asserts the result is the state the machine accepted (the change's own times
- * are the owner's facts, like a send's release), and encodes the message record
- * and its one snapshot event last. It never looks up a receipt and never
- * commits.
+ * are the owner's facts), and encodes the message record and its one snapshot
+ * event last. It never looks up a receipt and never commits.
  */
 export async function prepareSessionMessage(
   records: SessionMessageStore,
@@ -199,12 +191,6 @@ export async function prepareSessionMessage(
     accepted = { ...accepted, appliedAt: command.change.appliedAt };
   } else if (command.operation === 'message.recordExpiry') {
     accepted = { ...accepted, expiredAt: command.change.expiredAt };
-  } else if (command.operation === 'message.release' && command.change.allow) {
-    // The machine's change carries only the release and the approval revision;
-    // the same commit's record also writes the change's approval time.
-    accepted = { ...accepted, approvedAt: command.change.approvedAt };
-  } else if (command.operation === 'message.releaseApproved') {
-    accepted = { ...accepted, pins: command.change.pins };
   }
   if (canonicalOf(messageMachineStateOf(next)) !== canonicalOf(accepted as unknown as JsonValue)) {
     return reject('revision_conflict', 'the prepared message is not the state the machine accepted');
@@ -237,32 +223,6 @@ export const withdrawnResult = {
   validate: messageVersionAgainstReceipt,
   project: (decoded: SessionMessage, _cursor: CommitCursor) => decoded,
 };
-
-/** An approval or denial restores its own snapshot event exactly like a withdrawal's. */
-export const releaseDecidedResult = {
-  eventType: 'SessionMessageReleaseDecided' as const,
-  schemaVersion: 1 as const,
-  decode: sessionMessageFromEvent,
-  validate: messageVersionAgainstReceipt,
-  project: (decoded: SessionMessage, _cursor: CommitCursor) => decoded,
-};
-
-/** The one constructor of a release decision's change; a direct call passes no proof. */
-export function releaseDecidedChange(
-  message: SessionMessage, allow: boolean, at: string, proof: DecisionChangeProofV1 | null,
-): MessageReleaseDecidedChangeV1 {
-  // Exactly one arm: a denial carries no approval fact at all, and a direct
-  // call never writes the trusted entry's proof.
-  return allow
-    ? {
-      kind: 'release_decided', allow: true, approvedAt: at,
-      approvalRevision: message.revision + 1, release: 'approved', proof,
-    }
-    : {
-      kind: 'release_decided', allow: false, approvedAt: null,
-      approvalRevision: null, release: 'denied', proof,
-    };
-}
 
 /** The executor's public result: one shell, never its refusal wrapper or internal cause. */
 export function messageWriteResult(result: CommandResult<SessionMessage, CoreRejection>): WriteResult<SessionMessage> {

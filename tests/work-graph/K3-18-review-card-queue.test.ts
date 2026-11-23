@@ -32,6 +32,7 @@ import type { SessionMailboxDependencies } from '../../src/core/work-graph/model
 import { createSessionDirectory } from '../../src/core/work-graph/sessions/session-directory.js';
 import { unknownSessionDuty } from '../helpers/session-duty-double.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
+import { createQueryRoundResolver } from '../../src/core/work-graph/tasks/query-round.js';
 import { createUnknownCallReviewCardSource } from '../../src/core/work-graph/views/decision-read-model.js';
 import type { WorkspaceFile, WorkspaceToolsPort } from '../../src/core/workspace/ports.js';
 import { openK3ReviewCardWorld, type K3ReviewCardWorld } from '../helpers/K3-review-card-fixture.js';
@@ -205,6 +206,7 @@ function digestDecisions(world: K3ReviewCardWorld, workspace: Pick<WorkspaceTool
   const mailboxDeps: SessionMailboxDependencies = {
     defaultInquiryDeadlineMs: 86_400_000,
     records: f.records, materials, now: () => FIXTURE_T, newId: nextId, systemActor: f.operatorActor,
+    queryRounds: createQueryRoundResolver({ records: f.records, duties: unknownSessionDuty, bodies: f.bodies }),
     sessions: createSessionDirectory({ records: f.records,
       knowledge: knowledgeLinesOver(f.records), lookups: f.records, duty: unknownSessionDuty }),
     executions: createRunStateReader({ records: f.records }),

@@ -1,18 +1,18 @@
 import type { CommitCursor } from '../../../contracts/command-event.js';
-import type { SessionRef } from '../../../contracts/core/identity.js';
+import type { SessionRef, WorkspaceScope } from '../../../contracts/core/identity.js';
 import type { RunRef } from '../../../contracts/dispatch.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { CoreRejection, ReadResult } from '../../../contracts/core/results.js';
 import { rejectedWithCurrent as reject } from '../../../contracts/core/rejections.js';
-import { QueryJobRefShape } from '../../../contracts/data-format-refs.js';
+import { QueryJobRefShape, WorkspaceScopeShape } from '../../../contracts/data-format-refs.js';
 import { canonicalOf } from '../../../contracts/fingerprint.js';
-import type { MessageReleaseBlockV1 } from '../../../contracts/goal-decisions.js';
 import type { QueryJobRef } from '../../../contracts/query-job.js';
 import { checkShape } from '../../../contracts/validation/data-format.js';
 import { isRecord as isObject, nonEmpty } from '../../../contracts/validation/common.js';
-import { deriveMessageDelivery } from '../model/communication-contracts.js';
+import { deriveMessageDelivery, readNoAnswerClosingNotice } from '../model/communication-contracts.js';
 import type {
-  SessionMessage, SessionMessageOutboxPageV1, SessionMessageReadPageV1, SessionMessageStatus, UndeliveredReplyV1,
+  SessionMessage, SessionMessageOutboxPageV1, SessionMessageReadPageV1, SessionMessageReadV1,
+  SessionMessageStatus, UndeliveredReplyV1,
 } from '../model/communication-contracts.js';
 import { SESSION_BY_PROVENANCE_LOOKUP, SESSION_REPLY_BY_HANDLER_LOOKUP } from '../model/session-facts-contracts.js';
 import type { SessionPage, SessionPageRequest } from '../model/session-contracts.js';
@@ -23,11 +23,11 @@ import type { EncodedRecord, StoreResult } from '../../record-store/ports.js';
 import {
   SESSION_MESSAGE_BY_RECIPIENT_LOOKUP, SESSION_MESSAGE_BY_RECIPIENT_STATUS_LOOKUP,
   SESSION_MESSAGE_BY_REQUEST_ROOT_LOOKUP, SESSION_MESSAGE_BY_SENDER_RUN_LOOKUP, SESSION_MESSAGE_BY_SENDER_SESSION_LOOKUP,
-  decodeSessionMessageRecord, sessionMessageRefKey,
+  SESSION_PENDING_COPY_BY_WORKSPACE_LOOKUP, decodeSessionMessageRecord, sessionMessageRefKey,
 } from '../sessions/message-record-codecs.js';
 import { checkPlainSessionRef, decodeSessionRecord, plainSessionRefToAggregate, sessionAggregateRefKey } from '../sessions/session-record-codecs.js';
+import { readHostSendMessageRef } from './mailbox-host.js';
 import { readBatch } from '../tasks/plan-readers.js';
-import { releaseBlockOf } from './mailbox-basis.js';
 import {
   atLeastCursorOf, internalHostContext, isRunRef, isUserRecipient, mapBatchFailure, ownContext, pageProblem, presenceOf,
   readProgress, recipientLineFacts, sameSessionRefAs,
@@ -303,10 +303,23 @@ export async function readInboxView(mailbox: MailboxContext, ctx: CoreCallContex
   const lineOwned = messageWorkspaceId === owned.workspaceId ? owned : { ...owned, workspaceId: messageWorkspaceId };
   const line = await recipientLineFacts(mailbox.deps, internalHostContext(mailbox, lineOwned), recipient);
   if (!line.ok) return line.rejection;
-  return { status: 'ready', value: {
-    items: items.map((message) => ({ message, ...deriveMessageDelivery(message, line.value), releaseBlock: null })),
-    nextCursor, sourceCursor,
-  } };
+  // The same single `no_answer` evidence projection as the single-message view; a separate read fact, never folded
+  // into the disposition.
+  const readNotice = mailbox.deps.commitIdentities === undefined ? undefined
+    : (readCtx: CoreCallContext, readInput: { requestId: string; scope: WorkspaceScope }) =>
+      readHostSendMessageRef(mailbox, readCtx, readInput);
+  const views: SessionMessageReadV1[] = [];
+  for (const message of items) {
+    const view = { message, ...deriveMessageDelivery(message, line.value) };
+    if (message.response !== null) {
+      views.push(view);
+      continue;
+    }
+    const ending = await readNoAnswerClosingNotice(readNotice, ctx, message.ref);
+    if (ending.status !== 'ready') return ending;
+    views.push(ending.value ? { ...view, roundEnding: { kind: 'no_answer' } } : view);
+  }
+  return { status: 'ready', value: { items: views, nextCursor, sourceCursor } };
 }
 
 // ---- readOutbox ---------------------------------------------------------
@@ -412,13 +425,8 @@ export async function readOutbox(mailbox: MailboxContext, ctx: CoreCallContext, 
       v: 1, projectId: owned.projectId, workspaceId: owned.workspaceId,
       requestRoot: { ...reading.round.requestRoot }, callerKey, after: result.value.next,
     });
-    const releaseBlocks: (MessageReleaseBlockV1 | null)[] = [];
-    for (const message of items) {
-      const block = await releaseBlockOf(mailbox, owned, message);
-      if (block.status !== 'ready') return block;
-      releaseBlocks.push(block.value);
-    }
-    return { status: 'ready', value: { items, releaseBlocks, cursors, nextCursor, sourceCursor: progress.readThrough } };
+    return { status: 'ready', value: { items, cursors, nextCursor,
+      sourceCursor: progress.readThrough } };
   }
 
   // Rule W/M4: a Work Run's outbox is its Session's, in the Session's workspace; the Run identity
@@ -484,14 +492,16 @@ export async function readOutbox(mailbox: MailboxContext, ctx: CoreCallContext, 
     if (since.status !== 'decoded' || since.value.since === undefined) {
       return reject('unavailable', 'an outbox candidate has no commit origin');
     }
-    // 问答轮自己发的信也进按发件 Session 的索引；发件箱页暂不收它（收进页、回复占位和送达一起做），
-    // 所有读者都跳过它，不让这条线的整页读失败。
-    if (message.sender.kind === 'query_run') continue;
-    // The person reads the Session's whole outbox, including what its
-    // secretary round sent; a work_run keeps only its own work_run messages.
-    if (senderRun === undefined && message.sender.kind === 'secretary_round'
+    // The person reads the Session's whole outbox, including what its secretary round and its query rounds
+    // sent (§2.3); a query round's reply cursor is the reply fact's own position. A work_run keeps only its own
+    // work_run messages.
+    if (senderRun === undefined
+      && (message.sender.kind === 'secretary_round' || message.sender.kind === 'query_run')
       && canonicalOf(message.sender.sessionRef) === canonicalOf(senderSession)) {
-      if (owned.principal.kind === 'host') { items.push(message); cursors.push(since.value.since!); }
+      if (owned.principal.kind === 'host') {
+        items.push(message);
+        cursors.push(message.responseSince ?? since.value.since!);
+      }
       continue;
     }
     if (message.sender.kind !== 'work_run' || (senderRun === undefined
@@ -510,13 +520,7 @@ export async function readOutbox(mailbox: MailboxContext, ctx: CoreCallContext, 
     callerKey,
     after: pageResult.value.next,
   });
-  const releaseBlocks: (MessageReleaseBlockV1 | null)[] = [];
-  for (const message of items) {
-    const block = await releaseBlockOf(mailbox, owned, message);
-    if (block.status !== 'ready') return block;
-    releaseBlocks.push(block.value);
-  }
-  return { status: 'ready', value: { items, releaseBlocks, cursors, nextCursor, sourceCursor: readThrough } };
+  return { status: 'ready', value: { items, cursors, nextCursor, sourceCursor: readThrough } };
 }
 
 // ---- readRoutedReplies / readUndeliveredReplies (slice 1 §2.5) ----------
@@ -735,4 +739,70 @@ export async function readUndeliveredReplies(
     sessionId: sessionRef.sessionId, callerKey: caller.key, after: pageResult.value.next,
   });
   return { status: 'ready', value: { items, nextCursor, sourceCursor: readThrough } };
+}
+
+// ---- readPendingCopyQuestions (§2.3/1.2) ----------------------------------
+
+/**
+ * Trusted Host only: one page of this workspace's copy questions that have no reply and are not withdrawn, keyset-
+ * paged by the full message ref key (`after` is the previous page's `next`; null reads from the start, a null `next`
+ * is the end). The Host consumes each by question identity, never by the asking line's busy scan. The index is a
+ * candidate set: each decoded record is re-checked for the copy answerer, no reply, not withdrawn and a line recipient.
+ */
+export async function readPendingCopyQuestions(mailbox: MailboxContext, ctx: CoreCallContext, input: {
+  workspace: WorkspaceScope; after: string | null; limit: number;
+}): Promise<ReadResult<{ items: SessionMessage[]; next: string | null }>> {
+  const owned = ownContext(ctx);
+  if (!owned.ok) return owned.rejection;
+  const raw = input as unknown as Unknown | null | undefined;
+  if (!isObject(raw)) return reject('invalid', 'readPendingCopyQuestions requires an input object');
+  if (Object.keys(raw).some((key) => key !== 'workspace' && key !== 'after' && key !== 'limit')) {
+    return reject('invalid', 'readPendingCopyQuestions does not accept extra fields');
+  }
+  const workspaceProblem = checkShape(WorkspaceScopeShape, raw['workspace'], 'stored');
+  if (workspaceProblem !== null) {
+    return reject('invalid', `readPendingCopyQuestions requires a complete WorkspaceScope: ${workspaceProblem}`);
+  }
+  if (owned.principal.kind !== 'host') {
+    return reject('forbidden', 'pending copy questions are readable only by the trusted Host');
+  }
+  const workspace = structuredClone(raw['workspace']) as WorkspaceScope;
+  if (workspace.projectId !== owned.projectId || workspace.workspaceId !== owned.workspaceId) {
+    return reject('forbidden', 'the pending copy-question workspace is not the caller scope');
+  }
+  const limit = raw['limit'];
+  if (typeof limit !== 'number' || !Number.isInteger(limit) || limit < 1 || limit > 100) {
+    return reject('invalid', 'readPendingCopyQuestions limit must be an integer between 1 and 100');
+  }
+  const after = raw['after'];
+  if (after !== null && !nonEmpty(after)) {
+    return reject('invalid', 'readPendingCopyQuestions after must be a previous page key or null');
+  }
+  const request: RecordLookupRequest = {
+    index: SESSION_PENDING_COPY_BY_WORKSPACE_LOOKUP,
+    values: [workspace.projectId, workspace.workspaceId, 'copy', null, null],
+    limit,
+    ...(after === null ? {} : { after: after as string }),
+  };
+  let pageResult: StoreResult<{ records: EncodedRecord[]; next: string | null; readThrough: CommitCursor | null }>;
+  try {
+    pageResult = await mailbox.records.lookup(request);
+  } catch {
+    return reject('unavailable', 'the pending copy-question lookup failed');
+  }
+  if (pageResult.status !== 'ready') return sessionStoreFailureToRejection(pageResult);
+  const items: SessionMessage[] = [];
+  for (const record of pageResult.value.records) {
+    const decoded = decodeSessionMessageRecord(record);
+    if (decoded.status !== 'decoded') return reject('unavailable', `a copy-question candidate is damaged: ${decoded.reason}`);
+    const message = decoded.value;
+    if (sessionMessageRefKey(message.ref) !== record.refKey || message.ref.projectId !== workspace.projectId
+      || message.ref.workspaceId !== workspace.workspaceId) {
+      return reject('unavailable', 'a copy-question candidate disagrees with the requested workspace');
+    }
+    if (message.answeredBy !== 'copy' || message.response !== null || message.withdrawnAt !== null
+      || isUserRecipient(message.recipient)) continue;
+    items.push(message);
+  }
+  return { status: 'ready', value: { items, next: pageResult.value.next } };
 }

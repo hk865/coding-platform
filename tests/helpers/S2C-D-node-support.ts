@@ -53,6 +53,7 @@ import { CONTROL_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/co
 import { COMPLETION_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/completion-record-codecs.js';
 import { MODEL_REQUEST_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/model-request-codecs.js';
 import { SESSION_MESSAGE_RECORD_SCHEMAS } from '../../src/core/work-graph/sessions/message-record-codecs.js';
+import { SESSION_ACTIVITY_SCHEMAS } from '../../src/core/work-graph/sessions/session-activity.js';
 import { EVIDENCE_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/evidence-record-codecs.js';
 import { ARCHITECTURE_CATALOG_SCHEMAS } from '../../src/core/work-graph/architecture/catalog-record-codecs.js';
 import { KNOWLEDGE_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/knowledge-record-codecs.js';
@@ -63,6 +64,7 @@ import { QUERY_JOB_RECORD_SCHEMAS } from '../../src/core/work-graph/queries/quer
 import { materialRecordSchemas, createMaterialRecordReaders } from '../../src/core/work-graph/materials/record-readers.js';
 import { createMaterialService } from '../../src/core/work-graph/materials/material-service.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
+import { createQueryRoundResolver } from '../../src/core/work-graph/tasks/query-round.js';
 import { createTaskRequeueService } from '../../src/core/work-graph/tasks/requeue-service.js';
 import { WORKFLOW_AUTOMATION_ACTOR, type TaskRequeueOutcomeV1, type TaskRequeueRef } from '../../src/contracts/task-requeue.js';
 import type { WriteResult } from '../../src/contracts/core/results.js';
@@ -86,6 +88,7 @@ import { createRoleConfigurationService } from '../../src/core/work-graph/config
 import { createTaskClaimService } from '../../src/core/work-graph/tasks/claim-service.js';
 import { createQueryJobService } from '../../src/core/work-graph/queries/query-job-service.js';
 import { createQueryExecution } from '../../src/core/work-graph/queries/query-execution.js';
+import { planSourceRootOf } from './task-claim-fixture.js';
 import { RawArtifactBodyStore } from '../../src/core/record-store/body-store.js';
 import type { QueryJobIntentV1, QueryJobRef, QueryRunRef } from '../../src/contracts/query-job.js';
 import type { TaskClaimPort } from '../../src/core/work-graph/model/claim-contracts.js';
@@ -204,6 +207,7 @@ function schemas(extra: RecordBackendSchemas = { records: [], events: [] }): Rec
       ...LINE_RECORD_SCHEMAS.records,
       ...QUERY_JOB_RECORD_SCHEMAS.records, ...CONTROL_RECORD_SCHEMAS.records, ...COMPLETION_RECORD_SCHEMAS.records,
       ...MODEL_REQUEST_RECORD_SCHEMAS.records, ...SESSION_MESSAGE_RECORD_SCHEMAS.records,
+      ...SESSION_ACTIVITY_SCHEMAS.records,
       ...EVIDENCE_RECORD_SCHEMAS.records, ...UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS.records, ...extra.records],
     events: [...materialRecordSchemas().events, ...PLAN_RECORD_SCHEMAS.events, ...PLAN_STATE_RECORD_SCHEMAS.events,
       ...PLAN_GOVERNANCE_RECORD_SCHEMAS.events, ...SESSION_RECORD_SCHEMAS.events,
@@ -303,7 +307,14 @@ export async function openNodeFixture(kind: ClaimFixtureKind, options: NodeFixtu
   const anomalies = createSessionAnomalyService({ records: backend.records, lookups: backend.records,
     sessionFacts: createSessionFactsService({ records: backend.records }), now });
   const roles = createRoleConfigurationService({ records: backend.records, now, eventId });
-  const claims = createTaskClaimService({ records: backend.records, roles, now, newId });
+  const lineageMailbox = createSessionMailbox({ records: backend.records, sessions,
+    executions: createRunStateReader({ records: backend.records }), roles,
+    materials: createMaterialService({ bodies, authority: createMaterialRecordReaders(backend.records).authority, now }),
+    queryRounds: createQueryRoundResolver({ records: backend.records, duties: unknownSessionDuty, bodies }),
+    defaultInquiryDeadlineMs: 86_400_000, systemActor: { kind: 'system', id: 's2c-d-lineage' }, now, newId });
+  const claims = createTaskClaimService({ records: backend.records, roles, now, newId,
+    planSourceRoot: planSourceRootOf({ messages: lineageMailbox, plans,
+      queries: createQueryJobService({ records: backend.records, now, eventId }) }) });
 
   const modules: { ref: ModuleRef; name: string; responsibility: string; paths: string[]; interfaces: [] }[] = [
     { ref: { projectId, moduleId: 'M' }, name: 'Module M', responsibility: 'Own M', paths: ['m'], interfaces: [] },
@@ -611,6 +622,7 @@ export async function openNodeFixture(kind: ClaimFixtureKind, options: NodeFixtu
       authority: createMaterialRecordReaders(backend.records).authority, now });
     const mailbox = createSessionMailbox({ records: backend.records, sessions, executions,
       defaultInquiryDeadlineMs: 86_400_000,
+      queryRounds: createQueryRoundResolver({ records: backend.records, duties: unknownSessionDuty, bodies: lineBodies }),
       roles: createRoleConfigurationService({ records: backend.records, now, eventId: lineEventId }), materials,
       systemActor: { kind: 'system', id: 's2c-d-line' }, now, newId: lineEventId });
     const requeues = createTaskRequeueService({
@@ -738,6 +750,9 @@ export function nodeReaderOf(fixture: NodeFixture, options: {
     records, plans: fixture.plans, catalog: fixture.catalog, anomalies: options.anomalies ?? fixture.anomalies,
     executedFiles: options.executedFiles ?? scriptedExecutedFiles({ availability: 'not_available', files: [], possiblyIncomplete: true, sourceCursor: null }),
     line: lineDeps,
+    planSourceRoot: planSourceRootOf({ messages: fixture.runs.mailbox(), plans: fixture.plans,
+      queries: createQueryJobService({ records: fixture.records, now: () => '2026-09-24T00:00:00.000Z',
+        eventId: () => 's2c-d-node-lineage' }) }),
     maintainerOf: options.maintainerOf ?? (async () => ({ status: 'ready' as const, value: { status: 'none' as const } })),
   };
   return { reader: createNodeDetailReader(deps), line: createWorkLineReader(lineDeps) };

@@ -15,7 +15,7 @@
 | --- | --- | --- |
 | `types.ts` | `DecisionSourceBranchFacts`、`SourceReadResult`、`EncodedRecordOutcome`、`SourceReadSupport`、`SourceDependencies` | 分支结果、共享读支持与可选 owner 端口的形状；只有类型；`DecisionSourceBranchFacts.goal` 在项目 subject 为 `null`（不读 Goal 记录）。 |
 | `read-support.ts` | `createSourceReadSupport`、`readStoredDecoded`、`SAVED_ANSWER_READ_TEMPLATES`、`ReadRecordTemplates`、`Scope`、`clonePins`、`samePinSet`、`goalBasis`、`isAbsencePin`、`isGoalPin`、`isUserRecipient`、`sameJson` | 唯一的记录读取/解码协议、两套错误模板、scope 检查、pin 克隆/比较/复核与 Goal basis；`sameJson` 从 `contracts/fingerprint.ts` 再导出（正本）。 |
-| `message.ts` | `readMessageSource` | message 来源的完整分支事实。 |
+| `message.ts` | `readMessageSource` | message 来源的完整分支事实；正式读者取发件 Session，三种 agent 发件人（`work_run`/`query_run`/`secretary_round`）都算，Host 发件人没有。 |
 | `goal-cause.ts` | `readGoalCauseSource`、`initialCauseActiveRef` | goal cause 来源的完整分支事实，含原因白名单与正式原因核对；`initialCauseActiveRef` 是两个 `missing_initial_*` code 到各自 active 指针 ref 的唯一映射，读模型也用它。 |
 | `candidate.ts` | `readCandidateSource` | candidate 来源的完整分支事实。 |
 | `planning-question.ts` | `readPlanningQuestionSource` | planning question 来源的完整分支事实，含 QueryRun 读者读取。带绑定的身份从其绑定取 Goal：绑定读端口必须注入，按回答 + 草稿号读到的绑定必须是 `ready`（缺失是错，不给空卡）、其 ref 与本身份一致、其 Goal 与本分支的 `goalRef` 一致，已存答案仍须是 Job 的已答答案，绑定进来源 pins；没有绑定时保留原来的 Goal 要求。 |
@@ -25,7 +25,7 @@
 | `command-rerun-request.ts` | `readCommandRerunRequestSource` | command rerun request 来源的完整分支事实。 |
 | `rework-request.ts` | `reworkRequestOptions`、`projectReworkRequestCard`、`reworkRequestClosedReason`、`reworkRequestCardSourceSpec`、`readReworkRequestSource` | `rework_request` 来源的完整分支事实：全状态页，rejected/stale 以 `source_resolved` 关闭，applied 留给回答覆盖。 |
 | `member-creation.ts` | `readMemberCreationSource`、`memberCreationCardFacts`、`memberCreationClosedReason`、`memberCreationSourceIdentity`、`MemberOperationRecordV1`、`MemberCreationCardFactsV1` | member creation 来源的完整分支事实：按 identity.operationRef 重读一条 `member_create` 操作并核对 Goal/Task/revision；唯一纯投影产出卡片事实（operation pin、approve/reject 选项、`source_resolved` 的终态集合与 `requestedAt`）。 |
-| `message-release.ts` | `readMessageReleaseSource` | message release 来源的完整分支事实：消息记录、它的 Goal 与 `tasks/message-release-card.ts` 的卡片事实；派生块是读的 DTO，不在分支事实里。 |
+| `action-release.ts` | `readActionReleaseSource` | `action_release` 来源的完整分支事实：持久 `ActionRequest`（派活或叫停）、它的 Goal 与 `tasks/action-request-card.ts` 的卡片事实；派活卡的 pins 是受理时的三值，叫停卡带 `frozen.run`；派生块是读的 DTO，不在分支事实里。 |
 | `handoff-approval.ts` | `readHandoffApprovalSource`、`handoffApprovalSubjectOf`、`handoffApprovalCardFacts`、`handoffApprovalCard`、`handoffApprovalCardKey`、`handoffApprovalClosedReason`、`handoffApprovalSourceIdentity`、`handoffApprovalOperationOfSource`、`readHandoffApprovalOperation`、`readHandoffApprovalOperations`、`HandoffApprovalOperationV1`、`HandoffApprovalCardFactsV1` | `handoff_approval` 来源：按 identity 的 operation ref 重读一条 `handoff` 操作，只用它自己的 `progress.approval` 与 `requestedAt`；subject 由 `handoffApprovalSubjectOf` 按 `assignments` 的不同 Goal 数派生（恰好一个 Goal 是该 Goal，其余是项目），通知来源也调用同一份；所有阶段都列出，`approved`/`rejected`/已结束以 `source_resolved` 关闭。集合读遍历 workspace 五个阶段的操作并按 subject 筛选；唯一纯投影同时产出卡片事实和 `DecisionCardV1`，不另写第二份。 |
 
 | `adviser-creation.ts` | `adviserCreationOptions`、`adviserCreationIdentityOf`、`adviserCreationKeyOf`、`readAdviserCreationCollection`、`readAdviserCreationCardByKey`、`adviserCreationCard`、`readAdviserCreationSource`；类型 `AdviserCreationNoticeItemV1`、`AdviserCreationSourceDependencies` | `adviser_creation` 来源：按自动返工通知的只读投影读本条计次且累计至少两次的返工，没有 adviser 时派生决定卡；已有 adviser 时以 `source_resolved` 关闭；唯一纯投影产出卡片事实，不另写 rework 过滤或第二份卡。 |

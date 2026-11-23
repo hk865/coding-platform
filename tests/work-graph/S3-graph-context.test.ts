@@ -61,13 +61,15 @@ import { createSessionDirectory } from '../../src/core/work-graph/sessions/sessi
 import { unknownSessionDuty } from '../helpers/session-duty-double.js';
 import { plainSessionRefToAggregate, sessionAggregateRefKey } from '../../src/core/work-graph/sessions/session-record-codecs.js';
 import { createPlanService } from '../../src/core/work-graph/tasks/plan-service.js';
+import { createQueryJobService } from '../../src/core/work-graph/queries/query-job-service.js';
+import { createRunSupport } from '../helpers/S2C-L-runs-support.js';
+import { planSourceRootOf } from '../helpers/task-claim-fixture.js';
 import { createInitializationBindingReader } from '../../src/core/work-graph/tasks/goal-confirm-service.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
 import { createTaskContextInputService } from '../../src/core/work-graph/tasks/context-input-service.js';
 import { createTaskClaimService } from '../../src/core/work-graph/tasks/claim-service.js';
 import { createRoleConfigurationService } from '../../src/core/work-graph/configuration/role-memory-service.js';
 import { QUERY_JOB_RECORD_SCHEMAS } from '../../src/core/work-graph/queries/query-record-codecs.js';
-import { createQueryJobService } from '../../src/core/work-graph/queries/query-job-service.js';
 import { createQueryExecution } from '../../src/core/work-graph/queries/query-execution.js';
 import type { MaterialPort } from '../../src/core/work-graph/model/material-contracts.js';
 import { createGraphContextReader } from '../../src/core/work-graph/views/graph-context-reader.js';
@@ -547,6 +549,8 @@ async function createFixture(kind: 'memory' | 'sqlite', options: FixtureOptions 
   const roleFacts = createRoleConfigurationService({ records: rawRecords, now, eventId });
   const claimService = createTaskClaimService({
     records: rawRecords, roles: roleFacts, now,
+    planSourceRoot: planSourceRootOf({ messages: createRunSupport(base).mailbox(), plans: base.plans,
+      queries: createQueryJobService({ records: rawRecords, now, eventId }) }),
     newId: () => claimIds.shift() ?? `gr-claim-extra-${++claimExtra}`,
   });
   async function claim(task: TaskTriple, sessionRef: SessionRef, requestId: string) {

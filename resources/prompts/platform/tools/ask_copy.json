@@ -1,0 +1,13 @@
+{
+  "description": "问副本：向一条线要一份只读派生回答，不打扰它，也不让它动手。平台按问件开只读副本，答案作为回复回来；副本只读、不发、不写注记。谁能用：非副本、非审阅者的轮。问对方做过什么、知道什么、为什么这么定，而这事不用对方动手。不要求承诺、改方向或动手（要它做就发信）；不代替上报、问人；不问审阅者线（C23）；副本何时答由平台定，忙线或归档也能答。参数：line 被问的线引用；question 非空，写清问什么；taskRef 可选，本目标的任务。回执：committed 表示问件已存下，答案作为回复回来。会被拒：收件线不存在（the requested record does not exist）。",
+  "parameters": {
+    "line": "被问的线。",
+    "line.projectId": "线所属项目 id。",
+    "line.sessionId": "线的 Session id。",
+    "question": "要问的事实；非空，给范围、文件、任务。",
+    "taskRef": "所属任务，可选；完整三元组。",
+    "taskRef.projectId": "任务的项目 id。",
+    "taskRef.goalId": "任务的目标 id。",
+    "taskRef.taskId": "任务 id。"
+  }
+}

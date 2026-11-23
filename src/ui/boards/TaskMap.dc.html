@@ -679,6 +679,7 @@ body { margin: 0; background: #1F1F1F; }
               <button class="btn-text" type="button" onClick="{{ac.go}}">{{ac.label}}</button>
             </sc-for>
           </div>
+          <sc-if value="{{det.hasHoldError}}" hint-placeholder-val="{{ false }}"><p class="d-state"><span class="tx-failed">{{det.holdError}}</span></p></sc-if>
         </section>
       </sc-if>
     </aside>
@@ -792,7 +793,7 @@ class Component extends DCLogic {
      `props.data`; there is no sample Goal, Stage or Task and no `big` branch. */
   taskModel() {
     const data = this.props.data || { goal: { id: '', name: '', st: 'pending', word: '' }, stages: [], tasks: [], dag: {} };
-    const key = 'data|' + String(this.props.dataVersion || 0) + '|' + data.goal.id;
+    const key = 'data|' + String(this.props.dataVersion || 0) + '|' + data.goal.id + '|' + (data.detailFor || '');
     if (this._tm && this._tm.key === key) return this._tm;
     const root = { id: 'goal:' + data.goal.id, name: data.goal.name || '', kind: 'goal', goal: 'main', sem: '', kids: [] };
     const nodes = {};
@@ -801,8 +802,11 @@ class Component extends DCLogic {
       nodes[n.id] = n; root.kids.push(n);
     });
     (data.tasks || []).forEach((t) => {
+      /* §2.8: the detail read is this page's only source of the hold / dispatch /
+         stop state; the selected Task's mini card and detail head add that line. */
+      const detail = data.detail && data.detailFor === String(t.id) ? data.detail : null;
       const node = { id: 'task:' + t.id, name: t.name, kind: 'task', st: t.st, why: t.why || '', sem: t.instruction || '',
-        gate: t.gate, att: t.attempt, stageId: t.stageId || null, owner: t.owner || '',
+        gate: t.gate, att: t.attempt, stageId: t.stageId || null, owner: t.owner || '', statusNote: detail ? detail.cardStatus || '' : '',
         files: [], rework: t.rework || [], reworkCap: typeof t.reworkCap === 'number' ? t.reworkCap : null, deps: (t.deps || []).map((d) => 'task:' + d), next: [], kids: [] };
       const home = t.stageId && nodes['stage:' + t.stageId] ? nodes['stage:' + t.stageId] : root;
       home.kids.push(node);
@@ -1137,6 +1141,9 @@ class Component extends DCLogic {
   pathParts(p) { const a = String(p).split('/'); return { full: p, parts: a.map((x, i) => (i < a.length - 1 ? x + '/' : x)) }; }
 
   /* hover info card (name · state + reason · 归属 · 负责 · 语义) */
+  /* §2.8: the mini card's status line adds the read hold / dispatch / stop state;
+     a Task without that read adds nothing. */
+  taskNote(n) { return n && n.statusNote ? ' · ' + n.statusNote : ''; }
   taskCard(n) {
     const W = this.words(); const tree = this.taskModel();
     const path = this.shortPath(tree.byId, n);
@@ -1144,7 +1151,7 @@ class Component extends DCLogic {
     const sem = n.sem || '';
     const c = { show: true, name: n.name, path: path, hasPath: !!path, sem: sem, hasSem: !!sem };
     if (n.kind === 'task') { const agent = this.taskAgent(n); const why = this.liveWhy(n.id, n.why);
-      return Object.assign(c, { sq: 'sq z10 ' + this.sqAt(n.st), word: W[n.st] + (n.gate ? '（验收）' : ''), tx: 'tx-' + n.st, why: why ? '：' + why : '', agent: agent, hasAgent: this.fieldHasValue(agent) }); }
+      return Object.assign(c, { sq: 'sq z10 ' + this.sqAt(n.st), word: W[n.st] + (n.gate ? '（验收）' : ''), tx: 'tx-' + n.st, why: (why ? '：' + why : '') + this.taskNote(n), agent: agent, hasAgent: this.fieldHasValue(agent) }); }
     if (n.kind === 'goal') { const agent = this.goalAgent();
       return Object.assign(c, { sq: 'sq z10 s-' + this.goalSt(), word: this.goalWord(), tx: 'tx-' + this.goalSt(), why: ' · ' + this.cardCount(n), agent: agent, hasAgent: this.fieldHasValue(agent) }); }
     /* a Stage has no single owner: group counts are not an owner (design §3). */
@@ -2287,7 +2294,7 @@ class Component extends DCLogic {
       if (c.hasSem) rows.push({ k: '语义', v: c.sem, cls: 'hc-sem' });
       /* a replayed head keeps its reason at t alone (no duration on the DAG card) */
       const why = S.live ? this.liveWhy(id, x.why) : x.why;
-      return { sq: 'sq z10 ' + this.sqAt(x.st), name: n.name, word: x.word, tx: 'tx-' + x.st, why: (why ? '：' + why : '') + at, rows: rows, hint: hint };
+      return { sq: 'sq z10 ' + this.sqAt(x.st), name: n.name, word: x.word, tx: 'tx-' + x.st, why: (why ? '：' + why : '') + (S.live ? this.taskNote(n) : '') + at, rows: rows, hint: hint };
     }
     const g = this.groupAt(n, S); const c = this.taskCard(n);
     const rows = []; if (c.hasPath) rows.push({ k: '归属', v: c.path, cls: '' });
@@ -3025,7 +3032,10 @@ class Component extends DCLogic {
       if (out.hasAgent && !S.live) out.agent += '（现在）';
       out.word = real ? real.word : det.word;
       const why = this.liveWhy(id, real && real.why ? real.why : n.why);
-      out.why = why ? '：' + why : '';
+      const note = this.taskNote(n);
+      out.why = (why ? '：' + why : '') + note;
+      out.holdError = (this.state || {}).holdError || '';
+      out.hasHoldError = !!out.holdError;
       /* 依赖 / 后续: the real edges (transitive ones included); a line means
          "needs an output of", never a claim condition. */
       const item = (tid) => ({ name: (tm.byId[tid] || {}).name || '', sq: sqT(tid), go: () => go.sel(tid), over: () => hov.on(tid), out: hov.off });
@@ -3040,6 +3050,29 @@ class Component extends DCLogic {
       if (deps.length) out.rel.push(grp('', [], '依赖是需要它的产出，不必等它整个结束' + (ov.length ? '；没有连线的也会改同一个文件' : '')));
       if (real && real.disposition) {
         out.rel = out.rel.concat([{ k: '处置', items: [], files: [], lines: [real.disposition.text], hasText: false, text: '' }]);
+      }
+      /* §2.8: the hold reasons (who / why / when it expires / released or expired),
+         the dispatch request and the stop card's steps, in the prototype's
+         关系 rows: span.d-line inside div.d-rel. */
+      if (real && real.holds && real.holds.length) {
+        out.rel = out.rel.concat([{ k: '暂缓', items: [], files: [], lines: real.holds.map((h) => h.text), hasText: false, text: '' }]);
+      }
+      if (real && real.dispatch && real.dispatch.lines.length) {
+        out.rel = out.rel.concat([{ k: '派活请求', items: [], files: [], lines: real.dispatch.lines, hasText: false, text: '' }]);
+      }
+      if (real && real.stop && real.stop.lines.length) {
+        out.rel = out.rel.concat([{ k: '叫停', items: [], files: [], lines: real.stop.lines, hasText: false, text: '' }]);
+      }
+      /* 撤销暂缓 (design 4.3): one click releases every reason on this Task
+         through the one tasks/hold/release write. */
+      if (real && real.holdRelease && real.holdRelease.available) {
+        out.acts.push({ label: '撤销暂缓', go: () => {
+          const a = this.props.actions;
+          if (!a || !a.releaseHolds) return;
+          const onReleased = () => this.setState({ holdError: '' });
+          const onReleaseFailed = (e) => this.setState({ holdError: e && e.message ? String(e.message) : '撤销失败。' });
+          a.releaseHolds(real.holdRelease.task).then(onReleased, onReleaseFailed);
+        } });
       }
       if (real && real.filesUnknown) out.rel = out.rel.concat([grp('改过', [], '改动未知')]);
       /* 架构: the planned modules (计划要改, no square: no real file state) and the
@@ -3177,6 +3210,7 @@ class Component extends DCLogic {
       hasMore: false, more: '', hasHeld: false, held: [] };
     const emptyDet = { sq: 'sq', name: '', tx: '', word: '', why: '', hasAt: false, atTime: '', atWord: '', atTx: '', atWhy: '', crumbs: [], agent: '', sem: '', rel: [],
       hasArch: false, archSum: '', arch: [], filesUnknown: false, hasLines: false, lines: [], noLines: false, hasLinesNote: false, linesNote: '', canHandle: false, acts: [], close: noop,
+      holdError: '', hasHoldError: false,
       pinned: false, hasPins: false, pins: [], closeLabel: '关闭详情' };
     const emptyWl = { full: false, blockCls: 'wl-block', cls: 'tl full wl', bys: [], wins: [], hasCell: false, cellLabel: '', clearCell: noop, hasCrumb: false, crumbs: [], stale: false, resort: noop, replay: false, backNow: noop, atText: '',
       axName: '', ticks: [], evs: [], nowX: 0, nowTag: false, cur: { show: false, off: false, x: 0, label: '', text: '', min: 0, max: 0, now: 0, cls: 'wl-cur', key: noop }, down: noop, move: noop, up: noop,

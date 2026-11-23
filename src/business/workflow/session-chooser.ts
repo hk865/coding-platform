@@ -287,6 +287,8 @@ export function createSessionChooser(deps: {
   async function chooseSession(
     owned: Owned, goal: GoalSnapshot, binding: Binding, sessionHint: SessionRef | null,
     task: TaskTriple | null, moduleRef: string | null = null,
+    /** 2.5 首选线：派活请求记下的 `preferredLine`；只在同一套资格过滤后的候选里排第一，不在就不等、不加。 */
+    preferredLine: SessionRef | null = null,
   ): Promise<SessionChoice & { basis: PickBasisV1 }> {
     void sessionHint;
     const workspaceId = goal.workspaceRef.workspaceId;
@@ -444,7 +446,17 @@ export function createSessionChooser(deps: {
       candidates.push({ card, responsibleTask, responsibleModule, sameGoalRun, activityAt });
     }
 
-    const ranked = [...candidates].sort(comparePickCandidates);
+    // 2.5 首选线只改这一处排序：同一个已资格过滤后的候选集里，请求点名的那条线排第一；它不在集合里（忙、
+    // 没授权、不合格）就照常排，不等、不加。其余候选仍用同一个比较器。
+    const preferredKey = preferredLine === null ? null : plainSessionRefKey(preferredLine);
+    const ranked = [...candidates].sort((left, right) => {
+      if (preferredKey !== null) {
+        const leftFirst = plainSessionRefKey(left.card.record.ref) === preferredKey;
+        const rightFirst = plainSessionRefKey(right.card.record.ref) === preferredKey;
+        if (leftFirst !== rightFirst) return leftFirst ? -1 : 1;
+      }
+      return comparePickCandidates(left, right);
+    });
     const declared: PickBasisV1['incomplete'] = [
       'task_links', 'module_links', 'goal_history', 'directory', 'activity', 'waits', 'authorization',
     ];

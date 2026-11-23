@@ -17,25 +17,23 @@ import { TEMPLATE_SLOTS } from '../../src/contracts/prompts/slot-tables.js';
 const PACK: ResolvedPromptPackV1 = PLATFORM_PROMPT_PACK_V1;
 
 // decision 89 and 8E L3 row 4 append the skill paragraphs; each Skill template carries its own version.
-// SCRV (start rulings draft §4): the scribe template gains its review section, version 8 -> 9 below; its digest here is
-// 9's, set at the merge from the builder's text (lead rulings: pins are unified at the merge).
+// The five Skills after the P2 rewrite; every digest below is the merged template file's own sha256.
 const V2_TEMPLATES = {
     'base': 'cee15946501a2db933e00e1ea9954e8332542ab130268cd32c6962c91061958c',
-    'skill-platform-work': '7900ad9ec942898d22a666e20a6a82d8e0e647291d226108325bfa1d84bdaa08',
-    'skill-platform-secretary': '70dde99ef1db48706385d58c1fec689ea6be77f1ba033cc8f7502dd79f999dfb',
-    'skill-platform-adviser': '5c823b9ff62bb22618c605f72511a89e5ab0654311c937b05783d8e16caeb062',
-    'skill-platform-scribe': '06eaa54bb819486d3b7e3e69bd4bdcfe0a5cfb7e5a73a893296500710ec7b65d',
-    'skill-platform-reviewer': '730e2ee4693fbd17776a2adfb5c6b8edaeab2c5ba7ed102aec0ba49aec9307a6',
+    'skill-platform-work': '77cab7d447ce03b66cd83f63a680303991ab6148b4ce38fb9eff106cd86c9093',
+    'skill-platform-secretary': 'eb6dc54774b250b7bb022245f3783b91b42cb812d74d11595edaf6b217cc08cd',
+    'skill-platform-adviser': 'ca1623d443071551cf7c32c2ef1c164f5f7a2e625d58461c2042739254b8c015',
+    'skill-platform-scribe': '0f564aed3d684fa56026ad0d17b820f5c41e5ced948036ee2db61bce9a445190',
+    'skill-platform-reviewer': 'ff28c4a70368a6c321019d758180a7c7c71ab194fc5e62a6c847572c8655f10d',
 } as const;
 
-/** The v1 Skill texts PC-1 pinned plus the decision 89, 8E L3 row 4 and 121-128 (goal gate) paragraphs, hand-written. */
+/** The five rewritten Skill texts with every block present, hand-written as one whole digest each. */
 const V1_SKILL_DIGESTS = {
-    // 第 12 版只多一句：要参谋或人定的事发 action_request（lead 11-17，E09）；R6 把第 92 行的子项读法写成带 mode 的例子。
-    'skill-platform-work': '11b76ac00e87c3f6970ed8c4cbcea49c15701e6c038202800f581f25a6d68678',
-    'skill-platform-secretary': 'd9b25d2165ff471080eb74bcb24066c426db4f423256982eb3fcf68b9432b12a',
-    'skill-platform-adviser': '65f95c529e0d35fccbf2532258733a73cb30133813062e32a8a425c352af9a14',
-    'skill-platform-scribe': '5c4d9ebc3a3abb6b7d56bcb957728247789186588f4290d451d3c1efe2f46fd1',
-    'skill-platform-reviewer': '36fcce8c4354c4ac131f4bc64759a76695b4781c0937ab47c3c44704f7b9ed20',
+    'skill-platform-work': '1585a95cee6e904f90c3accb52c3d71e825c8bfe6e586b87c84a11fff32328fc',
+    'skill-platform-secretary': 'ee2329dccae857e77d8dcbd614d6091144041ba7209950df6a8d715bd9a6b656',
+    'skill-platform-adviser': '278d4c8ee951df693cff45e4f294457c1eefa12ad47cfa0144d5def419f70dfb',
+    'skill-platform-scribe': 'fc615e5a55cffe47d370e6fe541632922aaa6e1d2a6bb2c20371bc9d75668673',
+    'skill-platform-reviewer': '72fec1ba0f0677467a7a6f76ae1f70fcf5e4525d8fe32179e01b614e3294397f',
 } as const;
 
 /** Every tool a Skill sentence names; all present, so no block is omitted. */
@@ -43,7 +41,11 @@ const NAMED_SKILL_TOOLS = [
     'read', 'edit', 'shell',
     'look_graph', 'find_graph', 'check_links', 'record_note',
     'query_task_graph', 'query_ready_tasks', 'propose_future_plan',
-    'find_related_sessions', 'read_session_card', 'send_session_message',
+    'ask_copy', 'ask_person', 'notify_person', 'respond_session_message', 'withdraw_session_message',
+    'send_session_message', 'read_requests', 'read_user_decision',
+    'dispatch_task', 'hold_claim', 'release_hold', 'request_stop',
+    'assign_module_maintainer', 'create_member', 'propose_architecture_revision', 'propose_role_split',
+    'submit_command_rerun_advice', 'submit_plan_round', 'submit_scribe_review', 'submit_unknown_call_advice',
     'search', 'code_index', 'run_readonly_command',
 ] as const;
 
@@ -53,8 +55,8 @@ describe('platform prompt pack v2 (rulings 17–18)', () => {
         for (const [id, expectedDigest] of Object.entries(V2_TEMPLATES)) {
             expect(manifest.templates[id], `manifest entry ${id}`).toEqual({
                 file: `templates/${id}.txt`,
-                version: id === 'base' ? 3 : id === 'skill-platform-adviser' ? 17 : id === 'skill-platform-work' ? 14
-                    : id === 'skill-platform-reviewer' ? 5 : id === 'skill-platform-secretary' ? 13 : 9, // scribe 9 (SCRV, +1 in its tree)
+                version: id === 'base' ? 3 : id === 'skill-platform-adviser' ? 18 : id === 'skill-platform-work' ? 15
+                    : id === 'skill-platform-reviewer' ? 6 : id === 'skill-platform-secretary' ? 14 : 10,
                 mentionsTools: [],
             });
             const text = templates[id];
@@ -65,7 +67,7 @@ describe('platform prompt pack v2 (rulings 17–18)', () => {
         }
     });
 
-    it('renders every Skill to its v1 text plus the decision 89 paragraphs when every named tool is present (ruling 18)', () => {
+    it('renders every Skill to its rewritten text when every named tool is present (ruling 18)', () => {
         for (const [id, v1Digest] of Object.entries(V1_SKILL_DIGESTS)) {
             const rendered = renderTemplate(PACK, id, {}, NAMED_SKILL_TOOLS).text;
             // The whole text, compared whole: no prefix, no regex.
@@ -105,16 +107,14 @@ describe('platform prompt pack v2 (rulings 17–18)', () => {
             'initial-planning-answer': { packId: 'platform', version: 16, mentionsTools: [] },
             'consultation-received-input': { packId: 'platform', version: 1, mentionsTools: [] },
             'user-decision-response': { packId: 'platform', version: 1, mentionsTools: [] },
-            'action-request-delivery': { packId: 'platform', version: 1, mentionsTools: [] },
-            'inquiry-delivery': { packId: 'platform', version: 1, mentionsTools: [] },
-            'notify-delivery': { packId: 'platform', version: 1, mentionsTools: [] },
+            'message-delivery': { packId: 'platform', version: 1, mentionsTools: [] },
             'wait-reply-delivery': { packId: 'platform', version: 1, mentionsTools: [] },
             'wait-expiry-delivery': { packId: 'platform', version: 1, mentionsTools: [] },
             'intervention-delivery': { packId: 'platform', version: 1, mentionsTools: [] },
             'link-breaks-input': { packId: 'platform', version: 1, mentionsTools: [] },
             'python-syntax-input': { packId: 'platform', version: 1, mentionsTools: [] },
             'context-summary-request': { packId: 'platform', version: 1, mentionsTools: [] },
-            'intervention-planning': { packId: 'platform', version: 1, mentionsTools: [] },
+            'intervention-planning': { packId: 'platform', version: 2, mentionsTools: [] },
             'plan-review-input': { packId: 'platform', version: 2, mentionsTools: [] },
             'exec-review-input': { packId: 'platform', version: 2, mentionsTools: [] },
             'unknown-call-advice-input': { packId: 'platform', version: 1, mentionsTools: [] },
@@ -139,11 +139,11 @@ describe('platform prompt pack v2 (rulings 17–18)', () => {
             'handoff-brief-executor': { packId: 'platform', version: 1, mentionsTools: ['read'] },
             'handoff-brief-adviser': { packId: 'platform', version: 2, mentionsTools: ['read'] },
             base: { packId: 'platform', version: 3, mentionsTools: [] },
-            'skill-platform-work': { packId: 'platform', version: 14, mentionsTools: [] },
-            'skill-platform-secretary': { packId: 'platform', version: 13, mentionsTools: [] },
-            'skill-platform-adviser': { packId: 'platform', version: 17, mentionsTools: [] },
-            'skill-platform-scribe': { packId: 'platform', version: 9, mentionsTools: [] },
-            'skill-platform-reviewer': { packId: 'platform', version: 5, mentionsTools: [] },
+            'skill-platform-work': { packId: 'platform', version: 15, mentionsTools: [] },
+            'skill-platform-secretary': { packId: 'platform', version: 14, mentionsTools: [] },
+            'skill-platform-adviser': { packId: 'platform', version: 18, mentionsTools: [] },
+            'skill-platform-scribe': { packId: 'platform', version: 10, mentionsTools: [] },
+            'skill-platform-reviewer': { packId: 'platform', version: 6, mentionsTools: [] },
         });
     });
 });

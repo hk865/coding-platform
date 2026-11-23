@@ -1,18 +1,18 @@
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
-import type { SessionRef } from '../../../contracts/core/identity.js';
+import type { SessionRef, WorkspaceScope } from '../../../contracts/core/identity.js';
 import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
 import type { CoreRejection, ReadResult } from '../../../contracts/core/results.js';
 import { rejectedWithCurrent as reject } from '../../../contracts/core/rejections.js';
 import { canonicalOf } from '../../../contracts/fingerprint.js';
 import { isRecord as isObject } from '../../../contracts/validation/common.js';
-import { deriveMessageDelivery } from '../model/communication-contracts.js';
+import { deriveMessageDelivery, readNoAnswerClosingNotice } from '../model/communication-contracts.js';
 import type { SessionMessage, SessionMessageReadV1 } from '../model/communication-contracts.js';
 import { decodeStoredMessageBody, decodeStoredUserDecisionBody, isUserDecisionAnswerPart } from '../sessions/message-body-envelope.js';
-import { releaseBlockOf } from './mailbox-basis.js';
 import {
   internalHostContext, isUserRecipient, isolatedContext, loadMessage, mapReadResult, normalizeMessageRef,
   ownContext, recipientLineFacts, sameSessionRefAs, scopeOfMessageRef,
 } from './mailbox-common.js';
+import { readHostSendMessageRef } from './mailbox-host.js';
 import { deriveWorkRunSender, queryRunReader, readWorkRunIdentity, type QueryRunReaderV1 } from './mailbox-identity.js';
 import type { MailboxContext, Owned, ReadRight, Unknown } from './mailbox-types.js';
 
@@ -231,7 +231,14 @@ export async function readMessageView(mailbox: MailboxContext, ctx: CoreCallCont
   if (right !== null) return right;
   const line = await recipientLineFacts(mailbox.deps, internalHostContext(mailbox, viewOwned), loaded.value.recipient);
   if (!line.ok) return line.rejection;
-  const block = await releaseBlockOf(mailbox, viewOwned, loaded.value);
-  if (block.status !== 'ready') return block;
-  return { status: 'ready', value: { message: loaded.value, ...deriveMessageDelivery(loaded.value, line.value), releaseBlock: block.value } };
+  const view = { message: loaded.value, ...deriveMessageDelivery(loaded.value, line.value) };
+  // The round's formal `no_answer` conclusion is a separate read fact, never folded into the disposition: a reply,
+  // a withdrawal and Kernel acceptance keep their own fields.
+  if (loaded.value.response !== null) return { status: 'ready', value: view };
+  const readNotice = mailbox.deps.commitIdentities === undefined ? undefined
+    : (readCtx: CoreCallContext, input: { requestId: string; scope: WorkspaceScope }) =>
+      readHostSendMessageRef(mailbox, readCtx, input);
+  const ending = await readNoAnswerClosingNotice(readNotice, ctx, loaded.value.ref);
+  if (ending.status !== 'ready') return ending;
+  return { status: 'ready', value: ending.value ? { ...view, roundEnding: { kind: 'no_answer' } } : view };
 }

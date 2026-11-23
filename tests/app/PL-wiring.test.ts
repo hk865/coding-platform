@@ -153,8 +153,9 @@ describe('PL L: the goal-loop send', () => {
         ref: messageRef,
         sender: { kind: 'host', actor: { kind: 'system', id: 'host:plan-round' } },
         recipient: opened.adviser.ref,
-        intent: 'action_request', needsReply: true,
+        needsReply: true, wake: true,
       });
+      expect(sent.entry).toBeUndefined();
       const body = await readBody(opened.world, messageRef, 'message');
       expect(body.split('\n')[0]).toBe(requestId);
 

@@ -27,6 +27,7 @@ import type { DecisionApplicationReceiptV1, SessionMessageRef, UserMessageRespon
 import type { DecisionSelectionV1, DecisionSourceV1, UserDecisionBodyV1 } from '../../contracts/goal-decisions.js';
 import type { GoalRef, GoalSnapshot } from '../../contracts/ledger.js';
 import type { ReworkRequestRef } from '../../contracts/rework-request.js';
+import { WORKFLOW_AUTOMATION_ACTOR } from '../../contracts/task-requeue.js';
 import type { UnknownCallReviewV1 } from '../../contracts/unknown-call-review.js';
 import type { CommandRerunRequestV1 } from '../../contracts/command-rerun-request.js';
 import { OperationRefShape, ReworkRequestRefShape } from '../../contracts/data-format-refs.js';
@@ -53,11 +54,12 @@ import type {
   GoalExecutedFilesPort,
   GoalSettingsPort,
   MessageDutiesFactsPort,
-  MessageReleasePort,
   ResolveDecisionActionV1,
 } from '../../core/work-graph/model/decision-contracts.js';
-import type { MessageReleaseApprovedHookV1 } from '../../core/work-graph/communication/decision-change-proof.js';
+import type { ActionRequestAnswerV1, ActionRequestPort } from '../../core/work-graph/model/action-request-contracts.js';
+import { actionAnswerCommandId, actionRequestAnswerFacts } from '../../core/work-graph/tasks/action-request-answer.js';
 import type { GraphWrite } from '../../core/work-graph/model/task-contracts.js';
+import { hostSystemContext } from '../../core/work-graph/model/platform-check-context.js';
 import type {
   ResolveDecisionInputV1,
   ResolveDecisionReadV1,
@@ -315,31 +317,48 @@ export function createCommandRerunRequestApplicationAdapter(
 }
 
 /**
- * The `message_release` step ② adapter. The saved answer alone is the entry's input — the trusted entry derives
- * the person, the target and the option from it — and the committed record is the authority on the approval, so no
- * second selection read is made here.
+ * B#12/§3.10: the `action_release` step ② adapter. The saved answer alone names the request, its CAS revision and
+ * approve/deny (the `tasks/action-request-answer.ts` derivation the card answer path also uses); the call goes to the
+ * SAME `ActionRequest` owner the card source, tools and routes publish, and a committed result's cursor is handed to
+ * the coordinator's `applicationReceipt` for step ③. A retry replays by the answer-derived command id, so the
+ * archived answer's own Host actor must be the one passed as `ctx` (startup replay), never a second authorization.
  */
-export type MessageReleaseApplicationAdapterDependencies = {
-  /** The trusted internal entry L publishes (`decision-change-proof.ts:143`; port `decision-contracts.ts:557–:560`). */
-  applyMessageRelease: MessageReleasePort['applyMessageRelease'];
-  /** The glue's hook type (`MessageReleaseApprovedHookV1`, L1); the value is R's `armMessageRelease(scope)` (L4). */
-  onApproved: MessageReleaseApprovedHookV1;
+type ActionReleaseApplicationDependencies = {
+  approve: ActionRequestPort['approve'];
+  deny: ActionRequestPort['deny'];
+  /** 3.4: a committed release by the person delivers the closing stop through the same fixed-intent entry. */
+  deliverStop: ActionRequestPort['deliverStop'];
+  applicationReceipt: NonNullable<DecisionActionDependencies['applicationReceipt']>;
 };
 
-/** The `message_release` ② row: the answer becomes the release decision through the ONE trusted entry; its
- * committed result carries that command's formal receipt, which the adapter hands to ③ unchanged. */
-export function createMessageReleaseApplicationAdapter(
-  deps: MessageReleaseApplicationAdapterDependencies,
+export function createActionReleaseApplicationAdapter(
+  deps: ActionReleaseApplicationDependencies,
 ): DecisionApplicationAdapter {
   return {
-    async apply(ctx, { answerRef }) {
-      const result = await deps.applyMessageRelease(ctx, { answerRef });
-      // Only a committed approval arms the release queue; a denial or a refusal writes nothing.
-      if (result.status === 'committed' && result.value.release === 'approved' && result.value.goalRef !== null) {
-        deps.onApproved({ messageRef: result.value.ref, goalRef: result.value.goalRef });
+    async apply(ctx, { answer, answerRef }) {
+      const facts = actionRequestAnswerFacts(answer);
+      if (facts === null) {
+        return { status: 'ready', value: { action: {
+          status: 'rejected', code: 'invalid',
+          reason: 'the answer is not an answerable action release card',
+        }, receipt: null } };
       }
-      return { status: 'ready', value: { action: result,
-        receipt: result.status === 'committed' ? result.receipt : null } };
+      const command: ActionRequestAnswerV1 = { request: facts.requestRef, revision: facts.revision,
+        commandId: actionAnswerCommandId(answerRef), answerRef };
+      const result = facts.allow ? await deps.approve(ctx, command) : await deps.deny(ctx, command);
+      if (result.status !== 'committed') {
+        return { status: 'ready', value: { action: result, receipt: null } };
+      }
+      // 3.4/AR-02s: the approval commit is the receipt; a release with no `notSent` also delivers the closing
+      // stop. A failed delivery stays for start-up reconcile, and its retry replays the fixed intent.
+      const released = result.value;
+      if (released.state === 'released' && released.outcome?.kind === 'released' && released.outcome.notSent === null) {
+        await deps.deliverStop(
+          hostSystemContext({ ...ctx, workspaceId: released.workspaceId }, WORKFLOW_AUTOMATION_ACTOR),
+          { request: released.ref });
+      }
+      return { status: 'ready', value: { action: null,
+        receipt: await deps.applicationReceipt(ctx, result.cursor) } };
     },
   };
 }

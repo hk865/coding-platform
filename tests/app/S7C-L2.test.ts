@@ -101,8 +101,10 @@ describe('L2-attention', () => {
       await expect.poll(async () => (await attentionNotices(opened.world, recipient.ref)).length,
         { timeout: 20_000, interval: 25 }).toBe(1);
       const notices = await attentionNotices(opened.world, recipient.ref);
-      expect(notices[0]!).toMatchObject({ intent: 'notify',
+      expect(notices[0]!).toMatchObject({ sender: { kind: 'host' }, wake: false,
         recipient: { projectId: recipient.ref.projectId, sessionId: recipient.ref.sessionId } });
+      expect(notices[0]!.needsReply).toBeUndefined();
+      expect(notices[0]!.entry).toBeUndefined();
       if (adviser) expect(await attentionNotices(opened.world, opened.adviser!.ref)).toHaveLength(0);
     });
 
@@ -222,7 +224,7 @@ describe('L2-outbox', () => {
 // ---------------------------------------------------------------------------
 
 describe('L2-wiring', () => {
-  it('the local workbench grant offers the two rework tools and no ack/respond on a real Work Run', async () => {
+  it('the local workbench grant offers the two rework tools, respond, and no ack on a real Work Run', async () => {
     const workspace: WorkbenchWorkspaceConfig = { scope: S6A_SCOPE, name: 'S7C L2 local workbench',
       root: '/workspace', workspaceRevision: 1, readPrefixes: ['.'], writePrefixes: ['.'] };
     const model: HostSettingsStoredModel = { id: 's7c-l2', label: 'S7C L2 model', provider: 'deepseek',
@@ -247,7 +249,8 @@ describe('L2-wiring', () => {
     expect(names).toEqual(expect.arrayContaining(['request_rework', 'request_recheck', 'hand_off',
       'propose_future_plan']));
     expect(names).not.toContain('ack_session_message');
-    expect(names).not.toContain('respond_session_message');
+    // P2 §2.6/design:614: the executor's doing round may respond; the old "no respond" shape is gone.
+    expect(names).toContain('respond_session_message');
   });
 });
 
@@ -303,7 +306,7 @@ describe('T-receipt', () => {
           // A real send at the restart point: its commit is held, so the crash happens after the Host is idle.
           const hold = commitBarrier.hold(byIdentityPrefix('session-message-send:'), 'the T-receipt restart point');
           const sending = opened.world.post('messages/send', graphWrite(S6A_SCOPE,
-            { recipient: opened.line.ref, text: 'S7C T-receipt: the restart point', intent: 'inquiry',
+            { recipient: opened.line.ref, text: 'S7C T-receipt: the restart point',
               needsReply: true }, 's7c-t-receipt-restart-send'));
           await hold.reached;
           hold.release();

@@ -13,6 +13,7 @@ import type { RoleBindingRefV1 } from '../../../contracts/dispatch.js';
 import type { RuntimeBudget } from '../../../contracts/runtime-budget.js';
 import type { KnowledgeReadBaseV1 } from '../../../contracts/knowledge.js';
 import type { ColdStartExplorationQueryRefV1 } from './role-line-action.js';
+import { sameRef } from './ref-equality.js';
 
 export type RoleExplorationSegmentV1 = 'coarse_split' | 'region';
 export type RoleExplorationBindingV1 = { operationRef: OperationRef; systemMessageRef: SessionMessageRef };
@@ -38,22 +39,23 @@ export function roleExplorationQuestion(segment: RoleExplorationSegmentV1, regio
 }
 
 /**
- * Host system `action_request`, read from the record only: the shape of the `overlap-note:` planning source and of
- * a cold-start exploration's “please act” message.
+ * The Host's platform sender fact: only the Host writes a `host`/`system` sender, so no model or agent can make one.
+ * The cold-start exploration's “please act” message and the overlap gate's note request both carry it.
  */
-export function hostSystemActionRequest(message: { sender: { kind: string; actor?: { kind: string } }; intent?: string }): boolean {
-  return message.sender.kind === 'host' && message.sender.actor?.kind === 'system'
-    && message.intent === 'action_request';
+export function isHostSystemMessage(message: { sender: { kind: string; actor?: { kind: string } } }): boolean {
+  return message.sender.kind === 'host' && message.sender.actor?.kind === 'system';
 }
 
 /** The one binding check: Session role facts + the exploration operation's payload + the Host system message.
- *  The payload is the common `explorations` list, so the cold start and the second workspace's join share it. */
+ *  The payload is the common `explorations` list, so the cold start and the second workspace's join share it.
+ *  The message is verified by its complete ref (the one the operation saved) and the Host system sender fact,
+ *  never by a body field. */
 export function roleExplorationBindingOf(input: {
   operationRef: OperationRef;
   lineOperation: OperationRef | null;
   action: { explorations: ColdStartExplorationQueryRefV1[] };
   queryRunRef: QueryRunRef;
-  message: { sender: { kind: string; actor?: { kind: string } }; intent?: string } | null;
+  message: { ref: SessionMessageRef; sender: { kind: string; actor?: { kind: string } } } | null;
 }): { status: 'ready'; value: RoleExplorationBindingV1 } | CoreRejection {
   if (input.lineOperation === null) return rejected('forbidden', 'the exploration QueryRun has no role-line operation');
   const entry = input.action.explorations.find(candidate =>
@@ -68,8 +70,11 @@ export function roleExplorationBindingOf(input: {
     || input.lineOperation.operationId !== entry.operationRef.operationId) {
     return rejected('forbidden', 'the exploration line origin is not the adviser line the operation opened');
   }
-  if (input.message === null || !hostSystemActionRequest(input.message)) {
+  if (input.message === null || !isHostSystemMessage(input.message)) {
     return rejected('forbidden', 'the exploration round has no Host system “please act” message');
+  }
+  if (!sameRef(input.message.ref, entry.messageRef)) {
+    return rejected('forbidden', 'the exploration round is not the message this operation sent');
   }
   return { status: 'ready', value: { operationRef: { ...input.operationRef },
     systemMessageRef: { ...entry.messageRef } } };

@@ -75,9 +75,10 @@ type Prior = {
 type Received = { readonly message: SessionMessage; readonly text: string };
 
 const firstLine = (text: string): string => text.split('\n')[0] ?? '';
-const notifies = (items: readonly Received[]): Received[] => items.filter(item => item.message.intent === 'notify');
+const notifies = (items: readonly Received[]): Received[] =>
+  items.filter(item => item.message.needsReply === false && item.message.wake === false);
 const actionRequests = (items: readonly Received[]): Received[] =>
-  items.filter(item => item.message.intent === 'action_request');
+  items.filter(item => item.message.needsReply === true);
 const withFirstLine = (items: readonly Received[], rid: string): Received[] =>
   items.filter(item => firstLine(item.text) === rid);
 
@@ -247,9 +248,10 @@ it.each<{ cell: Cell; steps: string }>([
     expect(notifies(bInbox)).toEqual([]);
   }
 
-  const copy = { intent: 'notify', goalRef: g, text: copyText };
+  const copy = { needsReply: false, wake: false, goalRef: g, text: copyText };
   const shape = (items: readonly Received[]) =>
-    items.map(item => ({ intent: item.message.intent, goalRef: item.message.goalRef, text: item.text }));
+    items.map(item => ({ needsReply: item.message.needsReply ?? false, wake: item.message.wake,
+      goalRef: item.message.goalRef, text: item.text }));
   if (copyTo !== null) expect(shape(await receivedBy(handle, copyTo))).toEqual([copy]);
   if (copyTo === null || copyTo.sessionId !== a.ref.sessionId) {
     expect(notifies(await receivedBy(handle, a))).toEqual([]);

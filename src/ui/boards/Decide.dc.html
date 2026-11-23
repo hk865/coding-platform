@@ -2624,11 +2624,14 @@ class Component extends DCLogic {
   cardBase(n, path, agent, sem) {
     return { show: true, name: n.name, path: path, hasPath: !!path, agent: agent, sem: sem || '', hasSem: !!sem, tasks: [], hasTasks: false, more: '', hasMore: false };
   }
+  /* §2.8: the mini card's status line adds the read hold / dispatch / stop state;
+     a Task without that read adds nothing. */
+  taskNote(n) { return n && n.statusNote ? ' · ' + n.statusNote : ''; }
   taskCard(goal, n) {
     const W = this.words(); const tree = this.taskModel(goal);
     const c = this.cardBase(n, this.shortPath(tree.byId, n), '', n.sem);
     if (!n.kids.length) {
-      return Object.assign(c, { sq: 'sq z10 ' + this.sqAt(n.st), word: W[n.st] + (n.gate ? '（验收）' : ''), tx: 'tx-' + n.st, why: n.why ? '：' + n.why : '',
+      return Object.assign(c, { sq: 'sq z10 ' + this.sqAt(n.st), word: W[n.st] + (n.gate ? '（验收）' : ''), tx: 'tx-' + n.st, why: (n.why ? '：' + n.why : '') + this.taskNote(n),
         agent: this.ownerOf(goal, n) });
     }
     if (n.kind === 'goal') {

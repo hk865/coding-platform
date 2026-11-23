@@ -922,20 +922,18 @@ export function taskClaimProblem(
 }
 
 /**
- * 暂缓挡领取的拒绝（`busy`）：held 的原因说清谁放的、理由（看的人知道去找谁撤）；在等的叫停卡说清是哪一张。
+ * 暂缓挡领取的拒绝（`busy`），两句冻结原句：held 说清谁放的、理由；在等的叫停卡说清是哪一张。
  */
 function claimHoldProblem(blocker: HoldBlockerV1 | undefined): Rejected | null {
   if (blocker === undefined) return null;
   if (blocker.kind === 'stop_pending') {
-    return reject('guard_failed', 'busy', `the Task has a pending stop request ${blocker.actionRef.requestId}; `
-      + 'it is not claimed until that request is answered or withdrawn');
+    return reject('guard_failed', 'busy', `stop request ${blocker.actionRef.requestId} awaits your approval`);
   }
   const placedBy = blocker.reason.placedBy;
   const placer = placedBy.kind === 'agent' ? `the ${placedBy.duty} line ${placedBy.session.sessionId}`
     : placedBy.kind === 'action' ? `stop request ${placedBy.actionRef.requestId}`
       : `the platform (operation ${placedBy.operationId})`;
-  return reject('guard_failed', 'busy',
-    `the Task is under a claim hold placed by ${placer}: ${blocker.reason.reason}; it is not claimed until that hold is released`);
+  return reject('guard_failed', 'busy', `claim hold (${placer}: ${blocker.reason.reason})`);
 }
 
 /** TASK-01..03: `taskClaimProblem`, then the claim's records in one commit. */

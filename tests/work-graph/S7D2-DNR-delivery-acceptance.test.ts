@@ -279,8 +279,10 @@ describe('acc delivery acceptance', () => {
       expect(asked.round?.queryJobId).toBeTruthy();
     } else {
       const text = 'ACC-T08 there is a problem with this delivery';
+      // p2-frozen §2.3's dispatch table row 1: only a Host human message written by the direct-intervention entry is
+      // the person's B20 input. Without `entry` this same send is a plain notify: no round, no new-Goal request.
       const sent = (await world.post('messages/send', graphWrite(S6A_SCOPE, { recipient: secretary.ref,
-        goalRef, intent: 'action_request', needsReply: true, text }, 'acc-t08-send'))).body as { status: string };
+        goalRef, needsReply: true, entry: 'person_intervention', text }, 'acc-t08-send'))).body as { status: string };
       expect(sent.status).toBe('committed');
       // The fixture clock drives the Host's heartbeat: each poll registers the barrier, advances 25 ms and waits for
       // a real consume pass (S7A-host-gates:57–:67); a wall-clock poll alone never wakes the loop.

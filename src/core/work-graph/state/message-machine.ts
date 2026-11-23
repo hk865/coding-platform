@@ -54,17 +54,16 @@ import type {
   ApplicationProofV1,
   DecisionApplicationV1,
   DecisionMessageMetadataV1,
+  MessageAnsweredByV1,
   MessageDeliveryStateV1,
+  MessageEntryV1,
   MessageRecipient,
-  MessageReleaseV1,
-  SessionMessageIntentV1,
   SessionMessageRef,
   UserMessageResponseV1,
 } from '../../../contracts/core/session-message.js';
 import type { ArchiveWaitChoiceV1 } from '../../../contracts/core/session-archive.js';
-import type { DecisionChangeProofV1 } from '../../../contracts/goal-decisions.js';
 import type { SourceRefV1, TaskTriple } from '../../../contracts/dispatch.js';
-import type { DispatchBasisV1, GoalDesiredState, GoalRef } from '../../../contracts/ledger.js';
+import type { GoalDesiredState, GoalRef } from '../../../contracts/ledger.js';
 import type {
   MessageAcceptedInput, MessageConsultationDerivation, MessageDeliveryEvidenceV1, MessageDeliveryV1,
   MessageHostSenderRecord, MessageQueryRoundSenderRecord, MessageResponseRecord, MessageSecretaryRoundSenderRecord,
@@ -72,7 +71,8 @@ import type {
   SessionMessageRecord, SessionMessageStatus,
 } from '../../../contracts/mailbox.js';
 import type { QueryJobRef } from '../../../contracts/query-job.js';
-import { accept, reject, unreachable, type Rejected, type Transition } from './transition.js';
+import { sameRef } from './ref-equality.js';
+import { accept, failed, reject, unreachable, type Rejected, type Transition } from './transition.js';
 
 // --------------------------------------------------------------------------
 // Persisted record (declared once in contracts/mailbox.ts; re-exported here and by model)
@@ -87,19 +87,10 @@ export type {
 
 // The crossing value types are C's; `state/` names them, never redeclares them.
 export type {
-  MessageDeliveryStateV1, MessageReadDispositionV1, MessageReleaseV1,
+  MessageDeliveryStateV1, MessageReadDispositionV1,
 } from '../../../contracts/core/session-message.js';
 
 export type MessageWithdrawnChangeV1 = { kind: 'withdrawn'; withdrawnAt: string };
-/** Two discriminated arms; a denial carries no approval fact at all. */
-export type MessageReleaseDecidedChangeV1 =
-  | { kind: 'release_decided'; allow: true; approvedAt: string; approvalRevision: number; release: 'approved';
-      proof: DecisionChangeProofV1 | null }
-  | { kind: 'release_decided'; allow: false; approvedAt: null; approvalRevision: null; release: 'denied';
-      proof: DecisionChangeProofV1 | null };
-export type MessageReleasedChangeV1 = {
-  kind: 'released'; releasedAt: string; deadline: string | null; pins: DispatchBasisV1 | null;
-};
 export type MessageAppliedChangeV1 = { kind: 'applied'; appliedAt: string; proof: ApplicationProofV1 };
 /** The refusal reply's own change; `rejectedAt` is the same commit's time, and a plain reply passes null. */
 export type MessageRespondedChangeV1 =
@@ -107,15 +98,11 @@ export type MessageRespondedChangeV1 =
   | { kind: 'responded'; response: MessageResponseRecord; rejectedAt: string };
 
 export type MessageWithdrawnEventV1 = { type: 'message_withdrawn' };
-export type MessageReleaseDecidedEventV1 = { type: 'message_release_decided'; allow: boolean };
-export type MessageReleasedEventV1 = { type: 'message_released' };
 export type MessageAppliedEventV1 = { type: 'message_applied' };
 /** The refusal fact the existing `message_responded` arm carries (absent = a plain reply). */
 export type MessageRespondedRejectFactV1 = { rejected: true };
-export type MessageSeventhEventV1 = MessageWithdrawnEventV1 | MessageReleaseDecidedEventV1
-  | MessageReleasedEventV1 | MessageAppliedEventV1;
-export type Message7AChangeV1 = MessageWithdrawnChangeV1 | MessageReleaseDecidedChangeV1
-  | MessageReleasedChangeV1 | MessageAppliedChangeV1 | MessageRespondedChangeV1;
+export type MessageSeventhEventV1 = MessageWithdrawnEventV1 | MessageAppliedEventV1;
+export type Message7AChangeV1 = MessageWithdrawnChangeV1 | MessageAppliedChangeV1 | MessageRespondedChangeV1;
 export type MessageExpiredEventV1 = { type: 'message_expired' };
 
 // --------------------------------------------------------------------------
@@ -124,9 +111,8 @@ export type MessageExpiredEventV1 = { type: 'message_expired' };
 
 /**
  * The machine state of a message. The present arm carries the lifecycle facts
- * `messageMachineStateOf` reads from the record: release, stored delivery, the
- * withdrawal and the first-wins application/refusal times, the approval and its
- * message revision, and the release's dispatch pins.
+ * `messageMachineStateOf` reads from the record: the reply need, stored delivery,
+ * the withdrawal and the first-wins application/refusal times.
  */
 export type MessageMachineState =
   | { status: 'absent' }
@@ -134,18 +120,16 @@ export type MessageMachineState =
     status: SessionMessageStatus;
     hasReadAt: boolean;
     hasResponse: boolean;
+    /** The record's `needsReply`; a message written with `needsReply:false` has no reply slot. */
+    needsReply: boolean;
     acceptedInputIds: readonly string[];
     hasDerivation: boolean;
     revision: number;
-    release: MessageReleaseV1 | null;
     delivery: MessageDeliveryV1;
     withdrawnAt: string | null;
     expiredAt: string | null;
     appliedAt: string | null;
     rejectedAt: string | null;
-    approvedAt: string | null;
-    approvalRevision: number | null;
-    pins: DispatchBasisV1 | null;
   };
 
 type PresentMessageState = Exclude<MessageMachineState, { status: 'absent' }>;
@@ -160,7 +144,6 @@ type PresentMessageState = Exclude<MessageMachineState, { status: 'absent' }>;
  */
 export type MessageEvent =
   | { type: 'message_sent' }
-  | { type: 'message_read' }
   | { type: 'message_responded'; via: 'text' | 'query_answer';
       rejected?: MessageRespondedRejectFactV1['rejected'] }
   | { type: 'input_accepted'; part: 'message' | 'response' | 'expiry'; inputId: string }
@@ -172,9 +155,9 @@ export type MessageEvent =
   | { type: 'user_decision_answered' }
   | { type: 'synthetic_decision_answered' }
   | { type: 'decision_application_recorded' }
-  // The release/withdraw/apply lifecycle. The four events carry no clock and no
-  // deadline/pins/proof, so a transition sets only the facts its event names;
-  // the owner writes the change's times through `nextSessionMessageRecord`.
+  // The withdraw/apply lifecycle. The events carry no clock and no proof, so a
+  // transition sets only the facts its event names; the owner writes the
+  // change's times through `nextSessionMessageRecord`.
   | MessageSeventhEventV1
   | MessageExpiredEventV1;
 
@@ -184,7 +167,7 @@ export type MessageEvent =
 export type MessageUserSendFacts = {
   /** The named Goal is the real owning Goal of the recipient user workspace. */
   goalScopeMatches: boolean;
-  /** S5-AU-04: the sender's trusted duties admit the requested user-message intent. */
+  /** S5-AU-04: the sender's trusted duties admit the requested user-message kind (notify or decision_request). */
   dutiesAllowSend: boolean;
   /** The `decision_request` object/option/annotation parameters are legal. */
   decisionParamsValid: boolean;
@@ -226,6 +209,17 @@ export type MessageDecisionApplicationFacts = {
   requiresApplication: boolean;
 };
 
+/**
+ * §2.4: which commit owns a message's one reply slot, as the mailbox owner verified it. A message's slot is assigned
+ * when its round opens; a text reply may fill only the generic slot.
+ */
+export type MessageResponseSlotV1 =
+  | 'generic'    // the actual recipient in a natural turn writes it with the generic reply
+  | 'round'      // the deterministic planning Query's source; only that round's close-out writes it
+  | 'copy'       // a consultation copy question; only its bound copy's formal Answer writes it
+  | 'system'     // a trusted system round's source; only the Host's formal settlement writes it
+  | 'card';      // the person's card; only the answer-card entry writes it
+
 /** §10.1. IO stays in the service; it fills in what it read and authorized. */
 export type MessageGuardContext = {
   /**
@@ -237,22 +231,21 @@ export type MessageGuardContext = {
   workRunAuthorization: 'ok' | CoreRejection | null;
   /** ack/respond: the caller Session is the recipient. */
   callerIsRecipient: boolean | null;
+  /**
+   * respond only. The owner-verified owner of the one reply slot (§2.4); omitted/null = today's
+   * recipient-plus-`needsReply` checks only. A text reply may fill only `generic`; the other slots
+   * stay with their round, copy Answer, system settlement or card answer.
+   */
+  responseSlot?: MessageResponseSlotV1 | null;
   /** message_sent only. */
   recipientScope: 'same_workspace' | 'other_workspace' | 'other_project' | null;
   /** message_sent only: the normalized flags (`mailbox-service.ts:1356-1358`) and the pin count. */
   sendFlags: { needsReply: boolean; waitAfterSend: boolean; pinCount: number } | null;
   /**
-   * message_sent only: the release and its dispatch pins the send path decided
-   * from the Goal's autonomy. The record constructor writes them, so the
-   * machine's accepted state must carry them too (§3.4 invariant 1 compares the
-   * two); absent = the person's send, whose release is `null`.
+   * message_sent only: the named Goal's desired state. A cancelled Goal refuses the send (design §2.5); a paused
+   * one is accepted and queues until delivery. `null`/absent = the send names no Goal.
    */
-  sendRelease?: {
-    release: MessageReleaseV1 | null;
-    pins: DispatchBasisV1 | null;
-    /** The same window's Goal facts; a direct release needs it `active`. */
-    goal?: { desiredState: GoalDesiredState; revision: number } | null;
-  } | null;
+  sendGoal?: GoalDesiredState | null;
   /** ack/respond/derive need exactly one pin naming this message; `revision` is null when not a positive integer. */
   pins: { count: number; matchesMessage: boolean; revision: number | null };
   /**
@@ -322,7 +315,6 @@ export type QueryAnswerBinding =
 
 export type SessionMessageEventType =
   | 'SessionMessageSent'
-  | 'SessionMessageRead'
   | 'SessionMessageResponded'
   | 'SessionMessageInputAccepted'
   | 'SessionMessageConsultationDerived'
@@ -332,8 +324,6 @@ export type SessionMessageEventType =
   | 'SessionMessageDecisionApplied'
   // Message lifecycle events.
   | 'SessionMessageWithdrawn'
-  | 'SessionMessageReleaseDecided'
-  | 'SessionMessageReleased'
   | 'SessionMessageApplied'
   | 'SessionMessageExpired'
   // §3.9 items 2 and 5: the two replay events the forward owner writes (their payloads are codec-local, not
@@ -378,18 +368,15 @@ export function messageMachineStateOf(message: SessionMessageRecord | null): Mes
     status: message.status,
     hasReadAt: message.readAt !== null,
     hasResponse: message.response !== null,
+    needsReply: message.needsReply === true,
     acceptedInputIds: (message.acceptedInputs ?? []).map((entry) => entry.inputId),
     hasDerivation: message.consultationDerivation !== undefined,
     revision: message.revision,
-    release: message.release,
     delivery: message.delivery,
     withdrawnAt: message.withdrawnAt,
     expiredAt: message.expiredAt,
     appliedAt: message.appliedAt,
     rejectedAt: message.rejectedAt,
-    approvedAt: message.approvedAt,
-    approvalRevision: message.approvalRevision,
-    pins: message.pins,
   };
 }
 
@@ -398,19 +385,15 @@ export function messageMachineStateOf(message: SessionMessageRecord | null): Mes
 // --------------------------------------------------------------------------
 
 /**
- * The first guard of MSG-03..06 and MSG-09: the principal the row admits, with today's reason
- * (pre-step-3 `:1561`, `:1631`, `:1728`, `:1887`). The service asks it before anything else of
+ * The first guard of MSG-04..06 and MSG-09: the principal the row admits, with today's reason
+ * (pre-step-3 `:1631`, `:1728`, `:1887`). The service asks it before anything else of
  * the write and compares the kind itself only to narrow the principal it holds.
  */
 export function messagePrincipalProblem(
-  event: Extract<MessageEvent, { type: 'message_read' | 'message_responded' | 'consultation_derived' }>,
+  event: Extract<MessageEvent, { type: 'message_responded' | 'consultation_derived' }>,
   principal: MessageGuardContext['principal'],
 ): Rejected | null {
   switch (event.type) {
-    case 'message_read':
-      return principal === 'work_run' ? null : reject('guard_failed', 'forbidden', principal === 'host'
-        ? 'a Host cannot acknowledge a message'
-        : 'only a work_run may acknowledge a message');
     case 'message_responded':
       if (event.via === 'query_answer') {
         return principal === 'host' ? null
@@ -577,17 +560,13 @@ function onMessageSent(state: MessageMachineState, ctx: MessageGuardContext): Me
   }
   switch (state.status) {
     case 'absent': {
-      // Direct release (automatic release or notify) needs the same-window Goal
-      // `active`; the Goal revision rides from the one read that decided it.
-      const releaseGoal = ctx.sendRelease?.goal ?? null;
-      if (ctx.sendRelease?.release === 'released' && releaseGoal !== null && releaseGoal.desiredState !== 'active') {
-        return reject('guard_failed', 'busy', 'the Goal is not active');
-      }
+      // Design §2.5: a cancelled Goal refuses the send. A paused Goal is accepted and
+      // queues here; deliveryEligibility is what withholds it until the Goal resumes.
+      if (ctx.sendGoal === 'cancelled') return reject('guard_failed', 'busy', 'the Goal is cancelled');
       return accept<MessageMachineState, MessageEffect>(
-        { status: 'pending', hasReadAt: false, hasResponse: false, acceptedInputIds: [], hasDerivation: false, revision: 1,
-          release: ctx.sendRelease == null ? null : ctx.sendRelease.release, delivery: 'queued',
-          withdrawnAt: null, expiredAt: null, appliedAt: null, rejectedAt: null, approvedAt: null,
-          approvalRevision: null, pins: ctx.sendRelease == null ? null : ctx.sendRelease.pins },
+        { status: 'pending', hasReadAt: false, hasResponse: false, needsReply: ctx.sendFlags.needsReply,
+          acceptedInputIds: [], hasDerivation: false, revision: 1, delivery: 'queued',
+          withdrawnAt: null, expiredAt: null, appliedAt: null, rejectedAt: null },
         [
           { kind: 'store_body', part: 'message', source: 'workspace' },
           { kind: 'write_message', change: 'created' },
@@ -603,38 +582,6 @@ function onMessageSent(state: MessageMachineState, ctx: MessageGuardContext): Me
       // The messageId is derived from the send identity; an existing record is
       // caught by the create CAS@0 and only the original receipt replays.
       return reject('illegal', 'revision_conflict', 'the message already exists; only the original send receipt replays');
-    default:
-      return unreachable(state, 'message state');
-  }
-}
-
-/** MSG-03; checks in the pre-step-3 `ackMessage` order (`mailbox-service.ts:1559-1624`). */
-function onMessageRead(state: MessageMachineState, ctx: MessageGuardContext): MessageTransition {
-  const problem = first(
-    () => messagePrincipalProblem({ type: 'message_read' }, ctx.principal),
-    () => messagePinProblem(ctx.pins),
-    () => workRunAuthorizationProblem(ctx),
-  );
-  if (problem !== null) return problem;
-  switch (state.status) {
-    case 'absent':
-      return absentMessage();
-    case 'pending':
-      if (ctx.callerIsRecipient !== true) return reject('guard_failed', 'forbidden', 'this message is not addressed to the caller Session');
-      return accept<MessageMachineState, MessageEffect>(
-        { ...state, status: 'read', hasReadAt: true, revision: state.revision + 1 },
-        [
-          { kind: 'write_message', change: 'read' },
-          { kind: 'append_event', eventType: 'SessionMessageRead' },
-          { kind: 'guard_message', expectedRevision: pinnedRevision(ctx) },
-          { kind: 'guard_work_run_facts' },
-        ],
-      );
-    case 'read':
-    case 'responded':
-      // :1597 runs before :1598-1605.
-      if (ctx.callerIsRecipient !== true) return reject('guard_failed', 'forbidden', 'this message is not addressed to the caller Session');
-      return reject('illegal', 'invalid', 'only a pending message can be acknowledged');
     default:
       return unreachable(state, 'message state');
   }
@@ -661,6 +608,11 @@ function onTextResponse(
     case 'pending':
     case 'read':
       if (ctx.callerIsRecipient !== true) return reject('guard_failed', 'forbidden', 'this message is not addressed to the caller Session');
+      // §2.6: `needsReply:false` has no reply slot, so no actual recipient may write one.
+      const textSlotProblem = replySlotProblem(state);
+      if (textSlotProblem !== null) return textSlotProblem;
+      const ownerSlotProblem = textResponseSlotProblem(ctx.responseSlot);
+      if (ownerSlotProblem !== null) return ownerSlotProblem;
       if (event.rejected === true) {
         const slotProblem = applicationOrRefusalProblem(state);
         if (slotProblem !== null) return slotProblem;
@@ -687,7 +639,13 @@ function onTextResponse(
  * QueryRun, the claimed answerer Session, the Answer's own QueryRun, then the
  * readable claim generation (`unavailable`).
  */
-function queryAnswerProblem(answer: MessageGuardContext['queryAnswer']): MessageTransition | null {
+function queryAnswerProblem(
+  answer: MessageGuardContext['queryAnswer'], slot: MessageGuardContext['responseSlot'],
+): MessageTransition | null {
+  // §2.4: a changed copy binding is the guard failure `source_stale`; every other mismatch keeps today's `forbidden`.
+  const bindingProblem = (detail: string): Rejected => slot === 'copy'
+    ? failed('source_stale', 'the copy binding changed after the question was sent')
+    : reject('guard_failed', 'forbidden', detail);
   if (answer === null) {
     return reject('guard_failed', 'forbidden', 'the consultation answer does not match this message, its recipient or the derivation source');
   }
@@ -695,14 +653,14 @@ function queryAnswerProblem(answer: MessageGuardContext['queryAnswer']): Message
     case 'matches':
       break;
     case 'other_message':
-      return reject('guard_failed', 'forbidden', 'the consultation answer belongs to another message');
+      return bindingProblem('the consultation answer belongs to another message');
     case 'other_recipient':
-      return reject('guard_failed', 'forbidden', 'the consultation answer recipient is not the original message recipient');
+      return bindingProblem('the consultation answer recipient is not the original message recipient');
     case 'other_derivation_source':
       // A derived A′ answer is answered by the child Session; the original recipient stays the source.
-      return reject('guard_failed', 'forbidden', 'the derived answer source is not the original message recipient');
+      return bindingProblem('the derived answer source is not the original message recipient');
     case 'other_query_identity':
-      return reject('guard_failed', 'forbidden', 'the consultation answer does not match the deterministic message identity');
+      return bindingProblem('the consultation answer does not match the deterministic message identity');
     default:
       return unreachable(answer.binding, 'consultation binding');
   }
@@ -742,7 +700,7 @@ function onAnswerResponse(
   // The binding and the settled Query facts are checked before the slot, and
   // before the receipt lookup that needs the derived query_run sender.
   const guard = first(
-    () => queryAnswerProblem(ctx.queryAnswer),
+    () => queryAnswerProblem(ctx.queryAnswer, ctx.responseSlot),
     () => ctx.bodyBounded === true ? null
       : reject('guard_failed', 'invalid', 'the formal Query answer text is not a legal bounded message body'),
   );
@@ -750,6 +708,9 @@ function onAnswerResponse(
   switch (state.status) {
     case 'pending':
     case 'read':
+      // §2.6: only a message that asks for a reply has the one slot a formal Answer may fill.
+      const answerSlotProblem = replySlotProblem(state);
+      if (answerSlotProblem !== null) return answerSlotProblem;
       if (event.rejected === true) {
         const slotProblem = applicationOrRefusalProblem(state);
         if (slotProblem !== null) return slotProblem;
@@ -765,6 +726,33 @@ function onAnswerResponse(
       return reject('illegal', 'invalid', 'the message already has a response');
     default:
       return unreachable(state, 'message state');
+  }
+}
+
+/**
+ * §2.4/§2.6: only a message written with `needsReply:true` has the one reply slot. The refusal text is the frozen
+ * p2 §2.4 original; the source-Query half of the slot rule belongs to the round's opening and the generic reply.
+ */
+const REPLY_SLOT_CLOSED_REFUSAL = '这条消息不要回复；要说话另发一条';
+
+function replySlotProblem(state: PresentMessageState): Rejected | null {
+  return state.needsReply ? null : reject('illegal', 'invalid', REPLY_SLOT_CLOSED_REFUSAL);
+}
+
+/** §2.4: the generic reply writes only a `generic` slot; every assigned slot keeps its own writer. */
+function textResponseSlotProblem(slot: MessageGuardContext['responseSlot']): Rejected | null {
+  if (slot === null || slot === undefined || slot === 'generic') return null;
+  switch (slot) {
+    case 'system':
+      return reject('guard_failed', 'forbidden', 'only the Host may settle this source');
+    case 'copy':
+      return reject('guard_failed', 'forbidden', 'a copy question is answered only by its copy formal Answer');
+    case 'card':
+      return reject('guard_failed', 'forbidden', 'the reply tool cannot answer a card');
+    case 'round':
+      return reject('guard_failed', 'forbidden', '这条消息由这一轮的结论回复；要先说进度，另发一条不要回复的');
+    default:
+      return unreachable(slot, 'message response slot');
   }
 }
 
@@ -881,12 +869,16 @@ function onConsultationDerived(state: MessageMachineState, ctx: MessageGuardCont
 
 /**
  * The one consumption rule's facts, from either a decoded record or the
- * machine state the wait helper already holds.
+ * machine state the wait helper already holds. `entry` is the stored Host entry
+ * and `copyQuestion` the stored `answeredBy:'copy'` question; the machine state
+ * carries neither, and no wait rule reads them.
  */
 export type MessageConsumptionFactsV1 = {
   status: SessionMessageStatus;
-  release: MessageReleaseV1 | null;
   withdrawnAt: string | null;
+  entry?: MessageEntryV1 | undefined;
+  /** The question belongs to the copy identity; the original line never delivers or claims it. */
+  copyQuestion?: boolean | undefined;
 };
 
 export type MessageConsumptionProblemV1 = {
@@ -896,27 +888,28 @@ export type MessageConsumptionProblemV1 = {
 
 /**
  * The one pure consumption rule; `null` = offerable. A withdrawn message is
- * `invalid` before any release judgment; an unreleased (`awaiting`, `approved`,
- * `denied`) message is `busy`. `null` and `released` are offerable, and
- * `expiredAt` is not part of this rule (no producer yet).
+ * `invalid`; `expiredAt` is not part of this rule (no producer yet). Acceptance
+ * and reply are separate delivery facts (§2.2), so there is no admission judgment.
  */
 export function messageConsumptionProblem(facts: MessageConsumptionFactsV1): MessageConsumptionProblemV1 | null {
   if (facts.withdrawnAt !== null) return { code: 'invalid', reason: 'the message was withdrawn' };
-  if (facts.release === 'awaiting' || facts.release === 'approved' || facts.release === 'denied') {
-    return { code: 'busy', reason: 'the message has not been released' };
-  }
   return null;
 }
 
 export function messageFactsOfRecord(
-  message: Pick<SessionMessageRecord, 'status' | 'release' | 'withdrawnAt'>,
+  message: Pick<SessionMessageRecord, 'status' | 'withdrawnAt' | 'entry' | 'answeredBy'>,
 ): MessageConsumptionFactsV1 {
-  return { status: message.status, release: message.release, withdrawnAt: message.withdrawnAt };
+  return {
+    status: message.status,
+    withdrawnAt: message.withdrawnAt,
+    ...(message.entry === undefined ? {} : { entry: message.entry }),
+    ...(message.answeredBy === 'copy' ? { copyQuestion: true } : {}),
+  };
 }
 
 export function messageFactsOfState(state: MessageMachineState): MessageConsumptionFactsV1 | null {
   return state.status === 'absent' ? null
-    : { status: state.status, release: state.release, withdrawnAt: state.withdrawnAt };
+    : { status: state.status, withdrawnAt: state.withdrawnAt };
 }
 
 /** R2-7A1-06: the wait's verdict; the predicate's problem code passes through unchanged. */
@@ -928,15 +921,12 @@ export type MessageWaitVerdict =
  * MSG-10 read-only predicate (`claim-service.ts:619-638`): only a responded
  * message whose saved reply body is the claim's `responseRef`, in the bound
  * workspace, satisfies a wait. `read` or `acceptedInputs` never do (M3). The
- * shared consumption rule runs first, so a withdrawn or unreleased message is
- * refused with the predicate's own code before the status switch.
+ * shared consumption rule runs first, so a withdrawn message is refused with
+ * the predicate's own code before the status switch.
  */
-/** The two intents a Run can wait on: an inquiry, or an executor's `action_request` to its adviser (PL §5.5). */
-export const WAIT_INTENTS = ['inquiry', 'action_request'] as const;
-
-/** A wait's shape: the sender's Run yields on this message until its reply arrives. */
-export function isWaitMessage(message: Pick<SessionMessageRecord, 'intent' | 'waitAfterSend'>): boolean {
-  return message.waitAfterSend === true && (WAIT_INTENTS as readonly (string | undefined)[]).includes(message.intent);
+/** §2.4: a message is a wait exactly when its sender yielded after sending and asked for a reply. */
+export function isWaitMessage(message: Pick<SessionMessageRecord, 'waitAfterSend' | 'needsReply'>): boolean {
+  return message.waitAfterSend === true && message.needsReply === true;
 }
 
 export function messageSatisfiesWait(
@@ -1004,15 +994,21 @@ export function waitStateOf(message: WaitMessageFactsV1, facts: WaitFactsV1): Wa
 
 export type DeliveryBlockReason =
   | 'paused' | 'cancelled' | 'awaiting_decision' | 'outcome_unknown'
-  | 'withdrawn' | 'not_released' | 'delivered' | 'not_bound';
+  | 'withdrawn' | 'delivered' | 'not_bound';
 
 /** The gates every delivery part shares, read by the caller. */
 export type DeliveryBaseFactsV1 = {
-  /** `messageFactsOfRecord(message)`; the consumption predicate runs first on it. */
+  /**
+   * `messageFactsOfRecord(message)`; the consumption predicate runs first on it.
+   * Its stored `entry` decides whether `taskBlocked` applies at all.
+   */
   consumption: MessageConsumptionFactsV1;
   /** The message Goal's desired state; `null` when the message has no Goal. */
   goal: GoalDesiredState | null;
-  /** A blocking decision stands on the message's task: the automation confirmation or the L46 block. */
+  /**
+   * A blocking decision stands on the message's task: the automation confirmation or the L46 block.
+   * It gates only a `person_intervention` message; agent and platform messages never open work.
+   */
   taskBlocked: boolean;
   /** The recipient's last execution is `unknown`. */
   recipientOutcomeUnknown: boolean;
@@ -1030,16 +1026,34 @@ export type DeliveryFactsV1 = DeliveryBaseFactsV1 & (
 
 export type DeliveryEligibilityV1 = { offerable: true } | { offerable: false; reason: DeliveryBlockReason };
 
-export function deliveryEligibility(facts: DeliveryFactsV1): DeliveryEligibilityV1 {
+/**
+ * §2.2/§1.2: the optional facts the mailbox owner verifies before a copy question's message part may be consumed by
+ * its copy identity. Omitting them keeps the original line's `not_bound`; the original line must never pass this.
+ */
+export type DeliveryOptionsV1 = {
+  /** The owner verified that this consumer is the copy identity of the question. */
+  copyConsumerVerified?: boolean;
+};
+
+export function deliveryEligibility(facts: DeliveryFactsV1, options: DeliveryOptionsV1 = {}): DeliveryEligibilityV1 {
   const problem = messageConsumptionProblem(facts.consumption);
-  if (problem !== null) {
-    return problem.code === 'invalid'
-      ? { offerable: false, reason: 'withdrawn' }
-      : { offerable: false, reason: 'not_released' };
-  }
+  if (problem !== null) return { offerable: false, reason: 'withdrawn' };
   if (facts.goal === 'cancelled') return { offerable: false, reason: 'cancelled' };
+  // Design 2.5: a paused Goal still accepts and queues a send, but delivery waits until it resumes.
   if (facts.goal === 'paused') return { offerable: false, reason: 'paused' };
-  if (facts.taskBlocked) return { offerable: false, reason: 'awaiting_decision' };
+  // §2.2: a copy question's message part is consumed by its copy identity; the original line neither delivers nor
+  // claims it, and only the owner-verified copy consumer may pass this gate. It stays ahead of the later gates so the
+  // original line keeps `not_bound`. The reply and the expiry are judged by their own acceptance, wait and binding
+  // facts below, so the asking line still takes the copy's formal answer.
+  if (facts.part === 'message' && facts.consumption.copyQuestion === true && options.copyConsumerVerified !== true) {
+    return { offerable: false, reason: 'not_bound' };
+  }
+  // §2.2: a blocking decision only guards the person's direct intervention; an
+  // agent or platform message opens no work, so blocking it would only withhold
+  // the clarification or reply the person needs in order to decide.
+  if (facts.consumption.entry === 'person_intervention' && facts.taskBlocked) {
+    return { offerable: false, reason: 'awaiting_decision' };
+  }
   if (facts.recipientOutcomeUnknown) return { offerable: false, reason: 'outcome_unknown' };
   if (facts.part === 'message') {
     return facts.delivered ? { offerable: false, reason: 'delivered' } : { offerable: true };
@@ -1069,6 +1083,25 @@ export function waitFactsOfRecord(
 }
 
 /**
+ * §2.3: the three agent senders whose records carry the pending reply position
+ * (`responseSince`). A Host message is never one; the two-identity
+ * executor/replier sets (`effectiveReplyHandler` etc.) are deliberately separate.
+ */
+export const MESSAGE_AGENT_SENDER_KINDS = ['work_run', 'query_run', 'secretary_round'] as const;
+export type MessageAgentSenderKind = (typeof MESSAGE_AGENT_SENDER_KINDS)[number];
+export type MessageAgentSender = Extract<SessionMessageRecord['sender'], { kind: MessageAgentSenderKind }>;
+
+/** The one set test; a decoded codec body passes its untrusted `kind` here. */
+export function isMessageAgentSenderKind(kind: unknown): kind is MessageAgentSenderKind {
+  return (MESSAGE_AGENT_SENDER_KINDS as readonly unknown[]).includes(kind);
+}
+
+/** The one set test on a sender record, narrowing it to the three agent senders. */
+export function isMessageAgentSender(sender: { kind: string }): sender is MessageAgentSender {
+  return isMessageAgentSenderKind(sender.kind);
+}
+
+/**
  * The ONE effective reply handler of a wait: a recorded `replyHandler` wins;
  * otherwise the original `work_run`/`secretary_round` sender. A Host message has none.
  */
@@ -1082,16 +1115,15 @@ export function effectiveReplyHandler(
 }
 
 /**
- * The one destination rule both forward commands and the transfer share (§3.9 item 3): the same workspace, an eligible
- * line, and a duty that admits the intent. A gone line is the service's pre-check (SR2 §3), not this table.
+ * The one destination rule both forward commands and the transfer share (§3.9 item 3): the same workspace and an
+ * eligible line. A gone line is the service's pre-check (SR2 §3), not this table.
  */
 export const FORWARD_DESTINATION_GONE = 'destination_gone';
 
-export function destinationProblem(facts: { sameWorkspace: boolean; eligible: boolean; dutyAllows: boolean }):
+export function destinationProblem(facts: { sameWorkspace: boolean; eligible: boolean }):
   CoreRejection | null {
   if (!facts.sameWorkspace) return rejected('invalid', 'cross_workspace_forward');
   if (!facts.eligible) return rejected('invalid', 'destination_ineligible');
-  if (!facts.dutyAllows) return rejected('invalid', 'destination_duty_refused');
   return null;
 }
 
@@ -1099,19 +1131,19 @@ export function destinationProblem(facts: { sameWorkspace: boolean; eligible: bo
 export type ForwardFactsV1 = {
   branch: 'ordinary' | 'copy';
   /** The message ref to the fields the table reads. */
-  message: Pick<SessionMessageRecord, 'ref' | 'revision' | 'sender' | 'intent' | 'release' | 'withdrawnAt' |
+  message: Pick<SessionMessageRecord, 'ref' | 'revision' | 'sender' | 'withdrawnAt' |
     'rejectedAt' | 'transferredTo' | 'goalRef' | 'decision' | 'originalRef' | 'waitAfterSend'>;
   delivery: MessageDeliveryStateV1['delivery'];
   undeliveredReason: 'recipient_archived' | 'recipient_retired' | null;
   acceptedMessage: boolean;                          // an acceptedInput with part 'message'
   goal: { desiredState: 'active' | 'paused' | 'cancelled' } | null;
-  destination: { sameWorkspace: boolean; eligible: boolean; dutyAllows: boolean };
+  destination: { sameWorkspace: boolean; eligible: boolean };
   /** The copy arm only; `candidateState` is `copyInterventionCandidateOf(...).state`. */
   copy?: { candidateState: 'delivered' | 'not_delivered' | 'copied' | 'withdrawn' | 'applied' | 'rejected';
     selected: boolean; sourceMatches: boolean; planAdopted: boolean };
 };
 
-/** The fixed order of §3.2.2(3): accepted ordinary, undelivered ordinary, withdrawn ordinary, copy admission, Goal, release, destination. */
+/** The fixed order of §3.2.2(3): accepted ordinary, undelivered ordinary, withdrawn ordinary, copy admission, Goal, destination. */
 export function forwardMessageProblem(facts: ForwardFactsV1): CoreRejection | null {
   if (facts.branch === 'ordinary' && facts.acceptedMessage) {
     return rejected('busy', 'the original message was already accepted into an execution');
@@ -1132,24 +1164,20 @@ export function forwardMessageProblem(facts: ForwardFactsV1): CoreRejection | nu
   if (facts.goal !== null && facts.goal.desiredState === 'cancelled') {
     return rejected('invalid', 'goal_cancelled');
   }
-  if (facts.message.release === 'denied') return rejected('invalid', 'release_denied');
-  if (facts.message.release === 'awaiting' || facts.message.release === 'approved') {
-    return rejected('invalid', 'release_pending');
-  }
   return destinationProblem(facts.destination);
 }
 
 /** The already-read facts `waits/dispose`'s pure refusal table judges (§3.2.2(3)). */
 export type DisposeFactsV1 = {
   mode: 'cancel' | 'transfer';
-  message: Pick<SessionMessageRecord, 'ref' | 'sender' | 'intent' | 'waitAfterSend' | 'withdrawnAt' |
+  message: Pick<SessionMessageRecord, 'ref' | 'sender' | 'waitAfterSend' | 'needsReply' | 'withdrawnAt' |
     'waitCancelledAt' | 'expiredAt' | 'deadline'>;
   wait: WaitStateV1;
   delivery: MessageDeliveryStateV1['delivery'];
   acceptedResponse: boolean;
   /** The waiting (sender) line: archived, archiving (`archiveRequest !== null`) or retired. */
   waitingLineGone: boolean;
-  destination: { sameWorkspace: boolean; eligible: boolean; dutyAllows: boolean } | null;
+  destination: { sameWorkspace: boolean; eligible: boolean } | null;
 };
 
 /** The fixed order of §3.2.2(3): wait shape, delivery, open state, then a transfer's line and destination. */
@@ -1167,17 +1195,39 @@ export function disposeWaitProblem(facts: DisposeFactsV1): CoreRejection | null 
   return destinationProblem(facts.destination!);
 }
 
-export type ExpirySkipReason = 'not_released' | 'no_wait' | 'not_due' | 'not_open';
+export type ExpirySkipReason = 'no_wait' | 'not_due' | 'not_open';
 export type MessageExpiredChangeV1 = { kind: 'expired'; expiredAt: string };
 
-/** §3.7 item 1: released, a `waitAfterSend` inquiry, the deadline passed, the wait still open, no `expiredAt`. */
+/**
+ * The one request-wait identity: a `secretary_round` message whose own `requestRoot` is the same real root as its
+ * sender's (its deadline is frozen at send), and that asks for a reply. The request queue owns its reply and expiry;
+ * no other consumer may take them.
+ */
+export function isSecretaryRequestMessage(message: Pick<SessionMessageRecord,
+  'sender' | 'requestRoot' | 'needsReply'>): boolean {
+  return message.sender.kind === 'secretary_round' && message.requestRoot !== null
+    && sameRef(message.requestRoot, message.sender.requestRoot) && message.needsReply === true;
+}
+
+/**
+ * §2.1: the one expiry qualification, shared by the due-wait read and `decideExpiry`. A real wait is
+ * `waitAfterSend && needsReply`; a secretary request question is the request wait above. A reply and an expiry
+ * are each offered only once, by the wait or the request queue that owns them.
+ */
+export function isExpiryWaitMessage(message: Pick<SessionMessageRecord,
+  'sender' | 'requestRoot' | 'needsReply' | 'waitAfterSend'>): boolean {
+  if (isWaitMessage(message)) return true;
+  return isSecretaryRequestMessage(message);
+}
+
+/** §3.7 item 1: a waitable message, the deadline passed, the wait still open, no `expiredAt`. */
 export function decideExpiry(
-  message: WaitMessageFactsV1 & Pick<SessionMessageRecord, 'release' | 'intent' | 'waitAfterSend' | 'deadline'>,
+  message: WaitMessageFactsV1 & Pick<SessionMessageRecord,
+    'sender' | 'requestRoot' | 'needsReply' | 'waitAfterSend' | 'deadline'>,
   facts: WaitFactsV1,
   at: string,
 ): { change: MessageExpiredChangeV1 } | { skip: ExpirySkipReason } {
-  if (message.release !== 'released') return { skip: 'not_released' };
-  if (message.waitAfterSend !== true || message.intent !== 'inquiry') return { skip: 'no_wait' };
+  if (!isExpiryWaitMessage(message)) return { skip: 'no_wait' };
   if (message.deadline === null || Date.parse(message.deadline) > Date.parse(at)) return { skip: 'not_due' };
   if (waitStateOf(message, facts).state !== 'open') return { skip: 'not_open' };
   return { change: { kind: 'expired', expiredAt: at } };
@@ -1301,9 +1351,9 @@ function onSyntheticDecisionAnswered(state: MessageMachineState, ctx: MessageGua
     return reject('illegal', 'revision_conflict', 'the synthetic answer message already exists; only its original receipt replays');
   }
   return accept<MessageMachineState, MessageEffect>(
-    { status: 'responded', hasReadAt: true, hasResponse: true, acceptedInputIds: [], hasDerivation: false, revision: 1,
-      release: null, delivery: 'queued', withdrawnAt: null, expiredAt: null, appliedAt: null, rejectedAt: null, approvedAt: null,
-      approvalRevision: null, pins: null },
+    { status: 'responded', hasReadAt: true, hasResponse: true, needsReply: false,
+      acceptedInputIds: [], hasDerivation: false, revision: 1,
+      delivery: 'queued', withdrawnAt: null, expiredAt: null, appliedAt: null, rejectedAt: null },
     [
       { kind: 'store_body', part: 'message', source: 'workspace' },
       { kind: 'store_body', part: 'response', source: 'workspace' },
@@ -1359,22 +1409,18 @@ function onDecisionApplicationRecorded(state: MessageMachineState, ctx: MessageG
 }
 
 /**
- * Lifecycle rows. The four events deliberately carry NO clock and NO
- * deadline/pins/proof (frozen types), so their `next` state cannot set
- * `withdrawnAt`/`approvedAt`/`appliedAt`/`deadline`/`pins`; it sets only the
- * facts the event carries (`release`, `approvalRevision` for an approval). The
- * owner writes the change's times into the record through
- * `nextSessionMessageRecord`. After responses are excluded, accepted input ids
- * can only belong to the message body, so a nonempty list blocks withdrawal.
+ * Lifecycle rows. The events deliberately carry NO clock and NO proof (frozen
+ * types), so their `next` state cannot set `withdrawnAt`/`appliedAt`; it sets
+ * only the facts the event carries. The owner writes the change's times into the
+ * record through `nextSessionMessageRecord`. After responses are excluded,
+ * accepted input ids can only belong to the message body, so a nonempty list
+ * blocks withdrawal.
  */
 function onWithdrawn(state: MessageMachineState): MessageTransition {
   if (state.status === 'absent') return absentMessage();
   if (state.withdrawnAt !== null) return reject('illegal', 'invalid', 'the message is already withdrawn');
   if (state.hasReadAt || state.hasResponse || state.acceptedInputIds.length > 0) {
     return reject('illegal', 'invalid', 'only an unread, unanswered, undelivered message can be withdrawn');
-  }
-  if (state.release === 'denied') {
-    return reject('illegal', 'invalid', 'a denied message cannot be withdrawn');
   }
   if (state.appliedAt !== null) {
     return reject('illegal', 'invalid', 'an applied message cannot be withdrawn');
@@ -1384,39 +1430,6 @@ function onWithdrawn(state: MessageMachineState): MessageTransition {
     [
       { kind: 'write_message', change: 'withdrawn' },
       { kind: 'append_event', eventType: 'SessionMessageWithdrawn' },
-      { kind: 'guard_message', expectedRevision: state.revision },
-    ],
-  );
-}
-
-/** Only an `awaiting` release can be decided; the event carries only `allow`. */
-function onReleaseDecided(
-  state: MessageMachineState,
-  event: Extract<MessageEvent, { type: 'message_release_decided' }>,
-): MessageTransition {
-  if (state.status === 'absent') return absentMessage();
-  if (state.withdrawnAt !== null) return reject('illegal', 'invalid', 'a withdrawn message cannot be decided');
-  if (state.release !== 'awaiting') return reject('illegal', 'invalid', 'only an awaiting release can be decided');
-  const next: MessageMachineState = event.allow
-    ? { ...state, release: 'approved', approvalRevision: state.revision + 1, revision: state.revision + 1 }
-    : { ...state, release: 'denied', approvedAt: null, approvalRevision: null, revision: state.revision + 1 };
-  return accept<MessageMachineState, MessageEffect>(next, [
-    { kind: 'write_message', change: 'release_decided' },
-    { kind: 'append_event', eventType: 'SessionMessageReleaseDecided' },
-    { kind: 'guard_message', expectedRevision: state.revision },
-  ]);
-}
-
-/** Only an `approved` release can be released; the inquiry's direct path is the send transition. */
-function onReleased(state: MessageMachineState): MessageTransition {
-  if (state.status === 'absent') return absentMessage();
-  if (state.withdrawnAt !== null) return reject('illegal', 'invalid', 'a withdrawn message cannot be released');
-  if (state.release !== 'approved') return reject('illegal', 'invalid', 'only an approved release can be released');
-  return accept<MessageMachineState, MessageEffect>(
-    { ...state, release: 'released', revision: state.revision + 1 },
-    [
-      { kind: 'write_message', change: 'released' },
-      { kind: 'append_event', eventType: 'SessionMessageReleased' },
       { kind: 'guard_message', expectedRevision: state.revision },
     ],
   );
@@ -1454,8 +1467,6 @@ export function transitionMessage(state: MessageMachineState, event: MessageEven
   switch (event.type) {
     case 'message_sent':
       return onMessageSent(state, ctx);
-    case 'message_read':
-      return onMessageRead(state, ctx);
     case 'message_responded':
       switch (event.via) {
         case 'text':
@@ -1484,10 +1495,6 @@ export function transitionMessage(state: MessageMachineState, event: MessageEven
     // Lifecycle events.
     case 'message_withdrawn':
       return onWithdrawn(state);
-    case 'message_release_decided':
-      return onReleaseDecided(state, event);
-    case 'message_released':
-      return onReleased(state);
     case 'message_applied':
       return onApplied(state);
     case 'message_expired':
@@ -1510,15 +1517,19 @@ export type NewSessionMessageInput = {
   bodyRef: ArtifactRef;
   sourceRef: SourceRefV1;
   createdAt: string;
-  /** Normalized send flags (`mailbox-service.ts:1356-1358`); `null` = omitted. */
-  intent: SessionMessageIntentV1 | null;
+  /** The sender's wake choice; omitted is the write's platform default `true`. A reply never carries it. */
+  wake?: boolean;
+  /** The reply-slot owner; omitted is the original line. `copy` is written at consultation-question intake. */
+  answeredBy?: MessageAnsweredByV1;
+  /** Only the direct-intervention Host entry supplies it; the constructor writes it when present. */
+  entry?: MessageEntryV1;
   needsReply: boolean;
   waitAfterSend: boolean;
   /**
    * The owning Goal and the
    * decision metadata of a new user-recipient message. `goalRef` is always
    * written (`null` when omitted) and both record constructors write the
-   * nineteen lifecycle fields unconditionally; `decision` is written only when
+   * lifecycle fields unconditionally; `decision` is written only when
    * present. These are protected fields.
    */
   goalRef?: GoalRef | null;
@@ -1527,9 +1538,9 @@ export type NewSessionMessageInput = {
   taskRef?: TaskTriple | null;
   requestRoot?: QueryJobRef | null;
   followupOf?: SessionMessageRef | null;
+  /** Computed from the send; an expiry never changes it. */
   deadline?: string | null;
   deadlineMs?: number | null;
-  release?: MessageReleaseV1 | null;
   delivery?: MessageDeliveryV1;
   deliveryEvidence?: MessageDeliveryEvidenceV1 | null;
   expiredAt?: string | null;
@@ -1539,10 +1550,7 @@ export type NewSessionMessageInput = {
   originalRef?: SessionMessageRef | null;
   appliedAt?: string | null;
   rejectedAt?: string | null;
-  approvedAt?: string | null;
-  approvalRevision?: number | null;
   applicationProof?: ApplicationProofV1 | null;
-  pins?: DispatchBasisV1 | null;
 };
 
 /**
@@ -1565,8 +1573,8 @@ export type NewSyntheticDecisionAnswerInput = {
 
 /**
  * S5-MSG-03: the synthetic answer record, written directly as
- * `responded` at revision 1 with `intent: 'notify'` (spec §2.3), `readAt` =
- * the answer time, `application` null.
+ * `responded` at revision 1, `readAt` = the answer time, `application` null.
+ * It is a platform-identity record, so it never wakes a line (`wake:false`).
  * The service adds the `s5-decision-answer:` unique claim (spec §2.5) and the
  * `SessionMessageDecisionAnswered` event.
  */
@@ -1583,7 +1591,8 @@ export function createSyntheticDecisionAnswerRecord(input: NewSyntheticDecisionA
     status: 'responded',
     readAt: input.createdAt,
     response: input.response,
-    intent: 'notify',
+    wake: false,
+    answeredBy: 'line',
     goalRef: input.goalRef,
     // §2.7 protected field: this constructor alone establishes the synthetic
     // marker, so a caller can never save a synthetic answer card as a normal one.
@@ -1594,7 +1603,6 @@ export function createSyntheticDecisionAnswerRecord(input: NewSyntheticDecisionA
     followupOf: null,
     deadline: null,
     deadlineMs: null,
-    release: null,
     delivery: 'queued',
     deliveryEvidence: null,
     expiredAt: null,
@@ -1604,18 +1612,17 @@ export function createSyntheticDecisionAnswerRecord(input: NewSyntheticDecisionA
     originalRef: null,
     appliedAt: null,
     rejectedAt: null,
-    approvedAt: null,
-    approvalRevision: null,
     applicationProof: null,
-    pins: null,
   };
 }
 
 /**
- * MSG-01/02: `pending` at revision 1 (send CAS@0). `intent`, `needsReply`,
- * `waitAfterSend` and `decision` are written only when present. `goalRef` and
- * the nineteen lifecycle fields are always written: `delivery` defaults to
- * `'queued'`, every other absent value to `null`, and no key is omitted.
+ * MSG-01/02: `pending` at revision 1 (send CAS@0). `needsReply`, `waitAfterSend`,
+ * `entry` and `decision` are written only when present; `wake` defaults to the
+ * platform's `true` and `answeredBy` to the original line. `goalRef` and the
+ * lifecycle fields are always written: `delivery` defaults to `'queued'`, every
+ * other absent value to `null`, and no key is omitted. Deadlines are the send
+ * path's frozen input, never recomputed here.
  */
 export function createSessionMessageRecord(input: NewSessionMessageInput): SessionMessageRecord {
   if (input.waitAfterSend && !input.needsReply) {
@@ -1633,7 +1640,9 @@ export function createSessionMessageRecord(input: NewSessionMessageInput): Sessi
     status: 'pending',
     readAt: null,
     response: null,
-    ...(input.intent === null ? {} : { intent: input.intent }),
+    wake: input.wake ?? true,
+    answeredBy: input.answeredBy ?? 'line',
+    ...(input.entry === undefined ? {} : { entry: input.entry }),
     ...(input.needsReply ? { needsReply: true } : {}),
     ...(input.waitAfterSend ? { waitAfterSend: true } : {}),
     // S5-MSG-01: the owning Goal is always written (`null` is legal); the
@@ -1645,7 +1654,6 @@ export function createSessionMessageRecord(input: NewSessionMessageInput): Sessi
     followupOf: input.followupOf ?? null,
     deadline: input.deadline ?? null,
     deadlineMs: input.deadlineMs ?? null,
-    release: input.release ?? null,
     delivery: input.delivery ?? 'queued',
     deliveryEvidence: input.deliveryEvidence ?? null,
     expiredAt: input.expiredAt ?? null,
@@ -1655,17 +1663,13 @@ export function createSessionMessageRecord(input: NewSessionMessageInput): Sessi
     originalRef: input.originalRef ?? null,
     appliedAt: input.appliedAt ?? null,
     rejectedAt: input.rejectedAt ?? null,
-    approvedAt: input.approvedAt ?? null,
-    approvalRevision: input.approvalRevision ?? null,
     applicationProof: input.applicationProof ?? null,
-    pins: input.pins ?? null,
   };
 }
 
 /** One accepted change of an existing message; time comes from the service clock. */
 export type SessionMessageChange =
-  | { kind: 'read'; readAt: string }
-  // The refusal reply plus withdraw/release/apply lifecycle changes.
+  // The refusal reply plus the withdraw/apply lifecycle changes.
   | Message7AChangeV1
   | MessageExpiredChangeV1
   | { kind: 'input_accepted'; input: MessageAcceptedInput }
@@ -1701,10 +1705,6 @@ function disposedWaitRecord(message: SessionMessageRecord, revision: number,
 export function nextSessionMessageRecord(message: SessionMessageRecord, change: SessionMessageChange): SessionMessageRecord {
   const revision = message.revision + 1;
   switch (change.kind) {
-    case 'read':
-      // MSG-03 (pre-step-3 `mailbox-service.ts:1608`).
-      if (message.status !== 'pending') throw new Error('nextSessionMessageRecord: only a pending message can be read');
-      return { ...message, revision, status: 'read', readAt: change.readAt };
     case 'responded': {
       // MSG-04/05/06 (pre-step-3 `:1691-1697`, `:1857-1863`): one slot; readAt ??= respondedAt.
       if (message.status === 'responded' || message.response !== null) {
@@ -1727,9 +1727,10 @@ export function nextSessionMessageRecord(message: SessionMessageRecord, change: 
       };
       const next: SessionMessageRecord = { ...message, revision, status: 'responded',
         readAt: message.readAt ?? response.respondedAt, response, rejectedAt: change.rejectedAt };
-      // Spec §2.3 P02: the first reply on a work_run or secretary_round message
-      // marks the pending reply position; other senders never gain the field.
-      return message.sender.kind === 'work_run' || message.sender.kind === 'secretary_round'
+      // §2.3 P02: the first reply on a work_run, query_run or secretary_round
+      // sender's message marks the pending reply position; other senders never
+      // gain the field.
+      return isMessageAgentSender(message.sender)
         ? { ...next, responseSince: null } : next;
     }
     case 'input_accepted': {
@@ -1802,9 +1803,10 @@ export function nextSessionMessageRecord(message: SessionMessageRecord, change: 
       }
       const next: SessionMessageRecord = { ...message, revision, status: 'responded',
         readAt: message.readAt ?? change.response.respondedAt, response: change.response, application: null };
-      // Spec §2.3 P02: a user answer to a work_run or secretary_round message
-      // also marks the pending reply position; other senders never gain the field.
-      return message.sender.kind === 'work_run' || message.sender.kind === 'secretary_round'
+      // §2.3 P02: a user answer to a work_run, query_run or secretary_round
+      // sender's message also marks the pending reply position; other senders
+      // never gain the field.
+      return isMessageAgentSender(message.sender)
         ? { ...next, responseSince: null } : next;
     }
     case 'decision_applied': {
@@ -1817,7 +1819,7 @@ export function nextSessionMessageRecord(message: SessionMessageRecord, change: 
       }
       return { ...message, revision, application: change.application };
     }
-    // The withdraw/release/apply lifecycle, each a first-wins slot.
+    // The withdraw/apply lifecycle, each a first-wins slot.
     case 'expired':
       if (message.expiredAt !== null) throw new Error('nextSessionMessageRecord: the message already expired');
       if (message.response !== null) throw new Error('nextSessionMessageRecord: an answered wait cannot expire');
@@ -1830,23 +1832,10 @@ export function nextSessionMessageRecord(message: SessionMessageRecord, change: 
       if ((message.acceptedInputs ?? []).some((entry) => entry.part === 'message')) {
         throw new Error('nextSessionMessageRecord: an accepted message part cannot be withdrawn');
       }
-      if (message.release === 'denied') {
-        throw new Error('nextSessionMessageRecord: a denied message cannot be withdrawn');
-      }
       if (message.appliedAt !== null) {
         throw new Error('nextSessionMessageRecord: an applied message cannot be withdrawn');
       }
       return { ...message, revision, withdrawnAt: change.withdrawnAt };
-    case 'release_decided':
-      if (message.release !== 'awaiting') throw new Error('nextSessionMessageRecord: only an awaiting release can be decided');
-      if (change.allow && change.approvalRevision !== revision) {
-        throw new Error('nextSessionMessageRecord: approvalRevision must equal the produced revision');
-      }
-      return { ...message, revision, release: change.release,
-        approvedAt: change.approvedAt, approvalRevision: change.approvalRevision };
-    case 'released':
-      if (message.release !== 'approved') throw new Error('nextSessionMessageRecord: only an approved release can be released');
-      return { ...message, revision, release: 'released', deadline: change.deadline, pins: change.pins };
     case 'applied':
       if (message.rejectedAt !== null) throw new Error('nextSessionMessageRecord: the message already has a refusal');
       if (message.appliedAt !== null) throw new Error('nextSessionMessageRecord: the message already has an application');
@@ -1865,4 +1854,18 @@ export function nextSessionMessageRecord(message: SessionMessageRecord, change: 
 export function bindMessageResponseCursor(message: SessionMessageRecord, cursor: CommitCursor): SessionMessageRecord {
   if (message.responseSince !== null) return message;
   return { ...message, responseSince: cursor };
+}
+
+/**
+ * SR7 §7.3.3 / design 2.2: a reply is still bound to its original wait while that wait is open or
+ * answered and no accepted input consumed it. Only then does the wait's own execution own it; a
+ * consumed, expired or wait-less reply is ordinary late mail. The safe-point supply and the
+ * input-acceptance check share this one predicate.
+ */
+export function replyStillBoundToWait(
+  message: WaitMessageFactsV1 & Pick<SessionMessageRecord, 'waitAfterSend' | 'needsReply' | 'acceptedInputs'>,
+): boolean {
+  if (!isWaitMessage(message)) return false;
+  const state = waitStateOf(message, waitFactsOfRecord(message)).state;
+  return state === 'open' || state === 'answered';
 }

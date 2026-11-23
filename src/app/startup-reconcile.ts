@@ -36,7 +36,7 @@ import type { DecisionSourceV1 } from '../contracts/goal-decisions.js';
 import { messageOf } from '../contracts/error-message.js';
 import { decisionSourceKey } from '../contracts/goal-decisions.js';
 import type { SessionRecord } from '../contracts/core/session.js';
-import type { RunRef, RunSnapshot } from '../contracts/dispatch.js';
+import type { RunRef, RunSnapshot, TaskTriple } from '../contracts/dispatch.js';
 import type { GoalRef, GoalSnapshot } from '../contracts/ledger.js';
 import type { RoundSnapshot } from '../contracts/verification.js';
 import type { QueryRunRef } from '../contracts/query-job.js';
@@ -57,11 +57,18 @@ import type { PlanTaskPort } from '../core/work-graph/model/plan-contracts.js';
 import type { ExecutionReadPort, TaskExecutionRecord } from '../core/work-graph/model/execution-read-contracts.js';
 import type { ReconcileCandidateReader } from '../core/work-graph/tasks/reconcile-reads.js';
 import type { RunControlPort } from '../core/work-graph/tasks/control-contracts.js';
+import type { RuntimeExecutionPort } from '../core/agent-runtime/ports.js';
+import type { ActionRequestPort, ClaimHoldPort } from '../core/work-graph/model/action-request-contracts.js';
+import type { ActionRequestRef } from '../contracts/action-request.js';
+import { awaitsStopDelivery } from '../core/work-graph/state/action-request.js';
+import { stopSteerRequestIdOf } from '../core/work-graph/tasks/action-requests.js';
+import { controlIntentRefFor } from '../core/work-graph/tasks/control-service.js';
+import { WORKFLOW_AUTOMATION_ACTOR } from '../contracts/task-requeue.js';
 import type { WriteResult } from '../contracts/core/results.js';
 import type { GoalFanOutPassOptions, GoalFanOutReportV1 } from './goal-fan-out-driver.js';
 import type { WorkflowPort } from '../business/workflow/ports.js';
 import type { HandoffQueuePort } from './wake-loop.js';
-import type { RedriveAnswerV1 } from '../business/workflow/contracts.js';
+import type { RedriveAnswerV1, WorkflowAdvanceResult } from '../business/workflow/contracts.js';
 import type { UnappliedAnswersReadV1 } from '../core/work-graph/tasks/unknown-call-review-answers.js';
 import type { MemberRequestPortV1 } from '../core/work-graph/tasks/member-service.js';
 import type { RepairActivationService } from '../core/work-graph/notes/activate-repair.js';
@@ -80,6 +87,13 @@ export type StartupReconcilePlatform = {
   sessions: Pick<SessionDirectoryPort, 'findSessions'>;
   executions: Pick<ExecutionReadPort, 'readExecution'>;
   controls: Pick<RunControlPort, 'readControl'>;
+  /** 2.5: the persistent `open` dispatch requests and the stop requests' own records. */
+  actionRequests: Pick<ActionRequestPort,
+    'listOpenDispatchesInProject' | 'readRequest' | 'deliverStop'>;
+  /** 2.5/3.4: each Task's fixed claim hold names the stop request that needs recovery. */
+  claimHolds: Pick<ClaimHoldPort, 'readHold'>;
+  /** 3.4: a stop intent already `queued` is delivered here and nowhere else. */
+  deliverControl: NonNullable<RuntimeExecutionPort['deliverControl']>;
   /** Step 6b condition (a): the Task facts and their automation verdicts, read again after steps 1..6. */
   plans: Pick<PlanTaskPort, 'queryTaskGraph'>;
   reconcile: {
@@ -137,13 +151,6 @@ export type StartupReconcilePlatform = {
       readCommandRerunRequestAnswers?: (ctx: CoreCallContext, input: { goalRef: GoalRef }) =>
         Promise<ReadResult<UnappliedAnswersReadV1>>;
       /**
-       * G's start-up answer read (hook 1, `7a2-rgp-v7.md:1063–:1066`): the Goal's unapplied `message_release`
-       * answers through the SAME `k3-decision-answer-by-source-goal` index. Optional like the others; G-late
-       * implements it and L wires it.
-       */
-      readMessageReleaseAnswers?: (ctx: CoreCallContext, input: { goalRef: GoalRef }) =>
-        Promise<ReadResult<UnappliedAnswersReadV1>>;
-      /**
        * K3 L18/L28 step 6b (c) kind 3: read the current card's answer by its
        * canonical source. Optional as above; an absent read selects no answered
        * record.
@@ -154,6 +161,14 @@ export type StartupReconcilePlatform = {
   };
   repairs?: Pick<RepairActivationService, 'attemptRepairsForGoal'>;
   redriveRepairAnswers?: (ctx: CoreCallContext, input: { goalRef: GoalRef }) => Promise<void>;
+  /**
+   * 2.8/§3.10: hand every Goal's answered `action_release` card to the same Workflow advance, before the
+   * active filter, so a Goal paused or cancelled after the answer still meets the one release guard. The
+   * advance applies the saved answer under its archived Host actor (② and ③) and returns without selecting
+   * work; the start-up policy keeps deciding whether a Goal loop starts.
+   */
+  redriveActionReleaseAnswers?: (ctx: CoreCallContext, input: { goalRef: GoalRef }) =>
+    Promise<WorkflowAdvanceResult | null>;
 };
 
 /** What the reconcile of one workspace scope uses: its project's platform, lease facts and drivers. */
@@ -587,6 +602,26 @@ export async function runStartupReconcile(
         out.fanOut.push({ goalId: goal.ref.goalId, control: null, problem: messageOf(error), runs: 0, continuations: 0 });
       }
     }
+    // 2.8/§3.10: the answered `action_release` cards go to the SAME Workflow advance that replays the registered
+    // adapter under the saved answer's Host actor (② and ③). This runs after the fan-out and before the active
+    // filter, for every Goal: a Goal paused or cancelled after the answer still reaches the one release guard, and
+    // the advance applies the answer only, selecting no work. `resumeOnStartup` still decides whether a loop starts.
+    for (const goal of goalRecords) {
+      try {
+        const applied = await platform.redriveActionReleaseAnswers?.(ctx, { goalRef: goal.ref });
+        if (applied !== undefined && applied !== null
+          && (applied.status !== 'ready' || applied.value.state !== 'advance')) {
+          const detail = applied.status === 'ready'
+            ? `the Workflow ${applied.value.state}: ${applied.value.reason ?? 'no reason'}`
+            : rejectionText(applied);
+          out.problems.push(`${scope.workspaceId}: the answered action release of ${goal.ref.goalId} `
+            + `was not applied (${detail})`);
+        }
+      } catch (error) {
+        out.problems.push(`${scope.workspaceId}: the answered action release of ${goal.ref.goalId} `
+          + `was not applied (${messageOf(error)})`);
+      }
+    }
 
     // Step 6c (slice 1 §4.2): after the Goal fan-out, the Workflow processes at
     // most one maintenance page before the start-up re-drive. This is a stub
@@ -638,13 +673,28 @@ export async function runStartupReconcile(
     const readDecisionAnswer = platform.reconcile.reviews?.readDecisionAnswer;
     const listUnappliedAnswers = platform.reconcile.reviews?.listUnappliedAnswers;
     const readCommandRerunRequestAnswers = platform.reconcile.reviews?.readCommandRerunRequestAnswers;
-    const readMessageReleaseAnswers = platform.reconcile.reviews?.readMessageReleaseAnswers;
     const writeGoalInterruption = platform.reconcile.recordGoalInterruption;
+    // 2.5: a persistent `open` dispatch request names its Goal through `task.goalId`; the same re-drive
+    // selection wakes that Goal so the normal loop re-selects the request. `applied` requests are not in this read.
+    const openDispatchTasks = new Map<string, string[]>();
+    const openDispatches = await platform.actionRequests.listOpenDispatchesInProject(ctx,
+      { projectId: scope.projectId, workspaceId: scope.workspaceId });
+    if (openDispatches.status !== 'ready') {
+      out.problems.push(`${scope.workspaceId}: the open dispatch requests are not readable (${rejectionText(openDispatches)})`);
+    } else {
+      for (const entry of openDispatches.value) {
+        const tasks = openDispatchTasks.get(entry.goalId) ?? [];
+        tasks.push(entry.request.task.taskId);
+        openDispatchTasks.set(entry.goalId, tasks);
+      }
+    }
     for (const goal of goalRecords) {
       if (goal.desiredState !== 'active') continue;
       const goalReviews = openReviews.filter(record => record.ref.goalId === goal.ref.goalId);
       const selection = await pendingAutomationTaskIds(platform, ctx, goal, out);
+      await reconcileStopRequests(platform, ctx, scope, selection.tasks, out);
       const taskIds = [...selection.pending,
+        ...(openDispatchTasks.get(goal.ref.goalId) ?? []),
         ...notEntered.filter(run => run.ref.goalId === goal.ref.goalId).map(run => run.task.taskId),
         ...goalReviews.filter(record => reviewRedriveKindOf(record) !== null).map(record => record.task.taskId)];
       // Kind 3 (L28): a `needs_decision`/`awaiting_approval` record with no
@@ -685,11 +735,6 @@ export async function runStartupReconcile(
         if (answer.kind !== 'command_rerun_request') continue;
         answers.push({ kind: 'command_rerun_request', requestRef: answer.requestRef,
           answerMessageRef: answer.answerMessageRef });
-      }
-      // G.4 hook 1: every hit of that reader is a `message_release` answer (its own contract), so no kind test.
-      for (const answer of await unappliedAnswersOf(readMessageReleaseAnswers,
-        'unapplied release answers', ctx, scope, goal.ref, out)) {
-        answers.push({ kind: 'message_release', answerMessageRef: answer.answerMessageRef });
       }
       const uniqueTaskIds = [...new Set(taskIds)];
       if (uniqueTaskIds.length > 0 || answers.length > 0) {
@@ -765,18 +810,18 @@ export async function runStartupReconcile(
    */
   async function pendingAutomationTaskIds(platform: StartupReconcilePlatform, ctx: CoreCallContext, goal: GoalSnapshot,
     out: StartupReconcileReportV1):
-  Promise<{ pending: string[]; unfinished: string[] }> {
-    if (goal.activePlanRevision === null) return { pending: [], unfinished: [] };
+  Promise<{ pending: string[]; unfinished: string[]; tasks: TaskTriple[] }> {
+    if (goal.activePlanRevision === null) return { pending: [], unfinished: [], tasks: [] };
     let graph: Awaited<ReturnType<PlanTaskPort['queryTaskGraph']>>;
     try {
       graph = await platform.plans.queryTaskGraph(ctx, { goalRef: goal.ref });
     } catch (error) {
       out.problems.push(`${goal.ref.goalId}: the Task facts are not readable for the start-up re-drive (${messageOf(error)})`);
-      return { pending: [], unfinished: [] };
+      return { pending: [], unfinished: [], tasks: [] };
     }
     if (graph.status !== 'ready') {
       out.problems.push(`${goal.ref.goalId}: the Task facts are not readable for the start-up re-drive (${rejectionText(graph)})`);
-      return { pending: [], unfinished: [] };
+      return { pending: [], unfinished: [], tasks: [] };
     }
     const { plan, tasks } = graph.value;
     const rows = new Map(tasks.map(row => [row.ref.taskId, row]));
@@ -791,7 +836,78 @@ export async function runStartupReconcile(
       const verdict = row.failure?.automation.verdict;
       return !(verdict?.kind === 'stopped' && isGoalStopCause(verdict.reason));
     }).map(task => task.taskId);
-    return { pending, unfinished };
+    return { pending, unfinished,
+      tasks: plan.tasks.map(task => ({ projectId: goal.ref.projectId, goalId: goal.ref.goalId, taskId: task.taskId })) };
+  }
+
+  /**
+   * 2.5/3.4 recovery: the stop requests an active Goal's Tasks still carry. Two classes, each through the ONE owner
+   * entry that committed it: (a) `released`, the original Run still running, no control intent and no `notSent`
+   * redoes the stop delivery; (b) an intent already `queued` is only delivered, never re-admitted or re-run. An
+   * answered card's ② and ③ are the Workflow advance's job before the active filter. Nothing here re-admits the
+   * request.
+   */
+  async function reconcileStopRequests(platform: StartupReconcilePlatform, ctx: CoreCallContext, scope: Scope,
+    tasks: readonly TaskTriple[], out: StartupReconcileReportV1): Promise<void> {
+    const seen = new Set<string>();
+    for (const taskRef of tasks) {
+      const hold = await platform.claimHolds.readHold(ctx, { taskRef });
+      // A Task that was never held has no record; that is the normal answer, not a read failure.
+      if (hold.status === 'not_found') continue;
+      if (hold.status !== 'ready') {
+        out.problems.push(`${scope.workspaceId}: the claim hold of ${taskRef.taskId} is not readable (${rejectionText(hold)})`);
+        continue;
+      }
+      const refs = [];
+      if (hold.value.pendingStop !== null) refs.push(hold.value.pendingStop);
+      if (hold.value.lastStop !== null && hold.value.lastStop !== undefined) refs.push(hold.value.lastStop);
+      for (const reason of hold.value.reasons) {
+        if (reason.state === 'held' && reason.kind === 'stop' && reason.placedBy.kind === 'action') {
+          refs.push(reason.placedBy.actionRef);
+        }
+      }
+      for (const ref of refs) {
+        const key = refText(ref);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        const read = await platform.actionRequests.readRequest(ctx, { ref });
+        if (read.status !== 'ready') {
+          out.problems.push(`${scope.workspaceId}: the action request ${key} is not readable (${rejectionText(read)})`);
+          continue;
+        }
+        const record = read.value;
+        if (record.kind !== 'stop') continue;
+        if (!awaitsStopDelivery(record)) continue;
+        await deliverStopOrQueuedIntent(platform, ctx, scope, record, out);
+      }
+    }
+  }
+
+  /**
+   * 3.4: `released` without an intent redoes `deliverStop` (the owner submits the fixed-fingerprint steer or records
+   * why it cannot); an intent already `queued` is delivered through `deliverControl` only.
+   */
+  async function deliverStopOrQueuedIntent(platform: StartupReconcilePlatform, ctx: CoreCallContext, scope: Scope,
+    record: { ref: ActionRequestRef }, out: StartupReconcileReportV1): Promise<void> {
+    const intentRef = controlIntentRefFor(WORKFLOW_AUTOMATION_ACTOR, scope, stopSteerRequestIdOf(record.ref));
+    const intent = await platform.controls.readControl(ctx, intentRef);
+    const automation: CoreCallContext = { ...ctx, principal: { kind: 'host', actor: { ...WORKFLOW_AUTOMATION_ACTOR } } };
+    if (intent.status === 'ready') {
+      if (intent.value.status !== 'queued') return;
+      const delivered = await platform.deliverControl(automation, { intentRef });
+      if ('code' in delivered) {
+        out.problems.push(`the queued stop of ${refText(record.ref)} was not delivered (${delivered.code}: ${delivered.reason})`);
+      }
+      return;
+    }
+    if (intent.status !== 'not_found') {
+      out.problems.push(`the stop intent of ${refText(record.ref)} is not readable (${rejectionText(intent)})`);
+      return;
+    }
+    const delivered = await platform.actionRequests.deliverStop(automation, { request: record.ref });
+    if (delivered.status === 'rejected') {
+      out.problems.push(`the stop request ${refText(record.ref)} was not released (${delivered.code}: ${delivered.reason})`);
+    }
   }
 
   /** Whether any of the intents is still queued (a failed read counts as not queued: the Run is reconciled next start). */

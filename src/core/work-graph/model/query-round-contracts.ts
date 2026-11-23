@@ -38,10 +38,17 @@ export type QueryRoundV1 = {
   sourceMessageRef: SessionMessageRef | null;
   /** 本轮 Session 是问一问的只读副本：所有口都不让它冒充原线。 */
   readOnlyCopy: boolean;
+  /** QueryJob 意图上的请求根（`job.requestRoot`，身份读链本来就读到的那一份）；不是请求轮是 `null`。 */
+  requestRoot: QueryJobRef | null;
   /** 秘书请求轮（执行状态带 `requestProfile`）：它的邮箱和动作照旧走秘书路径。 */
   requestRound: boolean;
   /** 线（本轮 Session）的工作区：问答轮的信写在这里，和做事轮的规则 W 一样。 */
   lineWorkspaceId: string;
+  /**
+   * 这一轮冻结的最终工具名（`manifest.promptSet.toolNames`，准备与启动比对过的同一份）。动作 owner 只按它核
+   * 授予（Q1a）：没授予就是 `forbidden`，不另读 manifest、不另问 Host。
+   */
+  grantedToolNames: readonly string[];
   /** 同一读窗的 QueryRun 版本和 Session 版本，各口提交时守。 */
   guards: readonly RecordGuard[];
 };

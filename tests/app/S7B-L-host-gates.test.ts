@@ -5,6 +5,9 @@
  * waiting line is dispatched instead: its one `claimed` result drives the existing `select_work` prepare/start.
  * Neither gate re-checks a subset: only the full rule sees the paused Goal. Memory (a business-rule row); A4 shares the
  * one real records backend and body store across the Host start the consumers need, and A3's wrappers return real results.
+ * P2: the Host's inquiry is a copy question (`answeredBy: 'copy'`, the only input `consumeConsultation` takes,
+ * p2-frozen.md:133); a saved reply opens no round and is no longer handed to that consumer (p2-frozen.md:151,
+ * cp2g3a-r1-rulings.md A06).
  */
 import { afterEach, expect, it, vi } from 'vitest';
 import type { GoalRef } from '../../src/contracts/ledger.js';
@@ -60,7 +63,7 @@ const queued = async (world: S6AHostWorld, session: S6ASession, ref: SessionMess
 async function sendRun(world: S6AHostWorld, input: { goal: GoalRef; session: S6ASession; recipient: S6ASession;
   taskId: string; label: string; text: string; wait: boolean }): Promise<SessionMessage> {
   await world.scripted.script(input.session, [{ kind: 'calls', calls: [{ callId: `s7b-gates-${input.label}`,
-    name: 'send_session_message', args: { recipient: input.recipient.ref, text: input.text, intent: 'inquiry',
+    name: 'send_session_message', args: { recipient: input.recipient.ref, text: input.text,
       needsReply: true, ...(input.wait ? { waitAfterSend: true } : {}) } }] }]);
   await driveWorkflow(world.ag2b, { schemaVersion: 1, goalRef: input.goal, flowId: `s7b-gates-${input.label}`,
     sessionHint: input.session.ref, kind: 'select_work', taskId: input.taskId },
@@ -94,11 +97,17 @@ it('a paused Goal keeps both gates queued, resume consumes the inquiry and reply
   await replyS7AMessage(world, { goal, recipient: responder, messageRef: question.ref, taskId: tasks[2]!.taskId,
     label: 'gates-reply', text: 'S7B gates answer' });
   const person = committed<SessionMessage>(await world.post('messages/send', graphWrite(S6A_SCOPE, {
-    recipient: third.ref, text: 'S7B gates person question', intent: 'inquiry', needsReply: true, goalRef: goal,
+    recipient: third.ref, text: 'S7B gates person question', needsReply: true, goalRef: goal, answeredBy: 'copy',
   }, 's7b-gates-person')), 'the person inquiry');
   const intervention = committed<SessionMessage>(await world.post('messages/send', graphWrite(S6A_SCOPE, {
-    recipient: sender.ref, text: 'S7B gates intervention', intent: 'action_request', goalRef: goal, taskRef: tasks[0],
+    recipient: sender.ref, text: 'S7B gates intervention', entry: 'person_intervention', needsReply: true,
+    goalRef: goal, taskRef: tasks[0],
   }, 's7b-gates-intervention')), 'the intervention message');
+  // design-frozen.md:201: the responder's own Work Run already took the question at its safe point; the gates add
+  // nothing while the Goal is paused.
+  const cells = [[third, person.ref], [sender2, question.ref], [sender, intervention.ref]] as const;
+  const acceptedBefore = new Map<string, unknown>();
+  for (const [session, ref] of cells) acceptedBefore.set(ref.messageId, (await queued(world, session, ref)).acceptedInputs ?? []);
   await pauseS7AGoal(world, goal);
   await world.reopen({ sharedMemoryStore: true, extraHostOptions: { inputConsumers: [third, sender2, sender].map(
     (session, index) => ({ scope: S6A_SCOPE, sessionRef: session.ref, goalRef: goal,
@@ -134,18 +143,18 @@ it('a paused Goal keeps both gates queued, resume consumes the inquiry and reply
   await waitFor(async () => [...factsRead], ids => [person, question, intervention]
     .every(message => ids.includes(message.ref.messageId)), 'both gates to read the three delivery facts');
   expect({ consumed, handled }).toEqual({ consumed: [], handled: [] });
-  for (const [session, ref] of [[third, person.ref], [sender2, question.ref], [sender, intervention.ref]] as const) {
-    expect((await queued(world, session, ref)).acceptedInputs ?? []).toEqual([]);
+  for (const [session, ref] of cells) {
+    expect((await queued(world, session, ref)).acceptedInputs ?? []).toEqual(acceptedBefore.get(ref.messageId));
   }
-  // Resume: the inquiry and the reply take the consume path; the person's action_request takes the dispatch.
+  // Resume: the copy question takes the consume path; the person's action_request takes the dispatch.
   await resumeS7AGoal(world, goal);
   world.clock.advance(100);
   await waitFor(async () => [...consumed], entries => entries.some(entry => entry.id === person.ref.messageId
-    && entry.part === undefined) && entries.some(entry => entry.id === question.ref.messageId
-    && entry.part === 'response'), 'the two eligible cells to be consumed');
+    && entry.part === undefined), 'the eligible copy question to be consumed');
   await waitFor(async () => [...handled], entries => entries.some(entry => entry.id === intervention.ref.messageId
     && entry.status === 'claimed'), 'the intervention dispatch to claim');
   expect(consumed.some(entry => entry.id === intervention.ref.messageId), 'the dispatch is not a consultation').toBe(false);
+  expect(consumed.some(entry => entry.id === question.ref.messageId), 'the saved reply is no consultation').toBe(false);
   expect(handled.some(entry => entry.id === person.ref.messageId || entry.id === question.ref.messageId)).toBe(false);
   // The claimed result drives the existing select_work prepare/start: a new Run on the waiting line renders the
   // person's intervention text in its own model request.
@@ -173,16 +182,17 @@ it('a queued notify opens no turn and is skipped before the inquiry behind it', 
     recipient: await sessionOf(world, await createS6BLine(main, { label: 's7b-gates-notify-recipient',
       role: S6A_SECRETARY_ROLE })), text: 'S7B gates notify wait question', wait: true });
   const notify = committed<SessionMessage>(await world.post('messages/send', graphWrite(S6A_SCOPE, {
-    recipient: line.ref, text: 'S7B gates notify first', intent: 'notify', goalRef: goal, taskRef: tasks[0],
+    recipient: line.ref, text: 'S7B gates notify first', needsReply: false, wake: false,
+    goalRef: goal, taskRef: tasks[0],
   }, 's7b-gates-notify')), 'the person notify');
   const inquiry = committed<SessionMessage>(await world.post('messages/send', graphWrite(S6A_SCOPE, {
-    recipient: line.ref, text: 'S7B gates inquiry second', intent: 'inquiry', needsReply: true,
+    recipient: line.ref, text: 'S7B gates inquiry second', answeredBy: 'copy', needsReply: true,
     goalRef: goal }, 's7b-gates-inquiry')), 'the inquiry behind the notify');
   await pauseS7AGoal(world, goal);
   await world.reopen({ sharedMemoryStore: true, extraHostOptions: { inputConsumers: [{ scope: S6A_SCOPE,
     sessionRef: line.ref, goalRef: goal, queryProfileId: S6A_SECRETARY_PROFILE_ID, heartbeatMs: 25 }] } });
   const workflow = world.platform.workflow as unknown as { handleIntervention: (ctx: never, input: never) => Promise<{ status: string }> }; const realHandle = workflow.handleIntervention; const handled: string[] = [];
-  workflow.handleIntervention = async (ctx, input) => { const result = await realHandle(ctx, input); handled.push(result.status); return result; };
+  workflow.handleIntervention = async (ctx, input) => { const result = await realHandle(ctx, input); handled.push((input as { messageRef: { messageId: string } }).messageRef.messageId); return result; };
   world.scriptReplies(Array.from({ length: 4 }, () => ({ kind: 'text', text: 'S7B gates notify answer' })));
   await resumeS7AGoal(world, goal); world.clock.advance(100);
   await waitFor(async () => queued(world, line, inquiry.ref),
@@ -190,5 +200,6 @@ it('a queued notify opens no turn and is skipped before the inquiry behind it', 
   const still = await queued(world, line, notify.ref);
   // DRV D-F2: the woken successor Run really starts and takes the notify as ordinary input; the notify opened no turn.
   expect((still.acceptedInputs ?? []).filter(input => input.executionRef.aggregateType !== 'Run')).toEqual([]);
-  expect(handled).toEqual([]);
+  // The wait question still wakes its own idle recipient (p2-frozen.md:100, :141); neither cell here opened a round.
+  expect(handled.filter(id => id === notify.ref.messageId || id === inquiry.ref.messageId)).toEqual([]);
 }, 120_000);

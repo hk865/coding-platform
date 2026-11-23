@@ -56,7 +56,7 @@ async function goalLines(world: World, label: string) {
 async function scriptInquiry(world: World, lines: Awaited<ReturnType<typeof goalLines>>, label: string): Promise<void> {
   await world.scripted.script(lines.sender, [
     { kind: 'calls', calls: [{ callId: `${label}-send`, name: 'send_session_message',
-      args: { recipient: lines.recipient.ref, text: `DRV ${label} inquiry`, intent: 'inquiry',
+      args: { recipient: lines.recipient.ref, text: `DRV ${label} inquiry`,
         needsReply: true, waitAfterSend: true } }] },
     { kind: 'text', text: `DRV ${label} continuation done` },
   ]);

@@ -57,11 +57,13 @@ export function secretaryNoteAdmission(input: {
  * §5.2.8). A round whose submit-tool shape is `plan_round`/`plan_review` is a
  * planning round, and so is the scribe's long-command review (`scribe_review`,
  * 121-112: a normal conclusion is kept as the scribe's own note); a `text`-shaped overlap note is stored as `null` in the
- * manifest and enters only when its frozen source message is a Host system
- * `action_request` and the round has an effective Goal. `planRef` is part of the
+ * manifest and enters only when the Query carries the gate owner's verified proof (`execution.overlapNote`,
+ * frozen after the gate's saved `noteRequest.messageRef` matched this source) and the round has an effective
+ * Goal. Admission is by that proof, not by the sender. `planRef` is part of the
  * frozen input but does not decide the class. A `role_exploration` round (the
  * cold start's exploration, no Goal) is planning-class too and also admits
- * `link` and `flow`.
+ * `link` and `flow`. An executor's text round (no answer shape, woken by an
+ * agent message) is planning-class with the six general kinds (121-154 A10).
  */
 export function planningNoteAdmission(input: {
   answerShape: QueryAnswerShapeV1 | null;
@@ -70,6 +72,8 @@ export function planningNoteAdmission(input: {
   hostSystemPlanningSource: boolean;
   /** A role_exploration round is a planning-class note round with no Goal; absent reads false. */
   roleExploration?: boolean;
+  /** The trusted executor text round; absent reads false. */
+  executorTextRound?: boolean;
 }): QueryNoteAdmissionV1 {
   if (input.roleExploration === true) {
     // The exploration branch only ADDS the semantic `link`/`flow` kinds to the six general kinds; the ordinary
@@ -80,6 +84,7 @@ export function planningNoteAdmission(input: {
     || input.answerShape === 'scribe_review';
   const hostTextRound = input.answerShape === null && input.hostSystemPlanningSource
     && input.effectiveGoalId !== null;
-  if (!planningShape && !hostTextRound) return { class: 'none' };
+  const executorTextRound = input.answerShape === null && input.executorTextRound === true;
+  if (!planningShape && !hostTextRound && !executorTextRound) return { class: 'none' };
   return { class: 'planning', kinds: NOTE_GENERAL_KINDS, withdraw: true, grantedGoalIds: [] };
 }

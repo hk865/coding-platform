@@ -1,4 +1,8 @@
-/** IT20: three independent lines, all driven through owner/Runtime entries. */
+/**
+ * IT20: three independent lines, all driven through owner/Runtime entries. P2 (p2-frozen.md:133; design-frozen.md:210,
+ * :262): a wait question is a line question, answered by the recipient line's own woken round (`wakeLineRound`); only
+ * the person's inquiry of line 2 is a copy question (`answeredBy: 'copy'`), answered by its copy.
+ */
 import { afterEach, beforeEach, expect, it } from 'vitest';
 import type { SessionRef, WorkLinkTarget } from '../../src/contracts/core/identity.js';
 import type { ReadResult, WriteResult } from '../../src/contracts/core/results.js';
@@ -16,7 +20,7 @@ import { waitReplyDeliveryText } from '../helpers/S7B-delivery-samples.js';
 import {
   assertInvariants, cleanupScenarios, hostCtx, openHostScenario, performs, type HostScenario, type ScenarioCommit,
 } from './harness.js';
-import { acceptedMessageInputs, consult } from './support/brief.js';
+import { acceptedMessageInputs, consult, wakeLineRound } from './support/brief.js';
 import { NO_REDRIVE, execution, selectedRun, stepOf, WORK_TARGET } from './support/common.js';
 import { invariantStoreOf, readInvariantWorld } from '../state/invariants.js';
 import { storeDirOf } from '../helpers/KLS1B-host-store.js';
@@ -62,14 +66,14 @@ async function sourceExecutions(h: HostScenario, session: SessionRef) {
 it('IT20 (wait transfer, answered copy, retired reply): the original question is unchanged and consumed once; the answered copy is archived; a different retired line with no continuation shows exactly one undelivered reply source and is never auto-forwarded; reads and refreshes add no model call', async () => {
   const commits: ScenarioCommit[] = [];
   const sendLine1 = { callId: 'it20-line1-send', name: 'send_session_message',
-    args: { recipient: {}, text: QUESTION, intent: 'inquiry', needsReply: true, waitAfterSend: true } as Record<string, unknown> };
+    args: { recipient: {}, text: QUESTION, needsReply: true, waitAfterSend: true } as Record<string, unknown> };
   const sendLine3 = { callId: 'it20-line3-send', name: 'send_session_message',
-    args: { recipient: {}, text: QUESTION, intent: 'inquiry', needsReply: true, waitAfterSend: true } as Record<string, unknown> };
+    args: { recipient: {}, text: QUESTION, needsReply: true, waitAfterSend: true } as Record<string, unknown> };
   const h = await openHostScenario({ automation: NO_REDRIVE, check: 'pass',
     workIds: [AG2B_WORK_TASK_ID, SECOND_TASK_ID], script: {
       replies: [{ kind: 'calls', calls: [sendLine1] }, { kind: 'text', text: 'D used the transferred reply' },
         { kind: 'calls', calls: [sendLine3] }],
-      queryReplies: Array.from({ length: 3 }, () => ({ kind: 'text' as const, text: REPLY })),
+      queryReplies: [{ kind: 'text' as const, text: REPLY }],
     },
     // Refreeze §5: every committed batch with its cursor and events; R and P are
     // the two commits named below, taken from this log, not from record fields.
@@ -80,8 +84,8 @@ it('IT20 (wait transfer, answered copy, retired reply): the original question is
   const line1 = await yieldWait(h, 'it20-line1', AG2B_WORK_TASK_ID, WORK_TARGET, sendLine1);
   const original = await message(h, line1.messageRef);
   expect(original.status).toBe('pending');
-  expect({ intent: original.intent, needsReply: original.needsReply, waitAfterSend: original.waitAfterSend })
-    .toEqual({ intent: 'inquiry', needsReply: true, waitAfterSend: true });
+  expect({ needsReply: original.needsReply, waitAfterSend: original.waitAfterSend })
+    .toEqual({ needsReply: true, waitAfterSend: true });
   expect(original.sender).toMatchObject({ kind: 'work_run', sessionRef: line1.sessionRef });
   expect(original.recipient).toEqual(line1.member);
   const D = (await createAG2bSession(h.host, 'it20-handler', AG2B_WORK_ROLE)).sessionRef;
@@ -97,7 +101,7 @@ it('IT20 (wait transfer, answered copy, retired reply): the original question is
   await checked(h, 'it20: transfer and archive S');
   expect({ state: archived.state, lifecycle: archived.session.lifecycle, request: archived.session.archiveRequest,
     occupancy: archived.session.occupancy }).toEqual({ state: 'archived', lifecycle: 'archived', request: null, occupancy: null });
-  expect(await consult(h, line1.messageRef)).toMatchObject({ status: 'ready', value: { state: 'responded' } });
+  expect(await wakeLineRound(h, line1.messageRef, REPLY)).toEqual({ status: 'answer_ready', modelCalls: 1 });
   await checked(h, 'it20: E answers the transferred wait');
   const answered = await message(h, line1.messageRef);
   expect((answered.acceptedInputs ?? []).filter(a => a.part === 'response')).toEqual([]);
@@ -123,9 +127,9 @@ it('IT20 (wait transfer, answered copy, retired reply): the original question is
   expect(accepted.map(a => a.text)).toEqual([waitReplyDeliveryText({
     messageId: line1.messageRef.messageId, question: QUESTION, body: REPLY })]);
   expect({ sender: consumed.sender, recipient: consumed.recipient, bodyRef: consumed.bodyRef,
-    intent: consumed.intent, needsReply: consumed.needsReply, waitAfterSend: consumed.waitAfterSend })
+    needsReply: consumed.needsReply, waitAfterSend: consumed.waitAfterSend })
     .toEqual({ sender: original.sender, recipient: original.recipient, bodyRef: original.bodyRef,
-      intent: original.intent, needsReply: original.needsReply, waitAfterSend: original.waitAfterSend });
+      needsReply: original.needsReply, waitAfterSend: original.waitAfterSend });
   expect(ready(await platform.messages.readMessageBody(hostCtx(), { messageRef: line1.messageRef, part: 'message' })).text).toBe(QUESTION);
   expect(await sourceExecutions(h, line1.sessionRef)).toEqual({ work: [line1.runRef], query: [] });
 
@@ -135,7 +139,7 @@ it('IT20 (wait transfer, answered copy, retired reply): the original question is
   await checked(h, 'it20: create independent copy source');
   const sourceBefore = (await card(h, copySource)).record;
   const sent = await h.post<WriteResult<SessionMessage>>('messages/send', graphWrite(AG2B_SCOPE,
-    { recipient: copySource, text: 'IT20 independent copy inquiry', intent: 'inquiry', needsReply: true }, 'it20-copy-inquiry', []));
+    { recipient: copySource, text: 'IT20 independent copy inquiry', needsReply: true, answeredBy: 'copy' }, 'it20-copy-inquiry', []));
   if (sent.status !== 'committed') throw new Error(`send inquiry: ${JSON.stringify(sent)}`);
   await checked(h, 'it20: send inquiry');
   expect(await consult(h, sent.value.ref)).toMatchObject({ status: 'ready', value: { state: 'responded' } });
@@ -174,7 +178,7 @@ it('IT20 (wait transfer, answered copy, retired reply): the original question is
   await checked(h, 'it20: retirement wait exception');
   expect(retiredArchive.state).toBe('archived');
   expect(retiredArchive.session.archiveRequest).toBeNull();
-  expect(await consult(h, line3.messageRef)).toMatchObject({ status: 'ready', value: { state: 'responded' } });
+  expect(await wakeLineRound(h, line3.messageRef, REPLY)).toEqual({ status: 'answer_ready', modelCalls: 1 });
   await checked(h, 'it20: late reply saved after retirement');
   const late = await message(h, line3.messageRef);
   if (late.response === null) throw new Error('the late reply must have its real response');

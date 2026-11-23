@@ -192,7 +192,7 @@ describe('RL-23: the cold start and the exploration round', () => {
     const coarseInbox = await cold.inbox(cold.lines.adviser);
     expect(coarseInbox).toHaveLength(1);
     expect(coarseInbox[0]).toMatchObject({ sender: { kind: 'host', actor: { kind: 'system' } },
-      intent: 'action_request' });
+      needsReply: true });
     expect(await readBody(cold.host, coarseInbox[0]!.ref, 'message')).toBe(
       'Please act: read only the top-level directories, entry points and existing docs, then propose the coarse split.');
     const coarseEntry = await explorationOf(cold, 'coarse_split', 'root');
@@ -347,7 +347,7 @@ describe('RL-23: the cold start and the exploration round', () => {
     for (const name of ['look_graph', 'find_graph', 'record_note', 'propose_architecture_revision', 'read_requests']) {
       expect(offered).toContain(name);
     }
-    for (const name of ['create_member', 'send_session_message', 'write', 'edit', 'shell']) {
+    for (const name of ['create_member', 'write', 'edit', 'shell']) {
       expect(offered).not.toContain(name);
     }
     // Step 2: the link note is accepted, listed, and comes from A and the coarse QueryRun.

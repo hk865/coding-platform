@@ -83,17 +83,17 @@ export async function openS7B2DirectoryWorld(options: S6AWorldOptions): Promise<
   const pausedGoalPerson = await sessionOf(world, await createS6BLine(main, {
     label: 's7b2-paused-goal-person', role: S6A_WORK_ROLE, tasks: [pausedPlan.tasks[0]!] }));
   await sendMessage(world, pausedGoalPerson, 's7b2-paused-person', {
-    intent: 'action_request', needsReply: true, goalRef: world.goals.second, taskRef: pausedPlan.tasks[0] });
+    entry: 'person_intervention', needsReply: true, goalRef: world.goals.second, taskRef: pausedPlan.tasks[0] });
   await pauseS7AGoal(world, world.goals.second);
 
   const idlePerson = await world.createWorkSession('s7b2-idle-person');
   const idleInquiry = await world.createWorkSession('s7b2-idle-inquiry');
   const notifyOnly = await world.createWorkSession('s7b2-notify-only');
-  await sendMessage(world, idlePerson, 's7b2-person-inquiry', { intent: 'inquiry', needsReply: true });
-  await sendMessage(world, idlePerson, 's7b2-person', { intent: 'action_request', needsReply: true,
+  await sendMessage(world, idlePerson, 's7b2-person-inquiry', { needsReply: true });
+  await sendMessage(world, idlePerson, 's7b2-person', { entry: 'person_intervention', needsReply: true,
     goalRef: world.goals.first });
-  await sendMessage(world, idleInquiry, 's7b2-inquiry', { intent: 'inquiry', needsReply: true });
-  await sendMessage(world, notifyOnly, 's7b2-notify', { intent: 'notify' });
+  await sendMessage(world, idleInquiry, 's7b2-inquiry', { needsReply: true });
+  await sendMessage(world, notifyOnly, 's7b2-notify', { wake: false });
 
   // SQLite only: a plain Query crashed while its real `run_readonly_command` call has no result (QRR-05; a tool on the
   // read-only list would be attested by the platform at the restart, lead 11-17).
@@ -192,7 +192,7 @@ async function personSend(world: S6AHostWorld, to: S6ASession, requestId: string
   // An inquiry opens the consultation turn; a person action_request on a never-run Task is refused `busy` by the
   // intervention claim (its released prior Run is missing), so the batch's eligible person messages are inquiries.
   committed((await world.post('messages/send', graphWrite(S6A_SCOPE, {
-    recipient: to.ref, text: `S7B2 consume ${requestId}`, intent: 'inquiry', needsReply: true, ...extra,
+    recipient: to.ref, text: `S7B2 consume ${requestId}`, entry: 'person_intervention', needsReply: true, ...extra,
   }, requestId))).body, `the person message ${requestId}`);
 }
 /**
@@ -203,14 +203,30 @@ async function personSend(world: S6AHostWorld, to: S6ASession, requestId: string
 function withS6AWorkProfile(original: typeof hostModule.createLocalWorkbenchHost): typeof original {
   return async hostOptions => {
     const configuration = hostOptions.runtimeConfiguration;
-    configuration?.queryProfiles.push({
-      id: 's6a-work-profile', label: 'S6A work continuation', scope: S6A_SCOPE,
-      runtimeBindingId: 's6a-work-binding', sessionRole: structuredClone(S6A_WORK_ROLE),
-      roleBinding: structuredClone(S6A_WORK_ROLE_BINDING),
-      runtimeBudget: structuredClone(AG2B_RUNTIME_BUDGET), budget: structuredClone(AG2B_QUERY_BUDGET),
-      consumerId: AG2B_CONSUMER_ID,
-    });
-    return await original(hostOptions);
+    const profiles = configuration?.queryProfiles;
+    // A restart (SQLite crash/reopen, or a second start of the same configuration) must not push the same id twice:
+    // the Host refuses duplicate query profile ids, and the first start may have left the profile in place.
+    const added = profiles !== undefined && !profiles.some(profile => profile.id === 's6a-work-profile');
+    if (profiles !== undefined && added) {
+      profiles.push({
+        id: 's6a-work-profile', label: 'S6A work continuation', scope: S6A_SCOPE,
+        runtimeBindingId: 's6a-work-binding', sessionRole: structuredClone(S6A_WORK_ROLE),
+        roleBinding: structuredClone(S6A_WORK_ROLE_BINDING),
+        runtimeBudget: structuredClone(AG2B_RUNTIME_BUDGET), budget: structuredClone(AG2B_QUERY_BUDGET),
+        consumerId: AG2B_CONSUMER_ID,
+      });
+    }
+    try {
+      return await original(hostOptions);
+    } catch (error) {
+      // A failed start leaves no half-added profile behind; a successful one stays for the Host's later passes and
+      // for a SQLite crash/reopen (which runs this wrapper again and finds the id already present).
+      if (added && profiles !== undefined) {
+        const index = profiles.findIndex(profile => profile.id === 's6a-work-profile');
+        if (index >= 0) profiles.splice(index, 1);
+      }
+      throw error;
+    }
   };
 }
 /**
@@ -268,12 +284,12 @@ export async function openS7B2ConsumeWorld(options: { backend?: S6ABackend;
   for (const [index, number] of ['01', '02', '03', '04', '05', '06', '07', '08', '09', '10'].entries()) {
     const label = `s7b2-consume-eligible-${number}`;
     const session = await sessionOf(world, await createS6BLine(main, { label, role: S6A_WORK_ROLE, tasks: [tasks[index]!] }));
-    await personSend(world, session, label, { goalRef: world.goals.first, taskRef: tasks[index]! });
+    await personSend(world, session, label, { goalRef: world.goals.first });
     eligible.push(session);
   }
   const notify = await sessionOf(world, await createS6BLine(main, { label: 's7b2-consume-notify-3', role: S6A_WORK_ROLE }));
   committed((await world.post('messages/send', graphWrite(S6A_SCOPE, { recipient: notify.ref,
-    text: 'S7B2 consume notify', intent: 'notify' }, 's7b2-consume-notify'))).body, 'the notify message');
+    text: 'S7B2 consume notify', wake: false }, 's7b2-consume-notify'))).body, 'the notify message');
   const unmatchedRole = await world.createUnprofiledSecretary('s7b2-consume-unmatched-13');
   await personSend(world, unmatchedRole, 's7b2-consume-unmatched', { goalRef: world.goals.first });
   const goalLess = await sessionOf(world, await createS6BLine(main, { label: 's7b2-consume-goalless-4', role: S6A_WORK_ROLE }));
@@ -284,7 +300,7 @@ export async function openS7B2ConsumeWorld(options: { backend?: S6ABackend;
     label: 's7b2-consume-nowait-recipient-11', role: S6A_WORK_ROLE }));
   await world.scripted.script(noWaitSender, [{ kind: 'calls', calls: [{ callId: 's7b2-consume-nowait',
     name: 'send_session_message', args: { recipient: noWaitRecipient.ref, text: 'S7B2 consume no-wait',
-      intent: 'inquiry', needsReply: true, waitAfterSend: false } }] }]);
+      needsReply: true, waitAfterSend: false } }] }]);
   await driveWorkflow(world.ag2b, { schemaVersion: 1, goalRef: world.goals.first, flowId: 's7b2-consume-nowait',
     sessionHint: noWaitSender.ref, kind: 'select_work', taskId: tasks[10]!.taskId }, { stopBefore: 'open_checks' });
   const sent = (await listed(world, 'outbox', noWaitSender)).find(item => item.sender.kind === 'work_run');
@@ -300,7 +316,7 @@ export async function openS7B2ConsumeWorld(options: { backend?: S6ABackend;
     label: 's7b-s7b2-consume-wait-24-recipient', role: S6A_WORK_ROLE }));
   const waitSent = await sendS7BWaitingInquiry(world, {
     goal: waitGoal, session: waitSender, taskId: waitPlan.tasks[0]!.taskId, label: 's7b2-consume-wait-24',
-    body: { recipient: waitRecipient.ref, text: 'S7B2 consume wait', intent: 'inquiry',
+    body: { recipient: waitRecipient.ref, text: 'S7B2 consume wait',
       needsReply: true, waitAfterSend: true, deadlineMs: 1 },
   });
   world.clock.advance(2);

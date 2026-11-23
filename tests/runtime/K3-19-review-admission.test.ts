@@ -110,6 +110,8 @@ vi.mock('../../src/core/record-store/body-store.js', async (importOriginal) => {
 });
 
 const worlds: K3ReviewCardWorld[] = [];
+/** The F-033 production platforms opened over a world's stores; each is closed before its world removes the files. */
+const platforms: { close(): Promise<void> }[] = [];
 const temporaryDirectories: string[] = [];
 afterEach(async () => {
   shellSeam.release();
@@ -119,6 +121,9 @@ afterEach(async () => {
   shared.options.length = 0;
   shared.backends.length = 0;
   shared.bodies.length = 0;
+  // A platform left open keeps its SQLite files and tracked calls alive while the world's directory is removed, so
+  // the removal can race a file it still writes (ENOTEMPTY on the store directory, 7th full run): close it first.
+  for (const platform of platforms.splice(0)) await platform.close();
   for (const world of worlds.splice(0)) await world.close();
   for (const directory of temporaryDirectories.splice(0)) await rm(directory, { recursive: true, force: true });
 });
@@ -261,6 +266,7 @@ async function openAdmissionWorld(kind: 'memory' | 'sqlite', input: {
     platform = await build({ kind: 'sqlite', directory: world.fixture.base.storeDirectory }, join(directory, 's5-kernel.sqlite'));
   }
   worlds.push(world);
+  platforms.push(platform);
   directory = world.fixture.base.directory;
   revision = world.fixture.workspace.revision;
   const f = world.fixture;

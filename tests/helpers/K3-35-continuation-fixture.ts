@@ -74,6 +74,8 @@ import { createSessionHistoryCursorOwner, type SessionMappingProbe } from '../..
 import type { ResolvedRuntimeConfiguration } from '../../src/core/agent-runtime/execution-contracts.js';
 import { createTargetPlatform } from '../../src/composition/create-platform.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
+import { createQueryJobService } from '../../src/core/work-graph/queries/query-job-service.js';
+import { planSourceRootOf } from './task-claim-fixture.js';
 import { loadPreparedManifest } from '../../src/core/agent-runtime/execution-preparation.js';
 import type { RunReconcileReport } from '../../src/core/agent-runtime/run-reconcile.js';
 import { createSessionLifecycleService } from '../../src/core/work-graph/sessions/session-lifecycle.js';
@@ -153,12 +155,12 @@ function emptyMailbox(): SessionMessageCommandPort {
     async readHostSystemOutbox() { return { status: 'ready' as const, value: { items: [], next: null } }; },
     appendHostSystemOutbox: notUsed('appends to the Host system outbox'),
     async readMessage() { return { status: 'rejected', code: 'not_found', reason: 'the K3-35 record Run reads no message' }; },
+    async readDecisionAnswerTaken() { return { status: 'ready' as const, value: false }; },
+    async readQueryRound() { return { status: 'ready' as const, value: null }; },
     async readMessageBody() { return { status: 'rejected', code: 'not_found', reason: 'the K3-35 record Run reads no body' }; },
     async sendMessage() { throw new Error('the §5.1 mailbox seam never sends'); },
-    async ackMessage() { throw new Error('the §5.1 mailbox seam never acks'); },
     async respondMessage() { throw new Error('the §5.1 mailbox seam never responds'); },
     withdrawMessage: notUsed('withdraws'),
-    releaseMessage: notUsed('releases'),
     readMessageView: notUsed('reads a message view'),
     readInboxView: notUsed('reads an inbox view'),
   };
@@ -413,7 +415,9 @@ export async function openRealRunHarness(
   const runId = newId;
   const shell = options.shellSeam ?? shellSeam;
   const mailbox = options.mailboxToolSeam ?? mailboxToolSeam;
-  const claims = createTaskClaimService({ records, roles, now, newId: runId });
+  const claims = createTaskClaimService({ records, roles, now, newId: runId,
+    planSourceRoot: planSourceRootOf({ messages: world.mailbox, plans: world.fixture.b2.base.plans,
+      queries: createQueryJobService({ records, now, eventId }) }) });
   const anomalies = createSessionAnomalyService({ records, lookups: records, sessionFacts: facts, now });
   const materials = createMaterialService({ bodies: world.fixture.bodies,
     authority: createMaterialRecordReaders(records).authority, now });

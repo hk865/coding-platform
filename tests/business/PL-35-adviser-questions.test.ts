@@ -13,6 +13,7 @@
  */
 import { afterEach, expect, it } from 'vitest';
 import { interventionPlanningQueryRefs } from '../../src/contracts/query-job.js';
+import type { SessionMessage } from '../../src/core/work-graph/model/communication-contracts.js';
 import { driveWorkflow, readExecution } from '../helpers/A2-restart-fixture.js';
 import { S7A_REPLY_TOOLS, checkConfiguration, ready, sessionOf } from '../helpers/S7A-fixture.js';
 import { sendS7A2PersonMessage } from '../helpers/S7A2-fixture.js';
@@ -31,6 +32,12 @@ let opened: PLWorkflowWorld | null = null;
 afterEach(async () => { await opened?.close(); opened = null; });
 
 const FINAL = 'PL-35 final answer: option A';
+/**
+ * The platform's system rounds (`planresume:`, `refine:`) by their one fixed sender (`p2-frozen.md:130` ②). A closing
+ * notice is a Host system message too since P2 (`p2-frozen.md:132`, design 4.1), so the sender kind alone counts it.
+ */
+const systemRound = (message: SessionMessage): boolean =>
+  message.sender.kind === 'host' && message.sender.actor.id === 'host:plan-round';
 
 it('PL-35: the adviser asks the person; M waits and is replied exactly once at the end', async () => {
   const workflow = opened = await openPLWorkflowWorld({ label: 'pl-35',
@@ -109,8 +116,7 @@ it('PL-35: the adviser asks the person; M waits and is replied exactly once at t
   await answerCard(workflow.world, card, 'pl-35-card-answer', 'PL-35: use option A');
   await driveWorkflow(workflow.world.ag2b, { schemaVersion: 1, goalRef: workflow.goal,
     flowId: 'pl-35-resume', sessionHint: null, kind: 'select_work' });
-  const resume = (await listed(workflow.world, 'inbox', adviser)).filter(message =>
-    message.sender.kind === 'host' && message.sender.actor.kind === 'system');
+  const resume = (await listed(workflow.world, 'inbox', adviser)).filter(systemRound);
   const resumeHeads = await Promise.all(resume.map(async message =>
     (await readBody(workflow.world, message.ref, 'message')).split('\n')[0] ?? ''));
   expect(resumeHeads.filter(head => head.startsWith('planresume:'))).toHaveLength(1);
@@ -125,9 +131,7 @@ it('PL-35: the adviser asks the person; M waits and is replied exactly once at t
   const again = await readS7BMessage(workflow.world, sent.message.ref);
   expect(again.response?.bodyRef).toEqual(replied.response?.bodyRef);
   expect(await readBody(workflow.world, sent.message.ref, 'response')).toBe(firstBody);
-  expect((await listed(workflow.world, 'inbox', adviser)).filter(message =>
-    message.sender.kind === 'host' && message.sender.actor.kind === 'system').length)
-    .toBe(resume.length);
+  expect((await listed(workflow.world, 'inbox', adviser)).filter(systemRound).length).toBe(resume.length);
   // The goal loop did not adopt anything on this branch.
   const proposalRead = ready<{ goal: { activePlanRevision: { planId: string } | null } }>(
     await workflow.world.post('goals/read', { scope: { ...S6A_SCOPE }, input: workflow.goal }), 'goals/read');

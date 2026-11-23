@@ -32,7 +32,7 @@ import { createRecordCodec, formatSchemas } from '../persistence/field-table-cod
 import { sessionStoreFailureToRejection } from '../persistence/read-result-failures.js';
 import { nextSessionActivity } from '../state/session-activity.js';
 import {
-  decodeSessionRecord, plainSessionRefToAggregate, sessionAggregateRefKey,
+  decodeSessionRecord, plainSessionRef, plainSessionRefToAggregate, sessionAggregateRefKey,
 } from './session-record-codecs.js';
 
 export const sessionActivityCodec = createRecordCodec(SessionActivityFormat);
@@ -81,7 +81,7 @@ export async function planSessionActivityAdvance(
     current = decoded.value;
   }
   const next = nextSessionActivity({
-    current, ref, session: input.sessionRef, sessionCreatedAt: session.value.createdAt,
+    current, ref, session: plainSessionRef(input.sessionRef), sessionCreatedAt: session.value.createdAt,
     at: input.at, kind: input.kind, source: input.source,
   });
   return {

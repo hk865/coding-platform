@@ -117,9 +117,9 @@ describe('PL-39: the planning note is older than A, so the adviser updates it', 
       status: 'ready', value: { status: 'not_satisfied' },
     });
 
-    // Exactly one Host system `overlap-note:` action_request reaches the adviser line.
+    // Exactly one Host system `overlap-note:` round reaches the adviser line.
     const inbox = await listed(target.world.world, 'inbox', target.adviser);
-    const noteRequests = inbox.filter(message => message.intent === 'action_request'
+    const noteRequests = inbox.filter(message => message.needsReply === true
       && message.sender.kind === 'host' && message.sender.actor.kind === 'system');
     expect(noteRequests).toHaveLength(1);
     const request = noteRequests[0]!;

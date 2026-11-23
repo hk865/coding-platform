@@ -9,7 +9,7 @@
  * SES-13 on the scenario files.
  *
  * Z02 needs a `role_spec` secretary member (the stock scenario work role is the
- * legacy `builder`/executor) and a `send_user_message` grant, so it keeps the
+ * legacy `builder`/executor) and a `notify_person`/`ask_person` grant, so it keeps the
  * group-D `createWP2Platform` helper; it checks the real prepared reminder input
  * via `requestText`.
  */
@@ -30,7 +30,7 @@ import type { ScriptedReply } from '../helpers/B2-runtime-fixture.js';
 import {
   cleanupScenarios, hostCtx, openHostScenario, type HostScenario, type ScenarioCommit,
 } from './harness.js';
-import { consult } from './support/brief.js';
+import { wakeLineRound } from './support/brief.js';
 import {
   execution, NO_REDRIVE, openOwnedWorkRoot, selectedRun, WORK_TARGET,
 } from './support/common.js';
@@ -81,8 +81,8 @@ it('Z02 automatic advancement: a secretary member asks the user to decide, the c
     allowAnyRun: true,
     ownedHost: true,
     scriptedReplies: [
-      { kind: 'calls', calls: [{ callId: 'z02-send', name: 'send_user_message',
-        args: decisionRequestArgs(GOAL, { text: '请你决定：自动推进是否继续' }) }] },
+      { kind: 'calls', calls: [{ callId: 'z02-send', name: 'ask_person',
+        args: decisionRequestArgs('ask_person', { text: '请你决定：自动推进是否继续' }) }] },
       { kind: 'text', text: 'the member asked the user' },
     ],
   });
@@ -165,11 +165,10 @@ it('Z02 automatic advancement: a secretary member asks the user to decide, the c
 it('Z01 automatic advancement through the scenario harness: a yielded wait is answered, the member is retired, the notice appears, seen clears it, and SES-13 recovery keeps it out', async () => {
   const commits: ScenarioCommit[] = [];
   const send = { callId: 'z01-send', name: 'send_session_message',
-    args: { recipient: {}, text: 'Z01 which file should the interrupted work write?', intent: 'inquiry', needsReply: true, waitAfterSend: true } as Record<string, unknown> };
+    args: { recipient: {}, text: 'Z01 which file should the interrupted work write?', needsReply: true, waitAfterSend: true } as Record<string, unknown> };
   const h = await openHostScenario({ automation: NO_REDRIVE, check: 'pass',
     script: {
       replies: [{ kind: 'calls', calls: [send] }],
-      queryReplies: [{ kind: 'text', text: 'Z01 use result.txt' }],
     },
     commitObserver: batch => { commits.push(batch); } });
 
@@ -189,8 +188,8 @@ it('Z01 automatic advancement through the scenario harness: a yielded wait is an
   if (messageRef === undefined) throw new Error('the yielded Run must name its wait message');
   const sessionRef: SessionRef = { projectId: record.session.ref.projectId, sessionId: record.session.ref.sessionId };
 
-  // The member answers through the real consultation consumer.
-  expect(await consult(h, messageRef)).toMatchObject({ status: 'ready', value: { state: 'responded' } });
+  // P2 (p2-frozen.md:133; design-frozen.md:210, :262): the member answers in its own woken round, never a copy.
+  expect(await wakeLineRound(h, messageRef, 'Z01 use result.txt')).toEqual({ status: 'answer_ready', modelCalls: 1 });
 
   // The REAL health writer retires S through the owned work root.
   const platform = await openOwnedWorkRoot(h);
@@ -281,10 +280,10 @@ it("AGTP-11 the main page shows an adviser member's decision card and its notify
   if (f.runRef === null) throw new Error('AGTP-11 needs a claimed Run');
   replies.push(
     { kind: 'calls', calls: [
-      { callId: 'agtp-11-card', name: 'send_user_message',
-        args: decisionRequestArgs(f.goalRef, { text: 'AGTP-11 请决定是否继续' }) },
-      { callId: 'agtp-11-notice', name: 'send_user_message',
-        args: decisionRequestArgs(f.goalRef, { intent: 'notify', text: 'AGTP-11 请知悉' }) },
+      { callId: 'agtp-11-card', name: 'ask_person',
+        args: decisionRequestArgs('ask_person', { text: 'AGTP-11 请决定是否继续' }) },
+      { callId: 'agtp-11-notice', name: 'notify_person',
+        args: decisionRequestArgs('notify_person', { text: 'AGTP-11 请知悉' }) },
     ] },
     { kind: 'text', text: 'AGTP-11 main page answer' },
   );

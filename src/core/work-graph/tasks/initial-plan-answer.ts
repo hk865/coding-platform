@@ -37,7 +37,7 @@ import {
 } from '../queries/query-record-codecs.js';
 import { QUERY_MANIFEST_CONTENT_TYPE } from '../queries/query-execution.js';
 import { appendGuardFirstWins } from '../queries/request-rounds-read.js';
-import { messageConsumptionProblem } from '../state/message-machine.js';
+import { isMessageAgentSender, messageConsumptionProblem } from '../state/message-machine.js';
 import { sessionMessageRefKey } from '../sessions/message-record-codecs.js';
 import {
   normalizeInitialPlanningResponseV2,
@@ -66,6 +66,8 @@ type InitialPlanAnswerReadFacts = InitialPlanAnswerFacts & {
 /** The proven intervention source and the exact QueryJob/SessionMessage revisions it read. */
 export type InterventionSourceProof = {
   sourceMessageRef: SessionMessageRef;
+  /** The frozen part of that message on an `intervention_planning` Query; `decision_answer` only for a card-answer round. */
+  sourcePart?: 'decision_answer';
   guards: readonly RecordGuard[];
 };
 
@@ -109,19 +111,24 @@ export async function proveInterventionSource(input: {
     && canonicalJson(message.goalRef as unknown as JsonValue) !== canonicalJson(input.goalRef as unknown as JsonValue)) {
     return { status: 'ready', value: null };
   }
-  // A withdrawn or unreleased message is never an admitted source.
+  // A withdrawn message is never an admitted source.
   if (messageConsumptionProblem(message) !== null) return { status: 'ready', value: null };
-  // A person, an authorized agent's released `action_request`, or the fixed Host
-  // system round's `action_request` (§5.2.4 (2), DR-P2-02/D2). The text prefix is
-  // never parsed here.
-  const person = message.sender.kind === 'host' && message.sender.actor.kind === 'human';
-  const releasedRequest = (message.sender.kind === 'work_run' || message.sender.kind === 'secretary_round')
-    && message.intent === 'action_request' && message.release === 'released';
-  const systemRequest = message.sender.kind === 'host' && message.sender.actor.kind === 'system'
-    && message.intent === 'action_request';
-  if (!person && !releasedRequest && !systemRequest) return { status: 'ready', value: null };
+  // The stored facts that make a message an intervention source: a person's
+  // direct intervention (the Host-written `entry`), an agent line's own message
+  // (a work/query/secretary round), or a platform message that wakes the line.
+  // The fixed Host system round is one such platform wake; its trusted shape is
+  // proven when the Host picks the round, not by the sender identity here. The
+  // deleted `intent`/`release` fields are never read.
+  const person = message.entry === 'person_intervention'
+    && message.sender.kind === 'host' && message.sender.actor.kind === 'human';
+  const platformWake = message.wake === true
+    && message.sender.kind === 'host' && message.sender.actor.kind === 'system';
+  if (!person && !isMessageAgentSender(message.sender) && !platformWake) {
+    return { status: 'ready', value: null };
+  }
   return { status: 'ready', value: {
     sourceMessageRef: { ...source },
+    ...(execution.sourcePart === undefined ? {} : { sourcePart: execution.sourcePart }),
     guards: [
       { refKey: canonicalJson(input.query.ref as unknown as JsonValue), expectedRevision: input.query.revision },
       { refKey: sessionMessageRefKey(message.ref), expectedRevision: message.revision },

@@ -18,9 +18,8 @@ import {
   armedSeam, kls2cAdopt, kls2cNoticesAtLeast, kls2cRecover, kls2cWrittenNote, openKLS2CHost, type KLS2CHost,
 } from '../helpers/KLS2C-knowledge-host.js';
 import { expectedLine, must, registerLine } from '../helpers/KLS3A1-gap-world.js';
-import { graphWrite } from '../helpers/AG2b-collaboration-fixture.js';
 import { S6A_SCOPE } from '../helpers/S6A-request-fixture.js';
-import { openXWS2AWorld, XWS2A_ADVISER_TOOLS, xws2aModuleInProject, type XWS2AWorld } from '../helpers/XWS2A-world.js';
+import type { XWS2AWorld } from '../helpers/XWS2A-world.js';
 import { gitIn, initGitWorkspace } from '../scenarios/support/git-workspace.js';
 
 const worlds: (KLS2CHost | KLS2AWorld | XWS2AWorld)[] = [];
@@ -118,40 +117,6 @@ describe('D1 two repositories race the first line (line-service.ts:111, :114)', 
     const invalid = answers.find(answer => answer.status === 'rejected');
     expect(JSON.stringify(invalid)).toContain('another repository');
   });
-});
-
-describe('B1 a second-workspace Run finds the project region line, not another workspace Session (session-directory.ts:1970, session-discovery-tools.ts:197)', () => {
-  it('B1 the find_related_sessions result names the second-mod region line and not the investigated-only main line', async () => {
-    /* Named mutations: `session-directory.ts:1970` drops the `args.regionMain !== null && openResponsible && ...`
-     * disjunct — the region line's id disappears; drops only `openResponsible &&` — the investigated-only id leaks;
-     * `session-discovery-tools.ts:197` drops `projectRegionLines: true` — the region line's id disappears. */
-    const world = await openXWS2AWorld({ backend: 'memory', secondOpenOptions: { writeAllowed: true },
-      adviserTools: [...XWS2A_ADVISER_TOOLS, 'find_related_sessions'] });
-    worlds.push(world);
-    const ws2 = world.second.scope.workspaceId;
-    const projectId = world.base.world.scope.projectId;
-    const moduleRef = { projectId, moduleId: xws2aModuleInProject(ws2) };
-    await world.waitCoarseAnswered();
-    await world.approveCoarse();
-    const region = await world.scriptRegionProposal();
-    const card = await world.base.world.readSession(world.adviser.ref);
-    const investigated = graphWrite(S6A_SCOPE, { sessionRef: world.adviser.ref, relation: 'investigated',
-      target: { kind: 'module', ref: moduleRef }, active: true }, 'kls3a1-b1-investigated',
-    [{ ref: card.record.ref, revision: card.record.revision },
-      { ref: { ...world.adviser.ref, aggregateType: 'SessionWorkLink', target: { kind: 'module', ref: moduleRef },
-        relation: 'investigated' }, revision: 0 }]);
-    const linked = await world.base.world.post('sessions/link', investigated);
-    expect((linked.body as { status?: string }).status).toBe('committed');
-    const { line } = await world.workRun({ label: 'kls3a1-b1', replies: [
-      { kind: 'calls', calls: [{ callId: 'b1', name: 'find_related_sessions', args: {
-        target: { kind: 'module', ref: { projectId, moduleId: 'second-mod' } }, page: { limit: 20 } } }] },
-      { kind: 'text', text: 'b1' }] });
-    const last = (await world.base.world.scripted.requests(line)).at(-1);
-    if (last === undefined) throw new Error('B1: no model request after find_related_sessions');
-    const seen = JSON.stringify(last);
-    expect(seen).toContain(region.ref.sessionId);
-    expect(seen).not.toContain(world.adviser.ref.sessionId);
-  }, 180_000);
 });
 
 /** The b/c world: two workspaces, both catalog modules adopted, a real executor Run and line in each, and

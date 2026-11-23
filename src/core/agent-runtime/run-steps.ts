@@ -19,7 +19,9 @@ import type { SessionMessageRef } from '../../contracts/core/session-message.js'
 import { streamTail, truncateUtf8, utf8ByteLength } from '../../contracts/utf8.js';
 import { isRecord } from '../../contracts/validation/common.js';
 import type { KernelExecutionBinding } from '../work-graph/model/execution-entry-contracts.js';
-import type { SESSION_MAILBOX_TOOL_NAMES, USER_DECISION_TOOL_NAMES } from './communication-tools.js';
+import {
+  PERSON_MESSAGE_TOOL_NAMES, type SESSION_MAILBOX_TOOL_NAMES,
+} from './communication-tools.js';
 import {
   callStatusOf, callTargetOf, commandOutputOf, editLinesOf, turnCallsOf, turnEventsOf, turnReasoningOf,
   type DecodedKernelRecord, type TurnCall, type reduceTurnFromStart,
@@ -33,7 +35,8 @@ const READ_TOOL_NAMES: ReadonlySet<string> = new Set(['read', 'read_source']);
 const COMMAND_TOOL_NAMES: ReadonlySet<string> = new Set(['shell', READONLY_COMMAND_TOOL_NAME]);
 const SEND_SESSION_MESSAGE = 'send_session_message' satisfies (typeof SESSION_MAILBOX_TOOL_NAMES)[number];
 const RESPOND_SESSION_MESSAGE = 'respond_session_message' satisfies (typeof SESSION_MAILBOX_TOOL_NAMES)[number];
-const SEND_USER_MESSAGE = 'send_user_message' satisfies (typeof USER_DECISION_TOOL_NAMES)[number];
+/** 人件消息（通知、问人）：收件人固定是人，不走 Session 收件人参数。 */
+const PERSON_MESSAGE_TOOL_NAME_SET: ReadonlySet<string> = new Set<string>(PERSON_MESSAGE_TOOL_NAMES);
 
 /** 从头截到 `maxBytes` 个 UTF-8 字节，不切开一个字。 */
 function bounded(text: string, maxBytes: number): BoundedTextV1 {
@@ -99,7 +102,7 @@ function callStep(call: TurnCall, over: boolean): RunStepV1 {
   if (call.name === SEND_SESSION_MESSAGE) {
     return { ...base, kind: 'message', to: sessionRecipientOf(args['recipient']), text: boundedArg(args, 'text', RUN_STEP_TEXT_BYTES) };
   }
-  if (call.name === SEND_USER_MESSAGE) {
+  if (PERSON_MESSAGE_TOOL_NAME_SET.has(call.name)) {
     return { ...base, kind: 'message', to: { kind: 'person' }, text: boundedArg(args, 'text', RUN_STEP_TEXT_BYTES) };
   }
   if (call.name === RESPOND_SESSION_MESSAGE) {

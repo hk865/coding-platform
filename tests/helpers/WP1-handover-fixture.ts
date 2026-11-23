@@ -61,6 +61,8 @@ import { createSourceAuthorityReader } from '../../src/core/work-graph/source-au
 import { createRoleConfigurationService } from '../../src/core/work-graph/configuration/role-memory-service.js';
 import { createSessionMailbox } from '../../src/core/work-graph/communication/mailbox-service.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
+import { createQueryRoundResolver } from '../../src/core/work-graph/tasks/query-round.js';
+import { unknownSessionDuty } from './session-duty-double.js';
 import { createRunControlService } from '../../src/core/work-graph/tasks/control-service.js';
 import { createRunReconcileService } from '../../src/core/work-graph/tasks/run-reconcile-service.js';
 import { createTaskRequeueService } from '../../src/core/work-graph/tasks/requeue-service.js';
@@ -91,7 +93,7 @@ import type { WorkflowAdvanceBase, WorkflowAdvanceInput } from '../../src/busine
 import { moveKernelAside, restoreKernel } from './A2-restart-fixture.js';
 import { createB2ExecutionFixture, unknownWork, retireSession, type B2ExecutionFixture, type B2Records }
   from './S1-workflow-archive-fixture.js';
-import { createRuntimeHostDouble, createScriptedModel } from './B2-runtime-fixture.js';
+import { createRuntimeHostDouble, createScriptedModel, deliveryFactsForFixture } from './B2-runtime-fixture.js';
 import { knowledgeLinesFor } from './KLS2-knowledge-lines.js';
 
 const T0 = '2026-10-08T00:00:00.000Z';
@@ -157,6 +159,7 @@ async function createHandoverWorkflow(b2: B2ExecutionFixture, options: HandoverW
   const materials = createMaterialService({ bodies: b2.bodies, authority, now });
   const messages = createSessionMailbox({ records, sessions: base.sessionsPort, executions: reads, roles, materials,
     defaultInquiryDeadlineMs: 86_400_000,
+    queryRounds: createQueryRoundResolver({ records, duties: unknownSessionDuty, bodies: b2.bodies }),
     systemActor: { kind: 'system', id: prefix }, now, newId: eventId });
   const controls = createRunControlService({ records, authority, reads, now, eventId });
   const workspaceHost = {
@@ -189,6 +192,7 @@ async function createHandoverWorkflow(b2: B2ExecutionFixture, options: HandoverW
     graphHistory: createGraphExecutionHistoryReader({ executions: reads, history: activity }),
     sessionOperations, kernelStores, workspaceHost,
     sourceAuthority: () => createSourceAuthorityReader({ authority }),
+    deliveryFacts: deliveryFactsForFixture,
     host: createRuntimeHostDouble({ runRefs: new Set<string>(), scripted,
       root: base.directory, skillRoot: join(base.directory, 'skills'), scope: base.scope, role: ROLE_Y }),
     kernel: kernelApi, controls, now, newId: eventId,

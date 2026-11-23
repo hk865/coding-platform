@@ -70,15 +70,25 @@ export const PLAN_PROPOSAL_LOOKUP_INDEX = 'plan-proposal-by-goal';
 export const S5_PLAN_PROPOSAL_BY_REQUEST = 's5-plan-proposal-by-goal-request';
 
 /**
- * The wire-only origin of a stored `PlanProposal`. `since` is the candidate's
- * creation commit and is bound once; `until` is the cursor of the commit that
+ * The wire-only origin of a stored `PlanProposal`. `since` is the chain's
+ * first candidate creation commit and is bound once; a replacement copies it.
+ * `createdSince` is the candidate's OWN creation commit: the first candidate of
+ * a chain binds it together with `since`, a replacement binds only its own, and
+ * every later update copies it. `until` is the cursor of the commit that
  * adopted it (§6.4.2) and only that adoption write binds it.
  */
-export type PlanProposalOriginWireV1 = NoticeOriginWireV1 & { until?: CommitCursor | null };
+export type PlanProposalOriginWireV1 = NoticeOriginWireV1 & {
+  createdSince?: CommitCursor | null;
+  until?: CommitCursor | null;
+};
 
-/** A candidate binds `since`; the adoption commit binds `until`; later updates copy both. */
-export const PLAN_PROPOSAL_COMMIT_CURSOR_FIELDS: readonly ('since' | 'until')[] = [
-  ...NOTICE_ORIGIN_COMMIT_CURSOR_FIELDS, 'until',
+/**
+ * A chain's first candidate binds `since` and `createdSince`; a replacement
+ * binds `createdSince` only; the adoption commit binds `until`; later updates
+ * copy all three.
+ */
+export const PLAN_PROPOSAL_COMMIT_CURSOR_FIELDS: readonly ('since' | 'createdSince' | 'until')[] = [
+  ...NOTICE_ORIGIN_COMMIT_CURSOR_FIELDS, 'createdSince', 'until',
 ];
 
 /** The event that records one candidate/status transition of a proposal. */
@@ -101,6 +111,8 @@ export type PlanProposalRecordedEvent = {
   acknowledgement?: SessionMessageRef;
   /** The intervention message the proposal came from; required and null for every other proposal. */
   sourceMessageRef: SessionMessageRef | null;
+  /** The frozen source part of that message: `decision_answer` only for a card-answer round; absent otherwise. */
+  sourcePart?: 'decision_answer';
 };
 
 // --------------------------------------------------------------------------
@@ -852,6 +864,16 @@ function proposalValueIssues(value: unknown, expectedRef: PlanProposalRef | null
       issues.push('candidate_v2.sourceMessageRef must be null or a complete SessionMessageRef');
     }
     if (!('sourceMessageRef' in value)) issues.push('candidate_v2.sourceMessageRef is required (null when absent)');
+    // Absent on every candidate recorded before the frozen card-answer source existed; when present
+    // it names that source part and only exists alongside a concrete intervention message.
+    if (value['sourcePart'] !== undefined) {
+      if (value['sourcePart'] !== 'decision_answer') {
+        issues.push("candidate_v2.sourcePart must be 'decision_answer'");
+      }
+      if (sessionMessageRefFromValue(sourceMessage) === null) {
+        issues.push('candidate_v2.sourcePart requires a non-null sourceMessageRef');
+      }
+    }
     // 121-136: absent on every candidate recorded before it and on one that brings no checks.
     const checks = value['checks'];
     if (checks !== undefined && (!Array.isArray(checks) || checks.length === 0 || !checks.every(isRegisteredCommandCheck))) {
@@ -869,11 +891,17 @@ function validatePlanProposalRecord(record: EncodedRecord): DecodeResult<Encoded
   }
   const parsed = parseTaggedObject(record.json, 'PlanProposal');
   if (typeof parsed === 'string') return invalid(parsed);
-  // §2.5: the wire-only creation origin lives beside the body;
-  // the placeholder `null` is bound by the Store before this validator runs on
-  // a bound record (see the record schema's `commitCursorFields`).
+  // §2.5: the wire-only creation origins live beside the body; the placeholder
+  // `null` is bound by the Store before this validator runs on a bound record
+  // (see the record schema's `commitCursorFields`).
   const originProblem = noticeOriginFieldsProblem(parsed, 'PlanProposal');
   if (originProblem !== null) return invalid(`PlanProposal origin is invalid: ${originProblem}`);
+  // `createdSince` is the candidate's own creation commit; absent on records
+  // written before it existed, and `null` is only the pre-binding placeholder.
+  const createdSince = parsed['createdSince'];
+  if (createdSince !== undefined && createdSince !== null && !isPlatformCursor(createdSince)) {
+    return invalid('PlanProposal.createdSince must be a CommitCursor or null');
+  }
   // §6.4.2: the adoption commit fills `until`; `null` is only the placeholder
   // the Store binds inside the transaction, never a stored value.
   const until = parsed['until'];
@@ -994,6 +1022,16 @@ function validatePlanProposalRecordedEvent(event: EncodedDomainEvent): DecodeRes
   if (!('sourceMessageRef' in parsed)) {
     issues.push('PlanProposalRecorded sourceMessageRef is required (null when absent)');
   }
+  // Absent on every event written before the frozen card-answer source existed; when present
+  // it names that source part and only exists alongside a concrete intervention message.
+  if (parsed['sourcePart'] !== undefined) {
+    if (parsed['sourcePart'] !== 'decision_answer') {
+      issues.push("PlanProposalRecorded sourcePart must be 'decision_answer'");
+    }
+    if (sessionMessageRefFromValue(sourceMessage) === null) {
+      issues.push('PlanProposalRecorded sourcePart requires a non-null sourceMessageRef');
+    }
+  }
   const payload = parsed['payload'];
   if (!isRecord(payload)) issues.push('PlanProposalRecorded payload must be an object');
   else {
@@ -1058,10 +1096,12 @@ export function decodePlanProposalRecord(record: EncodedRecord): DecodeResult<Pl
   const checked = validatePlanProposalRecord(record);
   if (checked.status !== 'decoded') return checked;
   const parsed = JSON.parse(record.json) as UnknownRecord;
-  // §2.5: the wire-only creation origin (`since`) and adoption cursor (`until`)
-  // are NOT part of the public DTO; `decodePlanProposalOrigin` reads them.
+  // §2.5: the wire-only creation origins (`since`, `createdSince`) and the
+  // adoption cursor (`until`) are NOT part of the public DTO;
+  // `decodePlanProposalOrigin` reads them.
   const wire = { ...parsed };
   delete wire['since'];
+  delete wire['createdSince'];
   delete wire['until'];
   delete wire['noticeAutomationCap'];
   return { status: 'decoded', value: wire as unknown as PlanProposal };
@@ -1071,6 +1111,8 @@ export function decodePlanProposalRecord(record: EncodedRecord): DecodeResult<Pl
  * §2.5/§6.4.2: the wire-only origin of a stored PlanProposal, read beside
  * `decodePlanProposalRecord` and never merged into its public DTO.
  * Every current candidate carries `since` because the creating commit binds it;
+ * `createdSince` is this candidate's own creation commit and is absent only on a
+ * legacy record (which then proves no expiry, never falling back to `since`);
  * an adopted record also carries `until`, the cursor of its adoption commit.
  * A record without a field is a pre-slice record (the field stays absent); a
  * persisted `null` (the PreparedCommit placeholder) is invalid, never a legacy
@@ -1078,7 +1120,9 @@ export function decodePlanProposalRecord(record: EncodedRecord): DecodeResult<Pl
  */
 export function decodePlanProposalOrigin(
   record: EncodedRecord,
-): DecodeResult<PlanProposalOriginWireV1 & { since: CommitCursor; until?: CommitCursor }> {
+): DecodeResult<PlanProposalOriginWireV1 & {
+  since: CommitCursor; createdSince?: CommitCursor; until?: CommitCursor;
+}> {
   const parsed = parseTaggedObject(record.json, 'PlanProposal origin');
   if (typeof parsed === 'string') return invalid(parsed);
   const problem = noticeOriginFieldsProblem(parsed, 'PlanProposal origin');
@@ -1089,6 +1133,13 @@ export function decodePlanProposalOrigin(
   if (typeof parsed['since'] !== 'string') {
     return invalid('a PlanProposal origin must carry a commit cursor since');
   }
+  const createdSince = parsed['createdSince'];
+  if (createdSince === null) {
+    return invalid('a persisted PlanProposal origin createdSince must be a commit cursor');
+  }
+  if (createdSince !== undefined && !isPlatformCursor(createdSince)) {
+    return invalid('a PlanProposal origin createdSince must be a commit cursor');
+  }
   const until = parsed['until'];
   if (until === null) {
     return invalid('a persisted PlanProposal origin until must be a commit cursor');
@@ -1098,6 +1149,7 @@ export function decodePlanProposalOrigin(
   }
   return { status: 'decoded', value: {
     since: parsed['since'] as CommitCursor,
+    ...(createdSince === undefined ? {} : { createdSince: createdSince as CommitCursor }),
     ...(until === undefined ? {} : { until: until as CommitCursor }),
   } };
 }
@@ -1126,10 +1178,12 @@ export function decodePlanRevisionAcceptedEvent(event: EncodedDomainEvent): Deco
 
 /**
  * Encodes one `PlanProposal`. An optional `origin` writes the wire-only notice
- * origin beside the public DTO (SPEC §2.5, §6.4.2): the creating commit passes
- * `{ since: null }` for the Store cursor binding, the adoption commit passes the
- * preserved `since` plus `{ until: null }`, and every later update passes the
- * preserved origin; the public DTO itself is never extended.
+ * origin beside the public DTO (SPEC §2.5, §6.4.2): a chain's first candidate
+ * passes `{ since: null, createdSince: null }` for the Store cursor bindings, a
+ * replacement passes the preserved `since` plus its own `{ createdSince: null }`,
+ * the adoption commit passes the preserved origins plus `{ until: null }`, and
+ * every later update passes the preserved origin; the public DTO itself is
+ * never extended.
  */
 export function encodePlanProposal(
   proposal: PlanProposal,
@@ -1141,6 +1195,7 @@ export function encodePlanProposal(
   const wire = JSON.parse(record.json) as UnknownRecord;
   let wrote = false;
   if (origin.since !== undefined) { wire['since'] = origin.since; wrote = true; }
+  if (origin.createdSince !== undefined) { wire['createdSince'] = origin.createdSince; wrote = true; }
   if (origin.until !== undefined) { wire['until'] = origin.until; wrote = true; }
   return wrote ? { ...record, json: JSON.stringify(wire) } : record;
 }
@@ -1165,9 +1220,9 @@ export function encodePlanRevisionAcceptedEvent(event: PlanRevisionAcceptedEvent
 const PLAN_PROPOSAL_RECORD_SCHEMA: EncodedRecordSchema = {
   schemaId: PLAN_PROPOSAL_SCHEMA_ID,
   aggregateType: 'PlanProposal',
-  // §2.5/§6.4.2: a new candidate binds its creation commit cursor to the
-  // wire-only `since`; the adoption commit binds `until`; later updates copy
-  // both and never rebind.
+  // §2.5/§6.4.2: a chain's first candidate binds `since` and `createdSince` to
+  // its creation commit; a replacement binds only its own `createdSince`; the
+  // adoption commit binds `until`; later updates copy all three and never rebind.
   commitCursorFields: PLAN_PROPOSAL_COMMIT_CURSOR_FIELDS,
   validate: validatePlanProposalRecord,
 };

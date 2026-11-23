@@ -31,7 +31,7 @@ import { parseTaggedObject } from '../../../contracts/validation/common.js';
 import { rejectedWithCurrent } from '../../../contracts/core/rejections.js';
 import type { EncodedDomainEvent, StoreFailure } from '../../record-store/ports.js';
 import type { DecisionSourceFactsPort, S5RecordPort } from '../model/decision-contracts.js';
-import { decodeMessageReleaseProofEvent } from './decision-change-proof.js';
+import { decodeActionReleaseProofEvent } from './decision-change-proof.js';
 import { decodeGoalSettingsChangedEvent, decisionChangeProofProblem } from '../persistence/decision-record-codecs.js';
 import { noteDispositionChangedEventFromEvent } from '../persistence/note-record-codecs.js';
 import { decodePlanRevisionAcceptedEvent, decodePlanProposalRecordedEvent } from '../persistence/plan-record-codecs.js';
@@ -134,7 +134,7 @@ const PROOF_EVENT_DECODERS: Readonly<Record<string, ProofEventDecoder>> = {
     }
     return { actor: decoded.value.actor, appliedAt: decoded.value.occurredAt, proof: decoded.value.proof ?? null };
   },
-  SessionMessageReleaseDecided: decodeMessageReleaseProofEvent,
+  ActionRequestChanged: decodeActionReleaseProofEvent,
   // The handoff approval's decided event carries the host actor and the formal proof; accept/advance never do.
   SessionHandoffRecorded: (event) => {
     const decoded = sessionHandoffRecordedCodec.decode(event);
@@ -348,9 +348,9 @@ const PROOF_EVENT_DECODERS: Readonly<Record<string, ProofEventDecoder>> = {
   },
   // The initial architecture/completion-policy proof is slice 6.
   ArchitectureCatalogAdopted: () => rejectedWithCurrent('unsupported',
-    'only GoalSettingsChanged, PlanRevisionAccepted, NoteDispositionChanged, UnknownCallReviewChanged, CommandRerunRequestChanged and SessionMessageReleaseDecided applications are provable in this slice'),
+    'only GoalSettingsChanged, PlanRevisionAccepted, NoteDispositionChanged, UnknownCallReviewChanged, CommandRerunRequestChanged and ActionRequestChanged applications are provable in this slice'),
   ProjectCompletionPolicyActivated: () => rejectedWithCurrent('unsupported',
-    'only GoalSettingsChanged, PlanRevisionAccepted, NoteDispositionChanged, UnknownCallReviewChanged, CommandRerunRequestChanged and SessionMessageReleaseDecided applications are provable in this slice'),
+    'only GoalSettingsChanged, PlanRevisionAccepted, NoteDispositionChanged, UnknownCallReviewChanged, CommandRerunRequestChanged and ActionRequestChanged applications are provable in this slice'),
 };
 
 export function decodeProofEvent(event: EncodedDomainEvent, commit: CommittedReceiptRow): ProofEvent | ReadResult<never> {
@@ -414,8 +414,12 @@ export function readApplicationReceiptFacts(
     if (decoded.proof === null || decoded.proof === undefined) {
       return rejectedWithCurrent('incomplete', 'the formal event carries no decision change proof');
     }
-    const problem = decisionChangeProofProblem(decoded.proof);
-    if (problem !== null) return rejectedWithCurrent('unavailable', `the decision change proof is damaged: ${problem}`);
+    // The ActionRequestChanged decoder already proved this proof's shape (and its Host actor); the other
+    // whitelisted rows return an unvalidated proof, so only those are re-checked here.
+    if (event.eventType !== 'ActionRequestChanged') {
+      const problem = decisionChangeProofProblem(decoded.proof);
+      if (problem !== null) return rejectedWithCurrent('unavailable', `the decision change proof is damaged: ${problem}`);
+    }
     const proof = decoded.proof;
     if (canonicalOf(proof.acknowledgementRef) !== canonicalOf(answer.ref)) {
       return rejectedWithCurrent('invalid', 'the receipt is not associated with this answer');

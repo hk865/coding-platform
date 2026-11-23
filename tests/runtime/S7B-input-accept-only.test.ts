@@ -81,7 +81,7 @@ describe('the mailbox input offer is a read, not an acceptance', () => {
       const firstDrive = runS7ASameSessionAgain(world, line);
       await model.reached;
       const person = committed<SessionMessage>(await world.post('messages/send', graphWrite(S6A_SCOPE, {
-        recipient: line.ref, text: BODY, intent: 'action_request', needsReply: true,
+        recipient: line.ref, text: BODY, needsReply: true,
       }, `s7b-accept-only-send-${backend}`)), 'the person message');
       const inputId = deriveSessionInputId(person.ref, 'message');
       model.release();

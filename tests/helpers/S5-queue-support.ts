@@ -19,7 +19,7 @@ import type { S5RecordPort } from '../../src/core/work-graph/model/decision-cont
 import type { RecordOrderedLookupPort } from '../../src/core/record-store/lookup-ports.js';
 import type { SessionMailboxDependencies } from '../../src/core/work-graph/model/communication-contracts.js';
 import type { AuthorizeConfiguration } from '../../src/core/work-graph/model/execution-entry-contracts.js';
-import { SESSION_MAILBOX_TOOL_NAMES, USER_DECISION_TOOL_NAMES } from '../../src/core/agent-runtime/communication-tools.js';
+import { PERSON_MESSAGE_TOOL_NAMES, SESSION_MAILBOX_TOOL_NAMES, USER_DECISION_TOOL_NAMES } from '../../src/core/agent-runtime/communication-tools.js';
 import { createMaterialRecordReaders } from '../../src/core/work-graph/materials/record-readers.js';
 import { createMaterialService } from '../../src/core/work-graph/materials/material-service.js';
 import { createRoleConfigurationService } from '../../src/core/work-graph/configuration/role-memory-service.js';
@@ -28,6 +28,7 @@ import { unknownSessionDuty } from './session-duty-double.js';
 import { plainSessionRefToAggregate } from '../../src/core/work-graph/sessions/session-record-codecs.js';
 import { createSessionMailbox } from '../../src/core/work-graph/communication/mailbox-service.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
+import { createQueryRoundResolver } from '../../src/core/work-graph/tasks/query-round.js';
 import { createExecutionEntryService } from '../../src/core/work-graph/tasks/execution-entry-service.js';
 import { createQueryExecution } from '../../src/core/work-graph/queries/query-execution.js';
 import { createQueryJobService } from '../../src/core/work-graph/queries/query-job-service.js';
@@ -107,7 +108,8 @@ export function materialsFor(f: S5DecisionFixture) {
   return createMaterialService({ bodies: f.bodies, authority: createMaterialRecordReaders(f.records).authority, now: f.now });
 }
 export function mailboxDependencies(f: S5DecisionFixture): SessionMailboxDependencies {
-  const permissions = { policyRevision: 'legacy-template', tools: ['read', ...SESSION_MAILBOX_TOOL_NAMES, ...USER_DECISION_TOOL_NAMES], writeScope: [], createMember: false };
+  const permissions = { policyRevision: 'legacy-template', tools: ['read', ...SESSION_MAILBOX_TOOL_NAMES,
+    ...USER_DECISION_TOOL_NAMES, ...PERSON_MESSAGE_TOOL_NAMES], writeScope: [], createMember: false };
   // The world has two formal Host templates: the decision sender's RA uses
   // `platform-adviser`; the older builder Sessions/Runs keep `builder`.
   const hostTemplates = [
@@ -126,6 +128,7 @@ export function mailboxDependencies(f: S5DecisionFixture): SessionMailboxDepende
     knowledge: f.knowledge, lookups: f.records, duty: unknownSessionDuty }),
     executions: createRunStateReader({ records: f.records }),
     roles: createRoleConfigurationService({ records: f.records, now: f.now, eventId: f.newId }),
+    queryRounds: createQueryRoundResolver({ records: f.records, duties: unknownSessionDuty, bodies: f.bodies }),
     materials: materialsFor(f), runtimeAdmission: { bodies: f.bodies, authorizeConfiguration },
     defaultInquiryDeadlineMs: 86_400_000,
     systemActor: OPERATOR, now: f.now, newId: f.newId,

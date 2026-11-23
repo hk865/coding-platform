@@ -6,8 +6,11 @@ import type { S6AHostWorld } from '../helpers/S6A-host-fixture.js';
 import { holdS7AQueryRound, openS7AQueryWorld, sendS7ASecretaryMessage, setS7AAutonomy } from '../helpers/S7A-fixture.js';
 const readerGate = vi.hoisted(() => ({ refKey: null as string | null, used: false,
   reached: null as (() => void) | null, released: null as Promise<void> | null }));
-vi.mock('../../src/core/work-graph/tasks/owner-record-read.js', async importOriginal => {
-  const original = await importOriginal<typeof import('../../src/core/work-graph/tasks/owner-record-read.js')>();
+// The round's own read goes through `persistence/owner-record-read.js`; the
+// `tasks/` file of that name is only a re-export shim, so mocking it would
+// never hold the QueryRun read.
+vi.mock('../../src/core/work-graph/persistence/owner-record-read.js', async importOriginal => {
+  const original = await importOriginal<typeof import('../../src/core/work-graph/persistence/owner-record-read.js')>();
   return { ...original, async readOwnerRecord<T>(input: Parameters<typeof original.readOwnerRecord<T>>[0]) {
     if (readerGate.refKey !== null && !readerGate.used && input.refKey === readerGate.refKey) {
       readerGate.used = true; readerGate.reached?.(); await readerGate.released;
@@ -34,7 +37,7 @@ describe.each(['memory', 'sqlite'] as const)('X-secretary-replay: the receipt re
       view => view.rounds.every(round => round.status === 'ended'), 'the secretary round ends');
     expect((await opened.world.readRequest(requestRoot)).rounds.every(round => round.status === 'ended')).toBe(true);
     const replayed = await opened.world.platform.messages.sendMessage(sent.context, {
-      input: { recipient: opened.session.ref, text, intent: 'inquiry' as const, needsReply: true },
+      input: { recipient: opened.session.ref, text, needsReply: true },
       meta: { requestId: 's7a-secretary-send-x-secretary-replay', expected: [] },
     });
     expect(replayed).toMatchObject({ status: 'committed', replayed: true });
@@ -47,7 +50,7 @@ describe.each(['memory', 'sqlite'] as const)('X-secretary-replay: the receipt re
   it('restores a concurrent same-identity commit when the round ended after the first lookup missed', async () => {
     const opened = await openRound();
     const text = 'The same identity commits before this round ends.';
-    const input = { recipient: opened.session.ref, text, intent: 'inquiry' as const, needsReply: true };
+    const input = { recipient: opened.session.ref, text, needsReply: true };
     const requestId = 's7a-secretary-race';
     let release!: () => void;
     Object.assign(readerGate, { refKey: null, used: false, reached: null });

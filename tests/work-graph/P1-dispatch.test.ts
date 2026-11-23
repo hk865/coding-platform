@@ -122,9 +122,7 @@ const requestRound: Within = async (p1, use) =>
 const askers: Array<[string, string, 'dispatch' | 'stop', string, Within]> = [
   ['M1-1', 'the operator (no query round)', 'dispatch', 'only a running QueryRun has a query round identity',
     async (p1, use) => await use(p1.world.humanContext())],
-  ['M2-3', 'a secretary request round', 'dispatch', 'secretary request round is not wired yet', requestRound],
-  ['M2-3', 'a secretary request round', 'stop', 'secretary request round is not wired yet', requestRound],
-  ['M2-4', 'an executor line\'s planning round', 'dispatch', 'only a secretary or adviser line may request a dispatch',
+  ['M2-4', 'an executor line\'s planning round', 'dispatch', '这一轮没有授予这个动作',
     async (p1, use) => await use((await p1.hold(await createPLLine(p1.world, { label: 'p1-m-x', role: S6A_WORK_ROLE }),
       'm24-x')).ctx)],
 ];

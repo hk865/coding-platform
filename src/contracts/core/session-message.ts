@@ -10,6 +10,7 @@
 // of the identity, exactly like every other persisted aggregate ref.
 import type { ArtifactRef } from '../artifact.js';
 import type { ActorRef, CommitCursor } from '../command-event.js';
+import { canonicalJson, sha256Hex } from '../fingerprint.js';
 import type { RunRef, SourceRefV1 } from '../dispatch.js';
 import type {
   DecisionAnnotationV1,
@@ -33,16 +34,24 @@ export type SessionMessageRef = {
 };
 
 /**
- * 发送方的显式通信意图。意图、是否需要回复、发送后是否立即等待是三件独立事实，
- * 不能由单一字段隐式表达，也不能让平台把通知自动升级成行动授权。
+ * The trusted entry a Host human message was written from. Only the direct-intervention entry carries B20 rights;
+ * agent and platform messages never carry it. The Host writes it at the entry, never from model input.
  */
-export type SessionMessageIntentV1 = 'notify' | 'inquiry' | 'action_request' | 'decision_request';
+export type MessageEntryV1 = 'person_intervention';
 
-/** 归一后的通信意图契约。 */
-export type SessionMessageIntentFields = {
-  intent?: SessionMessageIntentV1;
+/**
+ * Who writes the message's one reply slot: the original line, or the formal answer to a consultation copy. A copy
+ * question is `copy` from intake, so the original line is never offered it.
+ */
+export type MessageAnsweredByV1 = 'line' | 'copy';
+
+/** The independent send facts: a reply need, a yield, the wake choice, and the two persisted entry facts. */
+export type SessionMessageSendFields = {
   needsReply?: boolean;
   waitAfterSend?: boolean;
+  wake?: boolean;
+  answeredBy?: MessageAnsweredByV1;
+  entry?: MessageEntryV1;
 };
 
 /**
@@ -115,21 +124,54 @@ export type SendRejectionV1 = CoreRejection & { dispatchCurrent?: DispatchCurren
 
 // The pure DTOs that cross layers: `W/state`, `W/views` and `C/work-line.ts` all name them, so they are
 // declared in C and only re-exported by the model; C imports no W module.
-/** The message's release state; the record's stored `delivery` is 7B's separate value. */
-export type MessageReleaseV1 = 'awaiting' | 'approved' | 'released' | 'denied';
 /** The derived delivery triple, recomputed on read and never stored. */
 export type MessageDeliveryStateV1 = {
   delivery: 'queued' | 'delivered' | 'undelivered';
   deliveredTo: { executionRef: RunRef | QueryRunRef; acceptedAt: string } | null;
-  evidence: 'accepted' | 'legacy_unknown' | null;
+  evidence: 'accepted' | null;
   undeliveredReason: 'recipient_archived' | 'recipient_retired' | null;
 };
 export type MessageReadDispositionV1 =
-  | { kind: 'offerable' }
-  | { kind: 'not_released'; release: 'awaiting' | 'approved' | 'denied' }
+  | { kind: 'offerable' }                    // the original line may still deliver it
+  | { kind: 'answered' }                    // a formal reply is saved; it is never offered again
+  | { kind: 'copy' }                        // a copy question, consumed only by its copy identity
   | { kind: 'withdrawn' }
-  | { kind: 'delivered'; evidence: 'accepted' | 'legacy_unknown' }
+  | { kind: 'delivered'; evidence: 'accepted' }
   | { kind: 'undelivered'; reason: 'recipient_archived' | 'recipient_retired' };
+
+/**
+ * The round's formal `no_answer` conclusion, read beside the message: the other side ended this round without a
+ * reply. It is its own fact, never a disposition: a reply, a withdrawal and Kernel acceptance keep their own facts,
+ * and the sender's unanswered state and original deadline are unchanged (the wait still expires on its own).
+ */
+export type MessageRoundEndingV1 = { kind: 'no_answer' };
+
+/** The closing reasons of a finished intervention round. `questions` sends no notice: the cards carry them. */
+export const INTERVENTION_CLOSING_REASONS = [
+  'invalid_plan', 'declined', 'no_answer', 'answered', 'candidate', 'adopted',
+] as const;
+export type InterventionClosingReasonV1 = (typeof INTERVENTION_CLOSING_REASONS)[number];
+
+/**
+ * The ONE fixed platform identity of the Host's automatic notices (a finished round's close-out, an expiry, a
+ * "please note"): a system actor, never the configured operator and never an agent line. It is deliberately not
+ * `SYSTEM_ROUND_ACTOR`: a notice is not a round, opens none, and must not read as one; its sender, its receipt and
+ * every reader of that receipt use this one identity.
+ */
+export const PLATFORM_NOTICE_ACTOR = Object.freeze({ kind: 'system' as const, id: 'host:platform-notice' });
+
+/**
+ * The fixed identity of one round's closing notice: the source message's canonical key plus the round's frozen
+ * source part. A card-answer round hashes `{ messageRef, part }` exactly as `interventionPlanningQueryRefs` does,
+ * so its notice never collides with the message round's; the default keeps the existing identity. One declaration:
+ * the notice writer and every receipt reader import this one.
+ */
+export function interventionClosingNoticeRequestId(messageRef: SessionMessageRef,
+    reason: InterventionClosingReasonV1, part: 'message' | 'decision_answer' = 'message'): string {
+  const key = part === 'message' ? canonicalJson(messageRef as never)
+    : sha256Hex(canonicalJson({ messageRef, part } as never));
+  return `intervention:${key}:notice:${reason}`;
+}
 
 export type DecisionApplicationV1 = {
   // `actor` 是落实这次决定的那次提交的 actor；批准参谋规划轮的返工请求时是那一轮（Q10a，返工这一族的形状）。

@@ -32,8 +32,25 @@ seams.shellSeam = shellSeam;
 // armed its blocking definition is what the Kernel registers.
 vi.mock('../../src/core/agent-runtime/communication-tools.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../src/core/agent-runtime/communication-tools.js')>();
-  return { ...actual, createSessionMailboxTools: (config: Parameters<typeof actual.createSessionMailboxTools>[0]) =>
-    mailboxToolSeam.enabled ? mailboxToolSeam.handle() : actual.createSessionMailboxTools(config) };
+  return { ...actual,
+    createSessionMailboxTools: (config: Parameters<typeof actual.createSessionMailboxTools>[0]) =>
+      mailboxToolSeam.enabled ? mailboxToolSeam.handle() : actual.createSessionMailboxTools(config),
+    createPersonMessageTools: (config: Parameters<typeof actual.createPersonMessageTools>[0]) =>
+      mailboxToolSeam.enabled ? mailboxToolSeam.handle() : actual.createPersonMessageTools(config) };
+});
+
+// The row is the "platform tool without a commit lookup -> undetermined" branch. `notify_person` is a P2 tool whose
+// lookup IS published, so this test omits only that one name from the mailbox owner's lookup set; every other owner
+// and name keeps the production table.
+vi.mock('../../src/composition/tool-commit-lookup.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/composition/tool-commit-lookup.js')>();
+  const mailbox = actual.MAILBOX_COMMIT_LOOKUP_TOOLS.filter(name => name !== 'notify_person');
+  return { ...actual,
+    createToolCommitLookup: (owners: Parameters<typeof actual.createToolCommitLookup>[0],
+      names?: Parameters<typeof actual.createToolCommitLookup>[1]) => actual.createToolCommitLookup(owners,
+      names ?? [mailbox, actual.DECISION_COMMIT_LOOKUP_TOOLS, actual.PLAN_COMMIT_LOOKUP_TOOLS,
+        actual.NOTE_COMMIT_LOOKUP_TOOLS, actual.COMMAND_RERUN_COMMIT_LOOKUP_TOOLS, actual.MEMBER_COMMIT_LOOKUP_TOOLS,
+        actual.REWORK_COMMIT_LOOKUP_TOOLS, actual.RECHECK_COMMIT_LOOKUP_TOOLS, actual.HANDOFF_COMMIT_LOOKUP_TOOLS]) };
 });
 
 const worlds: K3BlockedCommandWorld[] = [];
@@ -121,20 +138,17 @@ describe('B2-01 blockedCommands at the ② write', () => {
     // names it while `proposalTargets` is null. `skip_as_done` therefore has no
     // process target and writes nothing — without a Kernel command read.
     const blocked = await openK3BlockedCommandWorld(kind, {
-      commands: { p1: { name: 'send_user_message', args: {
-        recipient: { projectId: 'P', sessionId: 'session-k3-platform-only' }, text: 'platform-only' } } },
+      commands: { p1: { name: 'notify_person', args: { text: 'platform-only' } } },
       files: {},
     });
     worlds.push(blocked);
     expect(blocked.record.items.map(item => item.kind)).toEqual(['platform']);
-    expect(blocked.record.items[0]?.toolName).toBe('send_user_message');
+    expect(blocked.record.items[0]?.toolName).toBe('notify_person');
     // The item's arguments digest is the production digest of the REAL Kernel
     // call, so this `platform` item cannot be a hand-written review fact.
-    // sha256 of the canonical JSON
-    // {"recipient":{"projectId":"P","sessionId":"session-k3-platform-only"},"text":"platform-only"}
-    // (JCS key order; no whitespace).
+    // sha256 of the canonical JSON {"text":"platform-only"} (JCS key order; no whitespace).
     expect(blocked.record.items[0]?.argumentsDigest)
-      .toBe('cc5562be8a5bf53c94129ae55ddff507a8b6b59028d4d0f3159689a5642379e2');
+      .toBe('8c67fffb85dc6946c763c79a41910120b4c9d70c4f018d45ffff0d3c2da5c738');
     expect(blocked.record.status).toBe('needs_decision');
     const applied = await blocked.answer(blocked.record, 'skip_as_done');
     expect(applied.blockedCommands).toEqual([]);

@@ -113,7 +113,7 @@ export async function applyCommandReview(
   // D-18: the adviser's notice is a `notify`; no round is opened for it.
   const where = subject.run.kind === 'run' ? `任务 ${subject.run.taskId}` : `问答轮 ${subject.run.queryRunRef.runId}`;
   // The reason has no bound of its own (121-111); the message keeps its existing 16 KiB bound by truncation.
-  const notice: SessionMessageSendInputV1['input'] = { recipient: adviser, intent: 'notify', goalRef,
+  const notice: SessionMessageSendInputV1['input'] = { recipient: adviser, goalRef, wake: false,
     text: truncateUtf8(`请知悉（不需要回复）：书记审查认为${where}的命令异常，命令已经停下。`
       + `命令：${previewOf(subject)}，已跑 ${minutesOf(subject)} 分钟。原因：${answer.reason}`,
     SESSION_MESSAGE_MAX_TEXT_BYTES) };

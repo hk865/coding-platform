@@ -50,10 +50,11 @@ describe('X-secretary-sender: the round is the sender', () => {
     expect(sent.message).toMatchObject({
       revision: 1,
       status: 'pending',
-      release: 'awaiting',
-      pins: null,
+      // MP-11 (lead 11-23): a reply-asking send without its own deadline takes the
+      // platform default, 24 hours from the send; it stays the expiry-eligible case
+      // (p2-frozen.md:437).
       deadlineMs: 86_400_000,
-      deadline: null,
+      deadline: new Date(Date.parse(sent.message.createdAt) + 86_400_000).toISOString(),
       requestRoot,
       goalRef: { aggregateType: 'Goal', projectId: S6A_SCOPE.projectId, goalId: opened.goal.goalId },
       sender: {
@@ -74,16 +75,15 @@ describe('X-secretary-sender: the round is the sender', () => {
     });
     expect(sent.message.requestRoot).toEqual(requestRoot);
     expect('waitAfterSend' in sent.message).toBe(false);
-    // The ordinary Query mailbox tool is still not granted: the secretary
-    // binding keeps `read` and `look_graph` only, and the tool-name table keeps
-    // its exact seven mailbox names.
+    // 设计 §6 (秘书 · 请求轮: 箱、发、回、撤): P2 grants the request round the
+    // mailbox tools, and the tool-name table keeps its exact mailbox names.
     expect(SESSION_MAILBOX_TOOL_NAMES).toEqual([
       'send_session_message', 'read_session_inbox', 'read_session_message',
-      'read_session_message_body', 'ack_session_message', 'respond_session_message',
-      'withdraw_session_message',
+      'read_session_message_body', 'respond_session_message', 'withdraw_session_message',
     ]);
     expect(sent.round.manifest.permissions.tools
-      .filter(tool => (SESSION_MAILBOX_TOOL_NAMES as readonly string[]).includes(tool))).toEqual([]);
+      .filter(tool => (SESSION_MAILBOX_TOOL_NAMES as readonly string[]).includes(tool)).sort())
+      .toEqual([...SESSION_MAILBOX_TOOL_NAMES].sort());
     expect(sent.context.principal.kind).toBe('query_run');
     // The request's owner is the request's own fact, read through the public
     // request view; the sending secretary is never substituted for it.
@@ -92,7 +92,7 @@ describe('X-secretary-sender: the round is the sender', () => {
     expect(view.effectiveGoalId).toBe(opened.goal.goalId);
     expect(view.owner).not.toBeNull();
   });
-  it('refuses a send on a paused Goal instead of throwing, and writes nothing', async () => {
+  it('accepts a send on a paused Goal and withholds delivery while the Goal is paused', async () => {
     const opened = await openS7AQueryWorld({ backend: 'memory' });
     worlds.push(opened.world);
     const seeded = await seedS7AGoalPlan(opened.world);
@@ -100,31 +100,40 @@ describe('X-secretary-sender: the round is the sender', () => {
     const held = await heldSend(opened.world, 'x-secretary-paused', seeded.goal.goalId, async context => {
       await pauseS7AGoal(opened.world, seeded.goal);
       return opened.world.platform.messages.sendMessage(context, {
-        input: { recipient: opened.session.ref, text: 'The paused Goal refuses this inquiry.',
-          intent: 'inquiry' as const, needsReply: true },
+        input: { recipient: opened.session.ref, text: 'The paused Goal queues this inquiry.',
+          needsReply: true },
         meta: { requestId: 's7a-secretary-paused', expected: [] },
       });
     });
-    expect(held.value).toMatchObject({ status: 'rejected', code: 'busy', reason: 'the Goal is not active' });
+    // §2.2/§2.5: a paused Goal still accepts the send and queues it; only
+    // delivery waits for the resume, so the committed record is queued with no
+    // delivery evidence yet.
+    expect(held.value).toMatchObject({ status: 'committed',
+      value: { status: 'pending', delivery: 'queued', deliveryEvidence: null } });
     const inbox = await opened.world.platform.messages.readInbox(opened.world.humanContext(),
       { recipient: opened.session.ref, page: { limit: 10 } });
-    expect(inbox).toMatchObject({ status: 'ready', value: { items: [] } });
+    expect(inbox).toMatchObject({ status: 'ready', value: { items: [
+      { status: 'pending', delivery: 'queued', deliveryEvidence: null },
+    ] } });
   });
-  it('releases a no-goal secretary inquiry without a Goal guard, counter or pins', async () => {
+  it('releases a no-goal secretary inquiry without a Goal guard or counter', async () => {
     const opened = await openS7AQueryWorld({ backend: 'memory' });
     worlds.push(opened.world);
     const hold = commitBarrier.hold(byIdentityPrefix('session-message-send:'), 'x-ax04');
     const sending = sendS7ASecretaryMessage(opened.world,
-      { label: 'x-no-goal', goalId: null }, opened.session, 'No goal, but a deadline.');
+      { label: 'x-no-goal', goalId: null }, opened.session, 'No goal, and no sender deadline.');
     const batch = await hold.reached; hold.release();
     const sent = await sending;
-    expect(sent.message).toMatchObject({ release: 'released', goalRef: null, pins: null,
-      deadlineMs: 86_400_000, deadline: expect.any(String) });
+    // MP-11: no sender deadline on a reply-asking send is the platform's 24-hour default.
+    expect(sent.message).toMatchObject({ goalRef: null, deadlineMs: 86_400_000,
+      deadline: new Date(Date.parse(sent.message.createdAt) + 86_400_000).toISOString() });
     expect(batch.records.at(-1)?.refKey).toBe(sessionMessageRefKey(sent.message.ref));
-    expect(batch.records).toHaveLength(2);
+    // §2.2: the recipient's activity advances when a round actually starts, not
+    // on receipt, so the send commit writes only the message record.
+    expect(batch.records).toHaveLength(1);
     expect(batch.guards.every(guard => !guard.refKey.includes('"Goal"')
-      && !guard.refKey.includes('DispatchCounter'))).toBe(true);
-    expect(batch.guards.some(guard => guard.refKey.includes('"SessionActivity"'))).toBe(true);
+      && !guard.refKey.includes('DispatchCounter')
+      && !guard.refKey.includes('"SessionActivity"'))).toBe(true);
     expect(batch.claims).toEqual([]);
   });
   it('refuses a secretary followup that only touches the recipient, and writes nothing', async () => {
@@ -134,7 +143,7 @@ describe('X-secretary-sender: the round is the sender', () => {
       input: { recipient: opened.session.ref, text: 'the Host message to follow' }, meta: { requestId: 'x-ax10-host', expected: [] } });
     if (host.status !== 'committed') throw new Error(`the Host message did not commit: ${JSON.stringify(host)}`);
     const input: SessionMessageSendInputV1['input'] = { recipient: opened.session.ref,
-      text: 'Only the recipient is shared.', intent: 'inquiry', needsReply: true, followupOf: host.value.ref };
+      text: 'Only the recipient is shared.', needsReply: true, followupOf: host.value.ref };
     const held = await heldSend(opened.world, 'x-ax10', null, context =>
       opened.world.platform.messages.sendMessage(context, {
         input, meta: { requestId: 'x-ax10-send', expected: [] },
@@ -170,7 +179,7 @@ describe.each(['memory', 'sqlite'] as const)('X-outbox: the work_run caller skip
         for (const n of [1, 2, 3]) {
           const saved = await world.platform.messages.sendMessage(context, {
             input: { recipient: recipient.ref, text: `For the person to read ${n}.`,
-              intent: 'inquiry' as const, needsReply: true },
+              needsReply: true },
             meta: { requestId: `x-outbox-work-${n}`, expected: [] },
           });
           if (saved.status !== 'committed') throw new Error(`the secretary send ${n} did not commit: ${JSON.stringify(saved)}`);

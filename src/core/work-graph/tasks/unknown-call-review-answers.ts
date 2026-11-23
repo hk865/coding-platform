@@ -3,7 +3,7 @@
  * `k3-decision-answer-by-source-goal`.
  *
  * It is parameterized by the source kind (`unknown_call_review`,
- * `command_rerun_request` or `message_release`), pages the index to its end (2A
+ * `command_rerun_request`, `action_release` or `repair_approval`), pages the index to its end (2A
  * L6/L10) and keeps only a synthetic, responded answer whose formal ② commit
  * exists under the answer-derived identity. A read failure is `unavailable`,
  * never an empty list.
@@ -12,6 +12,7 @@ import type { CommitCursor } from '../../../contracts/command-event.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { CoreRejection, ReadResult } from '../../../contracts/core/results.js';
 import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
+import type { ActionRequestRef } from '../../../contracts/action-request.js';
 import type {
   DecisionSelectionV1, DecisionSourceV1,
 } from '../../../contracts/goal-decisions.js';
@@ -29,7 +30,7 @@ import type { S5RecordPort } from '../model/decision-contracts.js';
 import type { SessionMessage } from '../model/communication-contracts.js';
 import { commandKeys } from '../persistence/command-executor.js';
 import { lookupAll, type LookupBatch } from '../persistence/lookup-all.js';
-import { messageReleaseAnswerCommand, messageReleaseAnswerFacts } from './message-release-answer.js';
+import { actionRequestAnswerCommandOf, actionRequestAnswerFacts } from './action-request-answer.js';
 import {
   decodeSessionMessageRecord,
   K3_DECISION_ANSWER_BY_SOURCE_GOAL_LOOKUP,
@@ -63,14 +64,14 @@ export type RepairApprovalAnswerHitV1 = {
   source: DecisionSourceV1;
 };
 
-/** G.4's first hook shape: one answered, unapplied `message_release` card. */
-export type MessageReleaseAnswerHitV1 = {
-  kind: 'message_release';
+/** One answered, unapplied `action_release` card. */
+export type ActionReleaseAnswerHitV1 = {
+  kind: 'action_release';
   answerMessageRef: SessionMessageRef;
   source: DecisionSourceV1;
-  messageRef: SessionMessageRef;
+  requestRef: ActionRequestRef;
 };
-export type RedriveAnswerHitV1 = UnknownCallAnswerHitV1 | CommandRerunAnswerHitV1 | MessageReleaseAnswerHitV1
+export type RedriveAnswerHitV1 = UnknownCallAnswerHitV1 | CommandRerunAnswerHitV1 | ActionReleaseAnswerHitV1
   | RepairApprovalAnswerHitV1;
 
 export type UnappliedAnswersReadV1 = {
@@ -179,8 +180,8 @@ async function receiptExists(
 }
 
 /**
- * The internal reader for the three kinds (`unknown_call_review`,
- * `command_rerun_request`, `message_release`): (project, workspace, kind, goal)
+ * The internal reader for the card kinds (`unknown_call_review`,
+ * `command_rerun_request`, `action_release`, `repair_approval`): (project, workspace, kind, goal)
  * over the new index to the end, keeping the answers whose ② commit exists
  * (L28, D4).
  */
@@ -212,15 +213,13 @@ export async function readUnappliedAnswers(
     const source = answerSource(message);
     const selection = answerSelection(message);
     if (source === null || selection === null) continue;
-    if (input.kind === 'message_release') {
-      const command = messageReleaseAnswerCommand(message);
-      if (command === null) continue;
-      const applied = await receiptExists(deps, commandKeys(command));
-      if (applied !== null && applied.status === 'rejected') return applied;
-      const target = messageReleaseAnswerFacts(message);
+    if (input.kind === 'action_release') {
+      const target = actionRequestAnswerFacts(message);
       if (target === null) continue;
-      answers.push({ kind: 'message_release', answerMessageRef: message.ref, source,
-        messageRef: target.messageRef });
+      const applied = await receiptExists(deps, commandKeys(actionRequestAnswerCommandOf(target)));
+      if (applied !== null && applied.status === 'rejected') return applied;
+      answers.push({ kind: 'action_release', answerMessageRef: message.ref, source,
+        requestRef: target.requestRef });
       continue;
     }
     if (input.kind === 'command_rerun_request') {

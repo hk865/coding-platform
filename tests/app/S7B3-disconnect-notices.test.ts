@@ -8,14 +8,18 @@ import type { SessionMessage } from '../../src/core/work-graph/model/communicati
 import type { SessionRef } from '../../src/contracts/core/identity.js';
 import { graphWrite, plain } from '../helpers/AG2b-collaboration-fixture.js';
 import { s6aCardsWorkspace } from '../helpers/S6A-cards-fixture.js';
-import { openS6AHostWorld, type S6AHostWorld } from '../helpers/S6A-host-fixture.js';
+import { callPublishedOwnerAsHost, openS6AHostWorld, type S6AHostWorld } from '../helpers/S6A-host-fixture.js';
 import { S6A_AT, S6A_SCOPE, S6A_SECRETARY_PROFILE_ID, S6A_WORK_ROLE } from '../helpers/S6A-request-fixture.js';
 import { adoptS6BPlan, createS6BLine, governS6B, holdS6BRequestRound } from '../helpers/S6B1-fixture.js';
 import { inboxOf } from '../helpers/S7B-F-support.js';
-import { committed, nameS7AReplyHandler, ready, sessionOf, S7A_REPLY_TOOLS } from '../helpers/S7A-fixture.js';
-import { createCancelledS7A2Goal, sendS7A2PersonMessage } from '../helpers/S7A2-fixture.js';
-import { answerS7BWait, openS7BWorld, runS7BWait } from '../helpers/S7B-fixture.js';
+import {
+  cancelS7AGoal, committed, nameS7AReplyHandler, ready, seedS7AGoalPlan, sessionOf, S7A_REPLY_TOOLS,
+} from '../helpers/S7A-fixture.js';
+import { sendS7A2PersonMessage } from '../helpers/S7A2-fixture.js';
+import { openS7BWorld, runS7BWait } from '../helpers/S7B-fixture.js';
 import { openConsumeHostWorld } from '../helpers/S7B2-consumable-sessions.js';
+import { heartbeatUntil } from '../helpers/IV-host-fixture.js';
+import { PLATFORM_NOTICE_ACTOR } from '../../src/contracts/core/session-message.js';
 import { waitFor } from '../scenarios/harness.js';
 import { announceInterruption, systemNotifyRequest } from '../../src/app/host-notices.js';
 import { HOST_RECONCILE_ACTOR } from '../../src/app/startup-reconcile.js';
@@ -95,8 +99,8 @@ describe('N-source (memory): the disconnect person notice is a pure projection',
     const wait = await runS7BWait(world, { label: 'n-source-undelivered' });
     const archived = await world.archive(wait.recipient);
     const sent = committed<SessionMessage>(await world.post('messages/send', graphWrite(S6A_SCOPE, {
-      recipient: wait.recipient.ref, text: 'S7B3 undelivered after the archive', intent: 'notify',
-      goalRef: wait.goal,
+      recipient: wait.recipient.ref, text: 'S7B3 undelivered after the archive',
+      needsReply: false, wake: false, goalRef: wait.goal,
     }, 'n-source-undelivered-send')), 'the undelivered person message');
     const read = await disconnectQueueOf(world);
 
@@ -117,7 +121,7 @@ describe('N-source (SQLite only: the unavailable-line restart)', () => {
     const unavailableSince = card.record.unavailableSince;
     expect(unavailableSince).not.toBeNull();
     const sent = committed<SessionMessage>(await world.post('messages/send', graphWrite(S6A_SCOPE, {
-      recipient: retired.ref, text: 'S7B3 message to the retired line', intent: 'notify',
+      recipient: retired.ref, text: 'S7B3 message to the retired line', needsReply: false, wake: false,
     }, 'n-source-retired-send')), 'the message to the retired line');
     const read = await disconnectQueueOf(world);
 
@@ -153,16 +157,21 @@ describe('N-source case 3: the copy-forward gone recipient carries the copy Goal
     const world = await openS6AHostWorld({ backend: 'memory' });
     worlds.push(world);
     world.clock.set(S6A_AT);
-    const source = await createCancelledS7A2Goal(world);
+    // p2-frozen:115 / design:245: a cancelled Goal refuses the send, so the intervention is stored while the source
+    // Goal is alive and the cancel follows; the cancelled Goal is then the copy source.
+    const { goal: sourceGoal } = await seedS7AGoalPlan(world);
     const line = await sessionOf(world, await createS6BLine(s6aCardsWorkspace(world, S6A_SCOPE), {
       label: 'n-source-copy-line', role: S6A_WORK_ROLE,
     }));
     const message = await sendS7A2PersonMessage(world, {
-      label: 'n-source-copy', recipient: line.ref, goal: source.goal.ref,
+      label: 'n-source-copy', recipient: line.ref, goal: sourceGoal,
     });
+    await cancelS7AGoal(world, sourceGoal);
+    const cancelled = ready<{ goal: { revision: number } }>(await world.post('goals/read', plain(S6A_SCOPE, sourceGoal)),
+      'the cancelled source').goal;
     const copy = committed<GoalCopyConfirmResultV1>(await world.post('goals/copy-confirm', plain(S6A_SCOPE, {
-      commandId: 'n-source-copy-confirm', sourceGoalRef: source.goal.ref,
-      expectedSourceRevision: source.revision, selectedInterventions: [message.ref],
+      commandId: 'n-source-copy-confirm', sourceGoalRef: sourceGoal,
+      expectedSourceRevision: cancelled.revision, selectedInterventions: [message.ref],
     })), 'the copy Goal');
     const archived = await world.archive(line);
     const read = await disconnectQueueOf(world);
@@ -195,10 +204,10 @@ describe('N-notify (SQLite only; deferred to 7B-3 L)', () => {
 
     // The archive's Session commit wakes LIFECYCLE_QUEUE; the Host's own drain makes the two sends.
     const recipientNotices = await waitFor(
-      async () => (await inboxOf(world, wait.recipient.ref)).filter(message => message.intent === 'notify'),
+      async () => (await inboxOf(world, wait.recipient.ref)).filter(message => message.sender.kind === 'host' && message.needsReply !== true),
       items => items.length === 1, 'the recipient disconnect notify');
     const senderNotices = await waitFor(
-      async () => (await inboxOf(world, wait.sender.ref)).filter(message => message.intent === 'notify'),
+      async () => (await inboxOf(world, wait.sender.ref)).filter(message => message.sender.kind === 'host' && message.needsReply !== true),
       items => items.length === 1, 'the sender disconnect notify');
     const archivedMail = recipientNotices[0]!;
     const senderMail = senderNotices[0]!;
@@ -236,10 +245,10 @@ describe('N-notify (SQLite only; deferred to 7B-3 L)', () => {
     const secondPass = await runS7BWait(world, { label: 'n-notify-second-pass' });
     await world.archive(secondPass.recipient);
     await waitFor(async () => (await inboxOf(world, secondPass.recipient.ref))
-      .filter(message => message.intent === 'notify'), items => items.length === 1, 'the second pass notify');
-    expect((await inboxOf(world, wait.recipient.ref)).filter(message => message.intent === 'notify')
+      .filter(message => message.sender.kind === 'host' && message.needsReply !== true), items => items.length === 1, 'the second pass notify');
+    expect((await inboxOf(world, wait.recipient.ref)).filter(message => message.sender.kind === 'host' && message.needsReply !== true)
       .map(message => message.ref)).toEqual([archivedMail.ref]);
-    expect((await inboxOf(world, wait.sender.ref)).filter(message => message.intent === 'notify')
+    expect((await inboxOf(world, wait.sender.ref)).filter(message => message.sender.kind === 'host' && message.needsReply !== true)
       .map(message => message.ref)).toEqual([senderMail.ref]);
   });
 });
@@ -261,18 +270,32 @@ describe('N-interrupt (SQLite): the person interruption notifies each party of t
     const adviser = await createS6BLine(main, { label: 's7b3-n-interrupt-adviser',
       role: platformRoleProfile('adviser').template, tasks: [wait.tasks[0]!] });
     const adviserRef = await sessionOf(world, adviser);
+    // P2 (p2-frozen:100, :142; design:204-209): the wait question wakes its idle recipient by default, so that line's
+    // own text round runs and, with no scripted answer, ends `no_answer` with the platform's closing notice
+    // (p2-frozen:165, :168). It settles before the person acts, so the turns below and the notices compared are the
+    // interruption's alone.
+    await heartbeatUntil(world, async () => await inboxOf(world, wait.recipient.ref),
+      items => items.some(message => message.sender.kind === 'host' && message.sender.actor.id === PLATFORM_NOTICE_ACTOR.id));
     // The interruption's four-party set, kept for the reopen read below (L-02).
     let parties: SessionRef[] = [];
     let notices: SessionMessage[] = [];
+    // Every message a party already holds before the person acts; the interruption's notices are the new ones.
+    const earlier = new Set<string>();
+    const interruptionNoticesOf = async (ref: SessionRef): Promise<SessionMessage[]> => (await inboxOf(world, ref))
+      .filter(message => message.sender.kind === 'host' && message.needsReply !== true
+        && !earlier.has(message.ref.messageId));
 
     await holdS6BRequestRound(world, { label: 'n-interrupt-secretary', goalId: wait.goal.goalId }, async round => {
       const turnsBefore = { recipient: (await world.scripted.requests(wait.recipient)).length,
         sender: (await world.scripted.requests(wait.sender)).length,
         adviser: (await world.scripted.requests(adviserRef)).length,
         secretary: (await world.scripted.requests(round.secretary)).length };
+      for (const ref of [wait.sender.ref, wait.recipient.ref, adviserRef.ref, round.secretary.ref]) {
+        for (const message of await inboxOf(world, ref)) earlier.add(message.ref.messageId);
+      }
       const person = committed<SessionMessage>(await world.post('messages/send', graphWrite(S6A_SCOPE, {
-        recipient: wait.sender.ref, text: 'S7B3 interrupt the waiting line', intent: 'action_request',
-        goalRef: wait.goal, taskRef: wait.tasks[0],
+        recipient: wait.sender.ref, text: 'S7B3 interrupt the waiting line',
+        entry: 'person_intervention', needsReply: true, goalRef: wait.goal, taskRef: wait.tasks[0],
       }, 'n-interrupt-person')), 'the person action_request');
       const settled = world.consumeBarrier();
       world.clock.advance(25);
@@ -281,8 +304,7 @@ describe('N-interrupt (SQLite): the person interruption notifies each party of t
       parties = [wait.sender.ref, wait.recipient.ref, adviserRef.ref, round.secretary.ref];
       notices = [];
       for (const ref of parties) {
-        const inbox = await waitFor(async () => (await inboxOf(world, ref))
-          .filter(message => message.intent === 'notify'), items => items.length === 1,
+        const inbox = await waitFor(async () => await interruptionNoticesOf(ref), items => items.length === 1,
           `the interruption notice of ${ref.sessionId}`);
         notices.push(inbox[0]!);
       }
@@ -308,17 +330,21 @@ describe('N-interrupt (SQLite): the person interruption notifies each party of t
       // The claimed intervention's drive (`host.ts:3125-3139`) opens the sender's one turn, not the notice.
       expect((await world.scripted.requests(wait.sender)).length).toBe(turnsBefore.sender + 1);
 
-      // N-02: the reply leaves the line with no open wait, so the person's message sends no notify.
-      await answerS7BWait(world, { goal: wait.goal, recipient: wait.recipient, message: wait.message,
-        task: wait.tasks[1]!, label: 'n-interrupt-answered' });
+      // N-02: a wait that is no longer open leaves the line with no interruption party, so the person's message sends
+      // no notify. P2: the recipient's wake round above ended `no_answer` and owns this message's reply slot, so no
+      // other reply can land (p2-frozen:162, :168; design:262-263); the wait ends at its deadline (24 h default, MP-11).
+      world.clock.advance(86_400_000);
+      expect(await callPublishedOwnerAsHost(world, 'S7B', {
+        owner: 'messageExpiry.recordExpiry', wave: '7B-1 L',
+        scope: { projectId: S6A_SCOPE.projectId, workspaceId: S6A_SCOPE.workspaceId },
+      }, { messageRef: wait.message })).toMatchObject({ status: 'committed' });
       // The Host adds no condition (SR10 `:5755`); a second claimed intervention on a verifying Task is refused busy (intervention.ts:120).
       const deps = { messages: world.platform.messages,
         facts: world.platform.sessionFacts, nodeDetail: world.platform.nodeDetail };
       expect(await announceInterruption(world.systemContext(), deps, { scope: S6A_SCOPE,
         sessionRef: wait.sender.ref, personMessageRef: person.ref })).toHaveLength(0);
       for (const [index, ref] of parties.entries()) {
-        expect((await inboxOf(world, ref)).filter(message => message.intent === 'notify').map(message => message.ref))
-          .toEqual([notices[index]!.ref]);
+        expect((await interruptionNoticesOf(ref)).map(message => message.ref)).toEqual([notices[index]!.ref]);
       }
     });
 
@@ -327,8 +353,7 @@ describe('N-interrupt (SQLite): the person interruption notifies each party of t
     await world.reopen();
     const reopenedProfileIds = (await world.readProfiles()).map(profile => profile.id).join(',');
     for (const [index, ref] of parties.entries()) {
-      expect((await inboxOf(world, ref)).filter(message => message.intent === 'notify')
-        .map(message => message.ref), `the profiles after reopen: ${reopenedProfileIds}`)
+      expect((await interruptionNoticesOf(ref)).map(message => message.ref), `the profiles after reopen: ${reopenedProfileIds}`)
         .toEqual([notices[index]!.ref]);
     }
 

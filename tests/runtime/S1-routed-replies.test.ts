@@ -15,6 +15,7 @@ import { createAgentRuntime } from '../../src/core/agent-runtime/runtime.js';
 import { acceptedMessageInputs } from '../scenarios/support/brief.js';
 import { committed, installS1DateClock, openS1RuntimeFixture, ready } from '../helpers/S1-runtime-scenario-fixture.js';
 import { waitReplyDeliveryText } from '../helpers/S7B-delivery-samples.js';
+import { deliveryFactsForFixture } from '../helpers/B2-runtime-fixture.js';
 
 const QUESTION = 'Which file should the interrupted work write?';
 const REPLY = 'Write src/s1-routed-result.txt.';
@@ -38,9 +39,9 @@ async function openWait(overlap = false, idle = false) {
   const held = deferred();
   const release = deferred();
   const send = { callId: 'send-wait', name: 'send_session_message',
-    args: { recipient: {}, text: QUESTION, intent: 'inquiry', needsReply: true, waitAfterSend: true } as Record<string, unknown> };
+    args: { recipient: {}, text: QUESTION, needsReply: true, waitAfterSend: true } as Record<string, unknown> };
   const extras = overlap ? [0, 1].map(i => ({ callId: `other-question-${i}`, name: 'send_session_message',
-    args: { recipient: {}, text: `independent question ${i}`, intent: 'inquiry', needsReply: true } as Record<string, unknown> })) : [];
+    args: { recipient: {}, text: `independent question ${i}`, needsReply: true } as Record<string, unknown> })) : [];
   const f = await openS1RuntimeFixture({ replies: [
     { kind: 'calls', calls: [...extras, send] },
     idle ? { kind: 'text', text: 'recipient done' } : { kind: 'calls', calls: [{ callId: 'handler-read', name: 'read', args: { path: 'safe-point.txt' } }] },
@@ -108,8 +109,8 @@ async function sourceInputs(row: Row) {
   const { f, sender } = row;
   const auth = (await f.read(sender)).run.executionAuthorization;
   if (!auth || !('schemaVersion' in auth) || auth.schemaVersion !== 2 || !auth.kernel) throw new Error('source has no Kernel binding');
-  const supply = createMailboxInputSupply({ messages: f.messages, context: () => workCtx(f, sender), sessionRef: sender.sessionRef, runRef: sender.runRef,
-    texts: PLATFORM_PROMPT_PACK_V1, toolNames: [] });
+  const supply = createMailboxInputSupply({ messages: f.messages, context: () => workCtx(f, sender), sessionRef: sender.sessionRef,
+    texts: PLATFORM_PROMPT_PACK_V1, toolNames: [], deliveryFacts: deliveryFactsForFixture });
   return supply({ sessionId: auth.kernel.kernelSessionId, runId: auth.kernel.runId, turnId: auth.kernel.turnId,
     afterEventSequence: 0, acceptedInputIds: [] }, { signal: f.base.ctx.signal });
 }
@@ -199,7 +200,8 @@ describe('S1 routed replies at real before_model boundaries', () => {
       expect([...new Set(responsePages.routed)]).toEqual([row.message.ref.messageId]);
       const before = await counts(f);
       const supply = createMailboxInputSupply({ messages, context: () => workCtx(f, row.recipientClaim),
-        sessionRef: row.D, runRef: row.recipientClaim.runRef, texts: PLATFORM_PROMPT_PACK_V1, toolNames: [] });
+        sessionRef: row.D, texts: PLATFORM_PROMPT_PACK_V1, toolNames: [],
+        deliveryFacts: deliveryFactsForFixture });
       const auth = (await f.read(row.recipientClaim)).run.executionAuthorization;
       if (!auth || !('schemaVersion' in auth) || auth.schemaVersion !== 2 || !auth.kernel) throw new Error('D must have its real Kernel identity');
       expect(await supply({ sessionId: auth.kernel.kernelSessionId, runId: auth.kernel.runId, turnId: auth.kernel.turnId,
@@ -225,7 +227,11 @@ describe('S1 routed replies at real before_model boundaries', () => {
       expect(card.links.filter(link => link.until === null && link.ref.relation === 'responsible')).toEqual([]);
       const before = await counts(f);
       const message = ready(await f.messages.readMessage(f.base.ctx, row.message.ref));
-      expect(message.acceptedInputs ?? []).toEqual([]);
+      // design-frozen.md:201: the busy recipient E's own Work Run took the question at its safe point; the reply is
+      // retained, not accepted.
+      expect((message.acceptedInputs ?? []).map(input => ({ part: input.part, executionRef: input.executionRef,
+        consumesWait: input.consumesWait }))).toEqual([{ part: 'message', executionRef: row.recipientClaim.runRef,
+        consumesWait: false }]);
       expect(ready(await f.messages.readRoutedReplies!(f.base.ctx, { handler: row.D, page: { limit: 20 } })).items.map(item => item.ref))
         .toEqual([message.ref]);
       expect(await counts(f)).toEqual(before);

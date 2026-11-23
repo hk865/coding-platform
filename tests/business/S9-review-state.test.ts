@@ -9,10 +9,10 @@ import { execReviewAnswerText } from '../../src/contracts/exec-review.js';
 import type { WorkflowAdvanceResult } from '../../src/business/workflow/contracts.js';
 import { readPlanningQuery, waitForResponse } from '../helpers/IV-host-fixture.js';
 import { byIdentityPrefix, commitBarrier } from '../helpers/S6A-commit-barrier.js';
-import { readS7BMessage } from '../helpers/S7B-fixture.js';
 import { readS7D1Limits, setS7D1Open } from '../helpers/S7D1-allocation-world.js';
 import {
-  advanceS9Review, answerS9Review, openS9ReviewRound, openS9ReviewWorld, type S9ReviewWorld,
+  advanceS9Review, answerS9Review, openS9ReviewRound, openS9ReviewWorld, readS9ReviewSourceSettled,
+  type S9ReviewWorld,
 } from '../helpers/S9-review-fixture.js';
 
 vi.mock('../../src/core/record-store/in-memory-record-store.js', async importOriginal =>
@@ -100,7 +100,7 @@ describe('W1-read: readReviewState through workflow/advance', () => {
     expect(closed.state).toBe('advance');
     expect(operationOf(closed)?.kind).toBe('finalize_checks');
     expect(Object.keys((inputOf(closed) ?? {}) as object)).toEqual(['roundRef']);
-    const source = await readS7BMessage(review.world, sent.messageRef);
-    expect(source.response !== null || source.withdrawnAt !== null).toBe(true);
+    // P2 (`p2-frozen.md:165/:168`): a formal `no_answer` ends the round; the reviewer's message is not withdrawn.
+    expect(await readS9ReviewSourceSettled(review.world, sent.messageRef)).toBe(true);
   });
 });

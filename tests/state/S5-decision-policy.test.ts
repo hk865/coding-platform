@@ -8,6 +8,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import type { DecisionActionV1, GoalAutonomyV1 } from '../../src/contracts/goal-decisions.js';
+import { RULE_ACTIONS } from '../../src/contracts/goal-decisions.js';
 import type { GoalRef } from '../../src/contracts/ledger.js';
 import type { PlatformDutyV1 } from '../../src/contracts/platform-duty.js';
 import type { ReworkActorClass } from '../../src/contracts/task-requeue.js';
@@ -37,14 +38,14 @@ function actionPolicy(input: {
 
 function send(
   duties: readonly PlatformDutyV1[],
-  intent: 'notify' | 'decision_request',
+  kind: 'notify_person' | 'ask_person',
   overrides: { readOnlyCopy?: boolean; independentReview?: boolean } = {},
 ): boolean {
   return canSendUserMessage({
     duties,
     readOnlyCopy: overrides.readOnlyCopy ?? false,
     independentReview: overrides.independentReview ?? false,
-    intent,
+    kind,
   });
 }
 
@@ -88,12 +89,19 @@ describe('S5 decision policy (§5.2 PO01..PO16)', () => {
     expect(actionPolicy({ autonomy: 'after_plan_confirmation', action: 'structural_patch' })).toBe('needs_decision');
   });
 
-  it('PO09 every_step secretary_inquiry is a decision', () => {
-    expect(actionPolicy({ autonomy: 'every_step', action: 'secretary_inquiry' })).toBe('needs_decision');
+  // p2-frozen §2.8: `RULE_ACTIONS` drops the two retired message-only names and takes the two agent actions,
+  // whose factory defaults stay those of `secretary_action` (T5 owns "an inquiry produces no card").
+  it('PO10a the rule table carries agent_dispatch/agent_stop and not the retired message-only names', () => {
+    expect(RULE_ACTIONS).toEqual(expect.arrayContaining(['agent_dispatch', 'agent_stop']));
+    expect(RULE_ACTIONS).not.toContain('secretary_action');
+    expect(RULE_ACTIONS).not.toContain('secretary_inquiry');
   });
 
-  it('PO10 after_plan_confirmation secretary_action is automatic', () => {
-    expect(actionPolicy({ autonomy: 'after_plan_confirmation', action: 'secretary_action' })).toBe('automatic');
+  it('PO10b agent_dispatch and agent_stop default like secretary_action', () => {
+    for (const action of ['agent_dispatch', 'agent_stop'] as const) {
+      expect(actionPolicy({ autonomy: 'every_step', action })).toBe('needs_decision');
+      expect(actionPolicy({ autonomy: 'after_plan_confirmation', action })).toBe('automatic');
+    }
   });
 
   it('PO11 every_step secretary_too_long is only an automatic notice', () => {
@@ -109,19 +117,19 @@ describe('S5 decision policy (§5.2 PO01..PO16)', () => {
   // ------------------------------------------------------------------------ //
 
   it('PO13 an executor cannot send a decision_request', () => {
-    expect(send(['executor'], 'decision_request')).toBe(false);
+    expect(send(['executor'], 'ask_person')).toBe(false);
   });
 
   it('PO14 an adviser can send a decision_request', () => {
-    expect(send(['adviser'], 'decision_request')).toBe(true);
+    expect(send(['adviser'], 'ask_person')).toBe(true);
   });
 
   it('PO15 a scribe under independent review cannot notify', () => {
-    expect(send(['scribe'], 'notify', { independentReview: true })).toBe(false);
+    expect(send(['scribe'], 'notify_person', { independentReview: true })).toBe(false);
   });
 
   it('PO16 a reviewer that is not a read-only copy can notify', () => {
-    expect(send(['reviewer'], 'notify', { readOnlyCopy: false, independentReview: false })).toBe(true);
+    expect(send(['reviewer'], 'notify_person', { readOnlyCopy: false, independentReview: false })).toBe(true);
   });
 });
 

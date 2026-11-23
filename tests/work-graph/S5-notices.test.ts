@@ -131,7 +131,7 @@ async function sendUserNotice(f: S5DecisionFixture, text: string) {
     meta: { requestId: f.newId(), expected: [] } });
   const sent = committed(result);
   expect(sent).toMatchObject({ goalRef: GOAL_B, recipient: { kind: 'user', ...WORKSPACE_SCOPE },
-    sender: { kind: 'work_run', sessionRef: f.sessionS, runRef: f.claimRA.runRef }, intent: 'notify', revision: 1,
+    sender: { kind: 'work_run', sessionRef: f.sessionS, runRef: f.claimRA.runRef }, revision: 1,
     status: 'pending', response: null });
   expect(sent.application ?? null).toBeNull();
   expect(sent.decision?.syntheticAnswer ?? false).toBe(false);

@@ -48,7 +48,7 @@ function unbookedWithLaterClaim(record: TaskExecutionRecord): TaskExecutionRecor
 
 it('2B-40 (BE2c): RUN-20(iii) hands reconcileRun a counted tally for the real yielded Turn (one send_session_message = one step, not an edit)', async () => {
   const calls = [{ callId: 's2b-40-send-1', name: 'send_session_message',
-    args: { recipient: {}, text: 'S2B 2B-40 question', intent: 'inquiry', needsReply: true, waitAfterSend: true } }];
+    args: { recipient: {}, text: 'S2B 2B-40 question', needsReply: true, waitAfterSend: true } }];
   const fx = await createC2RuntimePlatform({ toolNames: ['send_session_message'],
     scriptedReplies: [{ kind: 'calls', calls }, { kind: 'text', text: 'never reached: the Run yields' }] });
   fixtures.push(fx);

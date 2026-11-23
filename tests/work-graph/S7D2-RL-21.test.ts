@@ -64,7 +64,7 @@ async function memberCreateRows(handle: S7D2RoleLineWorld): Promise<number> {
 
 /** The items of the adviser's inbox whose intent is `notify`. */
 async function notifyCount(handle: S7D2RoleLineWorld, adviser: S6ASession): Promise<number> {
-  return (await inboxOf(handle.world, adviser.ref)).filter(item => item.intent === 'notify').length;
+  return (await inboxOf(handle.world, adviser.ref)).filter(item => item.wake === false).length;
 }
 
 const memberCards = (cards: readonly DecisionCardV1[]): DecisionCardV1[] =>

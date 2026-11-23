@@ -13,7 +13,7 @@ import { plain } from '../helpers/AG2b-collaboration-fixture.js';
 import { commitBarrier } from '../helpers/S6A-commit-barrier.js';
 import type { S6AHostWorld } from '../helpers/S6A-host-fixture.js';
 import { S6A_SCOPE } from '../helpers/S6A-request-fixture.js';
-import { openS7AWorkWorld, ready, runS7ASameSessionAgain } from '../helpers/S7A-fixture.js';
+import { cancelS7AGoal, openS7AWorkWorld, ready, runS7ASameSessionAgain, seedS7AGoalPlan } from '../helpers/S7A-fixture.js';
 import {
   callS7A2PublishedOwner, createCancelledS7A2Goal, sendS7A2PersonMessage, withdrawS7A2Message,
 } from '../helpers/S7A2-fixture.js';
@@ -40,7 +40,7 @@ it.each(['memory', 'sqlite'] as const)('storage: five queued interventions page 
   async backend => {
     const { world, goal, line } = await openS7AWorkWorld({ backend });
     worlds.push(world);
-    const sourceGoalRef = (await createCancelledS7A2Goal(world)).goal.ref;
+    const sourceGoalRef = (await seedS7AGoalPlan(world)).goal;
     const send = (label: string, to: GoalRef) => sendS7A2PersonMessage(world, { label, recipient: line.ref, goal: to });
     const instant = async (labels: readonly string[]) => (await Promise.all(labels.map(label => send(label, sourceGoalRef))))
       .sort((left, right) => (left.ref.messageId < right.ref.messageId ? -1 : 1));
@@ -52,6 +52,8 @@ it.each(['memory', 'sqlite'] as const)('storage: five queued interventions page 
     // The cross-Goal cursor comes from another Goal's first page, so that Goal needs two messages at limit 1.
     await send('other-1', goal);
     await send('other-2', goal);
+    // P2 §2.5: a cancelled Goal refuses the send, so the messages go first and the source is cancelled after them.
+    await cancelS7AGoal(world, sourceGoalRef);
     const exercise = async () => {
       let cursor: string | null = null;
       for (const [index, refs] of pages.entries()) {
@@ -70,34 +72,39 @@ it.each(['memory', 'sqlite'] as const)('storage: five queued interventions page 
     await exercise();
   });
 
-it('facts: the delivered, withdrawn, copied and queued states reach the candidate row (memory)', async () => {
+it('facts: the delivered, withdrawn, copied and retracted states reach the candidate row (memory)', async () => {
   const { world, line } = await openS7AWorkWorld({ backend: 'memory' });
   worlds.push(world);
-  const source = await createCancelledS7A2Goal(world);
-  const sourceGoalRef = source.goal.ref;
+  const seeded = await seedS7AGoalPlan(world);
+  const sourceGoalRef = seeded.goal;
   const send = (label: string) => sendS7A2PersonMessage(world, { label, recipient: line.ref, goal: sourceGoalRef });
   const delivered = await send('fact-delivered');
   await runS7ASameSessionAgain(world, line);
   const withdrawn = await send('fact-withdrawn');
   await withdrawS7A2Message(world, withdrawn, 'fact-withdrawn');
   const copied = await send('fact-copied');
+  const queued = await send('fact-queued');
+  // P2 §2.5: cancel only after the messages that must exist on the source are sent.
+  await cancelS7AGoal(world, sourceGoalRef);
+  const source = ready<{ goal: { revision: number } }>(await world.post('goals/read', plain(S6A_SCOPE, sourceGoalRef)),
+    'the cancelled source');
   const exercise = async () => {
     await read(world, sourceGoalRef, { limit: 20 });
     // The first copy confirm of the source selects M; the copied set then holds M.
     const confirmed = await world.post('goals/copy-confirm', plain(S6A_SCOPE, {
-      commandId: 's7a2-facts-copy', sourceGoalRef, expectedSourceRevision: source.revision,
+      commandId: 's7a2-facts-copy', sourceGoalRef, expectedSourceRevision: source.goal.revision,
       selectedInterventions: [copied.ref],
     }));
     expect(confirmed.body).toMatchObject({ status: 'committed' });
-    // Sent after that confirm: it is not in the frozen unselected set.
-    const queued = await send('fact-queued');
+    // P2 §2.5: a cancelled source refuses later sends, so the not-delivered candidate is retracted
+    // by the confirm instead of arriving after the frozen set.
     const after = ready<Page>(await read(world, sourceGoalRef, { limit: 20 }), 'the candidate facts');
     expect(after.candidates).toHaveLength(4);
     expect(after.candidates).toEqual(expect.arrayContaining([
       expect.objectContaining({ messageRef: delivered.ref, state: 'delivered', selectable: true, reason: null, retractable: false, retractReason: 'delivered' }),
       expect.objectContaining({ messageRef: withdrawn.ref, state: 'withdrawn', selectable: false, reason: 'withdrawn', retractable: false, retractReason: 'withdrawn' }),
       expect.objectContaining({ messageRef: copied.ref, state: 'copied', selectable: false, reason: 'copied', retractable: false, retractReason: 'copied' }),
-      expect.objectContaining({ messageRef: queued.ref, state: 'not_delivered', selectable: true, reason: null, retractable: true, retractReason: null }),
+      expect.objectContaining({ messageRef: queued.ref, state: 'withdrawn', selectable: false, reason: 'withdrawn', retractable: false, retractReason: 'withdrawn' }),
     ]));
   };
   await exercise();

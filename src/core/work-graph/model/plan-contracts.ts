@@ -61,6 +61,8 @@ export type ProposedPlanDraftRequestV1 = {
   acknowledgement?: SessionMessageRef;
   /** The intervention message this proposal came from; present-only in the fingerprint. */
   sourceMessageRef?: SessionMessageRef | null;
+  /** The frozen source part of that message: `decision_answer` only for a card-answer round; present-only. */
+  sourcePart?: 'decision_answer';
   /** 121-136: the checks this plan proposes for its own Tasks; present-only in the fingerprint. */
   checks?: RegisteredCommandCheck[];
 };

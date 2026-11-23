@@ -66,7 +66,7 @@ it('PL-11: 1.2M sends one notify, a real rerun lifts the same Task to 2.1M and s
 
   const inbox = ready<{ items: SessionMessage[] }>(await world.post('messages/inbox',
     plain(S6A_SCOPE, { recipient: adviser.ref, page: { limit: 50 } })), 'the adviser inbox');
-  const reminders = inbox.items.filter(message => message.intent === 'notify');
+  const reminders = inbox.items.filter(message => message.wake === false);
   expect(reminders).toHaveLength(1);
   const reminderText = await readBody(world, reminders[0]!.ref, 'message');
   expect(reminderText).toContain(`plan-reminder:${goal.goalId}:${a.taskId}:2`);

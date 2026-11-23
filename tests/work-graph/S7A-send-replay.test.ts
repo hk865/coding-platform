@@ -46,12 +46,12 @@ describe.each(KINDS)('X-send-replay: the receipt is the replay (%s)', kind => {
       recipient: h.busySession });
     expect(admissions).toBe(1);
 
-    // Everything moves: the recipient acknowledges it, so the record is revision 2, not pending.
-    const acked = await h.mailbox.ackMessage(h.ctxWork, {
-      input: { messageRef: first.value.ref },
-      meta: { requestId: 'x-send-replay-ack', expected: [messagePin(first.value.ref, first.value.revision)] },
+    // Everything moves: the recipient replies, so the record is revision 2, not pending.
+    const replied = await h.mailbox.respondMessage(h.ctxWork, {
+      input: { messageRef: first.value.ref, text: 'looked' },
+      meta: { requestId: 'x-send-replay-reply', expected: [messagePin(first.value.ref, first.value.revision)] },
     });
-    expect(acked).toMatchObject({ status: 'committed', value: { revision: 2, status: 'read' } });
+    expect(replied).toMatchObject({ status: 'committed', value: { revision: 2, status: 'responded' } });
 
     // The same command id and input: the original event's result at its cursor, no new admission.
     const replayed = await mailbox.sendMessage(h.ctxWork,

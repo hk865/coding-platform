@@ -347,7 +347,7 @@ export function createSessionMaintenanceService(
       return { kind: 'unsupported', reason: 'the original message of the copy is not readable' };
     }
     const message = read.value;
-    const asksReply = message.intent === 'inquiry' || message.needsReply === true;
+    const asksReply = message.needsReply === true;
     if (asksReply) {
       // Attachment: the formal answer is associated with the original message.
       const sender = message.response?.sender;

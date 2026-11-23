@@ -72,6 +72,12 @@ export const AG2B_WORK_TASK_ID = 'ag2b-work';
 export const AG2B_GATE_TASK_ID = 'ag2b-gate';
 
 export const AG2B_WORK_ROLE = { kind: 'legacy_template' as const, templateId: 'builder', templateRevision: '1' };
+/**
+ * The AG2b work binding's tools, the one definition both worlds use: it mirrors `localWorkbenchGrant`
+ * (`src/app/host.ts:585`), which grants the executor `ask_copy` beside the mailbox and person families.
+ * `tests/scenarios/harness.ts` re-exports it for platform mode and the `support/*-work-root.ts` bases.
+ */
+export const AG2B_WORK_TOOLS: readonly string[] = ['read', 'write', 'send_session_message', 'ask_copy'];
 export const AG2B_QUERY_ROLE = { kind: 'legacy_template' as const, templateId: 'advisor', templateRevision: '1' };
 export const AG2B_WORK_ROLE_BINDING: RoleBindingRefV1 = {
   schemaVersion: 1, bindingId: 'ag2b-work-binding', templateId: 'builder', templateRevision: '1',
@@ -141,6 +147,8 @@ export type AG2bHost = {
 
 export type AG2bOverrides = {
   builderQueryProfile?: boolean;
+  /** The AG2b Work binding's granted tools; default `read`, `write`, `send_session_message` (no copy tool). */
+  workTools?: readonly string[];
   /**
    * O4b-1 (BK-15): also configure the platform secretary's binding and Query profile, as the local workbench
    * publishes one per workspace (`src/app/host.ts` `localSecretaryProfile`). Only then is the opening secretary
@@ -306,7 +314,7 @@ export async function startAG2bHost(publicDir: string, overrides: AG2bOverrides 
       grant: {
         budget: AG2B_RUNTIME_BUDGET,
         hostTemplate: { templateId: 'builder', revision: '1', digest: sha256Hex(AG2B_WORK_INSTRUCTION) },
-        tools: ['read', 'write', 'find_related_sessions', 'read_session_card', 'send_session_message'],
+        tools: [...(overrides.workTools ?? AG2B_WORK_TOOLS)],
         writeScope: ['.'], skills: { resourceRoot: skillsRoot, enabledIds: [] },
         systemInstruction: AG2B_WORK_INSTRUCTION, deniedPrefixes: [], processSandboxOptions: {}, materialBasis: null,
       },

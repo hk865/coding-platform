@@ -18,9 +18,9 @@ import type { RunRef } from '../../src/contracts/dispatch.js';
 import { platformRoleProfile } from '../../src/core/agent-runtime/role-profiles.js';
 import { advanceUntil, driveWorkflow } from '../helpers/A2-restart-fixture.js';
 import type { TaskTriple } from '../../src/contracts/dispatch.js';
-import { graphWrite } from '../helpers/AG2b-collaboration-fixture.js';
 import { parkedOnBasis, startGoalDriver, waitDriver } from '../helpers/DRV-fixture.js';
 import { createPLAdviserLine } from '../helpers/PL-consumption-fixture.js';
+import { proposePLCandidateFromIntervention } from '../helpers/PL-forms-fixture.js';
 import {
   adoptPLPlanDraft, settlePLGoal, openPLWorkflowWorld, plSkeletonDraft, plStageTwoDraft, requestHeads,
   type PLWorkflowWorld,
@@ -118,7 +118,7 @@ it('PL-16: plan_only refinement coexists with a real handoff block and a wait_re
   // The separate ordinary wait: a real Run yields on its reply after send.
   await world.scripted.script(source, [
     { kind: 'calls', calls: [{ callId: 'pl-16-send', name: 'send_session_message', args: {
-      recipient: recipient.ref, text: 'PL-16 please reply', intent: 'inquiry',
+      recipient: recipient.ref, text: 'PL-16 please reply',
       needsReply: true, waitAfterSend: true } }] },
     { kind: 'text', text: 'PL-16 send answer' },
   ]);
@@ -146,11 +146,11 @@ it('PL-16: plan_only refinement coexists with a real handoff block and a wait_re
   // with no review line, the candidate branch of the wait is a card, not an in-flight round.
   const adviser = await createPLAdviserLine(world, 'pl-16-adviser');
   await world.scripted.script(adviser, [{ kind: 'text', text: 'PL-16 refine answer' }]);
-  const proposed = (await main.post('plans/propose', graphWrite(S6A_SCOPE, {
-    goalRef: goal, basedOn: plan.ref, draft: plStageTwoDraft(plan, goal, 'pl-16'),
+  // P2 A13 (`p2-frozen.md:208`): an author that cannot be read is an A13 card that holds every refinement back, so the
+  // candidate names its real source; filling the placeholder is the lead-approved `plan_only` exemption.
+  await proposePLCandidateFromIntervention({ world, goal, basedOn: plan.ref, draft: plStageTwoDraft(plan, goal, 'pl-16'),
     reason: { text: 'PL-16 stage 2 candidate', sources: [], affectedTaskIds: ['pl-placeholder-pl-stage-2'] },
-  }, 'pl-16-propose'))) as { status: string };
-  expect(proposed.status, JSON.stringify(proposed)).toBe('committed');
+    label: 'pl-16' });
 
   // The common close-out: the real handoff block, the wait_reply and `plan_only:` all survive.
   const body = await settlePLGoal(world, goal, 'pl-16-goal') as {
@@ -168,11 +168,13 @@ it('PL-16: plan_only refinement coexists with a real handoff block and a wait_re
   expect(await requestHeads(workflow, adviser)).toEqual(
     [`refine:${goal.goalId}:pl-stage-2:${String(plan.planRevision)}`]);
 
-  // The exact sets: the ordinary wait's own reasons and kinds plus the four branches, no new branch or record.
+  // The exact sets: the ordinary wait's own reasons and kinds plus the four branches, no new branch or record. P2 adds
+  // `ActionRequest` and `TaskClaimHold` to the ordinary gap wait (`p2-frozen.md:182`).
   const exactReasons = ['plan_adoption', 'plan_change', 'task_claimable', 'formal_check', 'evidence',
     `handoff_approval:${cardKey}`, 'wait_reply', 'plan_candidate_waiting', 'plan_only:pl-stage-2'].sort();
   const exactKinds = ['PlanRevision', 'PlanProposal', 'Run', 'TaskLease', 'DispatchOutboxEntry', 'VerificationRound',
-    'Evidence', 'TaskEvidenceIndex', 'SessionMessage', 'CoreOperation', 'Goal', 'Session', 'TaskRequeue'].sort();
+    'Evidence', 'TaskEvidenceIndex', 'SessionMessage', 'CoreOperation', 'Goal', 'Session', 'TaskRequeue',
+    'ActionRequest', 'TaskClaimHold'].sort();
   expect([...reasons].sort()).toEqual(exactReasons);
   expect([...(body.value?.waitBasis?.recordKinds ?? [])].sort()).toEqual(exactKinds);
 

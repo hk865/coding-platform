@@ -1,6 +1,6 @@
 /**
  * R-codec (the record codec fragment): the record round trip, the encoded key
- * order, no decode defaults for the new fields, the four persisted lifecycle
+ * order, no decode defaults for the new fields, the persisted lifecycle
  * events, the `secretary_round` sender and the response reject branch, and the
  * `requestRoot` lookup.
  *
@@ -11,9 +11,10 @@
 import { describe, expect, it } from 'vitest';
 import type { ApplicationProofV1 } from '../../src/contracts/core/session-message.js';
 import type { SourceRefV1 } from '../../src/contracts/dispatch.js';
-import { makeCommitCursor, type DispatchBasisV1, type GoalRef } from '../../src/contracts/ledger.js';
+import { makeCommitCursor, type GoalRef } from '../../src/contracts/ledger.js';
 import type { ArtifactRef } from '../../src/contracts/artifact.js';
 import type { EncodedDomainEvent } from '../../src/core/record-store/ports.js';
+import type { MessageQueryRoundSenderRecord } from '../../src/contracts/mailbox.js';
 import {
   createSessionMessageRecord,
   nextSessionMessageRecord,
@@ -25,14 +26,10 @@ import {
   SESSION_MESSAGE_BY_REQUEST_ROOT_LOOKUP,
   SESSION_MESSAGE_LOOKUP_INDEXES,
   SESSION_MESSAGE_RECORD_SCHEMAS,
-  SESSION_MESSAGE_RELEASED_EVENT_TYPE,
-  SESSION_MESSAGE_RELEASE_DECIDED_EVENT_TYPE,
   SESSION_MESSAGE_WITHDRAWN_EVENT_TYPE,
   decodeSessionMessageRecord,
   encodeSessionMessageAppliedEvent,
   encodeSessionMessageRecord,
-  encodeSessionMessageReleasedEvent,
-  encodeSessionMessageReleaseDecidedEvent,
   encodeSessionMessageWithdrawnEvent,
   sessionMessageFromEvent,
 } from '../../src/core/work-graph/sessions/message-record-codecs.js';
@@ -41,18 +38,20 @@ import { SECRETARY_SENDER, s7aRecordInput } from '../helpers/S7A-message-fixture
 const PROJECT = 'P';
 const WORKSPACE = 'W';
 const AT = '2026-10-25T00:00:00.000Z';
-const APPROVED_AT = '2026-10-25T00:00:01.000Z';
-const RELEASED_AT = '2026-10-25T00:00:02.000Z';
 const APPLIED_AT = '2026-10-25T00:00:03.000Z';
-const DEADLINE = '2026-10-26T00:00:00.000Z';
 const SOURCE: SourceRefV1 = { kind: 'workspace', refId: WORKSPACE, revision: '1' };
 const BODY: ArtifactRef = { kind: 'artifact', contentType: 'text/plain', digest: 'd', sizeBytes: 1, source: SOURCE };
 const HOST = { kind: 'host' as const, actor: { kind: 'human' as const, id: 'operator' } };
 const GOAL: GoalRef = { aggregateType: 'Goal', projectId: PROJECT, goalId: 'g' };
-const PINS: DispatchBasisV1 = { planRevision: 2, pointerRevision: 'none', dispatchSequence: 4 };
 const PROOF: ApplicationProofV1 = {
   receipt: { identityKey: 'proof', fingerprint: 'proof-f', cursor: makeCommitCursor(2) },
   effect: { kind: 'requeue', ref: GOAL },
+};
+const QUERY_ROUND: MessageQueryRoundSenderRecord = {
+  kind: 'query_run',
+  sessionRef: { projectId: PROJECT, sessionId: 'S' },
+  queryRunRef: { aggregateType: 'QueryRun', projectId: PROJECT, workspaceId: WORKSPACE, queryJobId: 'q', runId: 'r' },
+  generation: 1,
 };
 const WORK_RUN_SENDER: MessageWorkRunSenderRecord = {
   kind: 'work_run',
@@ -65,17 +64,12 @@ const WORK_RUN_SENDER: MessageWorkRunSenderRecord = {
   generation: 1,
 };
 
-/** The applied lifecycle: release approved, released with deadline/pins, then applied. */
+/** The applied lifecycle: the G1 send facts, then the apply slot and its proof. */
 function appliedRecord(): SessionMessageRecord {
-  let record = createSessionMessageRecord(s7aRecordInput({ release: 'awaiting' }));
-  record = nextSessionMessageRecord(record, {
-    kind: 'release_decided', allow: true, approvedAt: APPROVED_AT,
-    approvalRevision: 2, release: 'approved', proof: null,
-  });
-  record = nextSessionMessageRecord(record, {
-    kind: 'released', releasedAt: RELEASED_AT, deadline: DEADLINE, pins: PINS,
-  });
-  return nextSessionMessageRecord(record, { kind: 'applied', appliedAt: APPLIED_AT, proof: PROOF });
+  const created = createSessionMessageRecord(s7aRecordInput({
+    wake: false, answeredBy: 'copy', entry: 'person_intervention', deadlineMs: 86_400_000,
+  }));
+  return nextSessionMessageRecord(created, { kind: 'applied', appliedAt: APPLIED_AT, proof: PROOF });
 }
 
 const APPLIED_RECORD = appliedRecord();
@@ -92,16 +86,6 @@ const WITHDRAWN = {
   occurredAt: AT, projectId: PROJECT, workspaceId: WORKSPACE, requestId: 'request-withdrawn',
   actor: HOST, message: APPLIED_RECORD,
 };
-const RELEASE_DECIDED = {
-  eventId: 'event-release-decided', eventType: 'SessionMessageReleaseDecided' as const,
-  schemaVersion: 1 as const, occurredAt: AT, projectId: PROJECT, workspaceId: WORKSPACE,
-  requestId: 'request-release-decided', actor: HOST, message: APPLIED_RECORD, proof: null,
-};
-const RELEASED = {
-  eventId: 'event-released', eventType: 'SessionMessageReleased' as const, schemaVersion: 1 as const,
-  occurredAt: AT, projectId: PROJECT, workspaceId: WORKSPACE, requestId: 'request-released',
-  actor: HOST, message: APPLIED_RECORD,
-};
 const APPLIED = {
   eventId: 'event-applied', eventType: 'SessionMessageApplied' as const, schemaVersion: 1 as const,
   occurredAt: AT, projectId: PROJECT, workspaceId: WORKSPACE, requestId: 'request-applied',
@@ -110,8 +94,6 @@ const APPLIED = {
 
 const EVENT_ROWS: ReadonlyArray<readonly [string, EncodedDomainEvent]> = [
   [SESSION_MESSAGE_WITHDRAWN_EVENT_TYPE, encodeSessionMessageWithdrawnEvent(WITHDRAWN)],
-  [SESSION_MESSAGE_RELEASE_DECIDED_EVENT_TYPE, encodeSessionMessageReleaseDecidedEvent(RELEASE_DECIDED)],
-  [SESSION_MESSAGE_RELEASED_EVENT_TYPE, encodeSessionMessageReleasedEvent(RELEASED)],
   [SESSION_MESSAGE_APPLIED_EVENT_TYPE, encodeSessionMessageAppliedEvent(APPLIED)],
 ];
 
@@ -123,19 +105,35 @@ describe('R-codec', () => {
     });
   });
 
-  it('requires an approval to name the revision it produced', () => {
-    const awaiting = createSessionMessageRecord(s7aRecordInput({ release: 'awaiting' }));
-    expect(() => nextSessionMessageRecord(awaiting, {
-      kind: 'release_decided', allow: true, approvedAt: APPROVED_AT,
-      approvalRevision: 3, release: 'approved', proof: null,
-    })).toThrow(/produced revision/);
+  it('round-trips the G1 send facts and a query_run reply without answerRef', () => {
+    const request = createSessionMessageRecord(s7aRecordInput({
+      sender: QUERY_ROUND, needsReply: true, wake: false, answeredBy: 'copy', entry: 'person_intervention',
+    }));
+    const record = nextSessionMessageRecord(request, {
+      kind: 'responded', rejectedAt: null,
+      response: { sender: QUERY_ROUND, bodyRef: BODY, sourceRef: SOURCE, respondedAt: AT },
+    });
+    const bound = { ...record, responseSince: makeCommitCursor(11) };
+    const decoded = decodeSessionMessageRecord(encodeSessionMessageRecord(bound));
+    expect(decoded.status).toBe('decoded');
+    if (decoded.status !== 'decoded') return;
+    expect(decoded.value.wake).toBe(false);
+    expect(decoded.value.answeredBy).toBe('copy');
+    expect(decoded.value.entry).toBe('person_intervention');
+    expect(decoded.value).not.toHaveProperty('intent');
+    expect(decoded.value).toEqual({ ...bound, replyHandler: null, archiveWaitDisposition: null });
+    const response = decoded.value.response;
+    if (response === null) throw new Error('the query_run reply must survive the codec');
+    expect(response.sender.kind).toBe('query_run');
+    expect(Object.keys(response.sender)).not.toContain('answerRef');
+    expect(response.sender).not.toHaveProperty('answerRef');
   });
 
   it('keeps the record\'s own key order in the encoded JSON', () => {
     expect(Object.keys(JSON.parse(APPLIED_ENCODED.json))).toEqual(Object.keys(APPLIED_RECORD));
   });
 
-  it.each(['pins', 'delivery', 'approvalRevision'])(
+  it.each(['wake', 'answeredBy', 'delivery'])(
     'treats a missing %s as a missing field, never a default',
     (key) => {
       const body = JSON.parse(APPLIED_ENCODED.json);
@@ -179,20 +177,12 @@ describe('R-codec', () => {
     expect(Object.keys(restored.value)).toEqual(Object.keys(APPLIED_RECORD));
   });
 
-  it('refuses an unknown event key and a release-decided event without proof', () => {
+  it('refuses an unknown event key', () => {
     const withdrawn = encodeSessionMessageWithdrawnEvent(WITHDRAWN);
     const extraBody = JSON.parse(withdrawn.json);
     extraBody['extra'] = true;
     expect(schemaFor(SESSION_MESSAGE_WITHDRAWN_EVENT_TYPE)
       .validate({ ...withdrawn, json: JSON.stringify(extraBody) }).status).toBe('invalid');
-
-    const release = encodeSessionMessageReleaseDecidedEvent(RELEASE_DECIDED);
-    const noProofBody = JSON.parse(release.json);
-    delete noProofBody['proof'];
-    const noProof = schemaFor(SESSION_MESSAGE_RELEASE_DECIDED_EVENT_TYPE)
-      .validate({ ...release, json: JSON.stringify(noProofBody) });
-    expect(noProof.status).toBe('invalid');
-    if (noProof.status === 'invalid') expect(noProof.reason).toContain('proof');
   });
 
   it('round-trips the secretary_round sender and its requestRoot', () => {
@@ -211,7 +201,7 @@ describe('R-codec', () => {
     // Spec §2.3 P02: the first reply on a work_run OR secretary_round message
     // carries the reply position; the body check admits both senders.
     const secretarySent = createSessionMessageRecord(s7aRecordInput({
-      sender: SECRETARY_SENDER, requestRoot: SECRETARY_SENDER.requestRoot, intent: 'inquiry', needsReply: true,
+      sender: SECRETARY_SENDER, requestRoot: SECRETARY_SENDER.requestRoot, needsReply: true,
     }));
     const replied = nextSessionMessageRecord(secretarySent, {
       kind: 'responded', rejectedAt: null,
@@ -226,7 +216,7 @@ describe('R-codec', () => {
     });
     const refused = decodeSessionMessageRecord(encodeSessionMessageRecord({ ...hostReplied, responseSince: makeCommitCursor(11) }));
     expect(refused.status).toBe('invalid');
-    if (refused.status === 'invalid') expect(refused.reason).toContain('work_run or secretary_round');
+    if (refused.status === 'invalid') expect(refused.reason).toContain('requires a work_run, query_run or secretary_round sender');
   });
 
   it('round-trips a reject response with exactly reject and reason beside the old four keys', () => {

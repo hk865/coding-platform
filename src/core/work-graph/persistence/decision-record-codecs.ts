@@ -30,6 +30,7 @@ import {
   hasOnlyKeys, invalid, isRecord, nonEmpty, parseTaggedObject, type UnknownRecord,
 } from '../../../contracts/validation/common.js';
 import { checkShape } from '../../../contracts/validation/data-format.js';
+import { ActionRequestRefShape, TaskClaimHoldRefShape } from '../../../contracts/data-format-refs.js';
 import { InitializationBindingRefShape } from '../../../contracts/initialization-binding.js';
 import type { WorkLinkRelation } from '../../../contracts/core/identity.js';
 import {
@@ -192,6 +193,14 @@ export function aggregateRefProblem(value: unknown): string | null {
   if (!nonEmpty(aggregateType)) return 'an aggregate ref must carry a non-empty aggregateType';
   if (aggregateType === 'InitializationBinding') {
     return checkShape(InitializationBindingRefShape, value, 'stored');
+  }
+  // An action card's source pins name the request record itself; its one shape lives in `data-format-refs.ts`.
+  if (aggregateType === 'ActionRequest') {
+    return checkShape(ActionRequestRefShape, value, 'stored');
+  }
+  // A release application's proof names the task's fixed claim hold; the same ref shape the hold owner reads.
+  if (aggregateType === 'TaskClaimHold') {
+    return checkShape(TaskClaimHoldRefShape, value, 'stored');
   }
   const rule = AGGREGATE_REF_RULES[aggregateType];
   if (rule === undefined) return `the aggregate ref type ${aggregateType} is not a known aggregate`;

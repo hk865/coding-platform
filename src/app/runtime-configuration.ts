@@ -129,8 +129,8 @@ export const LOCAL_WORKBENCH_BUDGET: RuntimeBudget = { ...DEFAULT_RUNTIME_BUDGET
  * §5.3.5: the planning round's own output reserve. The one formula
  * (`planningOutputReserveTokens`) is measured against this profile's model
  * window; the window itself is unchanged, and an ordinary profile keeps its
- * 16384. The Host applies this to the profile that consumes a Host system
- * `action_request`, so the request side and the Host upper bound use one value.
+ * 16384. The Host selects the budget for a trusted system round by this rule,
+ * so the request side and the Host upper bound use one value.
  */
 export function planningRoundRuntimeBudget(
   profile: Pick<WorkbenchQueryProfile, 'runtimeBudget'>,

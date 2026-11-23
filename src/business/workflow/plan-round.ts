@@ -13,8 +13,8 @@ import type { TaskTriple } from '../../contracts/dispatch.js';
 import { canonicalJson, type JsonValue } from '../../contracts/fingerprint.js';
 import type { GoalRef } from '../../contracts/ledger.js';
 import {
-  SYSTEM_ROUND_ACTOR, systemRoundRequestId,
-  type RefinementTargetV1, type SystemRoundHeadV1, type SystemRoundV1,
+  systemRoundRequestId,
+  type RefinementTargetV1, type SystemRoundV1,
 } from '../../contracts/plan-round.js';
 import type { PlatformDutyV1 } from '../../contracts/platform-duty.js';
 import type { PlanningAnswerShapeV1 } from '../../contracts/query-job.js';
@@ -93,7 +93,6 @@ export function systemRoundSendInput(input: {
       input: {
         recipient: input.recipient,
         text,
-        intent: 'action_request',
         needsReply: true,
         goalRef: input.round.goalRef,
         ...((input.round.kind === 'deviation' || input.round.kind === 'unknown_call'
@@ -110,15 +109,16 @@ export function systemRoundSendInput(input: {
 /**
  * The submit-tool shape of a planning Query, computed once where the Query is
  * created (§5.2.7 (2)): the sender identity plus the recipient line's duty.
- * The body and the request id are never parsed here; unknown combinations are
- * the ordinary text answer. Slice 9: the caller passes the system round's head
- * kind (`systemRoundOfText`), and only a reviewer answering an `execreview:`
- * round gets `exec_review`; every other reviewer round stays `plan_review`.
- * The adviser's `ucr:` round (a Host system round only) gets
- * `unknown_call_advice`, and its `crr:` round `command_rerun_advice`; a human's
- * same text stays `plan_round`, and a human's `action_request` to an executor
- * line is also `plan_round` (B20). 121-112: the scribe's `scr:` round (a Host
- * system round only) gets `scribe_review`.
+ * The body and the request id are never parsed here, and no sender self-recognizes:
+ * the caller passes the round only when `trustedSystemRoundOf` already accepted
+ * it (`SystemRoundV1 | null`). A gate's saved overlap-note is classified first
+ * and is always the text shape, for both the secretary and the adviser. Only an
+ * ordinary agent/platform message then splits by duty: the secretary and the
+ * adviser plan, the executor, scribe and reviewer settle text. The Host human's
+ * B20 shape is selected only by the caller's already-classified `person` fact
+ * (`entry:'person_intervention'` plus the Host human sender), never by the
+ * sender alone. `null` is the ordinary platform-message split, never a
+ * system-round shape.
  */
 export function planningAnswerShapeOf(
   message: {
@@ -127,28 +127,32 @@ export function planningAnswerShapeOf(
       | { kind: 'work_run' }
       | { kind: 'secretary_round' }
       | { kind: 'query_run' };
-    intent?: 'notify' | 'inquiry' | 'action_request' | 'decision_request';
   },
   duty: PlatformDutyV1 | null,
-  roundKind?: SystemRoundHeadV1['kind'],
+  round: SystemRoundV1 | null,
+  overlapNote: boolean,
+  /** The caller's stored B20 source fact (Host human plus `entry`); a Host human without it is not a direct intervention. */
+  person: boolean,
 ): PlanningAnswerShapeV1 {
-  if (message.intent !== 'action_request') return 'text';
-  const sender = message.sender;
-  if (sender.kind === 'host' && sender.actor.kind === 'system') {
-    if (sender.actor.id !== SYSTEM_ROUND_ACTOR.id) return 'text';
+  if (overlapNote) return 'text';
+  if (round !== null) {
     // G8B B1d：批检查轮只发给参谋或审阅者。
-    if ((duty === 'adviser' || duty === 'reviewer') && roundKind === 'check_review') return 'check_review';
-    if (duty === 'reviewer') return roundKind === 'exec_review' ? 'exec_review' : 'plan_review';
-    if (duty === 'adviser' && roundKind === 'unknown_call') return 'unknown_call_advice';
-    if (duty === 'scribe' && roundKind === 'command_review') return 'scribe_review';
-    if (duty === 'adviser' && roundKind === 'command_rerun') return 'command_rerun_advice';
+    if ((duty === 'adviser' || duty === 'reviewer') && round.kind === 'check_review') return 'check_review';
+    if (duty === 'reviewer') return round.kind === 'exec_review' ? 'exec_review' : 'plan_review';
+    if (duty === 'adviser' && round.kind === 'unknown_call') return 'unknown_call_advice';
+    if (duty === 'scribe' && round.kind === 'command_review') return 'scribe_review';
+    if (duty === 'adviser' && round.kind === 'command_rerun') return 'command_rerun_advice';
     return duty === 'adviser' || duty === 'secretary' ? 'plan_round' : 'text';
   }
-  if (sender.kind === 'host' && sender.actor.kind === 'human') {
+  const sender = message.sender;
+  if (person) {
     // B20：没有任务的活跃目标，人发给执行者线的直接干预在这条线上开规划轮，回答带完整计划草稿。
     return duty === 'adviser' || duty === 'secretary' || duty === 'executor' ? 'plan_round' : 'text';
   }
-  if (sender.kind === 'work_run' || sender.kind === 'secretary_round') {
+  // The ordinary platform messages (including the automated identities' notifications) split exactly like an
+  // agent's message: a secretary/adviser line plans, every other duty settles text.
+  if (sender.kind === 'work_run' || sender.kind === 'secretary_round' || sender.kind === 'query_run'
+    || (sender.kind === 'host' && sender.actor.kind === 'system')) {
     return duty === 'adviser' || duty === 'secretary' ? 'plan_round' : 'text';
   }
   return 'text';

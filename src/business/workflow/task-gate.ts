@@ -67,7 +67,8 @@ export type TaskGateDependencies = {
   isUnadmittedStarting(owned: Owned, runRef: RunRef): Promise<boolean>;
   claimContinuation(owned: Owned, base: Base, goal: GoalSnapshot, planRef: PlanRevisionRef, task: RuntimeTask,
     row: TaskRow, binding: Binding, afterRunRef: RunRef,
-    continuation: { requeue?: WorkflowSessionRequeue; review?: WorkflowSessionReview }): Promise<WorkflowAdvanceResult | null>;
+    continuation: { requeue?: WorkflowSessionRequeue; review?: WorkflowSessionReview }):
+    Promise<WorkflowAdvanceResult | { kind: 'line_busy'; reason: string }>;
   /** K3 layering (121-109): the record's responsible adviser line (the Workflow's one L35 read); `null` is none. */
   reviewAdviserOf(owned: Owned, review: Pick<UnknownCallReviewV1, 'ref'>, scope: TaskScope | null):
     Promise<SessionRef | null | CoreRejection>;
@@ -412,7 +413,8 @@ export function createTaskGate(gate: TaskGateDependencies): TaskGateFunctions {
     };
     const claimed = await claimContinuation(owned, base, goal, plan.ref, task, row, binding, afterRunRef,
       { review: sessionReview });
-    if (claimed === null) return { kind: 'skip', source: 'review_session_busy' };
+    // B3-04: the continuation's proven line-busy result stays the review gate's `review_session_busy` skip.
+    if ('kind' in claimed) return { kind: 'skip', source: 'review_session_busy' };
     if (claimed.status !== 'ready') return { kind: 'rejection', rejection: claimed };
     if (claimed.value.state !== 'advance' || claimed.value.next === null || claimed.value.next.kind !== 'perform') {
       return { kind: 'waiting', reason: claimed.value.reason ?? 'the review continuation selected no step' };

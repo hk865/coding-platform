@@ -4,6 +4,7 @@ import type { DecisionObjectV1, DecisionOptionV1, DecisionSourceIdentityV1,
 import { rejectedWithCurrent } from '../../../../contracts/core/rejections.js';
 import type { GoalRef, GoalSnapshot } from '../../../../contracts/ledger.js';
 import { decodeSessionMessageRecord } from '../../sessions/message-record-codecs.js';
+import { isMessageAgentSender } from '../../state/message-machine.js';
 import { goalBasis, isUserRecipient, sameJson } from './read-support.js';
 import type { SourceReadResult, SourceReadSupport } from './types.js';
 
@@ -27,8 +28,8 @@ export async function readMessageSource(
   const decoded = decodeSessionMessageRecord(loaded.record);
   if (decoded.status !== 'decoded') return rejectedWithCurrent('unavailable', `the message record is damaged: ${decoded.reason}`);
   const message = decoded.value;
-  if (!isUserRecipient(message.recipient) || message.decision === undefined
-    || message.decision.syntheticAnswer || message.intent !== 'decision_request') {
+  // §2.3: the card is recognized by its formal card metadata and the saved `decision`, never by a message intent.
+  if (!isUserRecipient(message.recipient) || message.decision === undefined || message.decision.syntheticAnswer) {
     return rejectedWithCurrent('invalid', 'the decision source message is not an answerable user decision card');
   }
   // The message's own Goal wins when it has one; otherwise the source subject's.
@@ -48,7 +49,9 @@ export async function readMessageSource(
   options = message.decision.options.map((option) => structuredClone(option));
   goalBases = [goalBasis(goal)];
   closed = goal.desiredState === 'cancelled';
-  allowedReaderSessionRefs = message.sender.kind === 'work_run'
+  // §4.6: every trusted agent sender line (`work_run`, `query_run`, `secretary_round`) names the formal
+  // reader; the caller must still be that exact Session.
+  allowedReaderSessionRefs = isMessageAgentSender(message.sender)
     ? [{ projectId: message.sender.sessionRef.projectId, sessionId: message.sender.sessionRef.sessionId }] : [];
   return { status: 'ready', value: { goal, objects, options, pins, goalBases, closed, allowedReaderSessionRefs } };
 }

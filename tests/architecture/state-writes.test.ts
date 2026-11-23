@@ -79,9 +79,9 @@ const ROUND_USE = 'state/verification-machine.ts buildOpenedRound, withCheckPhas
 const MESSAGE_USE = 'state/message-machine.ts createSessionMessageRecord, nextSessionMessageRecord or bindMessageResponseCursor';
 const MESSAGE_FIELDS = ['status', 'readAt', 'response', 'acceptedInputs', 'consultationDerivation',
   'replyHandler', 'archiveWaitDisposition', 'decision', 'application', 'responseSince',
-  'taskRef', 'requestRoot', 'followupOf', 'deadline', 'deadlineMs', 'release', 'delivery', 'deliveryEvidence',
-  'expiredAt', 'withdrawnAt', 'waitCancelledAt', 'transferredTo', 'originalRef', 'appliedAt', 'rejectedAt',
-  'approvedAt', 'approvalRevision', 'applicationProof', 'pins'] as const;
+  'wake', 'answeredBy', 'entry', 'taskRef', 'requestRoot', 'followupOf', 'deadline', 'deadlineMs', 'delivery',
+  'deliveryEvidence', 'expiredAt', 'withdrawnAt', 'waitCancelledAt', 'transferredTo', 'originalRef', 'appliedAt',
+  'rejectedAt', 'applicationProof'] as const;
 const WORKSPACE_USE = 'state/notice-settings-machine.ts buildWorkspaceDecisionSettingsRecord or '
   + 'state/line-pin-machine.ts buildWorkspaceLineSettingsRecord or state/workspace-removal.ts nextWorkspaceRemoved';
 const PROPOSAL_USE = 'state/plan-machine.ts newCandidateProposal or acceptProposalRecord';
@@ -197,7 +197,7 @@ const PROTECTED_TYPES: readonly ProtectedType[] = [
   { file: 'src/core/work-graph/model/session-operation-arms.ts', name: 'HandoffActionV1', kind: 'record',
     fields: ['progress'], use: 'state/session-handoff.ts consumeHandoffBrief' },
   { file: 'src/contracts/dispatch-counter-format.ts', name: 'DispatchCounterV1', kind: 'record',
-    fields: ['ref', 'schemaVersion', 'revision', 'goalId', 'sequence', 'lastMessageRef'],
+    fields: ['ref', 'schemaVersion', 'revision', 'goalId', 'sequence', 'lastActionRef'],
     use: 'state/dispatch-counter.ts firstDispatch or nextDispatch' },
   { file: 'src/contracts/initialization-binding.ts', name: 'InitializationBindingV1',
     kind: 'record', fields: 'all', use: 'state/goal-confirm.ts newInitializationBinding' },
@@ -1276,10 +1276,10 @@ describe('state-writes checker: record types inferred from field-table formats',
 // R-message-fields: one mutation per protected field (book §5, 7A-1 M-1)      //
 // -------------------------------------------------------------------------- //
 
-/** Book §3.1's nineteen new required record fields, in declaration order. */
-const NEW_MESSAGE_FIELDS = ['taskRef', 'requestRoot', 'followupOf', 'deadline', 'deadlineMs', 'release', 'delivery',
-  'deliveryEvidence', 'expiredAt', 'withdrawnAt', 'waitCancelledAt', 'transferredTo', 'originalRef', 'appliedAt',
-  'rejectedAt', 'approvedAt', 'approvalRevision', 'applicationProof', 'pins'] as const;
+/** Book §3.1's new record fields after G1, in declaration order. */
+const NEW_MESSAGE_FIELDS = ['wake', 'answeredBy', 'entry', 'taskRef', 'requestRoot', 'followupOf', 'deadline',
+  'deadlineMs', 'delivery', 'deliveryEvidence', 'expiredAt', 'withdrawnAt', 'waitCancelledAt', 'transferredTo',
+  'originalRef', 'appliedAt', 'rejectedAt', 'applicationProof'] as const;
 /** The ten lifecycle fields the table protected before 7A-1. */
 const HISTORICAL_MESSAGE_FIELDS = ['status', 'readAt', 'response', 'acceptedInputs', 'consultationDerivation',
   'replyHandler', 'archiveWaitDisposition', 'decision', 'application', 'responseSince'] as const;
@@ -1307,7 +1307,7 @@ describe('state-writes checker: R-message-fields (one mutation per field)', () =
   }, 120_000);
   afterAll(async () => { if (dir) await rm(dir, { recursive: true, force: true }); });
 
-  it('names the ten historical fields and the nineteen new ones in declaration order', () => {
+  it('names the ten historical fields and the eighteen new ones in declaration order', () => {
     expect(MESSAGE_FIELDS).toEqual([...HISTORICAL_MESSAGE_FIELDS, ...NEW_MESSAGE_FIELDS]);
   });
 

@@ -107,7 +107,7 @@ export type ColdStartServiceDeps = {
   proposals: Pick<ArchitectureProposalService,
     'readPendingArchitectureProposals' | 'freezeArchitectureProposalBatch' | 'readFrozenArchitectureBatches'
     | 'readArchitectureProposal'>;
-  /** The round's “please act”: sent when the round opens, read and withdrawn by its own sender when the round ends. */
+  /** The round's “please act”: sent when the round opens; at its end only the untouched one (empty `acceptedInputs`) is withdrawn, a consumed one just ends. */
   messages: Pick<SessionMailboxPort, 'sendMessage' | 'readMessage'> & Pick<SessionMessageCommandPort, 'withdrawMessage'>;
   lines: Pick<RoleLineOperationsPort, 'openRegionLine'>;
   /** L-9: one standby adviser line for a region (the Workflow chooser's `reuseStandby`). */
@@ -400,7 +400,7 @@ export async function openExploration(deps: ColdStartServiceDeps, at: RoleExplor
   if (card.status !== 'ready') return card;
   const question = input.question ?? roleExplorationQuestion(input.segment, input.region, 1);
   const sent = await deps.messages.sendMessage(at.ctx, {
-    input: { recipient: input.line, text: question, intent: 'action_request' },
+    input: { recipient: input.line, text: question, needsReply: true },
     meta: { requestId: `cold-start-message:${at.op.ref.operationId}:${input.key}`, expected: [] },
   });
   if (sent.status !== 'committed') return sent;
@@ -447,7 +447,9 @@ function reopenRoundIds(group: readonly ColdStartExplorationQueryRefV1[]): { que
  * own message), so it never heads its line's queue as an input nobody consumes. The exploration Answer cannot be its
  * reply: `respondFromQueryAnswer` binds only an intervention or consultation Query to a message. The message lives
  * in the line's workspace; a later round of the same group keeps it as its binding (`roleExplorationBindingOf` reads
- * only its shape). A refused withdrawal (the line runs something else now) is returned and the next pass retries.
+ * only its shape). Only a message nobody consumed is withdrawn: the Query accepted this round's message as an
+ * input, or read or answered it, and the machine refuses that withdrawal; the round ends without one. A refused
+ * withdrawal of a still-unconsumed message (the line runs something else now) is returned and the next pass retries.
  */
 async function endedRound(deps: ColdStartServiceDeps, at: RoleExplorationAtV1,
   entry: ColdStartExplorationQueryRefV1): Promise<ReadResult<EndingV1>> {
@@ -456,7 +458,9 @@ async function endedRound(deps: ColdStartServiceDeps, at: RoleExplorationAtV1,
     ? at.ctx : handoffContextOf({ ...at.ctx, workspaceId: ref.workspaceId }, at.ctx.principal);
   const message = await deps.messages.readMessage(lineCtx, ref);
   if (message.status !== 'ready') return message;
-  if (message.value.withdrawnAt === null) {
+  const unconsumed = message.value.readAt === null && message.value.response === null
+    && (message.value.acceptedInputs ?? []).length === 0;
+  if (message.value.withdrawnAt === null && unconsumed) {
     const withdrawn = await deps.messages.withdrawMessage(lineCtx, { input: { messageRef: { ...ref } },
       meta: { requestId: `exploration-settle:${sessionMessageRefKey(ref)}`, expected: [] } });
     if (withdrawn.status !== 'committed') return withdrawn;

@@ -24,7 +24,7 @@ import type { ReadResult } from '../../src/contracts/core/results.js';
 import type { SessionMessage } from '../../src/core/work-graph/model/communication-contracts.js';
 import type { WriteResult } from '../../src/contracts/core/results.js';
 import type { UnknownCallReviewV1 } from '../../src/contracts/unknown-call-review.js';
-import { cleanupScenarios, HostScenario, hostCtx, performs } from './harness.js';
+import { cleanupScenarios, HostScenario, hostCtx, performs, waitFor } from './harness.js';
 import { cleanupRestart, deferred, readExecution, type Deferred } from '../helpers/A2-restart-fixture.js';
 import { createScriptedModel } from '../helpers/B2-runtime-fixture.js';
 import { shellSeam } from '../helpers/K3-tool-seams.js';
@@ -34,7 +34,7 @@ import {
 } from '../helpers/AG2b-collaboration-fixture.js';
 import { lockLedgerAfter, openWorkRoot, preparedOf, redrivePolicy, WORK_TARGET } from './support/common.js';
 import { openShellWorkRoot, prepareOn } from './support/shell-work-root.js';
-import { acceptedMessageInputs, consult, outboxMessages, preparedBriefOf } from './support/brief.js';
+import { acceptedMessageInputs, outboxMessages, preparedBriefOf, wakeLineRound } from './support/brief.js';
 import { driveReviewUntil, openReviewWorkRoot } from './support/review-work-root.js';
 
 // The KE6 stand-in (as K3-05): `reviewCapability` reads the read-only probe
@@ -59,8 +59,8 @@ seams.shell = shellSeam;
 
 /**
  * A delegating gate on the real C factory: while installed, every
- * `readConsumableSessions` waits for the one deferred until the explicit
- * `workflow/consultation`, so H cannot auto-answer the inquiry before this
+ * `readConsumableSessions` waits for the one deferred until the recipient line's
+ * explicit woken round (`wakeLineRound`), so H cannot auto-answer the inquiry before this
  * test's own `pending` read. The module wrapper is the `S7B-L-host-gates`
  * pattern; the gate itself is the shared `deferred`.
  */
@@ -140,17 +140,16 @@ async function recipientParticipant(h: HostScenario, label: string): Promise<{ p
 describe('K3-08 the wait reply and the review round mailbox fence', () => {
   it('K3-08 (一): a wait send in flight is observed done, the wait relation is gone, and the continuation receives the reply', async () => {
     // The gate is installed before the Host opens and stays through the restart
-    // below; only the explicit consult at the end may release it.
+    // below; only the explicit woken round at the end may release it.
     const gate = deferred();
     consumeGate.gate = gate;
     try {
       const h = await HostScenario.open({ gitWorkspace: true, automation: redrivePolicy(false), check: 'pass',
-        script: { replies: [{ kind: 'text', text: 'K3-08 (一): the continuation received the reply' }],
-          queryReplies: [{ kind: 'text', text: 'K3-08: the reply' }] } });
+        script: { replies: [{ kind: 'text', text: 'K3-08 (一): the continuation received the reply' }] } });
       const recipient = await recipientParticipant(h, 'k3-08-one-recipient');
       const crashed = await crashOnWaitSend(h, 'k3-08-one', [{ callId: 'k3-08-one-send', name: 'send_session_message',
         args: { recipient: { projectId: recipient.projectId, sessionId: recipient.sessionId },
-          text: 'K3-08 (一): a question whose wait the crash loses', intent: 'inquiry', needsReply: true, waitAfterSend: true } }]);
+          text: 'K3-08 (一): a question whose wait the crash loses', needsReply: true, waitAfterSend: true } }]);
       const { runRef, sessionRef, report } = crashed;
 
       // RUN-25 applies (a git workspace, the contained send, a readable Kernel).
@@ -189,10 +188,18 @@ describe('K3-08 the wait reply and the review round mailbox fence', () => {
       const prepared = preparedOf(toContinue.next);
       expect(prepared.claim.sessionRef).toEqual(sessionRef);
       expect(prepared.claim.runRef.runId).not.toBe(runRef.runId);
+      // P2 (cp2f7 ruling P-B 2; B-36, 97-9; `intervention.ts:219-225`): the restart left the Goal interrupted, which
+      // holds the recipient line's woken round until a person starts the Goal. The person starts the Goal driver; it
+      // finds the prepared continuation's Run and waits, so the continuation is still started below.
+      expect((await h.post<{ status: string }>('workflow/driver-start', plain(AG2B_SCOPE,
+        { advance: h.select('k3-08-one-driver'), queryProfileIds: [] }))).status).toBe('ready');
+      await waitFor(async () => (await h.goalDisplay()).causes, causes => !causes.some(cause =>
+        (cause as { code?: string }).code === 'interrupted_pending_resume'), 'the person to resume the Goal');
 
       // The reply is delivered to the original Session, then the continuation
-      // starts; its safe point (the before-model input boundary) accepts it.
-      expect(await consult(h, message.ref)).toMatchObject({ status: 'ready', value: { state: 'responded' } });
+      // starts; its safe point (the before-model input boundary) accepts it. P2
+      // (design-frozen.md:775; p2-frozen.md:133; cp2f7 ruling P-A 3): the recipient line answers the wait question in its own woken round, never a copy.
+      expect(await wakeLineRound(h, message.ref, 'K3-08: the reply')).toEqual({ status: 'answer_ready', modelCalls: 1 });
       gate.resolve();
       const driven = await h.advance(toContinue.next, { stopBefore: performs('open_checks') });
       expect(driven.state).toBe('stopped');

@@ -33,6 +33,9 @@ import { createRoleConfigurationService } from '../../src/core/work-graph/config
 import { createMaterialService } from '../../src/core/work-graph/materials/material-service.js';
 import { createMaterialRecordReaders } from '../../src/core/work-graph/materials/record-readers.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
+import { createQueryRoundResolver } from '../../src/core/work-graph/tasks/query-round.js';
+import { unknownSessionDuty } from './session-duty-double.js';
+import { recordConsultationCopy } from './S2C-L-runs-support.js';
 import { createExecutionEntryService } from '../../src/core/work-graph/tasks/execution-entry-service.js';
 import { createRunReconcileService } from '../../src/core/work-graph/tasks/run-reconcile-service.js';
 import { createQueryExecution } from '../../src/core/work-graph/queries/query-execution.js';
@@ -83,8 +86,10 @@ export async function openWP2NoticesFixture(kind: 'memory' | 'sqlite', factory: 
   const roles = createRoleConfigurationService({ records, now: f.now, eventId: f.id });
   const materials = createMaterialService({ bodies: b2.bodies, authority: createMaterialRecordReaders(records).authority, now: f.now });
   const reads = createRunStateReader({ records, bodies: b2.bodies });
+  // P2 §2.6 deleted `send_user_message`; the Host grant names only the mailbox
+  // writer and the reply the notices rows use.
   const grant = { ...B2_HOST.permissions, tools: [...B2_HOST.permissions.tools,
-    'send_session_message', 'respond_session_message', 'send_user_message'] };
+    'send_session_message', 'respond_session_message'] };
   const sessionGrant = { ...B2_HOST.permissions, tools: [...B2_HOST.permissions.tools, 'send_session_message', 'respond_session_message'] };
   const authorizeConfiguration: AuthorizeConfiguration = async (requestCtx, input) => {
     if (requestCtx.projectId !== base.scope.projectId || requestCtx.workspaceId !== base.scope.workspaceId
@@ -97,6 +102,7 @@ export async function openWP2NoticesFixture(kind: 'memory' | 'sqlite', factory: 
   };
   const mailboxDeps = { records, sessions: f.sessions, executions: reads, roles, materials,
     defaultInquiryDeadlineMs: 86_400_000,
+    queryRounds: createQueryRoundResolver({ records, duties: unknownSessionDuty, bodies: b2.bodies }),
     runtimeAdmission: { bodies: b2.bodies, authorizeConfiguration }, systemActor: actor, now: f.now, newId: f.id,
     // NR tests reply binding; DU owns testing how these trusted facts are resolved.
     duties: { async readMessageDutiesFacts() { return { status: 'ready' as const,
@@ -130,9 +136,11 @@ export async function openWP2NoticesFixture(kind: 'memory' | 'sqlite', factory: 
       displayToken: value.displayToken, seenThrough: value.seenThrough },
       meta: { requestId: f.id(), expected: [await f.pin(base.workspaceRef)] } }));
   }
-  async function send(claim = b2.claim, recipient = f.D, waitAfterSend = false) {
+  async function send(claim = b2.claim, recipient = f.D, waitAfterSend = false, answeredBy?: 'copy') {
     return committed(await f.mailbox.sendMessage(f.workCtx(claim), { input: { recipient, text: 'Which file should this work use?',
-      intent: 'inquiry', needsReply: true, waitAfterSend }, meta: { requestId: f.id(), expected: [] } })).value;
+      needsReply: true, waitAfterSend,
+      ...(answeredBy === 'copy' ? { answeredBy: 'copy' as const, wake: false } : {}) },
+    meta: { requestId: f.id(), expected: [] } })).value;
   }
   async function replyWrite(message: SessionMessage) {
     return { input: { messageRef: message.ref, text: 'Use result.txt.' },
@@ -195,11 +203,24 @@ export async function openWP2NoticesFixture(kind: 'memory' | 'sqlite', factory: 
       queryRunRef: { aggregateType: 'QueryRun', ...base.scope, queryJobId: id, runId: id + '-run' } as QueryRunRef }; })();
     const { queryJobRef, queryRunRef } = ids;
     const question = message ? ready(await f.mailbox.readMessageBody(ctx, { messageRef: message.ref, part: 'message' })).text : 'Read the current goal.';
+    // The Query admission consumes only a copy question bound to its stored fixed derivation.
+    let derivation = message?.consultationDerivation;
+    if (message !== undefined && derivation === undefined) {
+      if (message.answeredBy !== 'copy') throw new Error('a derived Query needs a copy question');
+      if ('kind' in message.recipient) throw new Error('a derived Query needs a Session recipient');
+      const card = await f.session(sessionRef);
+      derivation = await recordConsultationCopy(f.mailbox, ctx, {
+        messageRef: message.ref, source: message.recipient,
+        sourceKernel: { adapterId: card.record.kernel.adapterId, kernelSessionId: card.record.kernel.kernelSessionId },
+        child: sessionRef, throughPosition: 1, requestId: f.id(),
+      });
+    }
     committed(await jobs.submitQueryJob(ctx, { input: { queryJobId: queryJobRef.queryJobId, runId: queryRunRef.runId,
       intent: { schemaVersion: 1, intentId: queryJobRef.queryJobId, ...base.scope, goalId: base.goalRef.goalId,
         question, focusTaskRefs: [], budget: { maxTokens: null, deadline: null }, multiTurn: { maxRounds: 1 }, correlationId: f.id(),
         execution: { kind: 'semantic_query', roleBinding: base.roleBinding, runtimeBudget: budget,
-          ...(message ? { consultation: { messageRef: message.ref, recipient: sessionRef } } : {}) } } },
+          ...(message ? { consultation: { messageRef: message.ref, recipient: sessionRef,
+            ...(derivation === undefined ? {} : { derivation }) } } : {}) } } },
       meta: { requestId: f.id(), expected: [await f.pin(base.projectRef), await f.pin(base.workspaceRef), await f.pin(base.goalRef),
         { ref: queryJobRef, revision: 0 }, { ref: queryRunRef, revision: 0 }] } }));
     committed(await owner.claimQuery(ctx, { input: { queryRunRef, sessionRef }, meta: { requestId: f.id(),

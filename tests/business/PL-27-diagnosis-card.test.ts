@@ -9,7 +9,8 @@
  * (`src/contracts/verification.ts:334`), so the policy names both kinds while
  * the registered check covers only `static`.
  *
- * The entry is the real `plans/propose` path and the fixture's reviewer line.
+ * The candidate names its real source (`proposePLCandidateFromIntervention`; P2 A13 reads the author first,
+ * `p2-frozen.md:208`) and the review goes to the fixture's reviewer line.
  * The named mutation is making `diagnosePlanCandidate` return empty for an
  * uncovered requirement; the finding and the "no automatic adoption" assertions
  * must go red.
@@ -26,7 +27,8 @@ import { canonicalRefKey } from '../../src/core/work-graph/persistence/record-co
 import { graphWrite } from '../helpers/AG2b-collaboration-fixture.js';
 import { driveWorkflow } from '../helpers/A2-restart-fixture.js';
 import { listed } from '../helpers/S7B-fixture.js';
-import { readBody, waitForResponse } from '../helpers/IV-host-fixture.js';
+import { readBody, readProposal, waitForResponse } from '../helpers/IV-host-fixture.js';
+import { proposePLCandidateFromIntervention } from '../helpers/PL-forms-fixture.js';
 import { commitBarrier } from '../helpers/S6A-commit-barrier.js';
 import { checkConfiguration, committed, ready } from '../helpers/S7A-fixture.js';
 import { OPERATOR, S6A_SCOPE, S6A_WORK_ROLE } from '../helpers/S6A-request-fixture.js';
@@ -107,13 +109,12 @@ it('PL-27: an uncovered required obligation is diagnosed, never auto-adopted, an
       role: S6A_WORK_ROLE.templateId, instruction: 'PL-27 uncovered executable work' }],
     obligations: [...skeleton.plan.obligations, obligation],
   });
-  const proposed = (await workflow.main.post('plans/propose', graphWrite(S6A_SCOPE, {
-    goalRef: workflow.goal, basedOn: skeleton.plan.ref, draft,
-    reason: { text: 'PL-27 uncovered candidate', sources: [], affectedTaskIds: [target.taskId] },
-  }, 'pl-27-propose'))) as { status: string; value?: PlanProposal };
-  expect(proposed.status, JSON.stringify(proposed)).toBe('committed');
-  const candidate = proposed.value;
-  if (candidate === undefined) throw new Error('PL-27: the candidate was not written');
+  // P2 A13 (`p2-frozen.md:208`): an author that cannot be read leaves the candidate on its card before any review, so
+  // the candidate names its real source; it only adds a Task, so A13 lets it reach the review.
+  const written = await proposePLCandidateFromIntervention({ world: workflow.world, goal: workflow.goal,
+    basedOn: skeleton.plan.ref, draft,
+    reason: { text: 'PL-27 uncovered candidate', sources: [], affectedTaskIds: [target.taskId] }, label: 'pl-27' });
+  const candidate = await readProposal(workflow.world, written.ref);
 
   // The candidate is a real `candidate` on the active Plan's next revision.
   expect(candidate.status).toBe('candidate');

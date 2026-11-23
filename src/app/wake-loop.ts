@@ -47,14 +47,10 @@ import type { WorkspaceScope } from '../contracts/core/identity.js';
 import { backoffMsFor } from '../core/work-graph/model/request-contracts.js';
 import type { GoalDrainResultV1 } from '../core/work-graph/tasks/goal-adviser-queue-service.js';
 
-export type WakeSource = 'request_command' | 'commit' | 'advance_settled' | 'line_registered' | 'start'
-  | 'release_armed';
+export type WakeSource = 'request_command' | 'commit' | 'advance_settled' | 'line_registered' | 'start';
 
 /** The queue keys the Host registers; the loop itself never names a second queue. */
 export const LIFECYCLE_QUEUE = 'lifecycle';
-
-/** Book §3.8 item 3 (`book-7a.md:382–:383`): the release queue's key; the Host registers it inside its driver block. */
-export const MESSAGE_RELEASE_QUEUE = 'message_release';
 
 /**
  * The lifecycle queue's own wake types: SessionActivity/CurrentPointer guard the coverage commit; NoteHead/
@@ -69,15 +65,6 @@ export const MESSAGE_RELEASE_QUEUE = 'message_release';
 export const LIFECYCLE_WAKE_AGGREGATE_TYPES: readonly string[] = Object.freeze([
   'QueryJob', 'QueryRun', 'Session', 'CoreOperation', 'SessionActivity', 'PlanProposal', 'Goal', 'NoteHead',
   'NoteVersion', 'CurrentPointer', 'GoalPhase', 'ProjectRoleLimits', 'ArchitectureProposal', 'KnowledgeWrite',
-]);
-
-/**
- * The release queue's own wake types — the facts an item waits on (`book-7a.md:387–:389`): its message, its
- * Goal, the plan pointer, the understanding pointer, the counter and its activity record. Static, not conditional: a
- * pass with nothing to do costs one indexed page read.
- */
-export const MESSAGE_RELEASE_WAKE_AGGREGATE_TYPES: readonly string[] = Object.freeze([
-  'SessionMessage', 'Goal', 'PlanRevision', 'CurrentPointer', 'DispatchCounter', 'SessionActivity',
 ]);
 
 /** The aggregate types whose commit wakes a queue that gave no option. */
@@ -373,7 +360,7 @@ export function createWakeLoop(deps: WakeLoopDependencies): WakeLoop {
     // A workspace the loop has not seen cannot be ignored: registering it here
     // keeps its first command's wake, and a pass re-reads everything anyway.
     const workspace = ensureWorkspace(scope);
-    if (source === 'request_command' || source === 'release_armed') workspace.armed = true;
+    if (source === 'request_command') workspace.armed = true;
     if (!workspace.armed) return;
     schedule(ensureQueue(workspaceKeyOf(scope), queueKey));
   }

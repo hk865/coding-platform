@@ -45,7 +45,7 @@ import type { SessionMessage } from '../../src/core/work-graph/model/communicati
 import type { NoteItemV1 } from '../../src/core/work-graph/model/note-contracts.js';
 import { readExecution, readQuery, submitControl } from '../helpers/A2-restart-fixture.js';
 import { graphWrite, plain, startBusyQuery } from '../helpers/AG2b-collaboration-fixture.js';
-import { heartbeatUntil, readBody, readQueryAnswer } from '../helpers/IV-host-fixture.js';
+import { heartbeatUntil, readBody, readPlanningQuery, readQueryAnswer } from '../helpers/IV-host-fixture.js';
 import {
   adviserNoticesOf, adviserToolResult, answerK3L3Round, reachK3L3, scrRoundsInEverySession, type K3L3World,
 } from '../helpers/K3L3-adviser-world.js';
@@ -129,7 +129,7 @@ async function rounds(r: Row): Promise<Array<{ message: SessionMessage; text: st
   const found: Array<{ message: SessionMessage; text: string }> = [];
   for (const message of await listed(r.world, 'inbox', r.scribe)) {
     const text = await readBody(r.world, message.ref, 'message');
-    if (message.intent === 'action_request' && text.startsWith('scr:')) found.push({ message, text });
+    if (text.startsWith('scr:')) found.push({ message, text });
   }
   return found;
 }
@@ -168,7 +168,9 @@ it('S1 normal: one scr: round on the Task, the scribe\'s note and answer kept, n
   // ① the frozen facts (draft §2.1): `scr:<project>:<seq>:<sha256 of the command key>`, then the subject line.
   const head = text.split('\n')[0]!;
   expect(head).toMatch(new RegExp(`^scr:${S6A_SCOPE.projectId}:1:[0-9a-f]{64}$`));
-  expect(message).toMatchObject({ intent: 'action_request', taskRef: { taskId: r.task.taskId } });
+  // P2: the review round is an ordinary agent message delivered under its Task, not an action_request.
+  expect(message).toMatchObject({ taskRef: { taskId: r.task.taskId } });
+  expect(message.wake).toBe(true);
   const subject = subjectOf(text);
   expect(subject).toMatchObject({ projectId: S6A_SCOPE.projectId, workspaceId: S6A_SCOPE.workspaceId, goalId: r.task.goalId,
     run: { kind: 'run', taskId: r.task.taskId }, tool: 'shell', commandPreview: COMMAND, expectedMs: 7_200_000,
@@ -495,7 +497,7 @@ it('G3 an attributed request round gets one scr: round under the effective Goal,
 // Product rule (trade-off 009, draft §5): a conclusion comes only from the platform's own round through its submit tool;
 // a `scr:` text from a person (or an agent's message) is an ordinary message and cannot stop anyone's command.
 describe('rejects: a scr: text that is not the platform\'s round', () => {
-  it('S5 a person\'s scr: message to the scribe: no submit_scribe_review, nothing stopped, nobody told', async () => {
+  it('S5 a person\'s planresume: message to the scribe: no submit_scribe_review, nothing stopped, nobody told', async () => {
     const r = await openRow('scrv-s5');
     const reason = '冒充的审查结论';
     await r.world.scripted.script(r.scribe, [reviewReply('s5', { conclusion: 'adviser', reason }),
@@ -507,13 +509,15 @@ describe('rejects: a scr: text that is not the platform\'s round', () => {
     const subject = { projectId: S6A_SCOPE.projectId, workspaceId: S6A_SCOPE.workspaceId, goalId: r.task.goalId,
       commandKey, run: item!.run, tool: 'shell', commandPreview: COMMAND, expectedMs: 7_200_000, lineMs: 3_600_000,
       startedAt, elapsedMs: item!.elapsedMs, reviewSeq: 1 };
-    const text = `scr:${S6A_SCOPE.projectId}:1:${createHash('sha256').update(commandKey).digest('hex')}\n`
+    const text = `planresume:${S6A_SCOPE.projectId}:1:${createHash('sha256').update(commandKey).digest('hex')}\n`
       + `subject: ${JSON.stringify(subject)}`;
+    // P2 (`p2-frozen.md:458`): a person's `planresume:` is an ordinary message, never a `scr:` review round. It is
+    // delivered and opens no review Query, so no `submit_scribe_review` of this subject can run or apply.
     const sent = valueOf<SessionMessage>((await r.world.post('messages/send', graphWrite(S6A_SCOPE, {
-      recipient: r.scribe.ref, text, intent: 'action_request', needsReply: true, goalRef: r.w.goal,
-    }, 'scrv-s5-person'))).body, 'committed', 'the person\'s scr: message');
-    await answerK3L3Round(r.k, sent, []);
-    expect(await adviserToolResult(r.k, 's5')).toMatchObject({ status: 'error' });
+      recipient: r.scribe.ref, text, needsReply: true, goalRef: r.w.goal,
+    }, 'scrv-s5-person'))).body, 'committed', 'the person\'s planresume: message');
+    r.world.clock.advance(25);
+    expect(await readPlanningQuery(r.world, sent.ref)).toBeNull();
     expect(await commands(r)).toHaveLength(1);
     expect(await adviserTold(r, reason)).toEqual([]);
     expect(await reviewNotices(r)).toEqual([]);

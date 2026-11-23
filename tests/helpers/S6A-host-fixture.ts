@@ -793,7 +793,7 @@ export async function openS6AHostWorld(options: S6AHostWorldOptions): Promise<S6
       const session: S6ASession = { label, ref: linked.sessionRef, aggregateRef: linkedCard.record.ref,
         role: structuredClone(S6A_SECRETARY_ROLE), createdAt: linkedCard.record.createdAt };
       await world.scripted.script(session, [{ kind: 'calls', calls: [{ callId: `s6a-wait-${label}`, name: 'send_session_message',
-        args: { recipient: recipient.ref, text: `S6A Work question from ${label}`, intent: 'inquiry', needsReply: true,
+        args: { recipient: recipient.ref, text: `S6A Work question from ${label}`, needsReply: true,
           waitAfterSend: true } }] }]);
       const steps = await driveWorkflow(world.ag2b, { schemaVersion: 1, goalRef: S6A_GOAL_1, flowId: `s6a-wait-${label}`,
         sessionHint: session.ref, kind: 'select_work', taskId: AG2B_WORK_TASK_ID });

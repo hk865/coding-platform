@@ -25,15 +25,16 @@
  */
 import { commandIdentityKey } from '../../../contracts/command-event.js';
 import type { ActorRef } from '../../../contracts/command-event.js';
-import type { CoreCallContext } from '../../../contracts/core/call-context.js';
+import type { CoreCallContext, HostPrincipal } from '../../../contracts/core/call-context.js';
 import type { SessionRef, VersionPin } from '../../../contracts/core/identity.js';
 import type { CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
 import { rejectedWithNonEmptyCurrent } from '../../../contracts/core/rejections.js';
 import { messageOf } from '../../../contracts/error-message.js';
 import { isRecord, nonEmpty } from '../../../contracts/validation/common.js';
 import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
-import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
-import { consultationQueryRefs, validQueryExecution } from '../../../contracts/query-job.js';
+import { isUserMessageRecipient } from '../../../contracts/core/session-message.js';
+import { canonicalJson, canonicalKey, canonicalOf, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
+import { consultationQueryRefs, interventionPlanningQueryRefs, validQueryExecution } from '../../../contracts/query-job.js';
 import type {
   PendingQueryJobSnapshot,
   QueryJobIntentV1,
@@ -59,10 +60,13 @@ import {
   decodeWorkspaceSnapshot,
 } from '../persistence/record-codecs.js';
 import { sessionMessageRefKey } from '../sessions/message-record-codecs.js';
+import { handoffContextOf } from '../sessions/session-handoff-service.js';
 import { decodePlanRevisionSnapshot, planRevisionRefKey } from '../persistence/plan-record-codecs.js';
 import { lookupCommittedReceipt, type CommittedReceipt, type ReceiptLookup } from '../persistence/receipt-lookup.js';
-import { consultationFacts } from '../model/communication-contracts.js';
+import { consultationFacts, deriveSessionInputId, interventionGoalRefOf } from '../model/communication-contracts.js';
+import { composeDecisionResponseInput } from '../model/decision-contracts.js';
 import { newPendingQueryRecords } from '../state/query-run-recovery.js';
+import { PLATFORM_PROMPT_PACK_V1 } from '../../../contracts/prompts/platform-pack.generated.js';
 import {
   deliveryEligibility,
   type DeliveryBlockReason,
@@ -123,7 +127,7 @@ type FocusTaskRef = { aggregateType: 'Task'; projectId: string; goalId: string; 
 
 type CallerPins = { project: number; workspace: number; goal: number | null };
 
-type ConsultationBinding = { messageRef: SessionMessageRef; recipient: SessionRef; part?: 'response' };
+type ConsultationBinding = { messageRef: SessionMessageRef; recipient: SessionRef };
 
 type SubmitDraft = {
   projectId: string;
@@ -277,10 +281,19 @@ function prepareSubmit(ctx: CoreCallContext, request: unknown): PreparedSubmit {
   if (intent['intentId'] !== queryJobId) {
     return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('invalid', 'intent.intentId must equal the actual queryJobId') };
   }
-  const question = intent['question'];
   // The read-only kind narrow-read selects the question bound BEFORE the full
   // execution validation below; it never replaces that validation.
   const rawExecution = intent['execution'];
+  // A card-answer round's input is the card and the person's formal answer, never
+  // the caller's placeholder text: the question is composed from the stored
+  // option/text/annotation facts after the card is read. Replacing it here with a
+  // stable token keeps the receipt/fingerprint independent of that placeholder
+  // (the card ref and `decision_answer` part remain frozen in the execution).
+  if (isRecord(rawExecution) && rawExecution['kind'] === 'intervention_planning'
+    && rawExecution['sourcePart'] === 'decision_answer') {
+    intent['question'] = 'decision_answer';
+  }
+  const question = intent['question'];
   const textProblem = queryTextProblem(question, isRecord(rawExecution) ? rawExecution['kind'] : undefined);
   if (textProblem !== null) {
     return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('invalid', `intent.question ${textProblem}`) };
@@ -324,9 +337,7 @@ function prepareSubmit(ctx: CoreCallContext, request: unknown): PreparedSubmit {
   if (execution['consultation'] !== undefined) {
     // `validQueryExecution` already proved the exact binding shape; the only
     // remaining facts are the deterministic identity and the bound scope.
-    const rawConsultation = execution['consultation'] as unknown as {
-      messageRef: SessionMessageRef; recipient: SessionRef; part?: 'response';
-    };
+    const rawConsultation = execution['consultation'] as unknown as { messageRef: SessionMessageRef; recipient: SessionRef };
     const messageRef = rawConsultation.messageRef;
     if (messageRef.projectId !== projectId || messageRef.workspaceId !== workspaceId) {
       return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('forbidden', 'the consultation message is outside the Host call scope') };
@@ -334,7 +345,7 @@ function prepareSubmit(ctx: CoreCallContext, request: unknown): PreparedSubmit {
     if (rawConsultation.recipient.projectId !== projectId) {
       return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('forbidden', 'the consultation recipient is outside the Host call project') };
     }
-    const refs = consultationQueryRefs(messageRef, rawConsultation.part);
+    const refs = consultationQueryRefs(messageRef);
     if (refs.queryJobRef.queryJobId !== queryJobId || refs.queryRunRef.runId !== runId) {
       return { status: 'rejected', rejection: rejectedWithNonEmptyCurrent('invalid', 'a consultation submit must use the deterministic identity of its message') };
     }
@@ -350,7 +361,6 @@ function prepareSubmit(ctx: CoreCallContext, request: unknown): PreparedSubmit {
     }
     consultation = {
       messageRef: { ...messageRef },
-      ...(rawConsultation.part === undefined ? {} : { part: rawConsultation.part }),
       recipient: { projectId: rawConsultation.recipient.projectId, sessionId: rawConsultation.recipient.sessionId },
     };
   }
@@ -598,7 +608,7 @@ function pinsFromCurrent(current: readonly { refKey: string; revision: number | 
 }
 
 function deliveryBlockCode(reason: DeliveryBlockReason): 'invalid' | 'busy' {
-  return reason === 'cancelled' || reason === 'withdrawn' || reason === 'not_released' ? 'invalid' : 'busy';
+  return reason === 'cancelled' || reason === 'withdrawn' ? 'invalid' : 'busy';
 }
 
 // --------------------------------------------------------------------------
@@ -689,9 +699,21 @@ async function submit(
     if (messageRead.status === 'not_ready') return rejectedWithNonEmptyCurrent('incomplete', 'the consultation message is not readable at the required watermark');
     if (messageRead.status !== 'ready') return messageRead;
     const message = messageRead.value;
-    const target = draft.consultation.part === 'response'
-      ? (message.sender.kind === 'work_run' ? message.sender.sessionRef : null)
-      : ('kind' in message.recipient ? null : message.recipient);
+    // §2.3/§3.10: this admission only consumes a copy question's own text (`answeredBy:'copy'`; the binding shape
+    // has no reply part). A line question opens its own round on its line, never a consultation Query, so
+    // `queries/submit` cannot bypass the same rule.
+    if (message.answeredBy !== 'copy') {
+      return rejectedWithNonEmptyCurrent('invalid', 'the consultation message is not a copy question');
+    }
+    // A copy question is consumed only by its FROZEN derivation: the question's stored child line and history
+    // boundary must be the Query's own declaration (the first consumption wrote it before this submit). A question
+    // that never derived, or a Query naming another child/boundary, is a stale binding and must not open a round.
+    const stored = message.consultationDerivation;
+    const declared = draft.intent.execution.consultation?.derivation;
+    if (stored === undefined || declared === undefined || canonicalOf(stored) !== canonicalOf(declared)) {
+      return rejectedWithNonEmptyCurrent('source_stale', 'the copy binding changed after the question was sent');
+    }
+    const target = 'kind' in message.recipient ? null : message.recipient;
     if (target === null || target.projectId !== draft.consultation.recipient.projectId
       || target.sessionId !== draft.consultation.recipient.sessionId) {
       return rejectedWithNonEmptyCurrent('forbidden', 'the consultation recipient is not the original message recipient');
@@ -701,24 +723,172 @@ async function submit(
     if (extra.status === 'not_found') return rejectedWithNonEmptyCurrent('not_found', 'the consultation message eligibility facts do not exist');
     if (extra.status === 'not_ready') return rejectedWithNonEmptyCurrent('incomplete', 'the consultation message eligibility facts are not readable at the required watermark');
     if (extra.status !== 'ready') return extra;                       // already a CoreRejection
-    const eligibility = deliveryEligibility(consultationFacts(message, draft.consultation.part ?? 'message', extra.value, target));
+    const eligibility = deliveryEligibility(consultationFacts(message, 'message', extra.value, target),
+      { copyConsumerVerified: true });
     if (!eligibility.offerable) return rejectedWithNonEmptyCurrent(deliveryBlockCode(eligibility.reason), eligibility.reason);
-    if (draft.consultation.part === 'response' ? message.response === null : message.status === 'responded') {
+    if (message.status === 'responded') {
       return rejectedWithNonEmptyCurrent('invalid', 'the original consultation message already has a response');
     }
     const bodyRead = await deps.consultations.readMessageBody(ctx,
-      { messageRef: draft.consultation.messageRef, part: draft.consultation.part ?? 'message' });
+      { messageRef: draft.consultation.messageRef, part: 'message' });
     if (bodyRead.status === 'not_found') return rejectedWithNonEmptyCurrent('not_found', 'the consultation message body does not exist');
     if (bodyRead.status === 'not_ready') return rejectedWithNonEmptyCurrent('incomplete', 'the consultation message body is not readable at the required watermark');
     if (bodyRead.status !== 'ready') return bodyRead;
-    const originalInquiry = message.intent === 'inquiry';
-    if ((originalInquiry || draft.consultation.part === 'response') && bodyRead.value.text !== draft.intent.question) {
+    if (bodyRead.value.text !== draft.intent.question) {
       return rejectedWithNonEmptyCurrent('invalid', 'the consultation question must be the original message body text');
     }
     consultationMessageGuard = { refKey: sessionMessageRefKey(message.ref), expectedRevision: message.revision };
   }
 
   const execution = draft.intent.execution;
+  // (3b) a card-answer round is built by the Query owner from the answered agent
+  // `ask_person` card, never from a message intent: the formal card metadata,
+  // the saved response and the response body are the real facts. The card may
+  // live in another workspace of the project than the Goal's Query, so the read
+  // uses the card's own workspace; the submit's scope pins stay the Query's.
+  let cardAnswerGuard: RecordGuard | null = null;
+  let planningSourceGuard: RecordGuard | null = null;
+  let overlapGateGuard: RecordGuard | null = null;
+  if (execution.kind === 'intervention_planning' && execution.sourcePart === 'decision_answer') {
+    if (deps.consultations === undefined) {
+      return rejectedWithNonEmptyCurrent('unsupported', 'a decision_answer round requires the read-only mailbox dependency');
+    }
+    if (signal?.aborted) return rejectedWithNonEmptyCurrent('cancelled', 'submitQueryJob was cancelled before reading the decision card');
+    const cardRef = execution.sourceMessageRef as SessionMessageRef;
+    if (cardRef.projectId !== draft.projectId) {
+      return rejectedWithNonEmptyCurrent('forbidden', 'the decision card is outside the Host call project');
+    }
+    // The card may live in another workspace; switch the Host's whole read scope, not only the workspace field.
+    const cardCtx = cardRef.workspaceId === draft.workspaceId ? ctx
+      : handoffContextOf({ ...ctx, workspaceId: cardRef.workspaceId }, ctx.principal as HostPrincipal);
+    const messageRead = await deps.consultations.readMessage(cardCtx, cardRef);
+    if (messageRead.status === 'not_found') return rejectedWithNonEmptyCurrent('not_found', 'the decision card does not exist');
+    if (messageRead.status === 'not_ready') return rejectedWithNonEmptyCurrent('incomplete', 'the decision card is not readable at the required watermark');
+    if (messageRead.status !== 'ready') return messageRead;
+    const card = messageRead.value;
+    // The formal card metadata is the source (decision-source/message.ts): a real
+    // user card that is not a synthetic answer, opened by an agent line, never
+    // the deleted `decision_request` intent or a platform card.
+    if (!isUserMessageRecipient(card.recipient) || card.decision === undefined || card.decision.syntheticAnswer
+      || card.sender.kind === 'host' || card.requestRoot !== null
+      || card.decision.source.kind !== 'message' || card.withdrawnAt !== null) {
+      return rejectedWithNonEmptyCurrent('invalid', 'the decision source is not an answered agent card');
+    }
+    // The card names the Goal this round belongs to; a card of another Goal (or
+    // one naming none) is not this Query's source.
+    const cardGoal = interventionGoalRefOf(card);
+    if (cardGoal === null || cardGoal.projectId !== draft.projectId || cardGoal.goalId !== draft.goalId) {
+      return rejectedWithNonEmptyCurrent('invalid', 'the decision card does not name this round\'s Goal');
+    }
+    const response = card.response;
+    if (card.status !== 'responded' || response === null || !('decision' in response)) {
+      return rejectedWithNonEmptyCurrent('invalid', 'the decision card has no formal answer');
+    }
+    // The answer's one input identity is the card's response part; once the safe
+    // point accepted it, this round can no longer open.
+    const answerInputId = deriveSessionInputId(card.ref, 'response');
+    if ((card.acceptedInputs ?? []).some((entry) => entry.inputId === answerInputId)) {
+      return rejectedWithNonEmptyCurrent('invalid', 'the decision card answer was already accepted');
+    }
+    // The card-answer round has its own frozen identity: the card ref plus the
+    // `decision_answer` part, so it can never collide with the round opened from
+    // the same card as a plain source.
+    const refs = interventionPlanningQueryRefs(card.ref, draft.workspaceId, 'decision_answer');
+    if (refs.queryJobRef.queryJobId !== draft.queryJobId || refs.queryRunRef.runId !== draft.runId) {
+      return rejectedWithNonEmptyCurrent('invalid', 'a decision_answer submit must use the deterministic identity of its card');
+    }
+    // `part:'response'` reads only the free text; the selection and annotations
+    // are the formal response facts. This is the same composer the line's safe
+    // point calls, so the chosen option reaches the model even with empty text.
+    const bodyRead = await deps.consultations.readMessageBody(cardCtx,
+      { messageRef: card.ref, part: 'response' });
+    if (bodyRead.status === 'not_found') return rejectedWithNonEmptyCurrent('not_found', 'the decision card answer body does not exist');
+    if (bodyRead.status === 'not_ready') return rejectedWithNonEmptyCurrent('incomplete', 'the decision card answer body is not readable at the required watermark');
+    if (bodyRead.status !== 'ready') return bodyRead;
+    const composed = composeDecisionResponseInput(PLATFORM_PROMPT_PACK_V1, {
+      schemaVersion: 1, kind: 'user_decision_response',
+      selection: response.decision.selection, text: bodyRead.value.text,
+      annotations: response.decision.annotations,
+    }, []);
+    const composedProblem = queryTextProblem(composed, 'intervention_planning');
+    if (composedProblem !== null) {
+      return rejectedWithNonEmptyCurrent('invalid', `the decision answer question ${composedProblem}`);
+    }
+    // The card and its answer are the round's input: the caller's question is
+    // never trusted over these stored facts.
+    draft.intent.question = composed;
+    // The Query owner guards the exact card revision it read (the standard Query
+    // and Run `expectedRevision: null` guards already prove the Query absent).
+    cardAnswerGuard = { refKey: sessionMessageRefKey(card.ref), expectedRevision: card.revision };
+  }
+
+  // (3c) an ordinary intervention-planning round names its source message: the
+  // owner re-reads it and confirms it has no response yet, then carries the exact
+  // message revision into the same commit. The generic reply's own submit guards
+  // the other side (the ordinary source Query still absent), so whoever commits
+  // first wins and a reply written before this round opens can never be overtaken.
+  if (execution.kind === 'intervention_planning' && execution.sourcePart === undefined) {
+    if (deps.consultations === undefined) {
+      return rejectedWithNonEmptyCurrent('unsupported', 'an intervention-planning submit requires the read-only mailbox dependency');
+    }
+    if (signal?.aborted) return rejectedWithNonEmptyCurrent('cancelled', 'submitQueryJob was cancelled before reading the planning source');
+    const sourceRef = execution.sourceMessageRef;
+    if (sourceRef === undefined) {
+      return rejectedWithNonEmptyCurrent('invalid', 'an intervention-planning round must name its source message');
+    }
+    if (sourceRef.projectId !== draft.projectId) {
+      return rejectedWithNonEmptyCurrent('forbidden', 'the planning source message is outside the Host call project');
+    }
+    // The ordinary source may live in another workspace of the project (the
+    // recipient line's), so the read switches to the source's own workspace;
+    // the submit's scope pins stay the Query's (same shape as the card branch).
+    // Same switch as the card branch: the source may live in another workspace of the project.
+    const sourceCtx = sourceRef.workspaceId === draft.workspaceId ? ctx
+      : handoffContextOf({ ...ctx, workspaceId: sourceRef.workspaceId }, ctx.principal as HostPrincipal);
+    const sourceRead = await deps.consultations.readMessage(sourceCtx, sourceRef);
+    if (sourceRead.status === 'not_found') return rejectedWithNonEmptyCurrent('not_found', 'the planning source message does not exist');
+    if (sourceRead.status === 'not_ready') return rejectedWithNonEmptyCurrent('incomplete', 'the planning source message is not readable at the required watermark');
+    if (sourceRead.status !== 'ready') return sourceRead;
+    const source = sourceRead.value;
+    // §2.2: the same one delivery rule the Host prechecked, re-run by the owner on the message it re-read. The reply
+    // slot must still be empty; a delivery fact that moved after the idle scan (an accepted input, a paused or
+    // cancelled Goal, a block) refuses the round instead of opening it. The guard below carries the exact revision.
+    if (source.response !== null) {
+      return rejectedWithNonEmptyCurrent('invalid', 'the original message already has a response');
+    }
+    const extra = await deps.eligibility?.readDeliveryEligibilityFacts(sourceCtx, { messageRef: source.ref });
+    if (extra === undefined) return rejectedWithNonEmptyCurrent('unsupported', 'an intervention-planning submit requires the delivery eligibility facts');
+    if (extra.status === 'not_found') return rejectedWithNonEmptyCurrent('not_found', 'the planning source message eligibility facts do not exist');
+    if (extra.status === 'not_ready') return rejectedWithNonEmptyCurrent('incomplete', 'the planning source message eligibility facts are not readable at the required watermark');
+    if (extra.status !== 'ready') return extra;                       // already a CoreRejection
+    const eligibility = deliveryEligibility(
+      consultationFacts(source, 'message', extra.value, isUserMessageRecipient(source.recipient) ? null : source.recipient));
+    if (!eligibility.offerable) return rejectedWithNonEmptyCurrent(deliveryBlockCode(eligibility.reason), eligibility.reason);
+    planningSourceGuard = { refKey: sessionMessageRefKey(source.ref), expectedRevision: source.revision };
+    // Design 5.1: whether the source is a module-overlap gate's saved note is the owner's own read of the one
+    // `overlapNoteOf` rule, never the caller's flag. The frozen `overlapNote` proof (with `sourceMessageRef` naming
+    // the note) is written only on a match, the gate revision read joins this commit's guards, and a note round is a
+    // text round. A declaration that disagrees with this read is stale: the caller reselects from current facts.
+    const declaredNote = execution.overlapNote === true;
+    if (deps.gateNotes === undefined) {
+      if (declaredNote) return rejectedWithNonEmptyCurrent('unsupported', 'an overlap-note round requires the gate note read');
+    } else {
+      const note = await deps.gateNotes.readGateNote(sourceCtx, source);
+      if (note.status === 'not_found') return rejectedWithNonEmptyCurrent('not_found', 'the overlap gate of the planning source does not exist');
+      if (note.status === 'not_ready') return rejectedWithNonEmptyCurrent('incomplete', 'the overlap gates are not readable at the required watermark');
+      if (note.status !== 'ready') return note;
+      if ((note.value !== null) !== declaredNote) {
+        return rejectedWithNonEmptyCurrent('source_stale', 'the overlap-note proof disagrees with the gate read at submit');
+      }
+      if (note.value !== null) {
+        if (execution.answerShape !== 'text') {
+          return rejectedWithNonEmptyCurrent('invalid', 'an overlap-note round answers in the text shape');
+        }
+        overlapGateGuard = { refKey: canonicalKey(note.value.gate), expectedRevision: note.value.revision };
+      }
+    }
+  }
+
   if (execution.kind === 'initial_coordination' && (facts.goal === null || facts.goal.activePlanRevision !== null)) {
     return rejectedWithNonEmptyCurrent('invalid', 'initial_coordination requires a Goal without an active Plan');
   }
@@ -792,6 +962,9 @@ async function submit(
   ];
   if (planGuard !== null) guards.push({ refKey: planGuard.refKey, expectedRevision: planGuard.revision });
   if (consultationMessageGuard !== null) guards.push(consultationMessageGuard);
+  if (cardAnswerGuard !== null) guards.push(cardAnswerGuard);
+  if (planningSourceGuard !== null) guards.push(planningSourceGuard);
+  if (overlapGateGuard !== null) guards.push(overlapGateGuard);
 
   const preparedCommit: PreparedCommit = {
     identityKey,

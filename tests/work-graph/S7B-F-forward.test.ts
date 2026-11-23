@@ -23,9 +23,9 @@ import { S6A_SCOPE, S6A_WORK_ROLE } from '../helpers/S6A-request-fixture.js';
 import { adoptS6BPlan, createS6BLine } from '../helpers/S6B1-fixture.js';
 import type { S6B2Captured } from '../helpers/S6B2-handoff-scene.js';
 import {
-  committed, openS7AWorkWorld, ready, runS7ASameSessionAgain, sessionOf,
+  cancelS7AGoal, committed, openS7AWorkWorld, ready, runS7ASameSessionAgain, seedS7AGoalPlan, sessionOf,
 } from '../helpers/S7A-fixture.js';
-import { createCancelledS7A2Goal, sendS7A2PersonMessage } from '../helpers/S7A2-fixture.js';
+import { sendS7A2PersonMessage } from '../helpers/S7A2-fixture.js';
 import {
   acceptS7BReply, answerS7BWait, openS7BWorld, readS7BMessage, runS7BWait,
 } from '../helpers/S7B-fixture.js';
@@ -91,9 +91,9 @@ describe('S7B F-forward', () => {
     const n = await readS7BMessage(world, nRef);
     expect(n).toMatchObject({
       originalRef: wait.message, goalRef: before.goalRef, taskRef: null, followupOf: null, requestRoot: null,
-      sender: before.sender, intent: before.intent, needsReply: before.needsReply,
+      sender: before.sender, needsReply: before.needsReply,
       waitAfterSend: before.waitAfterSend, bodyRef: before.bodyRef, sourceRef: before.sourceRef,
-      deadline: before.deadline, deadlineMs: before.deadlineMs, release: before.release, transferredTo: null,
+      deadline: before.deadline, deadlineMs: before.deadlineMs, transferredTo: null,
     });
     expect(await inboxOf(world, c.ref)).toHaveLength(1);
 
@@ -172,12 +172,14 @@ describe('S7B F-forward', () => {
     const opened = await openS7AWorkWorld({ backend: 'memory' });
     worlds.push(opened.world);
     const { world, line } = opened;
-    const source = await createCancelledS7A2Goal(world);
+    // P2 §2.5: the send goes first, the source Goal is cancelled only once the message is on it.
+    const source = (await seedS7AGoalPlan(world)).goal;
     const message = await sendS7A2PersonMessage(world, { label: 'f-copy', recipient: line.ref,
-      goal: source.goal.ref });
+      goal: source });
     await runS7ASameSessionAgain(world, line);
+    await cancelS7AGoal(world, source);
     const draft = ready<GoalCopyDraftResultV1>(await world.post('goals/copy-draft',
-      plain(S6A_SCOPE, { goalRef: source.goal.ref })), 'the F copy draft');
+      plain(S6A_SCOPE, { goalRef: source })), 'the F copy draft');
     const born = committed<GoalCopyConfirmResultV1>(await world.post('goals/copy-confirm', plain(S6A_SCOPE, {
       commandId: 'f-copy-confirm', sourceGoalRef: draft.source.goal, expectedSourceRevision: draft.source.revision,
       selectedInterventions: [message.ref],

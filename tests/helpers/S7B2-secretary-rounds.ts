@@ -12,10 +12,10 @@ import type { SessionWorkWaitV1 } from '../../src/core/work-graph/model/session-
 import type { ModelRequest } from '../../vendor/coding-agent/dist/public-api.js';
 import { graphWrite } from './AG2b-collaboration-fixture.js';
 import { followUp, secretaryAnswer } from './S6A-history-fixture.js';
-import { callPublishedOwnerAsHost, openS6AHostWorld, type S6AHostWorld } from './S6A-host-fixture.js';
+import { callPublishedOwnerAsHost, openS6AHostWorld, type S6AHostWorld, type S6AHostWorldOptions } from './S6A-host-fixture.js';
 import { claimWithSecretaryProfile, prepareAttempt, start } from './request-claim-steps.js';
 import {
-  S6A_SCOPE, S6A_WORK_ROLE, type S6AClock, type S6ASession, type S6AWorldOptions,
+  S6A_SCOPE, S6A_WORK_ROLE, type S6AClock, type S6ASession,
 } from './S6A-request-fixture.js';
 import { byIdentityPrefix } from './S6A-commit-barrier.js';
 import { s6aCardsWorkspace } from './S6A-cards-fixture.js';
@@ -60,7 +60,7 @@ export async function scriptS7B2RoundAnswer(world: S6AHostWorld, input: {
 }
 
 /** Opens one real Host world with the reply/send Work binding and one secretary. */
-export async function openS7B2RoundWorld(options: S6AWorldOptions): Promise<{
+export async function openS7B2RoundWorld(options: S6AHostWorldOptions): Promise<{
   world: S6AHostWorld; clock: S6AClock; secretary: S6ASession;
 }> {
   const world = await openS6AHostWorld({ ...options,
@@ -97,7 +97,7 @@ export async function runS7B2Round<T = undefined>(world: S6AHostWorld, input: {
       for (const [index, recipient] of recipients.entries()) {
         const saved = await world.platform.messages.sendMessage(context, {
           input: { recipient: recipient.ref, text: `S7B2 ${input.label} message ${index}`,
-            intent: 'inquiry' as const, needsReply: true, waitAfterSend: true, deadlineMs: 60_000 },
+            needsReply: true, deadlineMs: 60_000 },
           meta: { requestId: `s7b2-send-${input.label}-${index}`, expected: [] },
         });
         if (saved.status !== 'committed') {
@@ -182,7 +182,7 @@ export async function notifyOnlyS7B2Supply(world: S6AHostWorld, input: {
   await scriptS7B2RoundAnswer(world, { round: input.sent.round, label: input.label });
   const saved = committed<SessionMessage>(await world.dispatch('messages/send', world.systemContext(),
     graphWrite(S6A_SCOPE, {
-      recipient: input.sent.round.secretary.ref, text: `S7B2 notify ${input.label}`, intent: 'notify',
+      recipient: input.sent.round.secretary.ref, text: `S7B2 notify ${input.label}`, wake: false,
     }, `s7b2-notify-${input.label}`)), `the ${input.label} notify`);
   const notify = await readS7BMessage(world, saved.ref);
   const lateReply = await answerS7BWait(world, { goal: input.sent.goal,

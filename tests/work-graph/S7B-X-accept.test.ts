@@ -76,7 +76,7 @@ describe.each(['memory', 'sqlite'] as const)('X-accept (%s)', backend => {
     worlds.push(world);
     const wait = await runS7BWait(world, { label: 'x-accept-delivered' });
     const person = committed<SessionMessage>(await world.post('messages/send', graphWrite(S6A_SCOPE, {
-      recipient: wait.recipient.ref, text: 'S7B X-accept delivered', intent: 'notify', goalRef: wait.goal,
+      recipient: wait.recipient.ref, text: 'S7B X-accept delivered', needsReply: false, wake: false, goalRef: wait.goal,
     }, 'x-accept-delivered-send')), 'the X-accept person message');
     await answerS7BWait(world, { goal: wait.goal, recipient: wait.recipient, message: wait.message,
       task: wait.tasks[1]!, label: 'x-accept-delivered' });
@@ -144,7 +144,7 @@ describe.each(['memory', 'sqlite'] as const)('X-accept (%s)', backend => {
     worlds.push(world);
     const wait = await runS7BWait(world, { label: 'x-accept-pause' });
     const person = committed<SessionMessage>(await world.post('messages/send', graphWrite(S6A_SCOPE, {
-      recipient: wait.recipient.ref, text: 'S7B X-accept pause', intent: 'notify', goalRef: wait.goal,
+      recipient: wait.recipient.ref, text: 'S7B X-accept pause', needsReply: false, wake: false, goalRef: wait.goal,
     }, 'x-accept-pause-send')), 'the X-accept pause person message');
     const inputId = deriveSessionInputId(person.ref, 'message');
 

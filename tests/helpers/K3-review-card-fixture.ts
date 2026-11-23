@@ -47,6 +47,7 @@ import { createGoalSettingsService } from '../../src/core/work-graph/tasks/goal-
 import { createSessionDirectory } from '../../src/core/work-graph/sessions/session-directory.js';
 import { unknownSessionDuty } from './session-duty-double.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
+import { createQueryRoundResolver } from '../../src/core/work-graph/tasks/query-round.js';
 import { readCanonicalTaskFacts, readGoalPlanWindow, readTaskClosure } from '../../src/core/work-graph/tasks/plan-readers.js';
 import { createRunReconcileService } from '../../src/core/work-graph/tasks/run-reconcile-service.js';
 import { createUnknownCallReviewService } from '../../src/core/work-graph/tasks/unknown-call-review-service.js';
@@ -317,6 +318,7 @@ export async function openK3ReviewCardWorld(
     defaultInquiryDeadlineMs: 86_400_000,
     records: decisionRecords, materials, now: () => T, newId: nextDecisionId,
     systemActor: fixture.operatorActor,
+    queryRounds: createQueryRoundResolver({ records: decisionRecords, duties: unknownSessionDuty, bodies: fixture.bodies }),
     sessions: sessions,
     executions: createRunStateReader({ records: decisionRecords }),
     roles: createRoleConfigurationService({ records: decisionRecords, now: () => T, eventId: nextDecisionId }),

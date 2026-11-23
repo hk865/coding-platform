@@ -25,7 +25,7 @@ import type { QueryJobRecord } from '../../core/work-graph/queries/contracts.js'
 import { candidateSourceLineOf, hostContextIn, sentSystemRoundRef } from '../../core/work-graph/tasks/plan-lineage.js';
 import { PROPOSE_RETRIED_CODES } from './intervention.js';
 import type { WorkflowDependencies } from './ports.js';
-import { automationContext, ownedInWorkspace, type Owned } from './workflow.js';
+import { autoAdoptCandidate, automationContext, ownedInWorkspace, type Owned } from './workflow.js';
 
 /** 请批的四种结果：照旧采用、等批准轮、交人、发批准轮。 */
 export type CheckApprovalRequestV1 =
@@ -104,7 +104,7 @@ export async function checkReviewConclusionOf(ctx: CoreCallContext, reads: Check
 /** createWorkflow 用自己的闭包构造它（同 `claimIntervention` 的传法）。 */
 export type CheckApprovalDependencies = {
   workflow: Pick<WorkflowDependencies, 'checks' | 'checkApproval' | 'plans' | 'sessions' | 'sessionDuty' | 'messages'
-    | 'requests' | 'send' | 'consultations'>;
+    | 'requests' | 'send' | 'consultations' | 'readCandidateCard' | 'latestAgentCandidate'>;
   /** 这个目标里这一职责的批准线（参谋：`adviserOf`；审阅者：`reviewLineOf`）；没有是 `null`。 */
   approverLineOf(owned: Owned, goal: GoalSnapshot, duty: CheckReviewApproverDutyV1): Promise<SessionRef | null | CoreRejection>;
   /**
@@ -332,20 +332,22 @@ export function createCheckApproval(deps: CheckApprovalDependencies): CheckAppro
         return refused ?? { answered: answer !== null };
       }
       // 全部批了：以 Workflow 的自动化身份走普通的采用，Host 在采用包装里读这一轮的结论装检查（B1f）。
-      const adopted = await workflow.plans.applyPlanChange(automationContext(goalOwned), adoption);
-      if (adopted.status === 'committed') {
+      // 2.5a A13：这一处也经同一个包装，在装检查与采用之前判一次；命中或来源读不全都留作候选卡，不采用。
+      const adopted = await autoAdoptCandidate(goalOwned, workflow, adoption);
+      if (adopted.status === 'adopted') {
         const refused = await tell(goalOwned, { ...told, kind: 'check_approved',
           notice: { kind: 'approved', checkIds, approverDuty: subject.approverDuty } });
         return refused ?? { answered: true };
       }
+      if (adopted.status !== 'refused') return { answered: answer !== null };
       // 另一轮能变的拒绝原样返回，Host 下一轮用同一身份重做（同书记审查的约定）。
-      if (PROPOSE_RETRIED_CODES.has(adopted.code)) return adopted;
+      if (PROPOSE_RETRIED_CODES.has(adopted.result.code)) return adopted.result;
       // lead 11-17 19:2x 第 2 条：读到候选之后、采用之前人可能抢先采用，owner 回 invalid。再按同一条规则看一次：已经
       // 结束（本轮没有采用回执，所以是别人采用的）就安静退出，不出“没采用上，交你决定”。
       const endedAfter = await candidateEnded();
       if (endedAfter !== false) return endedAfter === true ? { answered: true } : endedAfter;
       const refused = await tell(goalOwned, { ...told, kind: 'check_to_person',
-        notice: { kind: 'not_adopted', checkIds, approverDuty: subject.approverDuty, reason: adopted.reason } });
+        notice: { kind: 'not_adopted', checkIds, approverDuty: subject.approverDuty, reason: adopted.result.reason } });
       return refused ?? { answered: true };
     },
   };

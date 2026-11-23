@@ -53,7 +53,7 @@ const LOOKUP_MAX_PAGES = 25;
 
 /** §4.3.5: the seven formal card source kinds; notice categories never hint here. */
 const CARD_SOURCE_KINDS: readonly DecisionSourceV1['kind'][] = [
-  'message', 'goal_cause', 'candidate', 'note_review', 'planning_question', 'goal_conflict', 'message_release',
+  'message', 'goal_cause', 'candidate', 'note_review', 'planning_question', 'goal_conflict', 'action_release',
   'repair_approval', 'structural_proposal',
 ];
 
@@ -69,6 +69,7 @@ function taskTriplesOf(card: DecisionCardV1): TaskPinRef[] {
     if (triple !== null) byKey.set(canonicalJson(triple as unknown as JsonValue), triple);
   };
   for (const pin of card.source.pins) consider(pin.ref);
+  if (card.taskRef !== null) consider({ ...card.taskRef, aggregateType: 'Task' });
   for (const object of card.objects) {
     if (object.kind === 'aggregate') consider(object.pin.ref);
   }

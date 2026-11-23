@@ -24,6 +24,7 @@ import { createPlanningQuestionReader } from '../../src/core/work-graph/tasks/pl
 import { createInitializationBindingReader } from '../../src/core/work-graph/tasks/goal-confirm-service.js';
 import { createPlanService, createRequestCandidateService } from '../../src/core/work-graph/tasks/plan-service.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
+import { createQueryRoundResolver } from '../../src/core/work-graph/tasks/query-round.js';
 import type { PlanSourceLineageDeps } from '../../src/core/work-graph/tasks/plan-lineage.js';
 import { createQueryJobService } from '../../src/core/work-graph/queries/query-job-service.js';
 import { createRoleConfigurationService } from '../../src/core/work-graph/configuration/role-memory-service.js';
@@ -164,9 +165,9 @@ describe.each(['memory', 'sqlite'] as const)('S5 decision queue (%s)', kind => {
     expect(causes[0]!.actions).toContain('answer');
     expect(read.counts.waitingAnswer).toBe(6);
     expect(read.countsComplete).toBe(false);
-    expect(read.capabilities.filter(c => c.source === 'note_review' || c.source === 'message_release')
+    expect(read.capabilities.filter(c => c.source === 'note_review' || c.source === 'action_release')
       .sort((a, b) => a.source.localeCompare(b.source))).toEqual([
-        { source: 'message_release', availability: 'not_available' }, { source: 'note_review', availability: 'not_available' }]);
+        { source: 'action_release', availability: 'not_available' }, { source: 'note_review', availability: 'not_available' }]);
   });
 
   it('DQ02 retains a concrete decision cause under a RUNNING Goal display', async () => {
@@ -194,6 +195,7 @@ describe.each(['memory', 'sqlite'] as const)('S5 decision queue (%s)', kind => {
       roles: createRoleConfigurationService({ records: f.records, now: () => T, eventId: () => 'dq03-lineage' }),
       materials: createMaterialService({ bodies: new RawArtifactBodyStore(),
         authority: createMaterialRecordReaders(f.records).authority, now: () => T }),
+      queryRounds: createQueryRoundResolver({ records: f.records, duties: unknownSessionDuty, bodies: new RawArtifactBodyStore() }),
       systemActor: OPERATOR, now: () => T, newId: () => 'dq03-lineage',
     });
     const read = ready(await readers(f.records, f.plans, {

@@ -41,7 +41,7 @@ import {
   SECRETARY_TEMPLATE_VERSIONS, secretaryInputText,
   type SampleRound, type SecretaryInputSample,
 } from '../helpers/S6A-prompt-samples.js';
-import { S6A_SCOPE, type S6ASession } from '../helpers/S6A-request-fixture.js';
+import { PREPARED_SECRETARY_TOOLS, S6A_SCOPE, type S6ASession } from '../helpers/S6A-request-fixture.js';
 import { DELIVERY_SET_IDS } from '../helpers/S7B-delivery-samples.js';
 
 // The commit barrier holds the prepared commits the Host gates use; its two
@@ -132,7 +132,8 @@ function noGoalSample(memory: S6AMemory, round: SampleRound): Omit<SecretaryInpu
   const architecture = governance.architecture;
   const policy = governance.policy;
   return {
-    role: { policyRevision: 's6a-secretary-binding@1', tools: ['read'], takesSessionHistory: false },
+    role: { policyRevision: 's6a-secretary-binding@1', tools: [...PREPARED_SECRETARY_TOOLS],
+      takesSessionHistory: false },
     workspace: { projectId: 'ag2b-collab-project', workspaceId: memory.workspace.workspaceId,
       revision: memory.workspace.revision },
     executionRoles: ['builder'],
@@ -214,9 +215,11 @@ describe('the whole input of a round that absorbs a queued input after an earlie
     expect(input).toContain('## Earlier rounds of this request on other secretaries');
     expect(input).toContain('## This round');
 
-    // The recorded set: every Query call kind's section order, the final Kernel
-    // tool list (the grant's `read` plus its exploration group, in declared
-    // order) and every template the preparation read, in first-read order.
+    // The recorded set: every Query call kind's section order, the final tool
+    // list (the grant's `read` plus its exploration group, then the request
+    // round's mailbox/decision/ask_copy/action/note/request families this
+    // no-goal round selects, never the person or member families, then the
+    // answer tool) and every template the preparation read, in first-read order.
     // The answer format is a used template of this call kind, read before the
     // round template that places it in the task slot; the base comes last.
     const record = await promptRecordOf(world, executing.round);
@@ -228,7 +231,11 @@ describe('the whole input of a round that absorbs a queued input after an earlie
     });
     expect(record.set.toolNames).toEqual([
       'read', 'list_files', 'search', 'symbols', 'code_index', 'project_source', 'python_index', 'cpp_index',
-      'source_excerpt', 'submit_secretary_answer',
+      'source_excerpt',
+      'send_session_message', 'read_session_inbox', 'read_session_message', 'read_session_message_body',
+      'respond_session_message', 'withdraw_session_message',
+      'read_user_decision', 'ask_copy', 'dispatch_task', 'hold_claim', 'release_hold', 'request_stop',
+      'record_note', 'read_requests', 'submit_secretary_answer',
     ]);
     expect(templateEntries(record)).toEqual([
       { id: 'secretary-answer', version: SECRETARY_TEMPLATE_VERSIONS['secretary-answer'], packId: 'platform' },

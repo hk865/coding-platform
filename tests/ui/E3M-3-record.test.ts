@@ -132,10 +132,10 @@ describe('E3M-3 the Member centre', () => {
       await settle(() => booted.receipts.some((receipt) => receipt.route === 'messages/send') && bubbles().includes('E3M intervention'), 5_000);
       const calls = callsOf(log, 'messages/send');
       expect(calls).toHaveLength(1);
-      /* 具名改坏: `intent` 改成 `notify`；本行的 `input` 红。 */
+      /* 具名改坏（测试内）: 期望的 `entry` 省略；本行的 `input` 红。 */
       expect(calls[0]!.input).toEqual({
         recipient: { projectId: 'ag2b-collab-project', sessionId: w.module.sessionId },
-        text: 'E3M intervention', intent: 'action_request', needsReply: true,
+        text: 'E3M intervention', entry: 'person_intervention', needsReply: true,
       });
       expect(metaOf(calls[0]).requestId).toMatch(UUID_V4);
       expect(metaOf(calls[0]).expected).toEqual([]);

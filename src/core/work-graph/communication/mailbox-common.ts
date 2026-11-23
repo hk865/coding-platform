@@ -290,9 +290,9 @@ export function principalRefusal(principal: MailboxPrincipal, event: Parameters<
 }
 
 /**
- * The one version pin of ack, respond, MSG-06 and MSG-09: the machine's pin
- * guard, asked with the request before the receipt lookup. The row asks the
- * same facts again.
+ * The one version pin of respond, MSG-06 and MSG-09: the machine's pin guard,
+ * asked with the request before the receipt lookup. The row asks the same
+ * facts again.
  */
 export function pinsOf(expected: readonly VersionPin[], ref: SessionMessageRef):
   { ok: true; pins: MessageGuardContext['pins'] } | { ok: false; rejection: CoreRejection } {
@@ -464,7 +464,7 @@ export function fingerprintOf(operation: string, scope: MailboxScope, senderIden
   } as unknown as JsonValue));
 }
 
-export function messageIdOf(owned: Owned, senderIdentity: Unknown, requestId: string): string {
+export function messageIdOf(owned: MailboxScope, senderIdentity: Unknown, requestId: string): string {
   // A Host send's id is P1's one formula (`hostMessageId`); the identity the
   // mailbox already built with `senderIdentityOf` has the same `{kind:'host',
   // actor}` shape, so the hash is never written a second time here.
@@ -480,10 +480,20 @@ export function messageIdOf(owned: Owned, senderIdentity: Unknown, requestId: st
   } as unknown as JsonValue));
 }
 
+/**
+ * The one full ref of a sent message: the id is `messageIdOf` over the SENDER's scope, identity and request id, and
+ * the record lives in the recipient line's workspace (121-109 C). The formal send and the overlap gate's note ref,
+ * which is recorded before its send, both use it.
+ */
+export function messageRefOf(senderScope: MailboxScope, senderIdentity: Unknown, requestId: string,
+  recipientWorkspaceId: string): SessionMessageRef {
+  return { aggregateType: 'SessionMessage', projectId: senderScope.projectId, workspaceId: recipientWorkspaceId,
+    messageId: messageIdOf(senderScope, senderIdentity, requestId) };
+}
+
 /** Each event's id under its write identity. */
 export const EVENT_ID_SUFFIX: Record<SessionMessageEventType, string> = {
   SessionMessageSent: 'sent',
-  SessionMessageRead: 'read',
   SessionMessageResponded: 'responded',
   SessionMessageConsultationDerived: 'consultation-derived',
   SessionMessageInputAccepted: 'input-accepted',
@@ -491,8 +501,6 @@ export const EVENT_ID_SUFFIX: Record<SessionMessageEventType, string> = {
   SessionMessageDecisionAnswered: 'decision-answered',
   SessionMessageDecisionApplied: 'decision-applied',
   SessionMessageWithdrawn: 'withdrawn',
-  SessionMessageReleaseDecided: 'release-decided',
-  SessionMessageReleased: 'released',
   SessionMessageApplied: 'applied',
   SessionMessageExpired: 'expired',
   SessionMessageForwarded: 'forwarded',

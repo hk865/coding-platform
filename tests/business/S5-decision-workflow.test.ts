@@ -23,6 +23,7 @@ import { createGoalService } from '../../src/core/work-graph/tasks/task-service.
 import { createPlanService } from '../../src/core/work-graph/tasks/plan-service.js';
 import { createInitializationBindingReader } from '../../src/core/work-graph/tasks/goal-confirm-service.js';
 import { createTaskClaimService } from '../../src/core/work-graph/tasks/claim-service.js';
+import { owners } from '../helpers/S5-application-support.js';
 import { createExecutionEntryService } from '../../src/core/work-graph/tasks/execution-entry-service.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
 import { createSessionDirectory } from '../../src/core/work-graph/sessions/session-directory.js';
@@ -67,7 +68,8 @@ function makeGoalSettings(fixture: S5DecisionFixture): GoalSettingsPort {
 
 function makeClaims(fixture: S5DecisionFixture): Claims {
   return createTaskClaimService({ records: fixture.records, now: fixture.now, newId: fixture.newId,
-    roles: createRoleConfigurationService({ records: fixture.records, now: fixture.now, eventId: fixture.newId }) });
+    roles: createRoleConfigurationService({ records: fixture.records, now: fixture.now, eventId: fixture.newId }),
+    planSourceRoot: owners(fixture).planSourceRoot });
 }
 
 /** Real WorkGraph/Plan/Session owners + real settings owner; execution/checks come

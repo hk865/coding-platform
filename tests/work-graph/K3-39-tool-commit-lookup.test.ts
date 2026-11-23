@@ -16,7 +16,7 @@ import type { ToolCommitLookup, ToolCommitLookupResult } from '../../src/contrac
 import { createToolCommitLookup } from '../../src/composition/tool-commit-lookup.js';
 import { readUnknownCallReviewDraft } from '../../src/core/agent-runtime/unknown-call-draft.js';
 import {
-  ackSessionMessageRequest, respondSessionMessageRequest, sendSessionMessageRequest, sendUserMessageRequest,
+  respondSessionMessageRequest, sendSessionMessageRequest,
   toolCommitLookupUnknownTool, toolCommitRequestId,
 } from '../../src/core/work-graph/model/tool-commit-arguments.js';
 import {
@@ -53,17 +53,17 @@ const NO_LOOKUP: ToolCommitLookup = async (_ctx, input) => toolCommitLookupUnkno
 
 function mailboxDispatch(owner: ToolCommitLookup): ToolCommitLookup {
   return createToolCommitLookup([owner, NO_LOOKUP, NO_LOOKUP],
-    [['send_session_message', 'ack_session_message', 'respond_session_message', 'send_user_message'],
+    [['send_session_message', 'respond_session_message', 'withdraw_session_message'],
       ['record_decision_application'], ['propose_future_plan']]);
 }
 function decisionDispatch(owner: ToolCommitLookup): ToolCommitLookup {
   return createToolCommitLookup([NO_LOOKUP, owner, NO_LOOKUP],
-    [['send_session_message', 'ack_session_message', 'respond_session_message', 'send_user_message'],
+    [['send_session_message', 'respond_session_message', 'withdraw_session_message'],
       ['record_decision_application'], ['propose_future_plan']]);
 }
 function planDispatch(owner: ToolCommitLookup): ToolCommitLookup {
   return createToolCommitLookup([NO_LOOKUP, NO_LOOKUP, owner],
-    [['send_session_message', 'ack_session_message', 'respond_session_message', 'send_user_message'],
+    [['send_session_message', 'respond_session_message', 'withdraw_session_message'],
       ['record_decision_application'], ['propose_future_plan']]);
 }
 
@@ -85,7 +85,7 @@ describe('K3-39 createToolCommitLookup dispatch (Q2)', () => {
     };
   }
 
-  it('K3-39 dispatches each of the six row-4 names to its owner by tool name', async () => {
+  it('K3-39 dispatches each of the five row-4 names to its owner by tool name', async () => {
     const calls: string[] = [];
     const own = (owner: string, names: readonly string[]): ToolCommitLookup =>
       async (_ctx, lookupInput) => {
@@ -95,13 +95,13 @@ describe('K3-39 createToolCommitLookup dispatch (Q2)', () => {
           : toolCommitLookupUnknownTool(lookupInput.toolName);
       };
     const dispatch = createToolCommitLookup([
-      own('mailbox', ['send_session_message', 'ack_session_message', 'respond_session_message', 'send_user_message']),
+      own('mailbox', ['send_session_message', 'respond_session_message', 'withdraw_session_message']),
       own('decision', ['record_decision_application']),
       own('plan', ['propose_future_plan']),
     ]);
     // The mailbox is first and owns other names: the fixed table must skip it by
     // tool name, not stop on its `unknown_tool: ...` answer.
-    for (const name of ['send_session_message', 'ack_session_message', 'respond_session_message', 'send_user_message']) {
+    for (const name of ['send_session_message', 'respond_session_message', 'withdraw_session_message']) {
       expect(await dispatch(ctx, input(name))).toEqual({ status: 'undetermined', reason: 'mailbox-answered' });
     }
     expect(await dispatch(ctx, input('record_decision_application')))
@@ -109,8 +109,8 @@ describe('K3-39 createToolCommitLookup dispatch (Q2)', () => {
     expect(await dispatch(ctx, input('propose_future_plan'))).toEqual({ status: 'undetermined', reason: 'plan-answered' });
     expect(await dispatch(ctx, input('not_a_row_4_tool'))).toEqual({ status: 'undetermined', reason: 'lookup_not_published' });
     expect(calls).toEqual([
-      'mailbox:send_session_message', 'mailbox:ack_session_message', 'mailbox:respond_session_message',
-      'mailbox:send_user_message', 'decision:record_decision_application', 'plan:propose_future_plan',
+      'mailbox:send_session_message', 'mailbox:respond_session_message', 'mailbox:withdraw_session_message',
+      'decision:record_decision_application', 'plan:propose_future_plan',
     ]);
   });
 });
@@ -216,7 +216,7 @@ describe.each(['memory', 'sqlite'] as const)('K3-39 mailbox owner lookups (%s)',
       ({ recipient: h.busySession, text: 'from the original Run' }), false],
     ['the input with the new fields', (h: C1Harness) => ({
       recipient: h.busySession, text: 'from the original Run',
-      intent: 'inquiry' as const, taskRef: h.claim.task, deadlineMs: 2500,
+      needsReply: true, taskRef: h.claim.task, deadlineMs: 2500,
     }), true],
   ] as const)('K3-39 send_session_message reports committed, not_committed and idempotency_conflict for %s',
     async (_name, argsOf, deadlinePinned) => {
@@ -266,7 +266,7 @@ describe.each(['memory', 'sqlite'] as const)('K3-39 mailbox owner lookups (%s)',
   it.each([
     ['the text body', { text: 'the answer' }],
     ['the reject body', { reject: true as const, reason: 'not mine to answer' }],
-  ] as const)('K3-39 ack_session_message and respond_session_message report the committed rows for %s',
+  ] as const)('K3-39 respond_session_message reports the committed rows for %s',
     async (_name, body) => {
       const h = await createC1Harness(kind);
       c1Fixtures.push(h);
@@ -280,18 +280,10 @@ describe.each(['memory', 'sqlite'] as const)('K3-39 mailbox owner lookups (%s)',
         generation: h.claim.generation, workspaceId: h.ctxHost.workspaceId as string,
       };
       const seed = committed(await h.mailbox.sendMessage(h.ctxWork, sendSessionMessageRequest(
-        { recipient: h.busySession, text: 'ack and respond me' }, 'k3-39-mailbox-seed')));
-
-      const ackCallId = 'k3-39-ack-call-1';
-      const ackArgs = { messageRef: seed.value.ref, expectedRevision: seed.value.revision };
-      const ackRequestId = toolCommitRequestId({ origin, toolName: 'ack_session_message', kernelCallId: ackCallId });
-      const acked = committed(await h.mailbox.ackMessage(h.ctxWork, ackSessionMessageRequest(ackArgs, ackRequestId)));
-      const ackHit = await lookup(h.ctxHost, { toolName: 'ack_session_message', arguments: ackArgs,
-        kernelCallId: ackCallId, origin });
-      expect(ackHit).toMatchObject({ status: 'committed', cursor: acked.cursor });
+        { recipient: h.busySession, text: 'respond to me', needsReply: true }, 'k3-39-mailbox-seed')));
 
       const respondCallId = 'k3-39-respond-call-1';
-      const respondArgs = { messageRef: seed.value.ref, expectedRevision: acked.value.revision, ...body };
+      const respondArgs = { messageRef: seed.value.ref, expectedRevision: seed.value.revision, ...body };
       const respondRequestId = toolCommitRequestId({ origin, toolName: 'respond_session_message',
         kernelCallId: respondCallId });
       const responded = committed(
@@ -300,46 +292,6 @@ describe.each(['memory', 'sqlite'] as const)('K3-39 mailbox owner lookups (%s)',
         kernelCallId: respondCallId, origin });
       expect(respondHit).toMatchObject({ status: 'committed', cursor: responded.cursor });
     });
-});
-
-describe.each(['memory', 'sqlite'] as const)('K3-39 send_user_message owner lookup (%s)', kind => {
-  it('K3-39 send_user_message reports committed, not_committed and idempotency_conflict through the dispatch', async () => {
-    const f = await openS5DecisionFixture(kind, { operatorActor: { ...{ kind: 'human', id: 'operator' } }, duties: ['adviser'] });
-    s5Fixtures.push(f);
-    const owners = realOwners(f, ['adviser']);
-    const mailboxLookup = owners.mailbox.lookupToolCommit;
-    expect(typeof mailboxLookup).toBe('function');
-    if (mailboxLookup === undefined) return;
-    const lookup = mailboxDispatch(mailboxLookup);
-
-    const ctx = workContext(f, f.runRA);
-    const origin = {
-      runRef: f.runRA.ref, sessionRef: f.sessionS,
-      generation: f.claimRA.generation, workspaceId: f.base.scope.workspaceId,
-    };
-    const kernelCallId = 'k3-39-user-send-call-1';
-    const requestId = toolCommitRequestId({ origin, toolName: 'send_user_message', kernelCallId });
-    const args = decisionInput(f);
-    const sent = committed(await owners.mailbox.sendUserMessage(ctx, sendUserMessageRequest(args, requestId)));
-    expect(sent.value).toMatchObject({ status: 'pending', revision: 1, response: null });
-
-    // The Host ctx is not the writer; only the rebuilt origin may identify it.
-    const hit = await lookup(f.ctx, { toolName: 'send_user_message', arguments: args, kernelCallId, origin });
-    expect(hit).toMatchObject({ status: 'committed', cursor: sent.cursor });
-    expect((hit as Extract<ToolCommitLookupResult, { status: 'committed' }>).eventIds.length).toBeGreaterThan(0);
-
-    const miss = await lookup(f.ctx, {
-      toolName: 'send_user_message', arguments: args, kernelCallId: 'k3-39-user-send-call-2', origin,
-    });
-    expect(miss).toEqual({ status: 'not_committed' });
-
-    const conflict = await lookup(f.ctx, {
-      toolName: 'send_user_message', arguments: { ...args, text: `${args.text} changed` }, kernelCallId, origin,
-    });
-    expect(conflict).toMatchObject({ status: 'undetermined' });
-    expect((conflict as Extract<ToolCommitLookupResult, { status: 'undetermined' }>).reason)
-      .toContain('idempotency_conflict');
-  });
 });
 
 describe.each(['memory', 'sqlite'] as const)('K3-39 record_decision_application owner lookup (%s)', kind => {

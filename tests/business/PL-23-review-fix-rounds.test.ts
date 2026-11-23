@@ -29,23 +29,26 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import type { PlanRevisionDraft, PlanRevisionSnapshot, RuntimeTask } from '../../src/contracts/plan.js';
 import type { PlanProposal } from '../../src/core/work-graph/model/plan-contracts.js';
+import type { LatestAgentCandidateV1 } from '../../src/core/work-graph/tasks/plan-readers.js';
 import { graphWrite, plain } from '../helpers/AG2b-collaboration-fixture.js';
 import { S7A_REPLY_TOOLS, cancelS7AGoal, checkConfiguration, ready, setS7AAutonomy } from '../helpers/S7A-fixture.js';
 import { byIdentityPrefix, commitBarrier } from '../helpers/S6A-commit-barrier.js';
 import { readS7BMessage } from '../helpers/S7B-fixture.js';
-import { OPERATOR, S6A_SCOPE, S6A_WORK_ROLE, type S6AExtraBinding } from '../helpers/S6A-request-fixture.js';
+import { OPERATOR, S6A_SCOPE, S6A_WORK_ROLE, type S6AExtraBinding, type S6ASession } from '../helpers/S6A-request-fixture.js';
 import { createS6BLine } from '../helpers/S6B1-fixture.js';
 import { sessionOf } from '../helpers/S7A-fixture.js';
 import {
   answerCard, awaitPlanningAnswer, awaitProposal, heartbeatUntil, proposalRefOf, questionCards, readBody, readPlanningQuery, readProposal, readQueryAnswer,
 } from '../helpers/IV-host-fixture.js';
 import {
-  adoptPLPlanDraft, adoptPLTwoStageSkeleton, advancePLGoal, createPLReviewerLine, openPLWorkflowWorld,
-  performOne, plPlanChangeDraft, plSingleStageDraft, plSystemRoundRef, plToolPlanOf, requestHeads, settlePLGoal,
+  adoptPLPlanDraft, adoptPLTwoStageSkeleton, advancePLGoal, createPLReviewerLine, openPLWorkflowWorld, PL_PROPOSE_FUTURE_TOOLS,
+  performOne, plPlanChangeDraft, plSingleStageDraft, plSystemRoundRef, plToolPlanOf, requestHeads, satisfyPLTaskWithPropose,
+  settlePLGoal,
   verdictOf,
   type PLWorkflowWorld,
 } from '../helpers/PL-workflow-fixture.js';
 import { createPLAdviserLine, sendPLActionWait } from '../helpers/PL-consumption-fixture.js';
+import { proposePLCandidateFromIntervention } from '../helpers/PL-forms-fixture.js';
 import { interventionPlanningQueryRefs } from '../../src/contracts/query-job.js';
 import type { CandidateCardFactsV1 } from '../../src/core/work-graph/views/decision-read-model.js';
 import type { WorkflowAdvanceInput } from '../../src/business/workflow/contracts.js';
@@ -107,15 +110,12 @@ it('PL-23: P1 is reviewed fix, two planfix rounds write P2/P3, pass adopts P3 on
     } }] },
   ]);
 
-  // P1@1: the adviser's one independent refinement candidate on the active Plan.
-  const drafted = (await workflow.main.post('plans/propose', graphWrite(S6A_SCOPE, {
-    goalRef: workflow.goal, basedOn: skeleton.plan.ref,
-    draft: { ...p1Draft(skeleton.plan, 'pl-23-p1'), origin: CANDIDATE_ORIGIN },
-    reason: { text: 'PL-23 P1 refinement', sources: [] },
-  }, 'pl-23-p1-propose'))) as { status: string; value?: PlanProposal };
-  expect(drafted.status, JSON.stringify(drafted)).toBe('committed');
-  const p1 = drafted.value;
-  if (p1 === undefined) throw new Error('PL-23: P1 was not written');
+  // P1@1: one candidate with a real author source (A-13, `p2-frozen.md:208/210/345`); it only fills the
+  // `plan_only` stage-2 slot, so no existing Task is touched and the review round still happens.
+  const written = await proposePLCandidateFromIntervention({ world: workflow.world, goal: workflow.goal,
+    basedOn: skeleton.plan.ref, draft: { ...p1Draft(skeleton.plan, 'pl-23-p1'), origin: CANDIDATE_ORIGIN },
+    reason: { text: 'PL-23 P1 refinement', sources: [] }, label: 'pl-23-p1' });
+  const p1 = await readProposal(workflow.world, written.ref);
   expect(p1.status).toBe('candidate');
   expect(p1.revision).toBe(1);
   expect(p1.basedOn).toEqual(skeleton.plan.ref);
@@ -217,7 +217,7 @@ async function advanceClockUntil(world: PLWorkflowWorld['world'], reached: Promi
 }
 
 async function openFixWorld(label: string, extraBindings: readonly S6AExtraBinding[] = []) {
-  const workflow = await openPLWorkflowWorld({ label, extraBindings,
+  const workflow = await openPLWorkflowWorld({ label, extraBindings: [PL_PROPOSE_FUTURE_TOOLS, ...extraBindings],
     extraHostOptions: { checks: checkConfiguration({ kind: 'human', id: OPERATOR.id }) } });
   const skeleton = await adoptPLTwoStageSkeleton(workflow.main, workflow.goal, {
     label, stageOneTaskIds: ['pl-a', 'pl-b'],
@@ -228,16 +228,29 @@ async function openFixWorld(label: string, extraBindings: readonly S6AExtraBindi
   return { workflow, skeleton, reviewer, adviser };
 }
 
+/** A-13: P1 through a real Work Run's `propose_future_plan` (`submittedBy`), then the Run's check round. It only
+ * fills the base `plan_only` slot, so no existing Task is touched and the review round still happens. */
+async function writeP1FromRun(workflow: PLWorkflowWorld, plan: PlanRevisionSnapshot, label: string,
+  draft: PlanRevisionDraft, existing?: S6ASession): Promise<PlanProposal> {
+  const task = plan.tasks.find(entry => entry.taskId === 'pl-a');
+  if (task === undefined) throw new Error(`PL-23: ${label} has no pl-a Task`);
+  const taskRef = { projectId: workflow.goal.projectId, goalId: workflow.goal.goalId, taskId: task.taskId };
+  const line = existing ?? await sessionOf(workflow.world, await createS6BLine(workflow.main, {
+    label: `${label}-p1-line`, role: S6A_WORK_ROLE, tasks: [taskRef],
+  }));
+  const written = await satisfyPLTaskWithPropose(workflow.world, workflow.goal, task.taskId, line, label,
+    { basedOn: plan.ref, draft, reasonText: `PL-23 ${label} P1` });
+  return ready<PlanProposal>(await awaitProposal(workflow.world, written.proposalRef), `PL-23 ${label} P1`);
+}
+
 async function writeP1(workflow: PLWorkflowWorld, skeleton: Awaited<ReturnType<typeof adoptPLTwoStageSkeleton>>,
   label: string): Promise<PlanProposal> {
-  const drafted = (await workflow.main.post('plans/propose', graphWrite(S6A_SCOPE, {
-    goalRef: workflow.goal, basedOn: skeleton.plan.ref,
-    draft: p1Draft(skeleton.plan, `${label}-p1`),
-    reason: { text: `PL-23 ${label} P1`, sources: [] },
-  }, `${label}-p1-propose`))) as { status: string; value?: PlanProposal };
-  expect(drafted.status, JSON.stringify(drafted)).toBe('committed');
-  if (drafted.value === undefined) throw new Error(`PL-23: ${label} P1 was not written`);
-  return drafted.value;
+  return writeP1FromRun(workflow, skeleton.plan, label, p1Draft(skeleton.plan, `${label}-p1`));
+}
+
+async function writeSourcedP1(workflow: PLWorkflowWorld, plan: PlanRevisionSnapshot, label: string,
+  _adviser: S6ASession, draft: PlanRevisionDraft): Promise<PlanProposal> {
+  return writeP1FromRun(workflow, plan, label, draft);
 }
 
 it('PL-23(a): a sent planfix is not resent and another Task still performs', async () => {
@@ -250,7 +263,7 @@ it('PL-23(a): a sent planfix is not resent and another Task still performs', asy
   await workflow.world.scripted.script(reviewer, [
     { kind: 'calls', calls: [{ callId: 'pl-23-a-review-p1', name: 'submit_plan_review', args: FIX }] },
   ]);
-  const p1 = await writeP1(workflow, skeleton, 'pl-23-a');
+  const p1 = await writeP1FromRun(workflow, skeleton.plan, 'pl-23-a', p1Draft(skeleton.plan, 'pl-23-a-p1'), line);
   await performOne(workflow, 'pl-23-a-review-p1', 'send_system_round');
   const reviewP1 = await plSystemRoundRef(workflow, reviewer, `planreview:${p1.ref.proposalId}:1`);
   expect(await verdictOf(workflow, reviewP1)).toBe('fix');
@@ -327,22 +340,28 @@ it('PL-23(b): a terminal planfix with no successor cards fix_invalid and is not 
 
 it('PL-23(b): with no plan_only to refine, the wait names the fix_invalid row', async () => {
   const workflow = opened = await openPLWorkflowWorld({ label: 'pl-23-b2',
+    extraBindings: [PL_PROPOSE_FUTURE_TOOLS],
     extraHostOptions: { checks: checkConfiguration({ kind: 'human', id: OPERATOR.id }) } });
   const plan = await adoptPLPlanDraft(workflow.main, workflow.goal,
     plSingleStageDraft(workflow.goal, { label: 'pl-23-b2', taskIds: ['pl-a'], goalGate: true }), 'pl-23-b2');
   await setS7AAutonomy(workflow.world, workflow.goal, 'after_plan_confirmation');
   const reviewer = await createPLReviewerLine(workflow.world, workflow.main, 'pl-23-b2-reviewer');
   const adviser = await createPLAdviserLine(workflow.world, 'pl-23-b2-adviser');
-  const proposed = (await workflow.main.post('plans/propose', graphWrite(S6A_SCOPE, {
-    goalRef: workflow.goal, basedOn: plan.ref, reason: { text: 'PL-23(b) P1', sources: [] },
-    draft: plPlanChangeDraft(plan, workflow.goal, { planId: 'pl-plan-pl-23-b2-p1', obligations: plan.obligations,
-      tasks: plan.tasks.map(task => task.taskId === 'pl-a' ? { ...task, title: 'PL-23(b) retitled' } : task),
-      assignments: plan.assignments ?? [] }),
-  }, 'pl-23-b2-propose'))) as { status: string; value: PlanProposal };
-  expect(proposed.status, JSON.stringify(proposed)).toBe('committed');
-  const p1 = proposed.value;
+  // A-13: P1 only adds a Task (no existing Task moves), written by a real Work Run's action request.
+  const newTask = 'pl-23-b2-new';
+  const p1Draft: PlanRevisionDraft = plPlanChangeDraft(plan, workflow.goal, {
+    planId: 'pl-plan-pl-23-b2-p1', obligations: plan.obligations,
+    tasks: [...plan.tasks, { taskId: newTask, title: 'PL-23(b) new task', requirementLevel: 'required',
+      taskKind: 'work', disposition: 'active', phase: 'pending', scope: { kind: 'goal' },
+      executionIntent: 'request_execution', sizeClass: 'small' }],
+    assignments: [...(plan.assignments ?? []),
+      { taskId: newTask, role: S6A_WORK_ROLE.templateId, instruction: 'PL-23(b) new task' }],
+  });
+  const written = await proposePLCandidateFromIntervention({ world: workflow.world, goal: workflow.goal,
+    basedOn: plan.ref, draft: p1Draft, reason: { text: 'PL-23(b) P1', sources: [] }, label: 'pl-23-b2-p1' });
+  const p1 = await readProposal(workflow.world, written.ref);
   await workflow.world.scripted.script(reviewer, [{ kind: 'calls', calls: [{ callId: 'pl-23-b2-review',
-    name: 'submit_plan_review', args: { verdict: 'fix', findings: [{ taskId: 'pl-a', text: 'PL-23(b) retitle' }] } }] }]);
+    name: 'submit_plan_review', args: { verdict: 'fix', findings: [{ taskId: newTask, text: 'PL-23(b) new task' }] } }] }]);
   await performOne(workflow, 'pl-23-b2-review', 'send_system_round');
   expect(await verdictOf(workflow, await plSystemRoundRef(workflow, reviewer,
     `planreview:${p1.ref.proposalId}:1`))).toBe('fix');
@@ -362,9 +381,9 @@ it('PL-23(b): with no plan_only to refine, the wait names the fix_invalid row', 
 
 
 it('PL-23(b): a refinement round already committed keeps the card row in the wait reason', async () => {
-  const { workflow, skeleton, reviewer, adviser } = await openFixWorld('pl-23-b3');
+  const { workflow, skeleton, reviewer, adviser } = await openFixWorld('pl-23-b3', [{ ...S7A_REPLY_TOOLS, mergeTools: ['send_session_message'] }]);
   opened = workflow;
-  const p1 = await writeP1(workflow, skeleton, 'pl-23-b3');
+  const p1 = await writeSourcedP1(workflow, skeleton.plan, 'pl-23-b3', adviser, p1Draft(skeleton.plan, 'pl-23-b3-p1'));
   await workflow.world.scripted.script(reviewer, [
     { kind: 'calls', calls: [{ callId: 'pl-23-b3-review-p1', name: 'submit_plan_review', args: FIX }] }]);
   await performOne(workflow, 'pl-23-b3-review-p1', 'send_system_round');
@@ -385,9 +404,9 @@ it('PL-23(b): a refinement round already committed keeps the card row in the wai
 
 
 it('PL-23(c): an answered question card with the planresume still running reads waiting', async () => {
-  const { workflow, skeleton, reviewer, adviser } = await openFixWorld('pl-23-c');
+  const { workflow, skeleton, reviewer, adviser } = await openFixWorld('pl-23-c', [{ ...S7A_REPLY_TOOLS, mergeTools: ['send_session_message'] }]);
   opened = workflow;
-  const p1 = await writeP1(workflow, skeleton, 'pl-23-c');
+  const p1 = await writeSourcedP1(workflow, skeleton.plan, 'pl-23-c', adviser, p1Draft(skeleton.plan, 'pl-23-c-p1'));
   await workflow.world.scripted.script(reviewer, [
     { kind: 'calls', calls: [{ callId: 'pl-23-c-review-p1', name: 'submit_plan_review', args: FIX }] },
   ]);
@@ -530,23 +549,24 @@ it('PL-23(d): the P2 fix round asks the person; planresume continues from P2 and
     `planreview:${p3.ref.proposalId}:1`))).toBe('pass');
   await performOne(workflow, 'pl-23-d-adopt', 'adopt_plan');
   expect((await readProposal(workflow.world, p3.ref)).status).toBe('accepted');
-  expect(ready(await workflow.world.platform.planReaders.latestAgentCandidate(workflow.goal), 'the latest candidate'),
-    'P2 stays a candidate record but left the pending selection').toBeNull();
+  const latest = ready<LatestAgentCandidateV1>(await workflow.world.platform.planReaders.latestAgentCandidate(workflow.goal), 'the latest candidate');
+  expect(latest.proposal, 'P2 stays a candidate record but left the pending selection').toBeNull();
   expect((await readProposal(workflow.world, p2.ref)).status).toBe('candidate');
-  expect((await requestHeads(workflow, reviewer)).sort()).toEqual([p1, p2, p3].map(round =>
-    `planreview:${round.ref.proposalId}:1`).sort());
-  expect((await requestHeads(workflow, adviser)).sort()).toEqual([`planfix:${p1.ref.proposalId}:1`,
+  expect((await requestHeads(workflow, reviewer)).filter(head => head.startsWith('planreview:')).sort())
+    .toEqual([p1, p2, p3].map(round => `planreview:${round.ref.proposalId}:1`).sort());
+  expect((await requestHeads(workflow, adviser)).filter(head => head.startsWith('planfix:')
+    || head.startsWith('planresume:')).sort()).toEqual([`planfix:${p1.ref.proposalId}:1`,
     `planfix:${p2.ref.proposalId}:1`, resumeHead].sort());
 });
 
 it('PL-23(e): a planfix ended unsettled, the Goal cancelled: the adviser line archives once the Host settles it', async () => {
-  const { workflow, skeleton, reviewer, adviser } = await openFixWorld('pl-23-c');
+  const { workflow, skeleton, reviewer, adviser } = await openFixWorld('pl-23-c', [{ ...S7A_REPLY_TOOLS, mergeTools: ['send_session_message'] }]);
   opened = workflow;
   const { world } = workflow;
   await world.scripted.script(reviewer, [
     { kind: 'calls', calls: [{ callId: 'pl-23-c-review-p1', name: 'submit_plan_review', args: FIX }] }]);
   await world.scripted.script(adviser, [{ kind: 'text', text: 'PL-23(c) no plan this time' }]);
-  const p1 = await writeP1(workflow, skeleton, 'pl-23-c');
+  const p1 = await writeSourcedP1(workflow, skeleton.plan, 'pl-23-c', adviser, p1Draft(skeleton.plan, 'pl-23-c-p1'));
   await performOne(workflow, 'pl-23-c-review-p1', 'send_system_round');
   expect(await verdictOf(workflow, await plSystemRoundRef(workflow, reviewer, `planreview:${p1.ref.proposalId}:1`)))
     .toBe('fix');

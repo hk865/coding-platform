@@ -7,8 +7,9 @@
  *
  * Expected (SR7 H.4): 8 Sessions open on heartbeat 1 and the remaining 2 on heartbeat 2; notify-only and unmatched
  * role open no model call, the latter returning `{ reason: 'no_profile' }`; the goal-less person is
- * `{ reason: 'no_goal' }` with `acceptedInputs` staying `[]`; both ordinary late replies are consumed with an accepted
- * `response` input; a person message and one released agent `action_request` in the same Session turn on the person
+ * `{ reason: 'no_goal' }` with `acceptedInputs` staying `[]`; both ordinary late replies stay saved and open no turn
+ * (P2: p2-frozen.md:151, cp2g3a-r1-rulings.md A06, design-frozen.md:238 — a late reply waits for the sender line's
+ * next safe point); a person message and one released agent `action_request` in the same Session turn on the person
  * message while the action_request stays queued.
  */
 import { afterEach, expect, it } from 'vitest';
@@ -94,11 +95,19 @@ it('opens 8 then 2 Sessions, skips the two reasons and turns on the person messa
   expect(world.host.consumeStatus).toContainEqual({ sessionRef: unmatchedRole.ref, reason: 'no_profile' });
   expect(world.host.consumeStatus).toContainEqual({ sessionRef: goalLess.ref, reason: 'no_goal' });
 
-  // Heartbeat 3: the wrapped remainder. Both ordinary late replies carry the accepted response input; the two
-  // skipped lines never turned, so their messages are still pending with no accepted input.
-  await heartbeat(consume);
-  expect(await acceptedResponseParts(consume, consume.replies[0])).toEqual(['response']);
-  expect(await acceptedResponseParts(consume, consume.replies[1])).toEqual(['response']);
+  // The wrapped remainder: P2 (p2-frozen.md:151, cp2g3a-r1-rulings.md A06) gives an ordinary late reply no turn and no
+  // Host consumer, so across the same six further passes both replies stay saved with no accepted input and their
+  // sender lines get no model call; the two skipped lines never turned, so their messages are still pending with no
+  // accepted input.
+  const repliedCalls = async () => (await Promise.all(consume.replies.map(async sender =>
+    (await consume.world.scripted.requests(sender)).length))).reduce((sum, count) => sum + count, 0);
+  const callsAtReplies = await repliedCalls();
+  for (let pass = 0; pass < 6; pass += 1) await heartbeat(consume);
+  for (const sender of [consume.replies[0], consume.replies[1]]) {
+    expect((await respondedOf(consume, sender))?.status).toBe('responded');
+    expect(await acceptedResponseParts(consume, sender)).toEqual([]);
+  }
+  expect(await repliedCalls()).toBe(callsAtReplies);
   const skipped = [await personMessageOf(consume, unmatchedRole), await personMessageOf(consume, goalLess)];
   expect(skipped.every(message => message?.status === 'pending')).toBe(true);
   for (const message of skipped) expect(message!.acceptedInputs ?? []).toEqual([]);
@@ -107,7 +116,7 @@ it('opens 8 then 2 Sessions, skips the two reasons and turns on the person messa
   // action_request lands in the same Session. The person message must be the one turn and the agent one stays queued.
   const wait = await runS7BWait(world, { label: 's7b2-h-person-first' });
   const person = committed<SessionMessage>(await world.post('messages/send', graphWrite(S6A_SCOPE, {
-    recipient: wait.sender.ref, text: 'S7B2 H person first', intent: 'action_request', needsReply: true,
+    recipient: wait.sender.ref, text: 'S7B2 H person first', entry: 'person_intervention', needsReply: true,
     goalRef: wait.goal, taskRef: wait.tasks[0]!,
   }, 's7b2-h-person-first-person')), 'the person message');
   // The released agent action_request: a real Work Run on its own Goal/Task sends it, then the person releases it.
@@ -122,15 +131,15 @@ it('opens 8 then 2 Sessions, skips the two reasons and turns on the person messa
     plain(S6A_SCOPE, { goalRef: agentGoal })), 'the agent dispatch basis');
   await world.scripted.script(agentLine, [{ kind: 'calls', calls: [{ callId: 's7b2-h-person-first-agent',
     name: 'send_session_message', args: { recipient: wait.sender.ref, text: 'S7B2 H agent action request',
-      intent: 'action_request', needsReply: true, expected: basis } }] }, { kind: 'text', text: 'S7B2 H agent sent' }]);
+      needsReply: true } }] }, { kind: 'text', text: 'S7B2 H agent sent' }]);
   const next = await advanceUntil(world.ag2b, { schemaVersion: 1, goalRef: agentGoal,
     flowId: 's7b2-h-person-first-agent', sessionHint: agentLine.ref, kind: 'select_work',
     taskId: agentPlan.tasks[0]!.taskId }, 'claim_task');
   await driveWorkflow(world.ag2b, next, { stopBefore: 'open_checks' });
   const actionRequest = (await listed(consume.world, 'inbox', wait.sender))
-    .find(message => message.sender.kind === 'work_run' && message.intent === 'action_request');
+    .find(message => message.sender.kind === 'work_run');
   if (actionRequest === undefined) throw new Error('S7B2: the agent action_request is not in the target inbox');
-  expect(actionRequest.release).toBe('released');
+  expect(actionRequest).toMatchObject({ status: 'pending', wake: true });
   await world.scripted.script(wait.sender, [{ kind: 'text', text: 'S7B2 consume person-first answer' }]);
   // Each heartbeat is one real Host pass; how many the Session's turn on the person message needs depends on how fast
   // the Host's reads are, so wait until it is accepted (up to 60 passes) and fail with the message's state otherwise.

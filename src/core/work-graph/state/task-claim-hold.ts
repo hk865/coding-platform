@@ -1,6 +1,7 @@
 /**
  * 暂缓领取 `TaskClaimHold`（设计 3.3；A4、A14 的一半；重裁 5）：每个任务一条，固定键。暂缓原因列表加两个卡位：
- * `pendingStop`（在等你批的叫停卡，挡领取）和 `openDispatch`（在等的派活请求，不挡任何东西，只给领取那次了结它）。
+ * `pendingStop`（在等你批的叫停卡，挡领取）和 `openDispatch`（在等的派活请求，不挡任何东西，只给领取那次了结它），
+ * 加最近一次被了结的派活请求 `lastDispatch` 和叫停请求 `lastStop`（§2.8、设计 3.4，可选）。
  *
  * 一次提交里对它的改动从读到的记录（或不存在）起：`nextTaskClaimHold` 先定下一版（`+1`），再用下面的纯函数一步步叠
  * （放原因、点名撤、撤全部、占和让两个卡位），最后编码写入。各 owner（暂缓、动作请求、领取）都只经这里改它。
@@ -64,6 +65,18 @@ const TASK_CLAIM_HOLD_FIELDS = {
   reasons: f.array(f.object(TASK_CLAIM_HOLD_REASON_FIELDS)),
   pendingStop: f.nullable(f.ref(ActionRequestRefShape)),
   openDispatch: f.nullable(f.ref(ActionRequestRefShape)),
+  /**
+   * 这个任务最近一次被了结的派活请求（领取、作废、拒、撤回清 `openDispatch` 的同一次提交写下）。§2.8 只留引用，
+   * 不建索引、不扫描；任务视图按键读回最近这一条 `ActionRequest`（原请求反馈按请求根的 lookup 读，不读它）。
+   * 老记录没有这个键。
+   */
+  lastDispatch: f.optional(f.nullable(f.ref(ActionRequestRefShape))),
+  /**
+   * 这个任务最近一次被了结的叫停请求（放行、拒、撤清 `pendingStop` 的同一次提交写下）。设计 3.4 只留引用，不建索引、
+   * 不扫描；任务详情按键读回 `ActionRequest` 才能在人接手（`person_stopped` 不写暂缓）后仍显示叫停各步。
+   * 老记录没有这个键。
+   */
+  lastStop: f.optional(f.nullable(f.ref(ActionRequestRefShape))),
 };
 
 export type TaskClaimHoldV1 = InferRecord<typeof TASK_CLAIM_HOLD_FIELDS>;
@@ -127,12 +140,18 @@ function releasedReason(reason: PendingTaskClaimHoldReasonV1, by: HoldReleasedBy
   return { ...reason, state: 'released', releasedBy: by, releaseNote: note };
 }
 
-function withReasons(
-  hold: PendingTaskClaimHoldV1, change: (reason: PendingTaskClaimHoldReasonV1) => PendingTaskClaimHoldReasonV1,
-): PendingTaskClaimHoldV1 {
+type HoldReasonsChange = (reason: PendingTaskClaimHoldReasonV1) => PendingTaskClaimHoldReasonV1 | null;
+
+/** 用变化函数重列原因；`null` 表示去掉这条。返回和入参同一版形状（已绑定或提交前）。 */
+export function withReasons<H extends TaskClaimHoldV1 | PendingTaskClaimHoldV1>(
+  hold: H, change: HoldReasonsChange,
+): H {
   const reasons: PendingTaskClaimHoldReasonV1[] = [];
-  for (const reason of hold.reasons as readonly PendingTaskClaimHoldReasonV1[]) reasons.push(change(reason));
-  return { ...hold, reasons };
+  for (const reason of hold.reasons as readonly PendingTaskClaimHoldReasonV1[]) {
+    const next = change(reason);
+    if (next !== null) reasons.push(next);
+  }
+  return { ...hold, reasons } as H;
 }
 
 /**
@@ -150,12 +169,30 @@ export function occupyHoldPointer(
   return { ...hold, [pointer]: { ...actionRef } };
 }
 
-/** 让出一个卡位：只在它还指着这条请求时清掉。 */
+/**
+ * 让出一个卡位：只在它还指着这条请求时清掉。清 `openDispatch` 时把这条派活请求留到 `lastDispatch`（§2.8：领取、
+ * 作废、拒、撤都在自己的同一次提交里清它，任务视图从这一个字段读回最近一条已领/已作废的请求；原请求反馈按请求根
+ * 的 lookup 读）。清 `pendingStop`
+ * 时同样把叫停请求留到 `lastStop`（设计 3.4：人接手后放行不写暂缓，任务详情仍要能读回这次叫停的各步）。
+ */
 export function yieldHoldPointer(
   hold: PendingTaskClaimHoldV1, pointer: 'pendingStop' | 'openDispatch', actionRef: ActionRequestRef,
 ): PendingTaskClaimHoldV1 {
   const current = hold[pointer];
-  return current !== null && canonicalKey(current) === canonicalKey(actionRef) ? { ...hold, [pointer]: null } : hold;
+  if (current === null || canonicalKey(current) !== canonicalKey(actionRef)) return hold;
+  return pointer === 'openDispatch'
+    ? { ...hold, openDispatch: null, lastDispatch: { ...actionRef } }
+    : { ...hold, pendingStop: null, lastStop: { ...actionRef } };
+}
+
+/**
+ * 自动放行的叫停请求没有占过 `pendingStop`，也在写请求和暂缓的同一次提交里把它留到 `lastStop`（设计 3.4）：任务详情
+ * 读最近一条叫停请求，不能被更早的卡位结果挡住。人工批准那条已由 `yieldHoldPointer` 写下，不重复调用。
+ */
+export function rememberLastStop(
+  hold: PendingTaskClaimHoldV1, actionRef: ActionRequestRef,
+): PendingTaskClaimHoldV1 {
+  return { ...hold, lastStop: { ...actionRef } };
 }
 
 /** 有新放的原因在等提交绑定游标：提交要带 `reasons[].since` 这一条绑定。 */

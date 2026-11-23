@@ -14,6 +14,8 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { AdoptedArchitecture, ModuleDefinition } from '../../src/contracts/architecture-catalog.js';
 import type { ModuleRef } from '../../src/contracts/core/identity.js';
 import type { ArchitectureCatalogPort } from '../../src/core/work-graph/architecture/catalog-contracts.js';
+import { createQueryJobService } from '../../src/core/work-graph/queries/query-job-service.js';
+import { planSourceRootOf } from '../helpers/task-claim-fixture.js';
 import { createNodeDetailReader } from '../../src/core/work-graph/views/node-detail-reader.js';
 import { mapExecutedFilesToModules } from '../../src/core/work-graph/views/goal-conflicts.js';
 import type { SessionDutyReadPort } from '../../src/core/work-graph/model/work-line-contracts.js';
@@ -58,6 +60,9 @@ function nodeReaderOverCatalog(fixture: NodeFixture, catalog: AdoptedArchitectur
     executedFiles: scriptedExecutedFiles({ availability: 'available', possiblyIncomplete: false, sourceCursor: null,
       files: files.map(path => ({ runRef, path, workspaceId: 's2c-d-workspace', certainty: 'definite' as const })) }),
     line: lineDeps,
+    planSourceRoot: planSourceRootOf({ messages: fixture.runs.mailbox(), plans: fixture.plans,
+      queries: createQueryJobService({ records: fixture.records, now: () => '2026-09-24T00:00:00.000Z',
+        eventId: () => 's4c-path-lineage' }) }),
     maintainerOf: async () => ({ status: 'ready' as const, value: { status: 'none' as const } }),
   });
   return reader;

@@ -157,7 +157,7 @@ describe.each(['memory', 'sqlite'] as const)('S5 decision application (%s)', kin
     ]);
     const winner = results.find(result => result.status === 'committed');
     if (winner === undefined || winner.status !== 'committed') throw new Error('no winning cause answer');
-    expect(winner.value).toMatchObject({ revision: 1, status: 'responded', intent: 'notify',
+    expect(winner.value).toMatchObject({ revision: 1, status: 'responded',
       recipient: { kind: 'user', ...WORKSPACE_SCOPE }, decision: { syntheticAnswer: true, source: { kind: 'goal_cause', key: source.key } },
       response: { sender: { kind: 'host', actor: OPERATOR }, decision: { selection: { kind: 'other' }, requiresApplication: true } } });
     expect(await h.f.userMessagesByGoal('B')).toEqual(expect.arrayContaining([...beforeMessages, keyOf(winner.value.ref)]));

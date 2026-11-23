@@ -50,7 +50,6 @@ describe('the expiry input on the real SQLite wait', () => {
     if (message.sender.kind !== 'work_run') return;
     expect({ projectId: message.sender.sessionRef.projectId, sessionId: message.sender.sessionRef.sessionId })
       .toEqual({ projectId: wait.sender.ref.projectId, sessionId: wait.sender.ref.sessionId });
-    expect(message.intent).toBe('inquiry');
     expect(message.needsReply).toBe(true);
     expect(message.waitAfterSend).toBe(true);
     expect(message.response).toBeNull();

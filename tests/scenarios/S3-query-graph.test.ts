@@ -37,13 +37,12 @@ import type { RunRef } from '../../src/contracts/dispatch.js';
 import type { AttentionChangesV1, GraphAttentionDetailV1 } from '../../src/contracts/graph-context.js';
 import type { TaskExecutionHistoryRequest } from '../../src/core/agent-runtime/execution-history-contracts.js';
 import type { ScriptedReply } from '../helpers/B2-runtime-fixture.js';
-import {
-  AG2B_CONSUMER_ID, AG2B_QUERY_BUDGET, AG2B_QUERY_ROLE, AG2B_QUERY_ROLE_BINDING, AG2B_RUNTIME_BUDGET,
-} from '../helpers/AG2b-collaboration-fixture.js';
+import { AG2B_QUERY_ROLE } from '../helpers/AG2b-collaboration-fixture.js';
 import { attentionConfig } from '../helpers/orchestration-fixture.js';
 import { cleanupScenarios } from './harness.js';
 import { toolOutputJson } from './support/common.js';
-import { G, GOAL_REF, P, PLAN_REF, SCOPE, WORK_TASK, openS3Host, type S3Host } from './support/S3-host.js';
+import { G, GOAL_REF, P, PLAN_REF, SCOPE, WORK_TASK, openS3Host, s3Ctx, type S3Host } from './support/S3-host.js';
+import { answerLineRound } from './support/brief.js';
 
 // ---------------------------------------------------------------------------
 // SC02 identities
@@ -97,7 +96,7 @@ it('SC02: the old main-conversation Query answers through the read-only graph to
   let h: S3Host | undefined;
   try {
     const send = { callId: 'sc02-send', name: 'send_session_message',
-      args: { recipient: {}, text: QUESTION, intent: 'inquiry', needsReply: true, waitAfterSend: true } as Record<string, unknown> };
+      args: { recipient: {}, text: QUESTION, needsReply: true, waitAfterSend: true } as Record<string, unknown> };
     const historyReply = { kind: 'calls' as const, calls: [{ callId: 'sc02-history', name: 'look_graph',
       args: { mode: 'history' as const, runRef: { aggregateType: 'Run' as const, projectId: P, goalId: G,
         runId: 'placeholder-tA-run' } as RunRef } }] };
@@ -140,13 +139,11 @@ it('SC02: the old main-conversation Query answers through the read-only graph to
     expect(messageRef).toBeDefined();
     if (messageRef === undefined) return;
 
-    // The derived read-only Query answers; its Answer is saved as a real
-    // content-addressed response body, not a transient string.
-    const answered = await h.platform.workflow.consumeConsultation(h.ctx(), {
-      schemaVersion: 1, messageRef, goalRef: GOAL_REF, roleBinding: AG2B_QUERY_ROLE_BINDING,
-      runtimeBudget: AG2B_RUNTIME_BUDGET, budget: AG2B_QUERY_BUDGET, consumerId: AG2B_CONSUMER_ID,
-    });
-    expect(answered).toMatchObject({ status: 'ready', value: { state: 'responded' } });
+    // P2 (p2-frozen.md:133; design-frozen.md:210, :262): the recipient line answers the wait question in its own
+    // woken round, never through a copy; that round's Answer is saved as a real content-addressed response body,
+    // not a transient string.
+    const owner = h;
+    expect(await answerLineRound(owner.platform, actor => s3Ctx(actor ?? owner.actor), messageRef)).toBe('answer_ready');
     const messageRead = await h.platform.messages.readMessage(h.ctx(), messageRef);
     expect(messageRead).toMatchObject({ status: 'ready',
       value: { status: 'responded', response: { bodyRef: { kind: 'artifact', digest: expect.any(String) } } } });

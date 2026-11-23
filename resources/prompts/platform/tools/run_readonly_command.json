@@ -1,8 +1,8 @@
 {
-  "description": "Run a non-interactive bash command in a read-only bubblewrap sandbox. When the platform proxy is on (HTTP_PROXY is set in the sandbox), HTTP and HTTPS reach the public internet through it; the host machine, loopback and private networks are never reachable, and ssh and other non-HTTP connections do not work. The workspace is mounted read-only at /workspace; Host-denied paths are hidden (for example .env, credentials and the Host hidden prefixes), and ordinary .git is readable but read-only. Git can read history and diffs, but any operation that writes .git (for example commit) fails with git's own error, and a linked worktree (.git is a file) has no usable git. Commands are not stopped by time (bound one yourself with `timeout <seconds> <command>`); a cancellation replaces the captured output with empty output. Only paths under the workspace root are visible; deeper files with a protected basename are still readable, exactly as with the read tool. There is no host-shell fallback: when bubblewrap or the read-only mounts are unavailable the call fails.",
+  "description": "Run a non-interactive read-only command in a bubblewrap sandbox. It never changes files: the workspace is mounted read-only at /workspace, ordinary .git is readable but read-only, Host-denied paths are hidden, and only workspace paths are visible. There is no network except the platform HTTP proxy. When you have your own shell, use that shell instead. Commands are never stopped by time; bound one yourself. Note: a cancellation replaces the captured output with empty output.",
   "parameters": {
-    "command": "Non-interactive bash command to run in the read-only sandbox",
-    "cwd": "Workspace-relative working directory; defaults to the workspace root",
-    "timeoutMs": "Expected duration in milliseconds; the platform never stops the command at this time and shows a command running past it to the person. Defaults to 600000."
+    "command": "Non-interactive bash command to run",
+    "cwd": "Workspace-relative dir; default root",
+    "timeoutMs": "Expected duration in ms; default 600000"
   }
 }

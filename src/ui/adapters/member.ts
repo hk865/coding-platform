@@ -123,7 +123,8 @@ export type MemberLine = {
 export type MemberItem =
   | { kind: 'sys'; code: 'start' | 'pause' | 'resume' | 'cancel' | 'requeue' | 'check'; text: string; at: string }
   | { kind: 'run'; runRef: RunRef; head: string; word: string; at: string; checks: MemberCheck[] }
-  | { kind: 'message'; messageRef: SessionMessageRef; text: string; at: string; track: MemberTrack; reply: string | null }
+  | { kind: 'message'; messageRef: SessionMessageRef; text: string; at: string; track: MemberTrack; reply: string | null;
+      replyWord: string; wakeWord: string }
   | { kind: 'ask'; messageRef: SessionMessageRef; question: string; answer: string | null; phase: string | null; at: string }
   | { kind: 'brief'; rows: Array<{ k: string; v: string }> }
   | { kind: 'mark'; text: string; at: string; sq: string; go: 'main' | null }
@@ -162,6 +163,17 @@ export type MemberData = {
 /** The one key both reads use for a message body: workspace + message + part. */
 export function messageBodyKey(ref: SessionMessageRef, part: 'message' | 'response'): string {
   return ref.workspaceId + '/' + ref.messageId + '/' + part;
+}
+
+/** §2.8: the two stored facts a line's message row shows — whether it needs a
+ * reply and whether it wakes the recipient. Main's line record and Member's
+ * message rows read the same `LineMessageStateV1` value here, so neither page
+ * keeps its own wording. */
+export function messageFlagsOf(state: LineMessageStateV1): { replyWord: string; wakeWord: string } {
+  return {
+    replyWord: state.needsReply ? '要回复' : '不用回复',
+    wakeWord: state.wake ? '会叫醒' : '不叫醒',
+  };
 }
 
 export const RUN_STATUS_WORD: Record<string, string> = { starting: '启动中', running: '执行中', ended: '已结束' };
@@ -521,6 +533,7 @@ function recordsOf(source: MemberSource, detail: WorkLineDetailV1): { items: Mem
     const text = bodies[messageBodyKey(state.messageRef, 'message')]?.text ?? '';
     const reply = bodies[messageBodyKey(state.messageRef, 'response')]?.text ?? null;
     const at = message === null ? localShortAt(state.createdAt) : localShortAt(message.createdAt);
+    const flags = messageFlagsOf(state);
     const item: MemberItem = {
       kind: 'message',
       messageRef: state.messageRef,
@@ -532,6 +545,8 @@ function recordsOf(source: MemberSource, detail: WorkLineDetailV1): { items: Mem
         rejectedAt: message?.rejectedAt ?? null,
       },
       reply,
+      replyWord: flags.replyWord,
+      wakeWord: flags.wakeWord,
     };
     const task = messageTaskOf(state, views, lineTask);
     timed.push({ at, item, task });

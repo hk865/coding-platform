@@ -33,6 +33,7 @@ import type { GoalRef } from '../../src/contracts/ledger.js';
 import type { QueryJobRef, QueryRunRef } from '../../src/contracts/query-job.js';
 import type { DecisionCardV1 } from '../../src/core/work-graph/model/decision-contracts.js';
 import type { RequestCoreViewV1 } from '../../src/core/work-graph/model/request-contracts.js';
+import type { RequestReadV1 } from '../../src/core/work-graph/views/main-surface-read-model.js';
 import {
   openS6ACardsWorld, seedS6AGoalOrder, seedS6ASharedCards, type S6ACandidate, type S6ACardsWorkspace, type S6ACardsWorld,
   type S6ARequest,
@@ -48,7 +49,7 @@ type Page = {
   displayToken: string | null;
   next: { phase: 'goal' | 'pre'; since: CommitCursor; rootKey: string } | null;
 };
-type RequestRead = RequestCoreViewV1 & { cards: DecisionCardV1[] };
+type RequestRead = RequestReadV1;
 
 const BACKENDS: readonly S6ABackend[] = ['memory', 'sqlite'];
 const worlds: S6ACardsWorld[] = [];
@@ -112,6 +113,10 @@ async function sincesOf(workspace: S6ACardsWorkspace, requests: readonly S6ARequ
  * A request's view, from its submit receipt: one request round, queued (the driver is off), owned and assigned to
  * the receipt's secretary, so processing; a request with a waiting candidate names it and has the `candidate` reason.
  */
+function feedbackOf(candidate: S6ACandidate | null): RequestReadV1['feedback'] {
+  return { affectedTasks: [], actions: [], planRevision: candidate === null ? null : candidate.basedOn };
+}
+
 function requestView(made: S6ARequest, round: RoundFacts, candidate: S6ACandidate | null = null,
   references: unknown[] = []): RequestCoreViewV1 {
   return {
@@ -297,12 +302,14 @@ describe.each(BACKENDS)('main/read and requests/read (%s)', backend => {
 
     expect(await readRequestCards(cards.main, r1.requestRoot)).toEqual({
       ...requestView(r1, since.get(r1.requestRoot.queryJobId)!, c1), cards: queueCards([candidateCardOf(first, r1), ...goalOwn]),
+      feedback: feedbackOf(c1),
     });
     expect(await readRequestCards(cards.main, r2.requestRoot)).toEqual({
       ...requestView(r2, since.get(r2.requestRoot.queryJobId)!, c2), cards: queueCards([candidateCardOf(first, r2), ...goalOwn]),
+      feedback: feedbackOf(c2),
     });
     expect(await readRequestCards(cards.main, noGoal.requestRoot))
-      .toEqual({ ...requestView(noGoal, since.get(noGoal.requestRoot.queryJobId)!), cards: [] });
+      .toEqual({ ...requestView(noGoal, since.get(noGoal.requestRoot.queryJobId)!), cards: [], feedback: feedbackOf(null) });
   });
 
   // UI1 request-refs 说明书 §5 rows 2 and 8, and §2.6: a multi-line reference is written on the

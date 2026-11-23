@@ -41,9 +41,9 @@ import {
   SESSION_MESSAGE_BY_REQUEST_ROOT_LOOKUP, decodeSessionMessageRecord, sessionMessageRefKey,
 } from '../sessions/message-record-codecs.js';
 import {
-  messageConsumptionProblem, messageFactsOfRecord, waitFactsOfRecord, waitStateOf,
+  isSecretaryRequestMessage, messageConsumptionProblem, messageFactsOfRecord, waitFactsOfRecord, waitStateOf,
 } from '../state/message-machine.js';
-import { messageReleaseBlockEligible } from './message-release-card.js';
+import { sameRef } from '../state/ref-equality.js';
 import { decodeQueryJobAnswerSnapshot, decodeQueryJobSnapshot } from '../queries/query-record-codecs.js';
 import {
   compareRequestRounds, deriveCoveredByDrop, deriveEffectiveGoalId, readRequestRounds,
@@ -92,10 +92,8 @@ export type RequestCoreFactsV1 = {
   coveredByDrop: readonly QueryJobRef[];
   answers: readonly QueryJobAnswerSnapshot[];
   candidate: { proposalRef: PlanProposalRef; state: string; stale: boolean } | null;
-  /** A secretary inquiry of this request still open: the request has a question waiting for a reply. */
+  /** A secretary request question of this root still open: the request has a question waiting for a reply. */
   reply: boolean;
-  /** A message of this request is awaiting release, or approved and not yet actually released. */
-  release: boolean;
 };
 
 /** The map key of one `(answerRef, draftIndex)` initialization binding; canonical JSON keeps the pair unambiguous. */
@@ -157,7 +155,6 @@ export function deriveRequestCore(
     || (view.status === 'queued' && !coveredKeys.has(canonicalJson(ordered[index]!.ref as unknown as JsonValue))));
   if (roundReason) reasons.push('round');
   if (facts.reply) reasons.push('reply');
-  if (facts.release) reasons.push('release');
   if (facts.candidate !== null) reasons.push('candidate');
   // G6F F4: the source an intervention_new_goal request's root round keeps.
   const source = rounds.find((round) => keyOf(round.ref) === keyOf(facts.requestRoot))?.job.interventionSource;
@@ -204,14 +201,13 @@ function unavailable(reason: string): { status: 'rejected'; code: 'unavailable';
 }
 
 /**
- * The request's own message reasons: a secretary inquiry whose wait is still open (`reply`) and a message
- * awaiting or approved-but-not-released (`release`). It reads every message of this request root, never only
- * the current owner's, and reuses the outbox's decode and root check. A read failure is `unavailable`; a
- * cancelled caller is `cancelled`.
+ * The request's own message reason: a secretary request question of this root that needs a reply and whose wait
+ * is still open (`reply`). It reads every message of this request root, never only the current owner's, and
+ * reuses the outbox's decode and root check. A read failure is `unavailable`; a cancelled caller is `cancelled`.
  */
 async function readRequestMessageReasons(
   records: RecordLookupPort, ctx: CoreCallContext, requestRoot: QueryJobRef,
-): Promise<{ status: 'ready'; value: { reply: boolean; release: boolean } }
+): Promise<{ status: 'ready'; value: { reply: boolean } }
   | { status: 'rejected'; code: 'cancelled' | 'unavailable'; reason: string }> {
   if (ctx.signal.aborted) {
     return { status: 'rejected', code: 'cancelled', reason: 'the request message read was cancelled before lookup' };
@@ -230,9 +226,7 @@ async function readRequestMessageReasons(
   if (ctx.signal.aborted) {
     return { status: 'rejected', code: 'cancelled', reason: 'the request message read was cancelled after lookup' };
   }
-  const rootKey = keyOf(requestRoot);
   let reply = false;
-  let release = false;
   for (const record of batch.items) {
     const decoded = decodeSessionMessageRecord(record);
     if (decoded.status !== 'decoded') {
@@ -243,21 +237,17 @@ async function readRequestMessageReasons(
       || message.ref.projectId !== requestRoot.projectId
       || message.ref.workspaceId !== requestRoot.workspaceId
       || message.requestRoot === null
-      || keyOf(message.requestRoot) !== rootKey
-      || (message.sender.kind === 'secretary_round' && keyOf(message.sender.requestRoot) !== rootKey)) {
+      || !sameRef(message.requestRoot, requestRoot)
+      || (message.sender.kind === 'secretary_round' && !sameRef(message.sender.requestRoot, message.requestRoot))) {
       return unavailable('a request message disagrees with the request root');
     }
-    if (message.sender.kind === 'secretary_round' && message.intent === 'inquiry'
+    if (isSecretaryRequestMessage(message)
       && messageConsumptionProblem(messageFactsOfRecord(message)) === null
       && waitStateOf(message, waitFactsOfRecord(message)).state === 'open') {
       reply = true;
     }
-    if (message.withdrawnAt === null
-      && (message.release === 'awaiting' || messageReleaseBlockEligible(message))) {
-      release = true;
-    }
   }
-  return { status: 'ready', value: { reply, release } };
+  return { status: 'ready', value: { reply } };
 }
 
 /**
@@ -451,7 +441,6 @@ export function createRequestFacts(deps: RequestFactsDependencies): RequestFacts
         answers: answers.value,
         candidate: candidate.value,
         reply: messages.value.reply,
-        release: messages.value.release,
       }, confirmed.value),
     };
   }
@@ -498,8 +487,9 @@ function boundOperator(ctx: CoreCallContext): { kind: 'human' | 'system'; id: st
 /**
  * The request facts the plan service's four candidate call sites need: whether
  * the ref is a request ROOT of this workspace, its EFFECTIVE goal, whether the
- * operator initiated it, and the record guards to commit against. The root,
- * initiator, effective goal and guards all come from the one complete read.
+ * operator initiated it, the source part frozen on the admitted Query, and the
+ * record guards to commit against. The root, initiator, effective goal and
+ * guards all come from the one complete read.
  */
 export function createCandidateRequestFactsReader(deps: RequestFactsDependencies): CandidateRequestFactsPort {
   return {
@@ -522,6 +512,7 @@ export function createCandidateRequestFactsReader(deps: RequestFactsDependencies
       // The narrow branch's one proof: an `intervention_planning` Query must prove
       // its source message, this Goal and the message's state together.
       let interventionSource: SessionMessageRef | null = null;
+      let interventionSourcePart: 'decision_answer' | undefined;
       let interventionGuards: readonly RecordGuard[] = [rootGuard];
       if (job.job.intent.execution.kind === 'intervention_planning') {
         const proof = await proveInterventionSource({ records: deps.records, signal: ctx.signal, query: job,
@@ -529,19 +520,21 @@ export function createCandidateRequestFactsReader(deps: RequestFactsDependencies
         if (proof.status !== 'ready') return proof;
         if (proof.value !== null) {
           interventionSource = proof.value.sourceMessageRef;
+          interventionSourcePart = proof.value.sourcePart;
           interventionGuards = proof.value.guards;
         }
       }
 
       // A QueryJob that does not name itself as the request root is not a
       // request: no creation event and no round set are read for it.
-      const isOwnRoot = job.job.requestRoot !== null && keyOf(job.job.requestRoot) === requestKey
+      const isOwnRoot = job.job.requestRoot !== null && sameRef(job.job.requestRoot, requestRef)
         && job.job.roundKind === 'request';
       if (!isOwnRoot) {
         return {
           status: 'ready',
           value: { root: false, initiatedByOperator: false, currentSecretary: null, guards: interventionGuards,
-            interventionSource },
+            interventionSource,
+            ...(interventionSourcePart === undefined ? {} : { interventionSourcePart }) },
         };
       }
       const store = storeOrNullFor(deps);
@@ -565,6 +558,7 @@ export function createCandidateRequestFactsReader(deps: RequestFactsDependencies
           guards: interventionSource === null ? facts.value.guards
             : [...facts.value.guards, ...interventionGuards],
           interventionSource,
+          ...(interventionSourcePart === undefined ? {} : { interventionSourcePart }),
         },
       };
     },

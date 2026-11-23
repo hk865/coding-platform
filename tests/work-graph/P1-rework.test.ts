@@ -114,7 +114,7 @@ describe('R1, R3: a reply by another line is the round\'s new basis', () => {
     const p1 = await worlds.open();
     const [a, s] = await p1.holdRounds([p1.lines.A, p1.lines.S], 'r3');
     const question = await sendS7BWaitingInquiry(p1.world, { goal: p1.goal, session: p1.lines.E, taskId: p1.task.tA.taskId,
-      label: 'p1-r3', body: { recipient: p1.lines.S.ref, text: 'P1 R3 question', intent: 'inquiry', needsReply: true,
+      label: 'p1-r3', body: { recipient: p1.lines.S.ref, text: 'P1 R3 question', needsReply: true,
         waitAfterSend: true } });
     // The person archives E and hands its open wait to A in the same step (`sessions/archive-line`'s wait transfer;
     // `waits/dispose` moves only a gone line's wait, and a waiting line cannot go without disposing it). E's Tasks go

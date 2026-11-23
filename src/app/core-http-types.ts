@@ -52,6 +52,7 @@ import type {
   UnknownCallReviewPort, UnknownCallReviewReadPort,
 } from '../core/work-graph/model/unknown-call-review-contracts.js';
 import type { TaskClaimPort } from '../core/work-graph/model/claim-contracts.js';
+import type { ClaimHoldPort } from '../core/work-graph/model/action-request-contracts.js';
 import type { AdoptInitialArchitectureInput } from '../core/work-graph/architecture/catalog-contracts.js';
 import type { ArchitectureCatalogPort } from '../core/work-graph/architecture/catalog-contracts.js';
 import type { ArchitectureProposalService } from '../core/work-graph/architecture/proposal-service.js';
@@ -233,7 +234,6 @@ export type CoreRouteSuffix =
   | 'messages/read'
   | 'messages/body'
   | 'messages/outbox'
-  | 'messages/release'
   | 'messages/withdraw'
   | 'messages/view'
   | 'messages/inbox-view'
@@ -283,6 +283,7 @@ export type CoreRouteSuffix =
   // A.2 step 5.4 (D-3, C1, C3): the operator requeue/continue and the
   // continuation brief pinned to a requeue Run.
   | 'tasks/requeue'
+  | 'tasks/hold/release'
   | 'executions/brief'
   // P1 (decision 121-147): one Work Run's or Query round's steps (think/read/edit/command/message/tool).
   | 'executions/steps'
@@ -340,7 +341,6 @@ export type CoreRouteSuffix =
   | 'decisions/answer'
   | 'decisions/application'
   | 'decisions/notices/seen'
-  | 'messages/user-send'
   // Slice 2B L15: the six activity/timeline routes. All are `plain`; only the
   // human-only range backfill performs a write (the Workflow operation).
   | 'activity/calendar'
@@ -556,9 +556,7 @@ export type MessagesBodyBody = PlainBody<SessionMailboxPort['readMessageBody']>;
 export type MessagesBodyResponse = RouteResponse<SessionMailboxPort['readMessageBody']>;
 export type MessagesOutboxBody = PlainBody<NonNullable<SessionMailboxPort['readOutbox']>>;
 export type MessagesOutboxResponse = RouteResponse<NonNullable<SessionMailboxPort['readOutbox']>>;
-// The two release/withdraw commands and the two derived view reads, each derived from the command port's exact method.
-export type MessagesReleaseBody = GraphWriteBody<SessionMessageCommandPort['releaseMessage']>;
-export type MessagesReleaseResponse = RouteResponse<SessionMessageCommandPort['releaseMessage']>;
+// The withdraw command and the two derived view reads, each derived from the command port's exact method.
 export type MessagesWithdrawBody = GraphWriteBody<SessionMessageCommandPort['withdrawMessage']>;
 export type MessagesWithdrawResponse = RouteResponse<SessionMessageCommandPort['withdrawMessage']>;
 export type MessagesViewBody = PlainBody<SessionMessageCommandPort['readMessageView']>;
@@ -577,7 +575,6 @@ export type WaitsDisposeResponse = RouteResponse<MessageForwardingPort['disposeW
 
 /** The message routes' DTO assembly: the production-reach anchor for the ten aliases above. */
 export type MessagesCoreRouteDto = {
-  'messages/release': { body: MessagesReleaseBody; response: MessagesReleaseResponse };
   'messages/withdraw': { body: MessagesWithdrawBody; response: MessagesWithdrawResponse };
   'messages/view': { body: MessagesViewBody; response: MessagesViewResponse };
   'messages/inbox-view': { body: MessagesInboxViewBody; response: MessagesInboxViewResponse };
@@ -586,6 +583,12 @@ export type MessagesCoreRouteDto = {
 };
 export type WaitsCoreRouteDto = {
   'waits/dispose': { body: WaitsDisposeBody; response: WaitsDisposeResponse };
+};
+/** §2.5: the configured operator's release-every-hold command, derived from the owner's one method. */
+export type TasksHoldReleaseBody = GraphWriteBody<ClaimHoldPort['releaseAll']>;
+export type TasksHoldReleaseResponse = RouteResponse<ClaimHoldPort['releaseAll']>;
+export type TasksHoldReleaseCoreRouteDto = {
+  'tasks/hold/release': { body: TasksHoldReleaseBody; response: TasksHoldReleaseResponse };
 };
 
 // ---------------------------------------------------------------------------
@@ -674,8 +677,6 @@ export type DecisionsApplicationBody = GraphWriteBody<DecisionMessagePort['recor
 export type DecisionsApplicationResponse = RouteResponse<DecisionMessagePort['recordDecisionApplication']>;
 export type DecisionsNoticesSeenBody = GraphWriteBody<WorkspaceDecisionSettingsPort['markNoticesSeen']>;
 export type DecisionsNoticesSeenResponse = RouteResponse<WorkspaceDecisionSettingsPort['markNoticesSeen']>;
-export type MessagesUserSendBody = GraphWriteBody<DecisionMessagePort['sendUserMessage']>;
-export type MessagesUserSendResponse = RouteResponse<DecisionMessagePort['sendUserMessage']>;
 
 // ---------------------------------------------------------------------------
 // Slice 2B L15: the six activity/timeline route DTOs. Each alias derives from

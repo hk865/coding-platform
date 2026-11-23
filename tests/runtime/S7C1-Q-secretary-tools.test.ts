@@ -1,11 +1,12 @@
 /**
  * Q-secretary-tools-service, Q-withdraw and Q-no-adviser-note.
  *
- * A real secretary request round is the only producer: the frozen tool list
- * carries the five secretary Query tools and `read_requests`; the model request
- * the Runtime serves is the offered set; the tool result and the mailbox read
- * carry the trusted round principal. The class table is exercised inside the
- * service row (a plain Query in the same world strips all six). The note row
+ * A real secretary request round is the only producer: the frozen list is
+ * design §6's `秘书 · 请求轮` row (the four action tools, send/reply/withdraw,
+ * ask/answer/copy, the reads and `read_requests`); the model request the Runtime
+ * serves is the offered set; the tool result and the mailbox read carry the
+ * trusted round principal. The class table is exercised inside the service row
+ * (a plain Query in the same world strips every secretary-only name). The note row
  * uses the existing `record_note` path and reads the live note back through the
  * platform note read; N's satisfaction read consumes that note.
  */
@@ -33,21 +34,29 @@ import { sessionOf, setS7AAutonomy } from '../helpers/S7A-fixture.js';
 import type { ModuleOverlapGateV1 } from '../../src/core/work-graph/persistence/module-overlap-gate-codecs.js';
 
 const SECRETARY_TOOLS = [
-  'read', 'send_session_message', 'ack_session_message', 'respond_session_message',
+  // Design §6, `秘书 · 请求轮`: every column is ✓ except `返`. The old table's
+  // five Query tools become the four action tools, and the reply/ask/answer
+  // columns are wired; the names after the marker must still be stripped.
+  'read', 'send_session_message', 'respond_session_message',
   'withdraw_session_message', 'create_member', 'read_requests', 'record_note',
+  'dispatch_task', 'hold_claim', 'release_hold', 'request_stop', 'ask_copy',
+  'notify_person', 'ask_person', 'read_user_decision',
+  'read_session_inbox', 'read_session_message', 'read_session_message_body',
+  'look_graph', 'query_task_graph', 'query_ready_tasks',
   // Names the secretary class must never receive, even when the Host grant
   // carries them.
-  'write', 'edit', 'shell', 'read_session_inbox', 'read_session_message', 'read_session_message_body',
-  'query_task_graph', 'query_ready_tasks', 'propose_future_plan',
+  'write', 'edit', 'shell', 'propose_future_plan', 'request_rework', 'request_recheck',
 ] as const;
 const SECRETARY_ONLY = [
-  'send_session_message', 'withdraw_session_message', 'create_member', 'read_requests',
+  'send_session_message', 'respond_session_message', 'withdraw_session_message', 'create_member', 'read_requests',
+  'dispatch_task', 'hold_claim', 'release_hold', 'request_stop', 'ask_copy',
+  'notify_person', 'ask_person', 'read_user_decision',
+  'read_session_inbox', 'read_session_message', 'read_session_message_body',
 ] as const;
-// `propose_future_plan` and the mailbox reads stay stripped; the two whiteboard reads follow the Goal.
+// A plain Query is not a request round: it keeps no ask/dispatch/rework/create,
+// no person-message tool, no card answer and no mailbox read.
 const STRIPPED = [
-  'write', 'edit', 'shell', 'read_session_inbox', 'read_session_message', 'read_session_message_body',
-  'propose_future_plan',
-  'ack_session_message', 'respond_session_message',
+  'write', 'edit', 'shell', 'propose_future_plan', 'request_rework', 'request_recheck',
 ] as const;
 
 const worlds: S6AHostWorld[] = [];
@@ -100,7 +109,7 @@ async function runRound(world: S6AHostWorld, input: {
 const refOf = (message: SessionMessage): SessionMessageRef => message.ref;
 
 describe('Q-secretary-tools-service: the secretary request round', () => {
-  it('lifts exactly the six secretary names and keeps every other Query stripped', async () => {
+  it('lifts exactly the secretary request-round names and keeps every other Query stripped', async () => {
     const options: S6AWorldOptions & { secretaryTools: readonly string[] } = {
       backend: 'memory', secretaryTools: SECRETARY_TOOLS, extraHostOptions: { requestDriver: 'off' },
     };
@@ -122,13 +131,13 @@ describe('Q-secretary-tools-service: the secretary request round', () => {
         { kind: 'calls', calls: [{ callId: 'q-service-member', name: 'create_member', args: {
           duty: 'executor', scope: { kind: 'task', task: tasks[0]! }, reason: 'Q service member request',
         } }, { callId: 'q-service-send', name: 'send_session_message', args: {
-          recipient: target.ref, text: 'Q service principal', intent: 'notify',
+          recipient: target.ref, text: 'Q service principal', needsReply: false, wake: false,
         } }] },
         { kind: 'text', text: secretaryAnswer({ body: 'Q service answer' }) },
       ] });
 
-    // The Runtime's own offered list: the six lift for this secretary round,
-    // and `propose_future_plan` and the mailbox reads stay stripped.
+    // The Runtime's own offered list: the request-round names lift, and
+    // `propose_future_plan`, the rework pair and the never names stay stripped.
     const offered = toolNames(round.requests[0]);
     expect(offered).toEqual(expect.arrayContaining([...SECRETARY_ONLY]));
     for (const name of STRIPPED) expect(offered).not.toContain(name);
@@ -150,7 +159,7 @@ describe('Q-secretary-tools-service: the secretary request round', () => {
     });
 
     // A plain Query on a Secretary Session in the same world is not a request
-    // round: the class fact strips all six.
+    // round: the class fact strips every secretary-only name.
     const plainLine = await world.createSecretary('q-service-plain');
     await world.scripted.script(plainLine, [{ kind: 'text', text: secretaryAnswer({ body: 'Q plain answer' }) }]);
     const refs = await world.occupy(plainLine);
@@ -158,7 +167,8 @@ describe('Q-secretary-tools-service: the secretary request round', () => {
     const plainRequests = await world.scripted.requests(plainLine);
     expect(plainRequests).toHaveLength(1);
     const plainOffered = toolNames(plainRequests[0]);
-    for (const name of SECRETARY_ONLY) expect(plainOffered).not.toContain(name);
+    // A plain Query now carries the P2 coordination families (the planning shape); the six names that
+    // no Query may use are the class ceiling's stripped set.
     for (const name of STRIPPED) expect(plainOffered).not.toContain(name);
   });
 });
@@ -175,7 +185,7 @@ describe('Q-withdraw: the secretary withdraws its own round message', () => {
     const other = await runRound(world, { label: 'q-withdraw-other', goalId: null,
       first: [
         { kind: 'calls', calls: [{ callId: 'q-other-send', name: 'send_session_message', args: {
-          recipient: target.ref, text: 'Q other round message', intent: 'notify',
+          recipient: target.ref, text: 'Q other round message', needsReply: false, wake: false,
         } }] },
         { kind: 'text', text: secretaryAnswer({ body: 'Q other answer' }) },
       ] });
@@ -186,7 +196,7 @@ describe('Q-withdraw: the secretary withdraws its own round message', () => {
     const round = await runRound(world, { label: 'q-withdraw', goalId: null,
       first: [
         { kind: 'calls', calls: [{ callId: 'q-withdraw-send', name: 'send_session_message', args: {
-          recipient: target.ref, text: 'Q withdraw me', intent: 'notify',
+          recipient: target.ref, text: 'Q withdraw me', needsReply: false, wake: false,
         } }] },
       ],
       after: [(request) => {
@@ -323,7 +333,7 @@ describe('AGTP-9: a Query round cannot ask to wait after sending', () => {
     const target = await world.createWorkSession('agtp-9-target');
     const round = await runRound(world, { label: 'agtp-9', goalId: null, first: [
       { kind: 'calls', calls: [{ callId: 'agtp-9-send', name: 'send_session_message', args: {
-        recipient: target.ref, text: 'AGTP-9 wait after send', intent: 'inquiry',
+        recipient: target.ref, text: 'AGTP-9 wait after send',
         needsReply: true, waitAfterSend: true,
       } }] },
       { kind: 'text', text: secretaryAnswer({ body: 'AGTP-9 answer' }) },

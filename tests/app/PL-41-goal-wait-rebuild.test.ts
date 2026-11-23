@@ -19,15 +19,17 @@ import type { PlanRevisionDraft } from '../../src/contracts/plan.js';
 import { createGoalWaitRebuild, createGoalWaitWakes, type GoalWaitWakes } from '../../src/app/goal-wait-wakes.js';
 import { openPLReadingsWorld, type PLReadingsWorld } from '../helpers/PL-readings-fixture.js';
 import { openPlanReaders } from '../helpers/PL-reads-fixture.js';
+import { advancePLGoal, openPLPendingCandidateWorld } from '../helpers/PL-workflow-fixture.js';
 import { S6A_SCOPE, S6A_WORK_ROLE } from '../helpers/S6A-request-fixture.js';
+import { driveWorkflow } from '../helpers/A2-restart-fixture.js';
 
 import { readS7BMessage } from '../helpers/S7B-fixture.js';
 import { completeS7BGoal, firstPlan, refinementPlan } from '../helpers/S7B-V-fixture.js';
 import { readActivePlan, proposeCandidate } from '../scenarios/support/S5-decisions.js';
 import { graphWrite, plain } from '../helpers/AG2b-collaboration-fixture.js';
 import { cancelS7AGoal, committed, ready, setS7AAutonomy } from '../helpers/S7A-fixture.js';
-import { openConsumeWorld, openIdleLine, createLine, awaitPlanningAnswer, awaitProposal, candidateCards,
-  heartbeat, notices, proposalRefOf, readProposal } from '../helpers/IV-host-fixture.js';
+import { abandonCandidate, openConsumeWorld, openIdleLine, createLine, awaitPlanningAnswer, awaitProposal,
+  candidateCards, heartbeat, notices, proposalRefOf, readProposal } from '../helpers/IV-host-fixture.js';
 import { createPLAdviserLine, needsDecisionAnswer, openPLConsumptionWorld, seedPLHistoryQuestion,
   seedPLSenderPlan } from '../helpers/PL-consumption-fixture.js';
 import { waitDriver } from '../helpers/DRV-fixture.js';
@@ -86,10 +88,11 @@ function rebuildFor(world: S6AHostWorld) {
     ctx: () => world.humanContext(),
     sessions: world.platform.sessions,
     facts: world.platform.sessionFacts,
-    released: world.platform.messageRelease,
     held: (ctx, goalRef) => heldByDisplay(world, ctx, goalRef),
     planCandidates: readers.planCandidates.bind(readers),
     acceptedCandidatesOf: readers.acceptedCandidatesOf.bind(readers),
+    abandonedCandidateTailsOf: readers.abandonedCandidateTailsOf.bind(readers),
+    completedGoalsOf: readers.completedGoalsOf.bind(readers),
     messages: world.platform.messages,
     queries: world.platform.queries,
     plans: world.platform.plans,
@@ -308,6 +311,42 @@ describe('PL-41 goal-wait rebuild, adopted-unreplied recovery', () => {
     await heartbeat(world);
     expect(await acceptedOf(world, goal), 'no new adoption for a completed Goal').toHaveLength(1);
     expect(await planRevision(world, goal), 'its Plan does not move').toBe(1);
+  });
+});
+
+describe('PL-41 goal-wait rebuild, a completed Goal still owing M', () => {
+  it('registers the completed Goal for its abandoned chain and the completion exit replies M once', async () => {
+    const { workflow, candidate, messageRef } = await openPLPendingCandidateWorld({ label: 'pl41-owe' });
+    const { world, goal } = workflow;
+    worlds.push(world);
+    // The Goal completes through its own `complete_goal` step while the candidate chain is still undecided.
+    const completed = await driveWorkflow(world.ag2b, { schemaVersion: 1, goalRef: goal,
+      flowId: 'pl41-owe-complete', sessionHint: null, kind: 'select_work' });
+    expect(completed.at(-1), JSON.stringify(completed.map(step => [step.state, step.receipt?.kind])))
+      .toMatchObject({ state: 'completed', receipt: { kind: 'complete_goal' } });
+    expect((await readS7BMessage(world, messageRef)).response, 'the undecided chain leaves M unanswered').toBeNull();
+
+    await abandonCandidate(world, goal, candidate, 'pl41-owe-abandon');
+    // The Goal is COMPLETED now, so the ordinary candidate read skips it: only `completedGoalsOf` can find it.
+    const { waits, registered } = recordingRegistry();
+    await rebuildFor(world)(S6A_SCOPE, waits);
+    const owed = registered.filter(basis => basis.goalId === goal.goalId
+      && basis.reasons.includes('abandoned_candidate_reply_open'));
+    expect(owed, 'the completed Goal is registered with its abandoned-chain reason').toHaveLength(1);
+    expect(owed[0]!.recordKinds).toEqual(expect.arrayContaining(['PlanProposal']));
+    waits.queueAll();
+    expect(waits.nextDrainBatch().map(candidateGoal => candidateGoal.goalRef.goalId),
+      'the rebuild registry wakes the completed Goal').toContain(goal.goalId);
+
+    // The completed Goal's select_work pass is the completion exit: it replies the abandoned tail's M.
+    const exit = await advancePLGoal(world, goal, 'pl41-owe-exit') as {
+      status: string; value: { state: string; reason: string } };
+    expect(exit.status, JSON.stringify(exit)).toBe('ready');
+    expect(exit.value).toMatchObject({ state: 'completed', reason: 'the Goal is formally COMPLETED' });
+    const replied = await readS7BMessage(world, messageRef);
+    expect(replied.response?.sender.kind, 'the reply is the chain tail\'s formal answer').toBe('query_run');
+    await heartbeat(world);
+    expect(await readS7BMessage(world, messageRef), 'M has exactly this one reply').toEqual(replied);
   });
 });
 

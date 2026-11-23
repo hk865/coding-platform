@@ -21,15 +21,18 @@ import type { CheckCapabilityV1, RegisteredCommandCheck, RoundSnapshot } from '.
 import type { FailingCheckOutputV1 } from '../../contracts/check-output.js';
 import type { NotifyProjectInputV1, ProjectNoticeV1 } from '../../contracts/role-lines.js';
 import type { GoalTaskPort } from '../../core/work-graph/model/task-contracts.js';
-import type { ClaimHoldPort } from '../../core/work-graph/model/action-request-contracts.js';
+import type { ActionRequestPort, ClaimHoldPort } from '../../core/work-graph/model/action-request-contracts.js';
 import type { TaskRow } from '../../core/work-graph/model/plan-contracts.js';
 import type {
   PlanProposal, PlanProposalRef, PlanServicePort, PlanTaskPort,
 } from '../../core/work-graph/model/plan-contracts.js';
 import type { GraphWrite } from '../../core/work-graph/model/task-contracts.js';
+import type { AbandonedCandidateTailsV1, LatestAgentCandidateV1 } from '../../core/work-graph/tasks/plan-readers.js';
+import type { CandidateChainEndDeps } from '../../core/work-graph/tasks/plan-lineage.js';
 import type { RequestFactsPort } from '../../core/work-graph/tasks/request-facts.js';
 import type { StandardChangeFactsV1 } from '../../core/work-graph/views/decision-read-model.js';
 import type { TaskInputUpstreamPort } from '../../core/work-graph/model/context-input-contracts.js';
+import type { HoldBlockerV1 } from '../../core/work-graph/state/task-claim-hold.js';
 import type { SessionDirectoryPort } from '../../core/work-graph/model/session-contracts.js';
 import type {
   SessionFactsPort, SessionResponsibilityBasisPort,
@@ -54,8 +57,7 @@ import type { SourceSnapshotReads } from '../../core/work-graph/source-authority
 import type { SendMessageResultV1, SessionMailboxPort } from '../../core/work-graph/model/communication-contracts.js';
 import type {
   DecisionCardV1, DecisionMessagePort, DecisionReadPort, GoalExecutedFilesPort,
-  GoalSettingsPort, MessageDutiesFactsPort, MessageReleaseCandidatesPort, MessageReleasePort,
-  RequestCandidatePort,
+  GoalSettingsPort, MessageDutiesFactsPort, RequestCandidatePort, TaskClaimJudgmentV1,
 } from '../../core/work-graph/model/decision-contracts.js';
 import type { ProjectRegistrationPort } from '../../core/work-graph/configuration/project-bootstrap-contracts.js';
 import type { QueryExecutionRecord, QueryJobPort } from '../../core/work-graph/queries/contracts.js';
@@ -76,6 +78,7 @@ import type { OverlapGatePort } from '../../core/work-graph/tasks/overlap-gates.
 import type { PickReadsV1 } from './session-chooser.js';
 import type { systemRoundSendInput } from './plan-round.js';
 import type { CommandReviewDeps } from './command-review.js';
+import type { InterventionClosingReasonV1 } from './intervention.js';
 import type { RepairActivationService } from '../../core/work-graph/notes/activate-repair.js';
 
 /**
@@ -252,13 +255,6 @@ export type WorkflowDependencies = {
   messages?: SessionMailboxPort;
   /** The internal goal-less request the completed-goal branch appends. */
   requestIntake?: Pick<RequestSubmitPort, 'submitInterventionGoal'>;
-  /**
-   * Book §3.8 item 3 (`book-7a.md:359–:391`): the release owner and the bounded candidate page. L publishes the one
-   * object as `platform.messageRelease`. Optional: without it the release step selects nothing and every old
-   * composition and fixture keeps its historical selection (`:383–:384`). 〔a-01〕 `applyMessageRelease` is not here:
-   * the handed-over answer goes through the one kind chain and G's application row, not through this dependency.
-   */
-  messageRelease?: Pick<MessageReleasePort, 'releaseApproved'> & MessageReleaseCandidatesPort;
   /** §3.13 item 2: the one L46 upstream read. Absent keeps the block table to the Plan's own DAG edges, so every old
    *  composition and narrow double behaves as today (the legacy exact-artifact branch is the only one it feeds). */
   taskInputs?: TaskInputUpstreamPort;
@@ -334,9 +330,19 @@ export type WorkflowDependencies = {
   unknownCallReviews?: UnknownCallReviewPort & UnknownCallReviewReadPort;
   /**
    * 暂缓领取的读口（同一个暂缓 owner 的 `readHold`）：`requeue_task` 在门上先看书记原因，held 就等、不写（2.6）。
-   * 可选：没接时门照旧跳过这一步，返工 owner 自己还会挡 `system` 类。
+   * `readEffectiveClaimBlocker` 是 claim-service 的同一个只读组合（读记录 + 领取 owner 的失效判断 + 卡位），
+   * 目标循环在首领、接续和返工的领取前用它；两个都可选，没接时门和目标循环照旧跳过暂缓判断。
    */
-  claimHolds?: Pick<ClaimHoldPort, 'readHold'>;
+  claimHolds?: Pick<ClaimHoldPort, 'readHold'> & {
+    readEffectiveClaimBlocker?: (ctx: CoreCallContext, input: { taskRef: TaskTriple }) =>
+      Promise<{ status: 'ready'; blocker: HoldBlockerV1 | null } | CoreRejection>;
+  };
+  /**
+   * 派活请求 owner 的两个口（2.5）：目标循环每次选择读一次本目标的派活请求（`open` 和待批 `pending`，按受理先后），
+   * 只把 `open` 点名的任务排在候选最前（每个候选照旧走同一段判断）；任务已不可服务时用全部记录找 `pending`/`open`
+   * 的请求，用 `settle` 记 `void`。可选：没接时按今天的顺序、没有可选请求。
+   */
+  actionRequests?: Pick<ActionRequestPort, 'listOpenDispatches' | 'settle'>;
   /** P's chooser reads (`session-chooser.ts`); the composition supplies the activity, goal-Run and pre-claim
    *  authorization facts. Absent keeps today's order and no authorization filter. */
   pick?: PickReadsV1;
@@ -368,7 +374,7 @@ export type WorkflowDependencies = {
    * `checks` stays the existing `runRegisteredCheck` runner and is not one of
    * these fields.
    */
-  latestAgentCandidate?: (goalRef: GoalRef) => Promise<ReadResult<PlanProposal | null>>;
+  latestAgentCandidate?: (goalRef: GoalRef) => Promise<ReadResult<LatestAgentCandidateV1>>;
   completedFixes?: (goalRef: GoalRef, basedOn: PlanRevisionRef | null) => Promise<ReadResult<number>>;
   planFixRead?: (goalRef: GoalRef, proposalRef: PlanProposalRef, revision: number) =>
     Promise<ReadResult<PlanFixReadV1>>;
@@ -382,6 +388,10 @@ export type WorkflowDependencies = {
     }[];
   }>>;
   acceptedCandidatesOf?: (goalRef: GoalRef) => Promise<ReadResult<readonly PlanProposal[]>>;
+  /** A12: the Goal's trusted candidate successor relation (plan readers); absent follows formal replacements only. */
+  candidateSuccessorsOf?: CandidateChainEndDeps['successors'];
+  /** A12: the Goal's abandoned chain tails, whose open M the Goal loop replies with the tail's Answer; absent skips. */
+  abandonedCandidateTailsOf?: (goalRef: GoalRef) => Promise<ReadResult<AbandonedCandidateTailsV1>>;
   /** The taskbook probe: exactly `TaskbookExportReadPort['read']`, implemented by P6. */
   exportBooks?: TaskbookExportReadPort['read'];
   readCandidateCard?: (goalRef: GoalRef, proposalRef: PlanProposalRef) => Promise<ReadResult<{
@@ -400,7 +410,7 @@ export type WorkflowDependencies = {
  * association; the Query half is the accepted pending/claim/answer port.
  */
 export type ConsultationConsumerDependencies = {
-  messages: Pick<SessionMailboxPort, 'readMessage' | 'readMessageBody'>
+  messages: Pick<SessionMailboxPort, 'readMessage' | 'readMessageBody' | 'readHostSendMessageRef'>
     & Required<Pick<SessionMailboxPort, 'respondFromQueryAnswer' | 'recordConsultationDerivation'>>;
   queries: QueryJobPort;
   projects: ProjectRegistrationPort;
@@ -479,6 +489,17 @@ export interface WorkflowPort {
    *  and Host gates; absent keeps old narrow doubles type-compatible. */
   readDeliveryEligibilityFacts?(ctx: CoreCallContext, input: { messageRef: SessionMessageRef }):
     Promise<ReadResult<DeliveryEligibilityFactsV1>>;
+  /** F06/§2.8: the target loop's one claim judgment (module gate, node occupancy, line busy, claimable) for the
+   *  action card and the task detail. Optional so a composition without the target loop keeps `not_read`. */
+  readTaskClaimability?(ctx: CoreCallContext, input: { goalRef: GoalRef; task: TaskTriple }):
+    Promise<ReadResult<TaskClaimJudgmentV1>>;
+  /** The one fixed closing notice of a finished round, read by the notice writer's own source-and-part identity;
+   *  absent keeps the consumable view's older classification. `reason` narrows the proof to one closing reason (the
+   *  formal `no_answer` conclusion); absent proves any reason. */
+  closingNotice?(ctx: CoreCallContext, input: {
+    sourceMessageRef: SessionMessageRef; part: 'message' | 'decision_answer';
+    reason?: InterventionClosingReasonV1;
+  }): Promise<ReadResult<boolean>>;
   /**
    * Slice 1 §4.1: the ONE Workflow archive composition entry. Optional so old
    * narrow doubles stay type-compatible; the real composition installs it. An
@@ -526,6 +547,11 @@ export type InterventionInput = {
   runtimeBudget: RuntimeBudget;
   budget: QueryJobIntentV1['budget'];
   consumerId: string;
+  /**
+   * An answered agent `ask_person` card's wake names its own frozen source part. It is only a routing fact: the
+   * handler re-checks the stored card and takes the card sender's line; every ordinary pass omits it.
+   */
+  part?: 'decision_answer';
   /** Every ordinary pass is the planning arm; only the closing's second step carries `completion`. */
   completion?: undefined;
 } | {
@@ -533,8 +559,15 @@ export type InterventionInput = {
   /** The Host's second step of a closing: the notice is committed and the formal Answer is associated as the
    *  message's one reply. The association reads no execution profile, so the closing carries none. */
   completion: 'associate_answer';
-  /** The closing associates the formal Answer as the original message's reply (§5.6). */
-  replyToOriginal?: boolean;
+  /** Which reply slot this step fills: `both` (the ordinary close-out, the default), `source` (only R, the delayed
+   *  executor close-out) or `original` (only the executor's original wait M, the adopted/abandoned recovery). */
+  replySlot?: 'both' | 'source' | 'original';
+} | {
+  messageRef: SessionMessageRef;
+  /** §2.4: the Host's close-out of a round that already ended, chosen before any execution profile. It settles only
+   *  the existing Query by its frozen source part and saved shape (the owed candidate or formal conclusion
+   *  included) and returns the closing result; it never opens a new round, claims, adopts or requests a new Goal. */
+  completion: 'settle_existing';
 };
 /** The stage one handler call reached; the next call continues from the first missing fact. */
 export type InterventionPlanningStage = 'query' | 'proposal' | 'adoption';
@@ -545,7 +578,9 @@ export type HandleInterventionResultV1 =
   /** The closing's reply step: `reason` names the one fixed Host notice (`questions` sends none) and the original
    *  formal Answer becomes the message's reply. */
   | { status: 'answer_ready'; branch: 'no_task'; answerRef: QueryJobAnswerRef;
-    reason: 'answered' | 'invalid_plan' | 'questions' | 'candidate' | 'declined' | 'adopted' }
+    reason: 'answered' | 'invalid_plan' | 'questions' | 'candidate' | 'declined' | 'adopted';
+    /** A12: `source` when the chain's tail is another round, whose Answer replies M; this closing writes only R. */
+    replySlot?: 'source' }
   /** The closing's withdraw step: the Query is formally ended without an Answer. */
   | { status: 'no_answer'; branch: 'no_task' }
   /** The association step of an `answer_ready` closing: the formal Answer is this message's reply. */

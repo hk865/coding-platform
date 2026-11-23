@@ -387,7 +387,7 @@ describe('PC2 J-08: a zero resident budget omits every present optional section 
       }))).toEqual([
         { name: 'notes', endByte: null, omitted: 1 },
         { name: 'inputs', endByte: null, omitted: 1 },
-        // Hand count: understanding 1 + architecture 1; the message_release card source is wired, so its unavailable row is gone.
+        // Hand count: understanding 1 + architecture 1; the action_release card source is wired, so its unavailable row is gone.
         { name: 'reminders', endByte: null, omitted: 2 },
       ]);
       expect(sections.map((section) => section.name)).not.toContain('footprint');

@@ -20,7 +20,7 @@ import { systemRoundRequestId } from '../../src/contracts/plan-round.js';
 import { interventionPlanningQueryRefs } from '../../src/contracts/query-job.js';
 import type { PlanProposal } from '../../src/core/work-graph/model/plan-contracts.js';
 import { advanceUntil, driveWorkflow } from '../helpers/A2-restart-fixture.js';
-import { graphWrite, plain } from '../helpers/AG2b-collaboration-fixture.js';
+import { plain } from '../helpers/AG2b-collaboration-fixture.js';
 import { S7A_REPLY_TOOLS, checkConfiguration, ready, sessionOf, setS7AAutonomy } from '../helpers/S7A-fixture.js';
 import { OPERATOR, S6A_SCOPE, S6A_WORK_ROLE } from '../helpers/S6A-request-fixture.js';
 import { createS6BLine } from '../helpers/S6B1-fixture.js';
@@ -34,6 +34,7 @@ import {
   plToolPlanOf, requestHeads, runPLAutomaticChain, verdictOf, type PLWorkflowWorld,
 } from '../helpers/PL-workflow-fixture.js';
 import { createPLAdviserLine, readPLPlanResumeRoot, sendPLActionWait } from '../helpers/PL-consumption-fixture.js';
+import { proposePLCandidateFromIntervention } from '../helpers/PL-forms-fixture.js';
 
 let opened: PLWorkflowWorld | null = null;
 afterEach(async () => { await opened?.close(); opened = null; });
@@ -266,12 +267,13 @@ it('PL-43: P1\'s conclusion arriving after an independent P2 stays on P1; P2 is 
   const { world, goal, main } = workflow;
   const p1 = chain.candidate;
   // P2 lands while P1's review is open: a new plan on the same base, with no `replaces`.
-  const written = (await main.post('plans/propose', graphWrite(S6A_SCOPE, {
-    goalRef: goal, basedOn: chain.skeleton.plan.ref, draft: planSegment(chain.skeleton.plan, 'late-p2'),
+  // P2 A13 (`p2-frozen.md:208`): an author that cannot be read leaves a candidate on its card before any review, so P2
+  // names its real source; filling the stage-2 placeholder stays inside the lead-approved `plan_only` exemption.
+  const written = await proposePLCandidateFromIntervention({ world, goal, basedOn: chain.skeleton.plan.ref,
+    draft: planSegment(chain.skeleton.plan, 'late-p2'),
     reason: { text: 'PL-43 independent P2', sources: [], affectedTaskIds: ['pl-placeholder-pl-stage-2'] },
-  }, 'pl-43-late-p2'))) as { status: string; value: PlanProposal };
-  expect(written.status, JSON.stringify(written)).toBe('committed');
-  const p2 = written.value;
+    label: 'pl-43-late-p2' });
+  const p2 = await readProposal(world, written.ref);
   expect(p2.ref.proposalId).not.toBe(p1.ref.proposalId);
   expect(p2.basedOn).toEqual(p1.basedOn);
 
@@ -284,8 +286,10 @@ it('PL-43: P1\'s conclusion arriving after an independent P2 stays on P1; P2 is 
     name: 'submit_plan_review', args: { verdict: 'pass', findings: [] } }] }]);
   await performOne(workflow, 'pl-43-late-review', 'send_system_round');
   const ownReview = await plSystemRoundRef(workflow, chain.reviewer, `planreview:${p2.ref.proposalId}:1`);
-  expect(await requestHeads(workflow, chain.reviewer)).toEqual([
-    `planreview:${p1.ref.proposalId}:1`, `planreview:${p2.ref.proposalId}:1`]);
+  // The inbox page is ordered by message id, not by send order (P2's sourced candidate has another id, so its round
+  // now lists first); the send order is pinned by the steps above, so the two rounds are compared as one sorted set.
+  expect((await requestHeads(workflow, chain.reviewer)).sort()).toEqual([
+    `planreview:${p1.ref.proposalId}:1`, `planreview:${p2.ref.proposalId}:1`].sort());
   expect((await main.activePlan(goal))?.ref).toEqual(chain.skeleton.plan.ref);
   expect((await readProposal(world, p2.ref)).status).toBe('candidate');
 

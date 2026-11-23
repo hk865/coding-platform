@@ -63,7 +63,7 @@ import {
   type TaskRequeueTriggerV1,
   type TaskReworkRefusalCode, type TaskReworkRefusalRef, type TaskReworkRefusalSnapshotV1,
 } from '../../../contracts/task-requeue.js';
-import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
+import type { RecordLookupPort, RecordOrderedLookupPort } from '../../record-store/lookup-ports.js';
 import type {
   GoalRecordTransactionPort, PreparedCommit, RecordGuard, StoreCommitReceipt, UniqueClaimChange,
 } from '../../record-store/ports.js';
@@ -144,7 +144,7 @@ export type SourceDigestResult = { status: 'ready'; sourceDigest: string } | { s
 export type RequeueSourceDigestPort = { captureDigest(root: string): Promise<SourceDigestResult> };
 
 export type TaskRequeueDependencies = {
-  records: GoalRecordTransactionPort & RecordLookupPort;
+  records: GoalRecordTransactionPort & RecordLookupPort & RecordOrderedLookupPort;
   /** WG11 reader: the afterRun's claim Session as it is now. */
   reads: ExecutionReadPort;
   /** The SAME Host workspace bindings the evidence owner resolves roots with (ND-2). */

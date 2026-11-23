@@ -132,7 +132,10 @@ async function threeCallRound(world: S6AHostWorld, session: S6ASession, commandI
 }
 
 /**
- * The existing ask-a-copy entry with a copy that makes two real tool calls. The consultation route creates the copy
+ * The existing ask-a-copy entry with a copy that makes two real tool calls. The
+ * inquiry is stored with `answeredBy:'copy'` on the send itself (frozen §2.1:
+ * `copy` is written when the question enters the mailbox, not when it is
+ * answered), which is the fact the consultation consumer matches. The consultation route creates the copy
  * Session and records the fixed derivation before it reads the Goal; its first call names a Goal that does not exist,
  * so it answers rejected after the copy's Kernel Session exists. The copy's Session is then given its scripted model
  * (two `look_graph` calls and an answer) and the route is called again with goal g1: the recorded derivation is
@@ -144,7 +147,7 @@ async function threeCallRound(world: S6AHostWorld, session: S6ASession, commandI
 async function copyWithTwoCalls(world: S6AHostWorld, source: S6ASession):
   Promise<{ session: SessionRef; runRef: QueryRunRef }> {
   const sent = await world.post('messages/send', graphWrite(S6A_SCOPE, {
-    recipient: source.ref, text: 'S6A activity copy question', intent: 'inquiry', needsReply: true,
+    recipient: source.ref, text: 'S6A activity copy question', needsReply: true, answeredBy: 'copy',
   }, 's6a-activity-copy-send'));
   const sentBody = sent.body as { status: string; value?: { ref: unknown } };
   if (sentBody.status !== 'committed') throw new Error(`S6A: the inquiry did not commit: ${JSON.stringify(sent.body)}`);

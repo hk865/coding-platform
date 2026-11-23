@@ -597,7 +597,7 @@ export function createExecutionPreparation(deps: ExecutionPreparationDependencie
         // hold the Runtime's owner bindings.
         owners: {
           mailbox: true, decisionMessages: true, applicationReceipt: true,
-          sessions: true, plans: true, graph: true, notes: true,
+          plans: true, graph: true, notes: true,
           unknownCallReviews: true, commandRerunRequests: true, roleSplit: true,
         },
         readonlyCommand: {

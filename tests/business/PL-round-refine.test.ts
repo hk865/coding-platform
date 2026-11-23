@@ -124,7 +124,6 @@ describe('systemRoundSendInput: the payload shape of §5.2.3', () => {
     expect(value.meta.requestId).toBe(requestId);
     expect(value.meta.expected).toEqual([]);
     expect(value.input.text.split('\n')[0]).toBe(requestId);
-    expect(value.input.intent).toBe('action_request');
     expect(value.input.needsReply).toBe(true);
     expect(value.input.goalRef).toEqual(goalRef);
   });
@@ -204,34 +203,37 @@ describe('systemRoundSendInput: the payload shape of §5.2.3', () => {
   });
 });
 
-describe('planningAnswerShapeOf: sender identity plus recipient duty (§5.2.7 (2))', () => {
+describe('planningAnswerShapeOf: sender identity, trusted round, overlap note and person fact (§5.2.7 (2))', () => {
   const systemRound = { kind: 'host' as const, actor: { kind: 'system' as const, id: 'host:plan-round' } };
   const otherSystem = { kind: 'host' as const, actor: { kind: 'system' as const, id: 'workflow:auto-rework' } };
   const person = { kind: 'host' as const, actor: { kind: 'human' as const, id: 'person-1' } };
+  const planReview: SystemRoundV1 = { kind: 'planreview', goalRef, proposalId: 'p-1', proposalRevision: 1 };
 
   const rows: readonly {
     name: string;
     sender: Parameters<typeof planningAnswerShapeOf>[0]['sender'];
-    intent: 'action_request' | 'notify';
     duty: Parameters<typeof planningAnswerShapeOf>[1];
+    round: SystemRoundV1 | null;
+    overlapNote: boolean;
+    person: boolean;
     expected: PlanningAnswerShapeV1;
   }[] = [
-    { name: 'system round to the reviewer', sender: systemRound, intent: 'action_request', duty: 'reviewer', expected: 'plan_review' },
-    { name: 'system round to the adviser', sender: systemRound, intent: 'action_request', duty: 'adviser', expected: 'plan_round' },
-    { name: 'system round to the secretary', sender: systemRound, intent: 'action_request', duty: 'secretary', expected: 'plan_round' },
-    { name: 'system round to an executor', sender: systemRound, intent: 'action_request', duty: 'executor', expected: 'text' },
-    { name: 'overlap-note host system sender with another id', sender: otherSystem, intent: 'action_request', duty: 'adviser', expected: 'text' },
-    { name: 'person to the adviser', sender: person, intent: 'action_request', duty: 'adviser', expected: 'plan_round' },
-    { name: 'person to an executor', sender: person, intent: 'action_request', duty: 'executor', expected: 'plan_round' },
-    { name: 'work run to an executor', sender: { kind: 'work_run' }, intent: 'action_request', duty: 'executor', expected: 'text' },
-    { name: 'person to the reviewer', sender: person, intent: 'action_request', duty: 'reviewer', expected: 'text' },
-    { name: 'work run to the secretary', sender: { kind: 'work_run' }, intent: 'action_request', duty: 'secretary', expected: 'plan_round' },
-    { name: 'secretary round to the adviser', sender: { kind: 'secretary_round' }, intent: 'action_request', duty: 'adviser', expected: 'plan_round' },
-    { name: 'a system round that is not an action_request', sender: systemRound, intent: 'notify', duty: 'reviewer', expected: 'text' },
-    { name: 'a work run notify', sender: { kind: 'work_run' }, intent: 'notify', duty: 'adviser', expected: 'text' },
+    { name: 'system round to the reviewer', sender: systemRound, duty: 'reviewer', round: planReview, overlapNote: false, person: false, expected: 'plan_review' },
+    { name: 'system round to the adviser', sender: systemRound, duty: 'adviser', round: planReview, overlapNote: false, person: false, expected: 'plan_round' },
+    { name: 'system round to the secretary', sender: systemRound, duty: 'secretary', round: planReview, overlapNote: false, person: false, expected: 'plan_round' },
+    { name: 'system round to an executor', sender: systemRound, duty: 'executor', round: planReview, overlapNote: false, person: false, expected: 'text' },
+    { name: 'overlap-note host system sender with another id', sender: otherSystem, duty: 'adviser', round: null, overlapNote: true, person: false, expected: 'text' },
+    { name: 'person to the adviser', sender: person, duty: 'adviser', round: null, overlapNote: false, person: true, expected: 'plan_round' },
+    { name: 'person to an executor', sender: person, duty: 'executor', round: null, overlapNote: false, person: true, expected: 'plan_round' },
+    { name: 'work run to an executor', sender: { kind: 'work_run' }, duty: 'executor', round: null, overlapNote: false, person: false, expected: 'text' },
+    { name: 'person to the reviewer', sender: person, duty: 'reviewer', round: null, overlapNote: false, person: true, expected: 'text' },
+    { name: 'work run to the secretary', sender: { kind: 'work_run' }, duty: 'secretary', round: null, overlapNote: false, person: false, expected: 'plan_round' },
+    { name: 'secretary round to the adviser', sender: { kind: 'secretary_round' }, duty: 'adviser', round: null, overlapNote: false, person: false, expected: 'plan_round' },
+    { name: 'a system message that carries no trusted round', sender: systemRound, duty: 'reviewer', round: null, overlapNote: false, person: false, expected: 'text' },
+    { name: 'a work run notify to the adviser', sender: { kind: 'work_run' }, duty: 'adviser', round: null, overlapNote: false, person: false, expected: 'plan_round' },
   ];
 
-  it.each(rows)('$name -> $expected', ({ sender, intent, duty, expected }) => {
-    expect(planningAnswerShapeOf({ sender, intent }, duty)).toBe(expected);
+  it.each(rows)('$name -> $expected', ({ sender, duty, round, overlapNote, person: isPerson, expected }) => {
+    expect(planningAnswerShapeOf({ sender }, duty, round, overlapNote, isPerson)).toBe(expected);
   });
 });

@@ -1,10 +1,13 @@
 /** The one responsibility recipient read (7D2 O4b, v4 §5.2 (a), book :575–:580): with a technical module the
  *  narrowest effective region adviser first, then the Goal's open responsible adviser link, then the asker's
- *  effective creator, then the person. One read; no cache; it never writes `creator` and never falls back to a
- *  secretary or a platform Session. The send site writes the copy, the resolver only names it. */
+ *  effective creator, then the person. One resolver; no cache; it never writes `creator` and never falls back to a
+ *  secretary or a platform Session. The send site writes the copy, the resolver only names it. A session arm carries
+ *  the exact open responsibility link that selected it (null on the creator arm), so a release can guard that link's
+ *  revision instead of re-finding "any" link of the same line. */
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { ModuleRef, SessionRef } from '../../../contracts/core/identity.js';
 import type { ReadResult } from '../../../contracts/core/results.js';
+import type { SessionWorkLink } from '../../../contracts/core/session.js';
 import type { GoalRef } from '../../../contracts/ledger.js';
 import { ROLE_LINE_DUTIES } from '../../../contracts/role-lines.js';
 import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
@@ -22,7 +25,7 @@ export type ResponsibilityRecipientInputV1 = {
   asker: SessionRef | null;        // null = a platform system round: no creator arm, no copy
 };
 export type ResponsibilityRecipientV1 =
-  | { kind: 'session'; session: SessionRef; copy: SessionRef | null }
+  | { kind: 'session'; session: SessionRef; copy: SessionRef | null; link: SessionWorkLink | null }
   | { kind: 'human' };
 
 export interface ResponsibilityRecipientPort {
@@ -59,6 +62,7 @@ export function createResponsibilityRecipient(
     async resolveResponsibilityRecipient(ctx, input) {
       // technical: the narrowest effective region first; only an empty region falls back to the Goal adviser.
       let recipient: SessionRef | null = null;
+      let link: SessionWorkLink | null = null;
       if (input.kind === 'technical' && input.moduleRef !== null) {
         const catalogRead = await deps.catalog.readArchitectureRevision(ctx, { selection: { kind: 'current' } });
         if (catalogRead.status !== 'ready' && catalogRead.status !== 'not_found') return catalogRead;
@@ -67,13 +71,20 @@ export function createResponsibilityRecipient(
           catalog: catalogRead.status === 'ready' ? catalogRead.value.catalog.catalog : null,
         }, deps.duty);
         if (region.status !== 'ready') return region;
-        recipient = region.value?.session ?? null;
+        const hit = region.value;
+        if (hit !== null) {
+          recipient = hit.session;
+          // 参与选择的那条链接随命中交出：调用方守这一条关系的版本，不再二次查找。
+          link = hit.link;
+        }
       }
 
       if (recipient === null && input.goalRef !== null) {
         const lines = await readOpenResponsibilityLines(deps.records, ctx, { goalRef: input.goalRef }, deps.duty);
         if (lines.status !== 'ready') return lines;
-        recipient = lines.value.find((line) => line.duty === 'adviser')?.session ?? null;
+        const goalAdviser = lines.value.find((line) => line.duty === 'adviser') ?? null;
+        recipient = goalAdviser?.session ?? null;
+        link = goalAdviser?.link ?? null;
       }
 
       const creatorRead = input.asker === null ? null : await effectiveCreatorOf(ctx, input.asker);
@@ -82,7 +93,8 @@ export function createResponsibilityRecipient(
       recipient ??= creator;
       if (recipient === null) return { status: 'ready', value: { kind: 'human' } };
       const copy = creator !== null && creator.sessionId !== recipient.sessionId ? creator : null;
-      return { status: 'ready', value: { kind: 'session', session: recipient, copy } };
+      return { status: 'ready', value: { kind: 'session', session: recipient, copy,
+        link: link === null ? null : structuredClone(link) } };
     },
   };
 }

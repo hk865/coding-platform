@@ -74,9 +74,9 @@ describe('PL-25 plan reads', () => {
     const latest = await readers.latestAgentCandidate(seeded.goal);
     expect(latest.status).toBe('ready');
     if (latest.status !== 'ready') return;
-    expect(latest.value?.ref.proposalId, 'the pending candidate, not the adopted first plan').toBe(seeded.candidateRef);
-    expect(latest.value?.status).toBe('candidate');
-    expect(latest.value?.basedOn?.planId).toBe(seeded.basedOn.ref.planId);
+    expect(latest.value?.proposal?.ref.proposalId, 'the pending candidate, not the adopted first plan').toBe(seeded.candidateRef);
+    expect(latest.value?.proposal?.status).toBe('candidate');
+    expect(latest.value?.proposal?.basedOn?.planId).toBe(seeded.basedOn.ref.planId);
 
     // A candidate written by no planfix round: completedFixes is a real 0.
     const fixes = await readers.completedFixes(seeded.goal, seeded.basedOn.ref);

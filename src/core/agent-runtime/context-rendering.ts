@@ -196,8 +196,9 @@ type RenderInput = {
    * three slots adjacent. `required.task` is null when this is present.
    */
   taskSlots?: { round: string; batched: string | null; earlier: string | null };
-  /** The intervention template's plan summary (the `task` section) and the person's message slot. */
+  /** The intervention template's plan summary (the `task` section), source line and person's message slot. */
   plan?: string | null;
+  source?: string | null;
   message?: string | null;
   optional: Partial<Record<OptionalSectionName, OptionalRow[]>>;
   continuationSuffix: string | null;
@@ -289,8 +290,10 @@ function renderWithTemplate(input: RenderInput): RenderResult {
   if (input.templateId === 'query-planning-input') slots.footprint = undefined;
   if (input.templateId === 'intervention-planning') {
     // The `plan` slot carries its own leading blank line and its `plan:`/`stages:`/`tasks:` text; the
-    // `message` slot carries the separator, the question heading and the person's text.
+    // `source` slot is its own line before the question; the `message` slot carries the separator, the
+    // question heading and the person's text.
     slots.plan = input.plan == null ? undefined : '\n\n' + input.plan;
+    slots.source = input.source == null ? undefined : '\n\n' + input.source;
     slots.message = '\n\n' + packString(texts, 'context.questionHeading') + '\n' + (input.message ?? '');
   }
 
@@ -466,6 +469,8 @@ export function renderQueryContext(input: {
   taskSlots?: { round: string; batched: string | null; earlier: string | null };
   /** The intervention template's plan summary; present only for `intervention-planning`. */
   plan?: string | null;
+  /** The intervention template's frozen source line; present only for `intervention-planning`. */
+  source?: string | null;
   /** The intervention template's person message; present only for `intervention-planning`. */
   message?: string | null;
   optional: Partial<Record<'footprint' | 'notes', OptionalRow[]>>;
@@ -490,6 +495,7 @@ export function renderQueryContext(input: {
     required: input.required,
     ...(input.taskSlots === undefined ? {} : { taskSlots: input.taskSlots }),
     ...(input.plan === undefined ? {} : { plan: input.plan }),
+    ...(input.source === undefined ? {} : { source: input.source }),
     ...(input.message === undefined ? {} : { message: input.message }),
     optional: input.optional,
     continuationSuffix: null,

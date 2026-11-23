@@ -55,10 +55,10 @@ describe('E3M-8 the Member page on a waiting line', () => {
       await settle(() => callsOf(log, 'messages/send').length > 0
         && userTexts(page.root).includes('E3M wait intervention'), 5_000);
       const calls = callsOf(log, 'messages/send');
-      /* 具名改坏: `interveneLine` 把 `intent` 改成 `notify`；本行的 `input` 红。 */
+      /* 具名改坏: `interveneLine` 不写 `entry`；本行的 `input` 红。 */
       expect(calls).toHaveLength(1);
       expect(calls[0]!.input).toEqual({
-        recipient: wait.sender.ref, text: 'E3M wait intervention', intent: 'action_request', needsReply: true,
+        recipient: wait.sender.ref, text: 'E3M wait intervention', entry: 'person_intervention', needsReply: true,
       });
       expect(receiptBody(booted, 'messages/send')?.['status']).toBe('committed');
       expect(receiptBody(booted, 'messages/send')?.['sendStatus']).toBe('sent');
@@ -165,7 +165,7 @@ describe('E3M-8 the Member page on a waiting line', () => {
         const recipient = await sessionOf(world, await createS6BLine(main, { label: 'e3m-p11-6-recipient',
           role: S6A_WORK_ROLE }));
         const inquiry = (callId: string, text: string) => ({ kind: 'calls' as const, calls: [{ callId,
-          name: 'send_session_message', args: { recipient: recipient.ref, text, intent: 'inquiry' as const,
+          name: 'send_session_message', args: { recipient: recipient.ref, text,
             needsReply: true, waitAfterSend: true } }] });
         await world.scripted.script(sender, [inquiry('e3m-p11-6-a', 'S7B message from e3m-p11-6'),
           inquiry('e3m-p11-6-beside', 'E3M p11-6 beside the wait')]);

@@ -42,7 +42,7 @@ import type { QueryJobRecord } from '../../src/core/work-graph/queries/contracts
 import { sessionMessageRefKey } from '../../src/core/work-graph/sessions/message-record-codecs.js';
 import { planProposalIdFor } from '../../src/core/work-graph/tasks/plan-service.js';
 import * as mailboxModule from '../../src/core/work-graph/communication/mailbox-service.js';
-import { graphWrite } from '../helpers/AG2b-collaboration-fixture.js';
+import { graphWrite, plain } from '../helpers/AG2b-collaboration-fixture.js';
 import { heartbeatUntil, lineFacts, notices, readPlanningQuery } from '../helpers/IV-host-fixture.js';
 import { adoptPLMixedPlan } from '../helpers/PL-consumption-fixture.js';
 import { S6A_SCRIBE_ROLE, S6A_SCOPE, S6A_WORK_ROLE, type S6ASession } from '../helpers/S6A-request-fixture.js';
@@ -70,7 +70,7 @@ async function joined(reviewer = false, work = false, scribe = false): Promise<X
   return world;
 }
 
-const NO_ANSWER_NOTICE = '这次规划已结束，没有留下可用的回答，这条消息已撤回。请补充要求后重新发送。';
+const NO_ANSWER_NOTICE = '对方这一轮结束，没有回复。请补充要求后重新发送。';
 /** The adviser's `submit_plan_round`: the goal-level placeholder `task` becomes executable work (PL-18's answer). */
 const submitPlanRound = (task: string, tag: string) => ({ kind: 'calls' as const, calls: [{ callId: tag,
   name: 'submit_plan_round', args: { answerKind: 'plan', summary: tag, reason: { text: tag, affectedTaskIds: [task] },
@@ -225,7 +225,11 @@ it('R4 a round of B that ends without an answer is noticed and withdrawn in A; t
   const round = (await roundsOn(world, world.adviser, 'refine:'))[0]!.ref;
   const closed = await settled(world, world.adviser, round);
   expect(await notices(host, world.adviser, NO_ANSWER_NOTICE)).toHaveLength(1);
-  expect(closed).toMatchObject({ response: null, withdrawnAt: expect.any(String) });
+  // P2 (`p2-frozen.md:165`, `:168`; lead A2-08): the formal `no_answer` ends the round's consumption and the view shows
+  // it; only a person's B20 source is withdrawn, so this platform round stays in A's inbox, unanswered.
+  expect(closed).toMatchObject({ response: null, withdrawnAt: null });
+  expect(valueOf<{ roundEnding?: { kind: string } }>((await host.post('messages/view', plain(S6A_SCOPE, round))).body,
+    'ready', 'the R4 round view').roundEnding).toMatchObject({ kind: 'no_answer' });
   const person = await sendS7A2PersonMessage(host, { label: 'xwr-r4-person', recipient: world.adviser.ref,
     goal: host.goals.first });
   expect(await heartbeatUntil(host, () => readPlanningQuery(host, person.ref), query => query !== null, 6))
@@ -264,7 +268,7 @@ it('R6 a person names a ready B Task to A\'s executor line: the line answers, th
   const line = await world.base.createWorkLine('xwr-r6-exec');
   await host.scripted.script(line, [{ kind: 'text', text: 'XWR R6: the A line answers about the B Task' }]);
   const person = valueOf<{ ref: SessionMessageRef }>((await host.post('messages/send', graphWrite(S6A_SCOPE, {
-    recipient: line.ref, text: 'XWR R6 person message', intent: 'action_request', needsReply: true, goalRef: goal,
+    recipient: line.ref, text: 'XWR R6 person message', entry: 'person_intervention', needsReply: true, goalRef: goal,
     taskRef: { projectId: goal.projectId, goalId: goal.goalId, taskId } }, 'xwr-r6-person'))).body,
   'committed', 'the R6 person message').ref;
   const closed = await settled(world, line, person);
@@ -288,7 +292,7 @@ it('R7 an open-duty scribe line in A claims B\'s ready Task; planningOnly does n
   const { taskId } = await adoptSecondPlan(host, world.second.workspace, goal, 'xwr-r7', S6A_SCRIBE_ROLE.templateId);
   const line = world.base.lines.scribe;
   const person = valueOf<{ ref: SessionMessageRef }>((await host.post('messages/send', graphWrite(S6A_SCOPE, {
-    recipient: line.ref, text: 'XWR R7 person message', intent: 'action_request', needsReply: true, goalRef: goal,
+    recipient: line.ref, text: 'XWR R7 person message', entry: 'person_intervention', needsReply: true, goalRef: goal,
     taskRef: { projectId: goal.projectId, goalId: goal.goalId, taskId } }, 'xwr-r7-person'))).body,
   'committed', 'the R7 person message').ref;
   const claims = await heartbeatUntil(host, () => bClaimsOn(world, line),
@@ -387,7 +391,7 @@ it('X1 a B Goal\'s overlap-note round reaches the main adviser, whose Query live
   const heldA = await host.gates.modelRequest(scribe);
   await host.scripted.script(scribe, [{ kind: 'text', text: 'XWR-ON a done' }]);
   valueOf((await host.post('messages/send', graphWrite(S6A_SCOPE, {
-    recipient: scribe.ref, text: 'XWR-ON a', intent: 'action_request', needsReply: true, goalRef: goal,
+    recipient: scribe.ref, text: 'XWR-ON a', entry: 'person_intervention', needsReply: true, goalRef: goal,
     taskRef: { projectId: goal.projectId, goalId: goal.goalId, taskId: taskIds[0] },
   }, 'xwron-a-person'))).body, 'committed', 'the a person message');
   try {
@@ -427,9 +431,9 @@ it('X1 a B Goal\'s overlap-note round reaches the main adviser, whose Query live
     }
     const messageRef = noteRequest.messageRef;
     if (messageRef === undefined) throw new Error('X1: the note request names no message');
-    // (b) exactly one Host system action_request for B's Goal, with N's body.
-    const requests = (await world.inbox(world.adviser)).filter(message => message.intent === 'action_request'
-      && message.sender.kind === 'host' && message.sender.actor.kind === 'system'
+    // (b) exactly one Host system message for B's Goal, with N's body.
+    const requests = (await world.inbox(world.adviser)).filter(message =>
+      message.sender.kind === 'host' && message.sender.actor.kind === 'system'
       && message.goalRef?.goalId === goal.goalId);
     expect(requests, 'X1: the adviser has one note request for B\'s Goal').toHaveLength(1);
     const request = requests[0]!;
@@ -489,7 +493,7 @@ it('XWR-ON ⑧ a B Goal with no responsible adviser sends the note request to A\
   const heldA = await host.gates.modelRequest(scribe);
   await host.scripted.script(scribe, [{ kind: 'text', text: 'XWR-ON ⑧ a done' }]);
   valueOf((await host.post('messages/send', graphWrite(S6A_SCOPE, {
-    recipient: scribe.ref, text: 'XWR-ON ⑧ a', intent: 'action_request', needsReply: true, goalRef: goal,
+    recipient: scribe.ref, text: 'XWR-ON ⑧ a', entry: 'person_intervention', needsReply: true, goalRef: goal,
     taskRef: { projectId: goal.projectId, goalId: goal.goalId, taskId: taskIds[0] },
   }, 'xwron8-a-person'))).body, 'committed', 'the a person message');
   try {

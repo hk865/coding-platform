@@ -105,8 +105,8 @@ Promise<{ status: 'ready'; facts: ApplyFacts } | CoreRejection> {
   const { messageRef: ref, proof } = input;
   const loaded = mapReadResult(await readSessionMessageRecord(deps.records, owned.signal, ref));
   // rd7a2b-10: `mapReadResult` already answers a missing message `not_found` (`book-7a.md:249`) and `not_ready`
-  // `incomplete` (`mailbox-service.ts:180–:184`), so the arms left here are `ready` and that rejection; the tree's own
-  // narrowing names the second (`:2725`, `message-release.ts:111`) and no arm is written for the two it has turned.
+  // `incomplete` (`mailbox-service.ts:180–:184`), so the arms left here are `ready` and that rejection; no arm is
+  // written for the two it has turned.
   if (loaded.status !== 'ready') return loaded as CoreRejection;
   const checked = await readFormalReceiptEvent(applyRecords(deps.records), proof.receipt);       // :229–:232, the one copy
   if (checked.status !== 'ready') return applyReceiptProblem(checked as CoreRejection);

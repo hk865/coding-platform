@@ -8,7 +8,8 @@ import { DEFAULT_RUNTIME_BUDGET } from '../../src/contracts/runtime-budget.js';
 import type { RunSnapshot } from '../../src/contracts/dispatch.js';
 import type { SessionMessage } from '../../src/core/work-graph/model/communication-contracts.js';
 import { createRunStateReader } from '../../src/core/work-graph/tasks/run-state-service.js';
-import { createSessionMailboxTools, USER_DECISION_TOOL_NAMES, type SessionMailboxToolsConfig } from '../../src/core/agent-runtime/communication-tools.js';
+import { createPersonMessageTools, createSessionMailboxTools, USER_DECISION_TOOL_NAMES,
+  type SessionMailboxToolsConfig } from '../../src/core/agent-runtime/communication-tools.js';
 import { createMailboxInputSupply, deriveInputId, formatDecisionResponseInput } from '../../src/core/agent-runtime/execution-inputs.js';
 import type { WorkflowPort } from '../../src/business/workflow/ports.js';
 import { createCollaborationDriver, type CollaborationDriver,
@@ -19,7 +20,7 @@ import { openS5DecisionFixture, type S5DecisionFixture } from '../helpers/S5-dec
 import { committed, ready, realOwners, workContext, refKey, sendDecision, answerPins,
   decisionInput, modelRequests, type RealOwners } from '../helpers/S5-user-message-support.js';
 import { createWP2Platform, decisionRequestArgs, type WP2PlatformFixture } from '../helpers/WP2-platform-support.js';
-import type { ScriptedReply } from '../helpers/B2-runtime-fixture.js';
+import { deliveryFactsForFixture, type ScriptedReply } from '../helpers/B2-runtime-fixture.js';
 
 const signal = (): AbortSignal => new AbortController().signal;
 const fixtures: S5DecisionFixture[] = [];
@@ -58,7 +59,13 @@ async function buildUserTools(f: S5DecisionFixture, owners: RealOwners,
     requestIdForCall: call => `tu:${call.name}:${call.callId}`, decisionMessages: owner.port,
     ...(onWaitRegistered === undefined ? {} : { onWaitRegistered }),
   });
-  const definitions = handle.create(await WorkspaceSandbox.create(f.base.directory));
+  const sandbox = await WorkspaceSandbox.create(f.base.directory);
+  // The two person-addressed tools live in their own factory (design §1.2 / 2.1): build both and merge.
+  const person = createPersonMessageTools({
+    decisionMessages: owner.port, goalRef: decisionInput(f).goalRef, context: workContext(f),
+    requestIdForCall: call => `tu:${call.name}:${call.callId}`,
+  });
+  const definitions = [...handle.create(sandbox), ...person.create(sandbox)];
   const byName = (name: string) => {
     const definition = definitions.find(candidate => candidate.name === name);
     if (definition === undefined) throw new Error(`missing tool ${name}`);
@@ -82,27 +89,37 @@ async function answerFromRun(f: S5DecisionFixture, owners: RealOwners, run: RunS
   return answer.value;
 }
 
+/** `ask_person`'s strict model args: the owner supplies the Goal, intent, reply wait and wake. */
+function personSendInput(f: S5DecisionFixture) {
+  const input = decisionInput(f);
+  return { text: input.text, options: input.options, objects: input.objects };
+}
+
 describe('S5 user-decision runtime tools', () => {
-  it('TU01 adviser send_user_message registers the actual committed wait once', async () => {
+  it('TU01 adviser ask_person registers the actual committed wait once', async () => {
     const f = await openFixture();
     const owners = realOwners(f, ['adviser']);
     const waits: SessionMessage[] = [];
     const tools = await buildUserTools(f, owners, message => waits.push(message));
     const before = await f.storeSnapshot();
-    const result = await tools.byName('send_user_message').handler.execute(
-      toolCall('send_user_message', 'tu01-call', decisionInput(f)), { signal: signal() });
+    const result = await tools.byName('ask_person').handler.execute(
+      toolCall('ask_person', 'tu01-call', personSendInput(f)), { signal: signal() });
     expect(result.status).toBe('success');
     expect(tools.calls).toEqual({ sends: 1, reads: 0, applications: 0 });
-    expect(waits).toHaveLength(1);
-    const wait = waits[0];
+    // The person adapter maps the owner's write result directly; its value is the committed wait.
+    const output = outputValue(result) as { status?: string; value?: SessionMessage };
+    expect(output).toMatchObject({ status: 'committed' });
+    const wait = output.value;
     if (wait === undefined) throw new Error('committed user wait not registered');
     const saved = ready(await owners.mailbox.readMessage(f.ctx, wait.ref));
     // Rebase onto slice 1 (lead): the stored Message reads with the slice-1 §2.9 defaults.
     expect(saved).toEqual({ ...wait, replyHandler: null, archiveWaitDisposition: null });
-    expect(outputValue(result)).toMatchObject({ message: wait });
+    expect(outputValue(result)).toMatchObject({ status: 'committed', value: wait });
+    // The person ask carries a reply slot but no yielded wait (`personMessageRequest` sets waitAfterSend false).
     expect(saved).toMatchObject({ recipient: { kind: 'user', projectId: 'P', workspaceId: 'W' },
-      status: 'pending', revision: 1, intent: 'decision_request', needsReply: true, waitAfterSend: true,
+      status: 'pending', revision: 1, needsReply: true,
       sender: { kind: 'work_run', sessionRef: f.sessionS, runRef: f.runRA.ref } });
+    expect(saved.waitAfterSend ?? false).toBe(false);
     expect(result.effects.sideEffect).toBe('none');
     const after = await f.storeSnapshot();
     expect(after.eventCount - before.eventCount).toBe(1);
@@ -112,12 +129,13 @@ describe('S5 user-decision runtime tools', () => {
   it('TU02 model-supplied operatorActor is invalid_arguments with zero owner calls and no send', async () => {
     const f = await openFixture();
     const tools = await buildUserTools(f, realOwners(f, ['adviser']));
-    const args = { ...decisionInput(f), operatorActor: { kind: 'human', id: 'forged' } };
-    expect(tools.byName('send_user_message').inputSchema.safeParse(args).success).toBe(false);
+    const input = decisionInput(f);
+    const args = { goalRef: input.goalRef, text: input.text, operatorActor: { kind: 'human', id: 'forged' } };
+    expect(tools.byName('notify_person').inputSchema.safeParse(args).success).toBe(false);
     const before = await f.storeSnapshot();
     const allocations = { ...f.allocationCounts };
-    const result = await tools.byName('send_user_message').handler.execute(
-      toolCall('send_user_message', 'tu02-call', args), { signal: signal() });
+    const result = await tools.byName('notify_person').handler.execute(
+      toolCall('notify_person', 'tu02-call', args), { signal: signal() });
     expect(result).toMatchObject({ status: 'error', error: { code: 'invalid_arguments' } });
     expect(tools.calls).toEqual({ sends: 0, reads: 0, applications: 0 });
     expect(await f.storeSnapshot()).toEqual(before);
@@ -129,8 +147,8 @@ describe('S5 user-decision runtime tools', () => {
     const waits: SessionMessage[] = [];
     const tools = await buildUserTools(f, realOwners(f, ['executor']), message => waits.push(message));
     const before = await f.storeSnapshot();
-    const result = await tools.byName('send_user_message').handler.execute(
-      toolCall('send_user_message', 'tu03-call', decisionInput(f)), { signal: signal() });
+    const result = await tools.byName('ask_person').handler.execute(
+      toolCall('ask_person', 'tu03-call', personSendInput(f)), { signal: signal() });
     expect(result).toMatchObject({ status: 'error', error: { code: 'execution_failed' } });
     expect(outputValue(result)).toMatchObject({ status: 'rejected', code: 'forbidden' });
     expect(waits).toEqual([]);
@@ -164,7 +182,8 @@ describe('S5 user-decision runtime tools', () => {
     expect(body.text).toBe('');
     expect(formatDecisionResponseInput(PLATFORM_PROMPT_PACK_V1, answer.body, [])).toBe('用户答复\n' + canonicalJson(original));
     const supply = createMailboxInputSupply({ messages: owners.mailbox, context: () => workContext(f, run),
-      sessionRef: f.claimRB.sessionRef, runRef: run.ref, texts: PLATFORM_PROMPT_PACK_V1, toolNames: [] });
+      sessionRef: f.claimRB.sessionRef, texts: PLATFORM_PROMPT_PACK_V1, toolNames: [],
+      deliveryFacts: deliveryFactsForFixture });
     const inputs = await supply({ sessionId: f.claimRB.sessionRef.sessionId, runId: run.ref.runId,
       turnId: 'tu-turn', afterEventSequence: 0, acceptedInputIds: [] }, { signal: signal() });
     expect(inputs).toEqual([{ inputId: deriveInputId(message.ref, 'response'),
@@ -182,8 +201,8 @@ describe('S5 user-decision runtime tools', () => {
     const message = await answerFromRun(f, owners, run, body, 'tu05');
     const ref = message.ref;
     const sessionRef = f.claimRB.sessionRef;
-    const supply = createMailboxInputSupply({ messages: owners.mailbox, context: () => workContext(f, run), sessionRef, runRef: run.ref,
-      texts: PLATFORM_PROMPT_PACK_V1, toolNames: [] });
+    const supply = createMailboxInputSupply({ messages: owners.mailbox, context: () => workContext(f, run), sessionRef,
+      texts: PLATFORM_PROMPT_PACK_V1, toolNames: [], deliveryFacts: deliveryFactsForFixture });
     const point = { sessionId: sessionRef.sessionId, runId: run.ref.runId, turnId: 'tu-turn', afterEventSequence: 0, acceptedInputIds: [] };
     const before = await f.storeSnapshot();
     const first = await supply(point, { signal: signal() });
@@ -273,7 +292,7 @@ type PumpWorld = {
 /**
  * One real WP2 world: the composition's real Runtime/Workflow, the claimed Run's
  * real prepared value, an idle recipient Session and the scripted model's real
- * `send_user_message`/`send_session_message` call. Every wrapper only counts,
+ * `ask_person`/`send_session_message` call. Every wrapper only counts,
  * holds the real dependency at a gate, and returns its result unchanged.
  */
 async function openPump(recipient: 'user' | 'session'): Promise<PumpWorld> {
@@ -309,10 +328,10 @@ async function openPump(recipient: 'user' | 'session'): Promise<PumpWorld> {
     const recipientRef = { projectId: created.value.ref.projectId, sessionId: created.value.ref.sessionId };
     scriptedReplies.push(
       { kind: 'calls', calls: [recipient === 'user'
-        ? { callId: 'tu07-user-send', name: 'send_user_message',
-          args: decisionRequestArgs(p.goalRef, { waitAfterSend: false }) }
+        ? { callId: 'tu07-user-send', name: 'ask_person',
+          args: decisionRequestArgs('ask_person') }
         : { callId: 'tu07-inquiry-send', name: 'send_session_message',
-          args: { recipient: recipientRef, text: 'Please inspect this.', intent: 'inquiry',
+          args: { recipient: recipientRef, text: 'Please inspect this.',
             needsReply: true, waitAfterSend: true } }] },
       { kind: 'text', text: 'TU07 final reply' },
     );
@@ -419,7 +438,9 @@ describe('S5 user-decision consultation pump', () => {
     try {
       ready(await user.driver.start(user.p.ctx, user.input));
       await user.replyReached;
-      await waitForDriverState(user, 'waiting_for_reply');
+      // P2: an `ask_person` card is not a wait (design:236, only `waitAfterSend` + `needsReply` registers one; the
+      // card's answer wakes the line, design:224-228), so the Run goes on to its next request and the pump shows none.
+      expect(ready(await user.driver.read(user.p.ctx, { goalRef: user.p.goalRef })).state).toBe('running');
       const message = await outboxMessage(user);
       expect(user.consumeCalls()).toBe(0);
       expect(user.p.queryScripted.calls()).toBe(0);
@@ -430,7 +451,9 @@ describe('S5 user-decision consultation pump', () => {
         schemaVersion: 1, messageRef: message.ref, goalRef: user.p.goalRef,
         roleBinding: user.roleBinding, runtimeBudget: DEFAULT_RUNTIME_BUDGET,
         budget: { maxTokens: null, deadline: null }, consumerId: 'tu07-consumer' });
-      expect(refused).toMatchObject({ status: 'rejected', code: 'unsupported' });
+      // p2-frozen:133 / design:222: only a copy question (`answeredBy:'copy'`) reaches the consultation consumer.
+      expect(refused).toMatchObject({ status: 'rejected', code: 'invalid',
+        reason: 'the consultation message is not a copy question' });
       expect(user.p.queryScripted.calls()).toBe(0);
       expect(await publicState(user, message)).toEqual(before);
       expect(user.p.commits().length).toBe(before.commits);
@@ -447,14 +470,11 @@ describe('S5 user-decision consultation pump', () => {
     try {
       ready(await other.driver.start(other.p.ctx, other.input));
       await waitForDriverState(other, 'waiting_for_reply');
-      await other.consultReached;
-      expect(other.consumeCalls()).toBe(1);
-      other.releaseConsult();
-      await other.consultFinished;
-      expect(other.consumeCalls()).toBe(1);
-      expect(other.p.queryScripted.calls()).toBe(1);
-      other.releaseReply();
-      await waitForDriverState(other, 'completed');
+      // p2-frozen:133: the pump's automatic consultation of an ordinary Session wait is deleted; the wait is only
+      // projected. Closing the driver drains the pump's last pass, after which no consultation was ever made.
+      await other.driver.close();
+      expect(other.consumeCalls()).toBe(0);
+      expect(other.p.queryScripted.calls()).toBe(0);
     } finally {
       other.releaseConsult();
       other.releaseReply();

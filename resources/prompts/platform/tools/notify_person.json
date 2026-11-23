@@ -1,0 +1,10 @@
+{
+  "description": "告诉人：发一条只让人知道、不要回复的请知悉，按目标合成一行。不叫醒、不出卡、不要回复。谁能用：有目标的非副本轮；审阅者只发不要回复的请知悉，不出卡（C23）；书记的 `scr:` 审查轮结论只写交表；和本轮无关、只需人知道的事用 `notify_person`。什么时候用：进度、风险、要人知道但不用他定的结论。不拿它提问或要人定（那是 ask_person）；不当执行者上报（上报走 send_session_message）；不说对方已看或已答。参数见下。回执：committed 表示已存下并进请知悉，不回复。会被拒：职责不允许（the sender trusted duties do not allow this user message）。",
+  "parameters": {
+    "text": "要让人知道的事；非空，写清对象和现状。",
+    "taskRef": "所属任务，可选；完整三元组。",
+    "taskRef.projectId": "任务的项目 id。",
+    "taskRef.goalId": "任务的目标 id。",
+    "taskRef.taskId": "任务 id。"
+  }
+}

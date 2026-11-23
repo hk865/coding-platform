@@ -9,10 +9,11 @@
  * creates a Card table, never fabricates a count/watermark and never lets an
  * unshown source item cross the page.
  */
+import type { ActionRequestRef } from '../../../contracts/action-request.js';
 import type { ActorRef, CommitCursor } from '../../../contracts/command-event.js';
 import { principalIdentity, type CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { SessionRef, VersionPin, WorkspaceScope } from '../../../contracts/core/identity.js';
-import type { AcceptanceObligation, PlanRevisionSnapshot } from '../../../contracts/plan.js';
+import type { AcceptanceObligation, PlanRevisionRef, PlanRevisionSnapshot } from '../../../contracts/plan.js';
 import type { CoreRejection, ReadResult } from '../../../contracts/core/results.js';
 import type { UserMessageResponseV1 } from '../../../contracts/core/session-message.js';
 import { isUserMessageRecipient } from '../../../contracts/core/session-message.js';
@@ -25,13 +26,15 @@ import {
   type DecisionSourceIdentityV1,
   type DecisionSourceV1,
   type DecisionSubjectV1,
-  type MessageReleaseBlockV1,
   type NoticeCategoryV1,
   type NoticePositionV1,
 } from '../../../contracts/goal-decisions.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
 import type { GoalRef, GoalSnapshot } from '../../../contracts/ledger.js';
+import type { TaskTriple } from '../../../contracts/dispatch.js';
+import type { NodeActionRequestV1 } from '../../../contracts/work-line.js';
 import type { EncodedRecord, GoalRecordTransactionPort } from '../../record-store/ports.js';
+import { storedDispatchBasis } from '../model/action-request-contracts.js';
 import type {
   DecisionCardSourcePort,
   DecisionCardV1,
@@ -52,6 +55,9 @@ import type {
   DecisionQueueWindowMoved,
   DecisionQueuePreparation,
   PreparedDecisionQueue,
+  ActionReleaseCardViewV1,
+  TaskClaimabilityPort,
+  TaskClaimJudgmentV1,
 } from '../model/decision-contracts.js';
 import { DECISION_WINDOW_MOVED_REASON } from '../model/decision-contracts.js';
 import type { SessionMessage } from '../model/communication-contracts.js';
@@ -68,15 +74,18 @@ import type { UnknownCallReviewReadPort } from '../model/unknown-call-review-con
 import type { UnknownCallReviewV1 } from '../../../contracts/unknown-call-review.js';
 import type { CommandRerunRequestV1 } from '../../../contracts/command-rerun-request.js';
 import type { ExecutionReadPort } from '../model/execution-read-contracts.js';
-import type { DispatchBasisFactsPort } from '../model/dispatch-basis-contracts.js';
 import {
   commandRerunRequestCardFacts, commandRerunRequestCardIdentity, commandRerunRequestCardWorkspaceOf,
   type CommandRerunRequestCardFactsV1, type CommandRerunRequestCardSourceDependencies,
 } from '../tasks/command-rerun-request-card.js';
-import { messageReleaseBlockEligible, messageReleaseCardFacts,
-  type MessageReleaseCardFactsV1 } from '../tasks/message-release-card.js';
-import { releaseCandidateBlockedReason } from '../communication/message-release.js';
-import { dispatchCurrentOf } from '../communication/mailbox-service.js';
+import { actionRequestCardFacts, claimedPlanRefOf, type ActionRequestCardFactsV1 } from '../tasks/action-request-card.js';
+import { readActionRequestRecord } from '../tasks/action-request-codecs.js';
+import { readTaskClaimHold } from '../tasks/claim-holds.js';
+import { holdWithoutExpiredReasons } from '../tasks/claim-service.js';
+import type { PlanSourceRootPort } from '../model/claim-contracts.js';
+import { dispatchBlockersOf } from '../tasks/action-requests.js';
+import type { ActionRequestV1 } from '../state/action-request.js';
+import type { TaskClaimHoldV1 } from '../state/task-claim-hold.js';
 import type { PlanProposal, PlanProposalRef } from '../model/plan-contracts.js';
 import { diagnosePlanCandidate } from '../state/plan-candidate.js';
 import type { PlanDiagnosisFindingV1, PlanReviewReadV1 } from '../../../contracts/plan-review.js';
@@ -97,7 +106,6 @@ import {
   decodeSessionMessageRecord,
   S2A_USER_MESSAGES_LOOKUP,
   S5_PROJECT_ANSWERS_LOOKUP,
-  S7A2_RELEASE_BY_GOAL_LOOKUP,
   sessionMessageRefKey,
 } from '../sessions/message-record-codecs.js';
 import {
@@ -112,7 +120,8 @@ import { enumerateClosedGoalCandidates, enumerateGoalCandidates, readGoal as rea
   readGoalPlanWindow, readPinnedCompletionPolicy, readPlan, readProposal,
   readTaskClosure, successorParentsOf, terminalProposalOf, type PlanReaders, type PlanReadersRecords,
   type TaskClosureV1 } from '../tasks/plan-readers.js';
-import { candidateSourceLineOf, type CandidateSourceLineDeps, type PlanSourceLineageDeps } from '../tasks/plan-lineage.js';
+import { candidateSourceLineOf, type CandidateSourceIncompleteV1, type CandidateSourceLineDeps,
+  type PlanSourceLineageDeps } from '../tasks/plan-lineage.js';
 import { standardChangeOf } from '../tasks/plan-validation.js';
 import { findAnswerMessage } from '../tasks/decision-answer-lookup.js';
 import { UNKNOWN_CALL_REVIEW_FILE_OBJECTS_MAX, unknownCallReviewCardFacts, unknownCallReviewTargetPaths,
@@ -145,8 +154,9 @@ import { roleCapacityEpisodeCodec } from '../sessions/role-line-orchestration-co
 import { ROLE_CAPACITY_OPTIONS, roleLineChangeOptionsOf } from '../communication/decision-source-facts.js';
 
 /**
- * The views' read seam plus the two commit reads the member notice rebuilds its position from. The composition root
- * already passes the same `backend.records`, so this widening adds no injection and no second reader.
+ * The views' read seam plus the two commit reads the member notice rebuilds its position from. `commit` is absent:
+ * the claim owner's read-only expiry judgment takes the same seam, and both candidate enumerations declare only
+ * `readMany`/`lookup`.
  */
 type DecisionReadModelRecordsPort = DecisionReadRecordsPort &
   Pick<GoalRecordTransactionPort, 'lookupCommit' | 'eventAt'>;
@@ -205,7 +215,7 @@ type CardAction = DecisionCardV1['actions'][number];
 type CapabilityState = { availability: 'available' | 'not_available' | 'read_failed'; reason?: string };
 
 const CARD_KINDS: readonly DecisionSourceV1['kind'][] = [
-  'message', 'goal_cause', 'candidate', 'note_review', 'planning_question', 'goal_conflict', 'message_release',
+  'message', 'goal_cause', 'candidate', 'note_review', 'planning_question', 'goal_conflict', 'action_release',
   'unknown_call_review', 'command_rerun_request',
   'member_creation', 'rework_request', 'handoff_approval', 'adviser_creation', 'module_maintainer_assignment',
   'repair_approval', 'structural_proposal', 'role_capacity', 'role_line_change',
@@ -228,29 +238,6 @@ const SOURCE_PAGE_LIMIT = 200;
 export const WINDOW_MAX_ATTEMPTS = 4;
 /** Internal sentinel: this attempt did not observe one stable ledger window. */
 const WINDOW_MOVED: unique symbol = Symbol('decision-read-model.window-moved');
-
-/**
- * `enumerateGoalCandidates` (§2.4) declares the full write-capable Goal port
- * although it only reads. `views/` holds the read-only slice
- * (`DecisionReadRecordsPort`), so the ONE call is narrowed here instead of
- * widening the read model's dependency with write methods.
- */
-const enumerateCandidates = enumerateGoalCandidates as unknown as (
-  records: DecisionReadRecordsPort,
-  goalRef: GoalRef,
-  options?: { lookupPageLimit?: number; status?: PlanProposal['status'] | 'any' },
-) => ReturnType<typeof enumerateGoalCandidates>;
-
-/**
- * The sibling closed-history enumeration declares the same full write-capable
- * Goal port; the read model narrows it the same way instead of widening its
- * dependency with write methods.
- */
-const enumerateClosedCandidates = enumerateClosedGoalCandidates as unknown as (
-  records: DecisionReadRecordsPort,
-  goalRef: GoalRef,
-  options?: { lookupPageLimit?: number },
-) => ReturnType<typeof enumerateClosedGoalCandidates>;
 
 /** §4.1/§4.3: a card's stable page point, ordered exactly like the output list. `goal` holds a Goal subject's GoalRef
  * canonical JSON (the v1 spelling) and the project subject's `decisionSubjectKey`; see `cardSeek`. */
@@ -867,105 +854,197 @@ export function createCommandRerunRequestCardSource(
   return base;
 }
 
+/** One `action_release` card item: the shared request facts plus the derived task-card view (never stored). */
+type ActionReleaseItemV1 = ActionRequestCardFactsV1 & { actionRelease: ActionReleaseCardViewV1 };
+
+/** The request record as both the action card and the task detail show it. */
+export function actionRequestViewOf(request: ActionRequestV1): NodeActionRequestV1 {
+  return {
+    action: request.kind,
+    ref: structuredClone(request.ref),
+    state: request.state,
+    requester: {
+      kind: request.requester.kind,
+      session: structuredClone(request.requester.session),
+      duty: request.requester.duty,
+    },
+    reason: request.reason,
+    requestedAt: request.requestedAt,
+    planVersion: storedDispatchBasis(request.expected),
+    preferredLine: request.preferredLine === null ? null : structuredClone(request.preferredLine),
+    stopRun: request.frozen === null ? null : structuredClone(request.frozen.run),
+    outcome: request.outcome === null ? null : structuredClone(request.outcome),
+  };
+}
+
+/** §2.8: the request record plus its Goal into the one item both the card and the task read project. */
+function actionReleaseItemOf(
+  request: ActionRequestV1, goal: GoalSnapshot, hold: TaskClaimHoldV1 | null,
+  targetLoop: TaskClaimJudgmentV1 | null, claimedPlanRef: PlanRevisionRef | null,
+): ActionReleaseItemV1 {
+  const facts = actionRequestCardFacts({ request, goal });
+  const blockedBy = dispatchBlockersOf(hold, goal);
+  const item: ActionReleaseItemV1 = {
+    ...facts,
+    actionRelease: {
+      ...actionRequestViewOf(request),
+      cardKey: facts.source.key,
+      decisionVerdict: request.decision.verdict,
+      blockedBy,
+      // The same composition the task detail uses: a request-side blocker settles the verdict; otherwise the
+      // target loop's own verdict carries the six skips that name no blocker. A stop card reads no target-loop
+      // judgment, so it stays `null` unless its own blocker stands.
+      claimableNow: blockedBy.length > 0 ? false : targetLoop === null ? null : targetLoop.claimable,
+      claimsBlockedByCard: request.kind === 'stop' && request.state === 'pending',
+      targetLoopBlockers: targetLoop === null ? 'not_read' : { blockers: structuredClone(targetLoop.blockers) },
+      claimedPlanRef,
+    },
+  };
+  return item;
+}
+
+/** §2.8: a closed dispatch card reads back the plan its claiming Run actually used. */
+async function claimedPlanRefForCard(
+  records: DecisionReadRecordsPort, request: ActionRequestV1,
+): Promise<ReadResult<PlanRevisionRef | null>> {
+  if (request.outcome?.kind !== 'applied') return { status: 'ready', value: null };
+  let encoded: EncodedRecord | null;
+  try {
+    encoded = await readOne(records, canonicalJson(request.outcome.run as unknown as JsonValue));
+  } catch (error) {
+    return storeFailureToRejection(error as { code: string; reason: string });
+  }
+  if (encoded === null) return { status: 'ready', value: null };
+  const decoded = decodeRun(encoded);
+  if (!decoded.ok) return { status: 'rejected', code: 'unavailable', reason: decoded.reason };
+  return { status: 'ready', value: claimedPlanRefOf(request, [decoded.value]) };
+}
+
 /**
- * §3.10: the `message_release` card source. One Goal's `awaiting` and `approved` messages are read through the
- * record's own by-goal index; a withdrawn message is skipped, and each item's block is derived by the one projection
- * the candidate read and the mailbox also use. The block is the read's DTO, never stored.
+ * §2.8: the request pointers a Task's fixed claim-hold record names. A pending
+ * dispatch/stop card is reachable from `openDispatch`/`pendingStop` while it
+ * waits; a request after its claim or void is no longer pointed here.
  */
-export type MessageReleaseCardSourceDependencies = {
-  records: DecisionReadRecordsPort;
-  /** D's one facts read (`W/model/dispatch-basis-contracts.ts:21`): the block's three values and the desired state. */
-  dispatchBasis: Pick<DispatchBasisFactsPort, 'readDispatchFacts'>;
+function actionRequestPointersOf(hold: TaskClaimHoldV1 | null): ActionRequestRef[] {
+  if (hold === null) return [];
+  const pointers: ActionRequestRef[] = [];
+  if (hold.openDispatch !== null) pointers.push(hold.openDispatch);
+  if (hold.pendingStop !== null) pointers.push(hold.pendingStop);
+  return pointers;
+}
+
+/**
+ * §2.8: the `action_release` card source. It replaces the message-release
+ * source: one Goal's pending dispatch/stop requests are read through each
+ * Task's fixed `TaskClaimHold` record (`openDispatch`/`pendingStop`), then the
+ * request by its own key. No request index and no stored card table is added;
+ * the live blockers are the read's DTO.
+ */
+export type ActionReleaseCardSourceDependencies = {
+  records: DecisionReadModelRecordsPort;
+  /** 设计 3.3: the same source-chain root the claim owner injects, so a pure `planfix`/`planresume` hold expires here too. */
+  planSourceRoot: PlanSourceRootPort;
+  /** §2.8: the target loop's one claim judgment, shared with the task detail; absent keeps `not_read`. */
+  taskClaimability?: TaskClaimabilityPort;
 };
 
-/** §3.10: the `message_release` card on the generic collection adapter (`:302`), subject `{ kind: 'goal' }`. L
- * registers it (`X/create-platform.ts:1222`). */
-export function createMessageReleaseCardSource(
-  deps: MessageReleaseCardSourceDependencies,
+/** §3.10/§2.8: the `action_release` card on the generic collection adapter, subject `{ kind: 'goal' }`. */
+export function createActionReleaseCardSource(
+  deps: ActionReleaseCardSourceDependencies,
 ): DecisionCardSourcePort {
-  const base = createCollectionCardSource<MessageReleaseCardFactsV1 & {
-    releaseBlock: MessageReleaseBlockV1 | null }>({
-    kind: 'message_release',
+  const base = createCollectionCardSource<ActionReleaseItemV1>({
+    kind: 'action_release',
     serves: ['goal'],
     async readCollection(ctx, { subject }) {
       const goalRef = decisionSubjectGoalRef({ subject });
       const goal = goalRef === null ? null : await readGoalForBasis(deps.records, goalRef);
       // A missing or damaged Goal is never an empty page.
       if (goal === null) {
-        return { status: 'rejected', code: 'unavailable', reason: 'the release card Goal is not readable' };
+        return { status: 'rejected', code: 'unavailable', reason: 'the action release Goal is not readable' };
       }
-      const messages: SessionMessage[] = [];
-      for (const release of ['awaiting', 'approved'] as const) {
-        const batch = await lookupAll(deps.records, S7A2_RELEASE_BY_GOAL_LOOKUP,
-          [goal.ref.projectId, goal.workspaceRef.workspaceId, release, goal.ref.goalId]);
-        for (const record of batch.items) {
-          const decoded = decodeSessionMessageRecord(record);
-          if (decoded.status !== 'decoded') {
-            throw { status: 'rejected', code: 'unavailable',
-              reason: `release message ${record.refKey}: ${decoded.reason}` } as CoreRejection;
-          }
-          // A withdrawn message is not a card; the read continues with the index's own next page.
-          if (decoded.value.withdrawnAt !== null) continue;
-          messages.push(decoded.value);
+      const requests = new Map<string, ActionRequestV1>();
+      const holds = new Map<string, TaskClaimHoldV1 | null>();
+      const taskIds = new Set<string>();
+      if (goal.activePlanRevision !== null) {
+        const planRead = await readPlan(deps.records, goal.activePlanRevision);
+        if (planRead.status !== 'ready') return planRead;
+        for (const task of planRead.plan.tasks) taskIds.add(task.taskId);
+      }
+      for (const taskId of taskIds) {
+        const task: TaskTriple = { projectId: goal.ref.projectId, goalId: goal.ref.goalId, taskId };
+        const holdRead = await readTaskClaimHold(deps.records, task);
+        if (holdRead.status !== 'ready') return holdRead;
+        // Q4b（设计 3.3）: the claim owner's one read-only expiry judgment; an expired reason is not a current blocker.
+        holds.set(taskId, holdRead.hold === null ? null
+          : await holdWithoutExpiredReasons(deps.records, ctx, goal.ref, holdRead.hold, taskId, deps.planSourceRoot));
+        for (const pointer of actionRequestPointersOf(holdRead.hold)) {
+          const requestRead = await readActionRequestRecord(deps.records, pointer);
+          if (requestRead.status !== 'ready') return requestRead;
+          const request = requestRead.record;
+          // Only the waiting card is a card; `open` has already been approved.
+          if (request === null || request.state !== 'pending') continue;
+          requests.set(canonicalJson(request.ref as unknown as JsonValue), request);
         }
       }
-      const factsRead = await deps.dispatchBasis.readDispatchFacts(ctx, { goalRef: goal.ref });
-      if (factsRead.status !== 'ready') return factsRead;
-      const items = messages.map((message) => {
-        const facts = messageReleaseCardFacts({ message, goal });
-        const releaseBlock = messageReleaseBlockEligible(message)
-          ? { blockedReason: releaseCandidateBlockedReason(message, {
-              desiredState: goal.desiredState, currentValues: factsRead.value.values,
-            }),
-            current: dispatchCurrentOf(factsRead.value) }
-          : null;
-        return { ...facts, releaseBlock };
-      });
+      const items: ActionReleaseItemV1[] = [];
+      for (const request of requests.values()) {
+        // 设计 4.2: a stop card needs its own record and slot, not the dispatch judgment; a failed dispatch read must
+        // not fail the whole stop card.
+        const judgment = request.kind === 'stop' || deps.taskClaimability === undefined ? null
+          : await deps.taskClaimability.readTaskClaimability(ctx, { goalRef: goal.ref, task: request.task });
+        if (judgment !== null && judgment.status !== 'ready') return judgment;
+        items.push(actionReleaseItemOf(request, goal, holds.get(request.task.taskId) ?? null,
+          judgment === null ? null : judgment.value, null));
+      }
       return { status: 'ready', value: items };
     },
-    keyOf: (item) => decisionSourceKey({
-      kind: 'message_release', messageRef: item.messageRef, revision: item.creationRevision,
-    }),
-    project: (item, subject) => messageReleaseCard(item, subject),
+    keyOf: (item) => item.source.key,
+    project: (item, subject) => actionReleaseCard(item, subject),
     closedReasonOf: (item) => item.closedReason,
     async readByKey(ctx, { source }) {
       const identity = parseIdentity(source.key);
-      if (identity === null || identity.kind !== 'message_release') {
+      if (identity === null || identity.kind !== 'action_release') {
         return { status: 'rejected', code: 'invalid',
-          reason: 'a message_release source key is not a message_release identity' };
+          reason: 'an action_release source key is not an action_release identity' };
       }
       const goalRef = decisionSubjectGoalRef(source);
       if (goalRef === null) return { status: 'ready', value: null };
-      const record = await readOne(deps.records, sessionMessageRefKey(identity.messageRef));
-      if (record === null) return { status: 'ready', value: null };
-      const decoded = decodeSessionMessageRecord(record);
-      if (decoded.status !== 'decoded') {
-        return { status: 'rejected', code: 'unavailable', reason: decoded.reason };
-      }
-      const message = decoded.value;
-      // A message of another Goal is not this Goal's card.
-      if (message.goalRef === null || message.goalRef.projectId !== goalRef.projectId
-        || message.goalRef.goalId !== goalRef.goalId) {
-        return { status: 'ready', value: null };
-      }
       const goal = await readGoalForBasis(deps.records, goalRef);
       if (goal === null) {
-        return { status: 'rejected', code: 'unavailable', reason: 'the release card Goal is not readable' };
+        return { status: 'rejected', code: 'unavailable', reason: 'the action release Goal is not readable' };
       }
-      const facts = messageReleaseCardFacts({ message, goal });
-      // The identity carries the creation revision, never the message's CAS revision.
+      const requestRead = await readActionRequestRecord(deps.records, identity.requestRef);
+      if (requestRead.status !== 'ready') return requestRead;
+      const request = requestRead.record;
+      if (request === null) return { status: 'ready', value: null };
+      // A request of another Goal or Task is not this Goal's card.
+      if (request.ref.projectId !== goal.ref.projectId || request.ref.goalId !== goal.ref.goalId
+        || request.task.goalId !== goal.ref.goalId) {
+        return { status: 'ready', value: null };
+      }
+      const facts = actionRequestCardFacts({ request, goal });
+      // The identity carries the creation revision, never the request's CAS revision.
       if (identity.revision !== facts.creationRevision) return { status: 'ready', value: null };
-      // A withdrawn, denied or released message is closed however the card was answered; no block is derived.
-      if (facts.closedReason !== null) return { status: 'ready', value: { item: { ...facts, releaseBlock: null } } };
-      const factsRead = await deps.dispatchBasis.readDispatchFacts(ctx, { goalRef: goal.ref });
-      if (factsRead.status !== 'ready') return factsRead;
-      const releaseBlock = messageReleaseBlockEligible(message)
-        ? { blockedReason: releaseCandidateBlockedReason(message, {
-            desiredState: goal.desiredState, currentValues: factsRead.value.values,
-          }),
-          current: dispatchCurrentOf(factsRead.value) }
-        : null;
-      return { status: 'ready', value: { item: { ...facts, releaseBlock } } };
+      // 设计 4.2: a settled dispatch/stop card keeps its request details (state, outcome, claimed line) instead of only
+      // the generic closed shell; `actionReleaseCard` derives `closed` from `facts.closedReason`. A closed card has no
+      // current blocker, so neither the hold nor the target-loop port is read for it.
+      if (facts.closedReason !== null) {
+        const claimed = await claimedPlanRefForCard(deps.records, request);
+        if (claimed.status !== 'ready') return claimed;
+        return { status: 'ready', value: { item: actionReleaseItemOf(request, goal, null, null, claimed.value) } };
+      }
+      const holdRead = await readTaskClaimHold(deps.records, request.task);
+      if (holdRead.status !== 'ready') return holdRead;
+      const effectiveHold = holdRead.hold === null ? null
+        : await holdWithoutExpiredReasons(deps.records, ctx, goal.ref, holdRead.hold, request.task.taskId,
+          deps.planSourceRoot);
+      // 设计 4.2: a stop card needs its own record and slot, not the dispatch judgment; a failed dispatch read must
+      // not fail the whole stop card.
+      const judgment = request.kind === 'stop' || deps.taskClaimability === undefined ? null
+        : await deps.taskClaimability.readTaskClaimability(ctx, { goalRef: goal.ref, task: request.task });
+      if (judgment !== null && judgment.status !== 'ready') return judgment;
+      return { status: 'ready', value: { item: actionReleaseItemOf(request, goal, effectiveHold,
+        judgment === null ? null : judgment.value, null) } };
     },
   });
   return base;
@@ -1200,7 +1279,7 @@ function degradableSourceFailure(ctx: CoreCallContext, result: ReadResult<unknow
 }
 
 /**
- * R3 第 8 条：收尾补读里 `message_release`、`role_line_change` 自己的来源读失败；能降级就标这一种、留下原来的卡
+ * R3 第 8 条：收尾补读里 `action_release`、`role_line_change` 自己的来源读失败；能降级就标这一种、留下原来的卡
  * （不合并 live），返回 null；不能降级的把读失败原样交回调用方，照旧让整张失败。抛出来的不是读失败结果
  * （程序错，Q8）就照旧往外抛，由外层的 catch 让整张失败，不降级。
  */
@@ -1278,7 +1357,9 @@ async function prepareQueueWindow(
 
 type GoalCandidateCards = {
   watermark: CommitCursor | null;
-  cards: { proposal: PlanProposal; successor: boolean; sourceWithdrawn: boolean }[];
+  cards: {
+    proposal: PlanProposal; successor: boolean; sourceWithdrawn: boolean; sourceUnreadable: boolean;
+  }[];
 };
 
 /**
@@ -1293,13 +1374,13 @@ async function readGoalCandidateCards(
   try {
     // §2.4/§4.2: the reader-backed enumeration of one Goal's live candidates
     // (a discarded window/truncation is a real failure, never an empty page).
-    const candidateRead = await enumerateCandidates(deps.records, goal.ref,
+    const candidateRead = await enumerateGoalCandidates(deps.records, goal.ref,
       deps.lookupPageLimit === undefined ? undefined : { lookupPageLimit: deps.lookupPageLimit });
     if (candidateRead.status !== 'ready') return candidateRead;
     // §4.2 source 3 CLOSED history: `accepted`/`not_adopted` request candidates
     // keep the same per-request card identity as their live card, so an answered
     // card merges with its closure instead of vanishing from `history`.
-    const closedRead = await enumerateClosedCandidates(deps.records, goal.ref,
+    const closedRead = await enumerateClosedGoalCandidates(deps.records, goal.ref,
       deps.lookupPageLimit === undefined ? undefined : { lookupPageLimit: deps.lookupPageLimit });
     if (closedRead.status !== 'ready') return closedRead;
     const proposals = [...candidateRead.proposals, ...closedRead.proposals];
@@ -1308,13 +1389,20 @@ async function readGoalCandidateCards(
     // candidate leaves the queue whether it reads live or as closed history.
     const successorParents = await successorParentsOf(ctx, deps.lineage, proposals);
     if (successorParents.status !== 'ready') return successorParents;
+    // A source failure belongs to the candidate it names: only that live card is marked unreadable and loses
+    // "adopt"; every sibling keeps its card and its adoption. Any failure still blocks the Goal loop's automatic
+    // adoption (that is global), but never another card's person-facing actions.
+    const failures = successorParents.value.failures;
     const cards: GoalCandidateCards['cards'] = [];
     for (const proposal of proposals) {
       const pointerStale = candidatePointerStale(proposal, goal);
+      const sourceState = await candidateSourceState(deps.records, proposal, pointerStale);
       cards.push({
         proposal,
-        successor: successorParents.value.has(planProposalRefKey(proposal.ref)),
-        sourceWithdrawn: await candidateSourceWithdrawn(deps.records, proposal, pointerStale),
+        successor: successorParents.value.parents.has(planProposalRefKey(proposal.ref)),
+        sourceWithdrawn: sourceState === 'withdrawn',
+        sourceUnreadable: sourceState === 'unreadable'
+          || (proposal.status === 'candidate' && ownSourceChainFailed(failures, proposal)),
       });
     }
     return { status: 'ready', value: {
@@ -1449,7 +1537,8 @@ async function readDecisionQueueWindow(
         if (message.status !== 'responded' || !isUserDecisionResponse(message.response)) continue;
         const card = syntheticAnswerCard(message);
         if (card !== null) add(card);
-      } else if (message.intent === 'decision_request') {
+      } else {
+        // §2.3: a formal user decision card is recognized by its metadata, never by a removed message intent.
         const card = messageCard(message.decision.source, message);
         if (card !== null) add(card);
       }
@@ -1474,8 +1563,8 @@ async function readDecisionQueueWindow(
         continue;
       }
       watermark = later(watermark, candidateRead.value.watermark);
-      for (const { proposal, successor, sourceWithdrawn } of candidateRead.value.cards) {
-        const card = candidateCard(proposal, goal, sourceWithdrawn);
+      for (const { proposal, successor, sourceWithdrawn, sourceUnreadable } of candidateRead.value.cards) {
+        const card = candidateCard(proposal, goal, sourceWithdrawn, sourceUnreadable);
         if (card === null) continue;
         if (successor) {
           collected.delete(card.source.key);
@@ -1561,12 +1650,12 @@ async function readDecisionQueueWindow(
     let source: DecisionSourceV1;
     try {
       // book :428–:430: the queue merges the same live facts the single card carries.
-      if (raw.source.kind === 'message_release' && raw.messageRelease === undefined) {
+      if (raw.source.kind === 'action_release' && raw.actionRelease === undefined) {
         try {
           const live = await deriveOpenCard(deps, ctx, raw.source, goal, null);
           if (live !== null) raw = mergeCards(raw, live);
         } catch (error) {
-          const rejection = degradeSourceReadFailure(ctx, capabilities, 'message_release', error);
+          const rejection = degradeSourceReadFailure(ctx, capabilities, 'action_release', error);
           if (rejection !== null) return rejection;
         }
       }
@@ -1887,7 +1976,7 @@ async function readDecisionCard(
       // The same eligibility as the queue's source-1 loop.
       const message = decoded.value;
       if (!isUserMessageRecipient(message.recipient) || message.decision === undefined
-        || message.decision.syntheticAnswer || message.intent !== 'decision_request') {
+        || message.decision.syntheticAnswer) {
         return { status: 'not_found' };
       }
       card = messageCard(source, message);
@@ -1899,7 +1988,7 @@ async function readDecisionCard(
       const boundWorkspace: WorkspaceScope = { projectId: ctx.projectId, workspaceId: ctx.workspaceId };
       const answerMessage = await findAnswerMessage(deps.records, boundWorkspace, source);
       const answered = answerMessage === null ? null : syntheticAnswerCard(answerMessage);
-      if (source.kind !== 'message_release') {
+      if (source.kind !== 'action_release') {
         if (answered === null) {
           card = await deriveOpenCard(deps, ctx, source, goal, candidateRead);
         } else {
@@ -2012,8 +2101,9 @@ function identityScopeProblem(ctx: CoreCallContext, identity: DecisionSourceIden
     ref.projectId !== ctx.projectId || (ref.workspaceId !== undefined && ref.workspaceId !== ctx.workspaceId);
   switch (identity.kind) {
     case 'message':
-    case 'message_release':
       return foreignRef(identity.messageRef) ? forbidden : null;
+    case 'action_release':
+      return identity.requestRef.projectId !== ctx.projectId ? forbidden : null;
     case 'candidate':
       return foreignRef('requestRef' in identity ? identity.requestRef : identity.proposalRef) ? forbidden : null;
     case 'planning_question':
@@ -2096,7 +2186,9 @@ async function readCardTerminalState(
  * once per call and passes it to `deriveOpenCard`, so the saved-answer branch
  * and the live branch share the same successor set.
  */
-type CandidateCardRead = { proposal: PlanProposal | null; successor: boolean; sourceWithdrawn: boolean };
+type CandidateCardRead = {
+  proposal: PlanProposal | null; successor: boolean; sourceWithdrawn: boolean; sourceUnreadable: boolean;
+};
 
 async function readCandidateCardSource(
   deps: DecisionReadModelDependencies,
@@ -2104,7 +2196,7 @@ async function readCandidateCardSource(
   goal: GoalSnapshot,
   identity: Extract<DecisionSourceIdentityV1, { kind: 'candidate' }>,
 ): Promise<CandidateCardRead> {
-  const enumerated = await enumerateCandidates(deps.records, goal.ref, {
+  const enumerated = await enumerateGoalCandidates(deps.records, goal.ref, {
     status: 'any',
     ...(deps.lookupPageLimit === undefined ? {} : { lookupPageLimit: deps.lookupPageLimit }),
   });
@@ -2112,10 +2204,13 @@ async function readCandidateCardSource(
   const successorParents = await successorParentsOf(ctx, deps.lineage, enumerated.proposals);
   if (successorParents.status !== 'ready') throw successorParents;
   const proposal = await findCandidateProposal(deps.records, identity, goal, deps.lookupPageLimit);
-  const sourceWithdrawn = proposal === null ? false
-    : await candidateSourceWithdrawn(deps.records, proposal, candidatePointerStale(proposal, goal));
-  return { proposal, successor: proposal !== null && successorParents.value.has(planProposalRefKey(proposal.ref)),
-    sourceWithdrawn };
+  const sourceState = proposal === null ? 'readable' as const
+    : await candidateSourceState(deps.records, proposal, candidatePointerStale(proposal, goal));
+  return { proposal, successor: proposal !== null && successorParents.value.parents.has(planProposalRefKey(proposal.ref)),
+    sourceWithdrawn: sourceState === 'withdrawn',
+    sourceUnreadable: sourceState === 'unreadable'
+      || (proposal !== null && proposal.status === 'candidate'
+        && ownSourceChainFailed(successorParents.value.failures, proposal)) };
 }
 
 async function deriveOpenCard(
@@ -2127,7 +2222,8 @@ async function deriveOpenCard(
 ): Promise<DecisionCardV1 | null> {
   if (source.kind === 'candidate') {
     if (candidate === null || goal === null) return null;
-    return candidate.proposal === null ? null : candidateCard(candidate.proposal, goal, candidate.sourceWithdrawn);
+    return candidate.proposal === null ? null
+      : candidateCard(candidate.proposal, goal, candidate.sourceWithdrawn, candidate.sourceUnreadable);
   }
   if (source.kind === 'goal_conflict') {
     const workspace = goal === null ? null : { projectId: goal.workspaceRef.projectId, workspaceId: goal.workspaceRef.workspaceId };
@@ -2197,7 +2293,7 @@ function messageCard(source: DecisionSourceV1, message: SessionMessage): Decisio
   return {
     cardKey: source.key, source, state: answered ? 'answered_pending_application' : 'waiting_answer',
     subject,
-    senderSessionRef: message.sender.kind === 'work_run' ? message.sender.sessionRef : null,
+    senderSessionRef: cardSenderLineOf(message),
     requestRef: null,
     objects: message.decision?.objects ?? [], options: message.decision?.options ?? [],
     answerMessageRef: answered ? message.ref : null,
@@ -2218,7 +2314,7 @@ function syntheticAnswerCard(message: SessionMessage): DecisionCardV1 | null {
   return {
     cardKey: source.key, source, state: 'answered_pending_application',
     subject,
-    senderSessionRef: message.sender.kind === 'work_run' ? message.sender.sessionRef : null,
+    senderSessionRef: cardSenderLineOf(message),
     requestRef: null,
     objects: message.decision?.objects ?? [], options: message.decision?.options ?? [],
     answerMessageRef: message.ref, answer: response, application: message.application ?? null,
@@ -2236,28 +2332,38 @@ function candidatePointerStale(proposal: PlanProposal, goal: GoalSnapshot): bool
     || canonicalJson(proposal.basedOn as unknown as JsonValue) !== canonicalJson(active as unknown as JsonValue);
 }
 
+type CandidateSourceState = 'readable' | 'withdrawn' | 'unreadable';
+
 /**
- * 121-147：活着的候选，来源消息被人撤回后不再给 `adopt`。初始候选和后续候选都只在写出时证过一次来源，采用时还会
- * 再证（`proveFutureAdoptionSource`）；这里只读撤回事实，和 `messageConsumptionProblem` 同一个字段。读失败、解不开
- * 照 `readOne` 抛出去：在队列里由候选来源的降级处理，在单卡读里原样返回。
+ * Whether this candidate's OWN source chain is one of the enumeration's failures. B2-06: only the card the failure
+ * names loses `adopt`; a sibling whose chain reads complete keeps its person-facing actions even when an older
+ * candidate's chain failed. The Goal loop's automatic adoption stays global over every entry.
  */
-async function candidateSourceWithdrawn(
-  records: DecisionReadRecordsPort, proposal: PlanProposal, pointerStale: boolean,
-): Promise<boolean> {
-  if (proposal.status !== 'candidate' || pointerStale || proposal.sourceMessageRef === null) return false;
-  const record = await readOne(records, sessionMessageRefKey(proposal.sourceMessageRef));
-  if (record === null) {
-    throw { status: 'rejected', code: 'unavailable',
-      reason: 'the source message of the candidate was not found' } as CoreRejection;
-  }
-  const decoded = decodeSessionMessageRecord(record);
-  if (decoded.status !== 'decoded') {
-    throw { status: 'rejected', code: 'unavailable', reason: decoded.reason } as CoreRejection;
-  }
-  return decoded.value.withdrawnAt !== null;
+function ownSourceChainFailed(
+  failures: readonly CandidateSourceIncompleteV1[], proposal: PlanProposal,
+): boolean {
+  const key = planProposalRefKey(proposal.ref);
+  return failures.some(entry => planProposalRefKey(entry.proposalRef) === key);
 }
 
-function candidateCard(proposal: PlanProposal, goal: GoalSnapshot, sourceWithdrawn: boolean): DecisionCardV1 | null {
+/**
+ * 121-147：活着的候选，来源消息被人撤回后不再给 `adopt`。初始候选和后续候选都只在写出时证过一次来源，采用时还会
+ * 再证（`proveFutureAdoptionSource`）；这里只读撤回事实，和 `messageConsumptionProblem` 同一个字段。记录缺失或解不
+ * 开时是 `unreadable`：候选仍在队列里，卡上写“来源不可读”，不整段失败、也不当来源已撤回。
+ */
+async function candidateSourceState(
+  records: DecisionReadRecordsPort, proposal: PlanProposal, pointerStale: boolean,
+): Promise<CandidateSourceState> {
+  if (proposal.status !== 'candidate' || pointerStale || proposal.sourceMessageRef === null) return 'readable';
+  const record = await readOne(records, sessionMessageRefKey(proposal.sourceMessageRef));
+  if (record === null) return 'unreadable';
+  const decoded = decodeSessionMessageRecord(record);
+  if (decoded.status !== 'decoded') return 'unreadable';
+  return decoded.value.withdrawnAt === null ? 'readable' : 'withdrawn';
+}
+
+function candidateCard(proposal: PlanProposal, goal: GoalSnapshot, sourceWithdrawn: boolean,
+  sourceUnreadable = false): DecisionCardV1 | null {
   if (proposal.kind !== 'candidate_v2') return null;
   // §4.2 source 3: a live `candidate` is waiting (possibly stale); `accepted` and
   // `not_adopted` are the stored terminal statuses and read as closed history.
@@ -2268,7 +2374,7 @@ function candidateCard(proposal: PlanProposal, goal: GoalSnapshot, sourceWithdra
     : ({ kind: 'candidate', goalRef: goal.ref, requestRef } as const);
   const key = decisionSourceKey(identity);
   const pointerStale = candidatePointerStale(proposal, goal);
-  const stale = pointerStale || (proposal.status === 'candidate' && sourceWithdrawn);
+  const stale = pointerStale || (proposal.status === 'candidate' && (sourceWithdrawn || sourceUnreadable));
   const closed = proposal.status !== 'candidate';
   const pins = [
     { ref: goal.ref, revision: goal.revision },
@@ -2287,7 +2393,8 @@ function candidateCard(proposal: PlanProposal, goal: GoalSnapshot, sourceWithdra
     objects: pins.map(pin => ({ kind: 'aggregate' as const, pin: structuredClone(pin), label: 'candidate' })), options: [],
     answerMessageRef: null, answer: null, application: null,
     candidateStatus: closed ? null : stale ? 'stale' : 'candidate',
-    staleReason: pointerStale ? 'basedOn is not the active Plan pointer' : stale ? '来源已撤回' : null,
+    staleReason: pointerStale ? 'basedOn is not the active Plan pointer'
+      : sourceWithdrawn ? '来源已撤回' : sourceUnreadable ? '来源不可读' : null,
     closedReason: closed ? 'source_resolved' : null, openedAt: null, readOnly: closed, actions,
     taskRef: taskRefOfPins(pins), runRef: runRefOfPins(pins),
     ...(proposal.checks === undefined ? {} : { proposedChecks: structuredClone(proposal.checks) }),
@@ -2512,8 +2619,8 @@ function finalizeCard(card: DecisionCardV1, goal: GoalSnapshot | null, terminal:
   if (terminal.completed && card.source.kind === 'goal_conflict' && card.answer === null) {
     return { ...card, state: 'closed', closedReason: 'source_resolved', readOnly: true, actions: [] };
   }
-  // book :430–:432: a withdrawn, denied or released message is closed however the card was answered.
-  if (card.source.kind === 'message_release' && card.closedReason !== null) {
+  // book :430–:432: a withdrawn, denied or released action request is closed however the card was answered.
+  if (card.source.kind === 'action_release' && card.closedReason !== null) {
     return { ...card, state: 'closed', closedReason: card.closedReason, readOnly: true, actions: [] };
   }
   if (card.answer !== null) {
@@ -2583,32 +2690,35 @@ function cardTerminalState(
 }
 
 /**
- * The one `message_release` card of one item. Only `stale_pins` is "过期"; `goal_not_active` is carried in the block
- * but is not staleness (book :392–:396, :430–:432).
+ * The one `action_release` card of one item. The card lands on the asking line
+ * (`senderSessionRef`); a waiting dispatch card still lets the Task be claimed,
+ * so no `stale_pins` is projected here.
  */
-function messageReleaseCard(
-  facts: MessageReleaseCardFactsV1 & { releaseBlock: MessageReleaseBlockV1 | null },
+function actionReleaseCard(
+  facts: ActionReleaseItemV1,
   subject: DecisionSubjectV1,
 ): DecisionCardV1 {
-  const stale = facts.releaseBlock?.blockedReason === 'stale_pins';
-  return {
+  const card: DecisionCardV1 = {
     cardKey: facts.source.key, source: facts.source,
     state: facts.closedReason === null ? 'waiting_answer' : 'closed',
     subject: structuredClone(subject),
-    senderSessionRef: null, requestRef: facts.requestRoot,
+    senderSessionRef: { ...facts.actionRelease.requester.session }, requestRef: facts.requestRoot,
     objects: facts.objects, options: facts.options, answerMessageRef: null, answer: null, application: null,
-    candidateStatus: stale ? 'stale' : null,
-    staleReason: stale ? 'stale_pins' : null,
+    candidateStatus: null,
+    staleReason: null,
     closedReason: facts.closedReason, openedAt: facts.openedAt, readOnly: facts.closedReason !== null,
-    taskRef: taskRefOfPins(facts.source.pins), runRef: runRefOfPins(facts.source.pins),
+    taskRef: { ...facts.task },
+    runRef: facts.kind === 'stop' ? { ...facts.run } : null,
     actions: facts.closedReason === null ? ['answer'] : [],
-    messageRelease: { deadline: facts.deadline, releaseBlock: facts.releaseBlock },
+    // §2.8's card facts ride beside the shared card shape; absent on every other source kind.
+    actionRelease: facts.actionRelease,
   };
+  return card;
 }
 
 function mergeCards(existing: DecisionCardV1, incoming: DecisionCardV1): DecisionCardV1 {
   const existingWins = existing.source.pins.length >= incoming.source.pins.length;
-  return {
+  const merged: DecisionCardV1 = {
     ...existing,
     source: existingWins ? existing.source : incoming.source,
     // The live source card arrives last at every merge site and owns the refs and the stored time — an explicit
@@ -2625,10 +2735,6 @@ function mergeCards(existing: DecisionCardV1, incoming: DecisionCardV1): Decisio
     staleReason: existing.staleReason ?? incoming.staleReason,
     closedReason: existing.closedReason ?? incoming.closedReason,
     openedAt: incoming.openedAt,
-    // The message's live facts win over the answer's projection, and every other kind (neither side carries the
-    // field) is unchanged.
-    ...(existing.messageRelease === undefined && incoming.messageRelease === undefined
-      ? {} : { messageRelease: incoming.messageRelease ?? existing.messageRelease }),
     // 121-136 A4: the candidate's stored checks, from whichever side read the candidate.
     ...(existing.proposedChecks === undefined && incoming.proposedChecks === undefined
       ? {} : { proposedChecks: incoming.proposedChecks ?? existing.proposedChecks }),
@@ -2636,6 +2742,9 @@ function mergeCards(existing: DecisionCardV1, incoming: DecisionCardV1): Decisio
     ...(existing.withdrawableChecks === undefined && incoming.withdrawableChecks === undefined
       ? {} : { withdrawableChecks: incoming.withdrawableChecks ?? existing.withdrawableChecks }),
   };
+  // §2.8: the live action card's facts win over the answer's projection; every other kind carries neither side.
+  const actionRelease = incoming.actionRelease ?? existing.actionRelease;
+  return actionRelease === undefined ? merged : { ...merged, actionRelease };
 }
 
 function sortCards(cards: readonly DecisionCardV1[]): DecisionCardV1[] {
@@ -2954,8 +3063,8 @@ function builtInMemberNoticeSource(records: DecisionReadRecordsPort, messages: r
         items = [];
         for (const message of messages) {
           if (!isUserMessageRecipient(message.recipient)) continue;
-          if (message.intent !== 'notify') continue;
-          if (message.decision?.syntheticAnswer === true) continue;
+          // §2.1: `sendUserMessage`'s notify arm is the user message with no decision metadata; the decision arm carries it.
+          if (message.decision !== undefined) continue;
           if (input.goalRef !== undefined
             && (message.goalRef === null || message.goalRef === undefined || !sameGoal(message.goalRef, input.goalRef))) continue;
           const record = await readOne(records, sessionMessageRefKey(message.ref));
@@ -3489,4 +3598,14 @@ function later(left: CommitCursor | null, right: CommitCursor | null): CommitCur
 
 function compareText(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
+}
+
+/**
+ * The line that sent an agent's card (`messageCard`, `syntheticAnswerCard`): a Work Run's Session or, since P2 lets a
+ * Query round ask the person too (p2-frozen 2.6), the Query round's Session; the card answer wakes this line
+ * (p2-frozen 2.3 "已答 agent `ask_person` 卡"). A secretary request round's card returns to its request (cp2mp
+ * MP-12), not to a line round, and a Host card has no line: both stay null.
+ */
+function cardSenderLineOf(message: SessionMessage): SessionRef | null {
+  return message.sender.kind === 'work_run' || message.sender.kind === 'query_run' ? message.sender.sessionRef : null;
 }

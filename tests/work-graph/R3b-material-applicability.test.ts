@@ -13,6 +13,8 @@ import { QUERY_JOB_RECORD_SCHEMAS } from '../../src/core/work-graph/queries/quer
 import { createQueryJobService } from '../../src/core/work-graph/queries/query-job-service.js';
 import { createProjectBootstrapServices } from '../../src/core/work-graph/configuration/project-bootstrap-service.js';
 import { createTaskClaimService } from '../../src/core/work-graph/tasks/claim-service.js';
+import { createRunSupport } from '../helpers/S2C-L-runs-support.js';
+import { planSourceRootOf } from '../helpers/task-claim-fixture.js';
 import type { RoleBindingFactsPort } from '../../src/core/work-graph/model/configuration-contracts.js';
 import { createSessionOperations } from '../../src/core/agent-runtime/session-operations.js';
 import { createKernelStoreRegistry } from '../../src/core/agent-runtime/kernel-store-locator.js';
@@ -130,7 +132,9 @@ it.each(['memory', 'sqlite'] as const)('%s: a Run or QueryRun reader opens only 
       if (value === undefined) throw new Error('the claim produced more ids than the test queued');
       return value;
     };
-    const claims = createTaskClaimService({ records: f.records, roles: f.roleService as unknown as RoleBindingFactsPort, now: () => at, newId });
+    const claims = createTaskClaimService({ records: f.records, roles: f.roleService as unknown as RoleBindingFactsPort, now: () => at, newId,
+      planSourceRoot: planSourceRootOf({ messages: createRunSupport(f).mailbox(), plans: f.plans,
+        queries: createQueryJobService({ records: f.records, now: () => at, eventId: () => 'r3b-claim-query' }) }) });
     async function claim(input: { ctx: CoreCallContext; goalRef: GoalRef; planRef: PlanRevisionRef;
       workspaceRef: WorkspaceRef; session: { sessionRef: { projectId: string; sessionId: string }; revision: number };
       runId: string; label: string }): Promise<RunRef> {

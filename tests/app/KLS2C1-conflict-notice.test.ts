@@ -31,7 +31,7 @@ import {
 import { readyValue } from '../helpers/S6A-memory-fixture.js';
 
 type SessionRef = { projectId: string; sessionId: string };
-type InboxItem = { ref: { messageId: string }; intent?: string };
+type InboxItem = { ref: { messageId: string }; sender: { kind: string; actor: { kind: string } } };
 
 const worlds: KLS2CHost[] = [];
 afterEach(async () => {
@@ -51,13 +51,13 @@ async function adoptedWorld(storage: 'memory' | 'sqlite', kernelStore?: true): P
 const readRoute = async <T>(world: KLS2CHost, suffix: string, input: unknown): Promise<T> =>
   readyValue<T>(await world.call(suffix, plain(world.scope, input)), suffix);
 
-/** The `action_request` messages in one Session's inbox. */
+/** The Host system-round messages that ask for a reply, in one Session's inbox. */
 async function actionRequests(world: KLS2CHost, recipient: SessionRef): Promise<InboxItem[]> {
   const page = await readRoute<{ items: InboxItem[] }>(world, 'messages/inbox', { recipient, page: { limit: 100 } });
-  return page.items.filter(item => item.intent === 'action_request');
+  return page.items.filter(item => item.sender.kind === 'host' && item.sender.actor.kind === 'system');
 }
 
-/** The `action_request` messages in every Session's inbox of the workspace (`sessions/find`). */
+/** The Host system-round requests in every Session's inbox of the workspace (`sessions/find`). */
 async function everyActionRequest(world: KLS2CHost): Promise<InboxItem[]> {
   const found = await readRoute<{ items: { record: { ref: SessionRef } }[] }>(world, 'sessions/find',
     { workspace: world.scope, includeArchived: true, page: { limit: 100 } });

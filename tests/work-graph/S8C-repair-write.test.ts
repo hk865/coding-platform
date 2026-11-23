@@ -344,8 +344,8 @@ describe('S8C W1 repair write', () => {
     const requests = await runRepairNoteTool(world, [{ callId: 'w1-pack', args: { op: 'write',
       ...repairDraftOf(world.pin, [{ op: 'set_responsibility', moduleId: 's6a-core', text: 'W1 pack' }]) } }]);
     const tool = requests.at(-1)?.tools.find(candidate => candidate.name === 'record_note');
-    expect(tool?.description).toContain('{ pin, ops, responsibilityMoves }');
-    expect(tool?.description).toContain('computes `structural`');
+    expect(tool?.description).toContain('`pin`, `ops`, `responsibilityMoves`');
+    expect(tool?.description).toContain('platform derives `structural`');
     expect(PLATFORM_PROMPT_PACK_V1.tools['record_note'].parameters).toEqual({});
     expect(PLATFORM_PROMPT_PACK_V1.tools['propose_architecture_revision'].parameters).toEqual({});
     expect(PLATFORM_PROMPT_PACK_V1.tools['propose_architecture_revision'].description)

@@ -137,7 +137,7 @@ it('2B-06 a communication tool call is one step and zero edits', async () => {
     scriptedReplies: [
       { kind: 'calls', calls: [{ callId: 'be1-send', name: 'send_session_message',
         args: { recipient: { projectId: 'r4c-claim-project', sessionId: 'r4c-claim-session' },
-          text: '2B-06 ping', intent: 'inquiry', needsReply: false } }] },
+          text: '2B-06 ping', needsReply: false } }] },
       { kind: 'text', text: '2B-06 send done' },
     ],
   });

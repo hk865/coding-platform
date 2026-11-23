@@ -1,0 +1,25 @@
+{
+  "description": "问人：给人出一张决定卡，请他选一个选项，等他答。目标、标准、不可逆、对外，或拿不准人的意图时出卡；选项写清后果；同一件事不出第二张卡。出卡后本轮结束。秘书请求轮发出的卡，人答完回到原请求；其他 agent 的卡，人答完后发卡线闲就开一轮，忙就在安全点送到。读答案再动手。谁能用：秘书、参谋、书记；执行者、审阅者不问人，交参谋。不当请知悉（用 notify_person）；不把不相干的事塞进一张卡。参数见下。回执：committed 表示卡已存下、人会收到；答复不在回执里。会被拒：职责不允许（the sender trusted duties do not allow this user message）。",
+  "parameters": {
+    "text": "要定什么、为什么现在定；非空。",
+    "options": "2–4 个；每项写清后果。",
+    "options[].id": "选项 id。",
+    "options[].label": "卡上显示的文字，写清后果。",
+    "options[].effect": "\"apply\"（采用）、\"reject\"（否掉）、\"defer\"（搁置）。",
+    "objects": "涉及的对象和版本；没有给空数组。",
+    "objects[].kind": "\"aggregate\"（记录及版本）、\"file\"（文件及摘要）。",
+    "objects[].label": "卡上显示的对象名。",
+    "objects[].pin": "aggregate 时填：版本钉子。",
+    "objects[].pin.ref": "对象完整引用。",
+    "objects[].pin.revision": "你读到的版本。",
+    "objects[].workspace": "file 时填：所在工作区。",
+    "objects[].workspace.projectId": "项目 id。",
+    "objects[].workspace.workspaceId": "工作区 id。",
+    "objects[].path": "file 时的文件路径。",
+    "objects[].digest": "文件摘要；没有写 null。",
+    "taskRef": "所属任务，可选；完整三元组。",
+    "taskRef.projectId": "任务的项目 id。",
+    "taskRef.goalId": "任务的目标 id。",
+    "taskRef.taskId": "任务 id。"
+  }
+}

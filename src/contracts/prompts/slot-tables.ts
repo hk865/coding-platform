@@ -41,12 +41,13 @@ export const TEMPLATE_SLOTS: Readonly<Record<string, TemplateSlotTableV1>> = {
         task: { required: false },
     },
     // The intervention-planning Query carries the goal, the current plan (the
-    // `task` binding section) and the person's message as its own slot.
+    // `task` binding section), the frozen source line and the person's message.
     'intervention-planning': {
         role: { required: true },
         prelude: { required: false },
         goal: { required: true },
         plan: { required: false },
+        source: { required: false },
         message: { required: true },
     },
     // The secretary's task section is one section made of three adjacent slots
@@ -138,20 +139,15 @@ export const TEMPLATE_SLOTS: Readonly<Record<string, TemplateSlotTableV1>> = {
     'user-decision-response': {
         bodyJson: { required: true },
     },
-    'action-request-delivery': {
+    // One message delivery for every letter the platform hands a Run: the
+    // header names the sender and the facts the recipient acts on; `deadline`
+    // is present only when the letter asks for a reply and carries one.
+    'message-delivery': {
         messageId: { required: true },
         sender: { required: true },
-        body: { required: true },
-    },
-    'inquiry-delivery': {
-        messageId: { required: true },
-        sender: { required: true },
-        body: { required: true },
-        deadline: { required: true },
-    },
-    'notify-delivery': {
-        messageId: { required: true },
-        sender: { required: true },
+        deadline: { required: false },
+        needsReply: { required: true },
+        wake: { required: true },
         body: { required: true },
     },
     'wait-reply-delivery': {

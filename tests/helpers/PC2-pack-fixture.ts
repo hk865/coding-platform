@@ -409,8 +409,8 @@ export async function openPC2QueryHistoryFixture(options: PCOptions = {}) {
     if (boundary.cursor === null || boundary.position < 1) throw new Error('Work produced no completed history');
     const message = committed(await platform.messages.sendMessage(base.ctx, {
       input: {
-        recipient: base.sessionRef, text: 'PC2 inquiry.', intent: 'inquiry',
-        needsReply: true, waitAfterSend: false,
+        recipient: base.sessionRef, text: 'PC2 inquiry.',
+        needsReply: true, waitAfterSend: false, answeredBy: 'copy', wake: false,
       },
       meta: { requestId: 'pc2-history-inquiry', expected: [] },
     }));

@@ -147,10 +147,10 @@ describe.each(['memory', 'sqlite'] as const)('X-expiry (%s)', backend => {
     const follower = await sessionOf(world, await createS6BLine(main,
       { label: 's7b-x-count-follower', role: S6A_WORK_ROLE, tasks: [tasks[1]!] }));
     const first = await sendS7BWaitingInquiry(world, { goal, session: sender, taskId: tasks[0]!.taskId,
-      label: 'first', body: { recipient: follower.ref, text: 'S7B count first question', intent: 'inquiry',
+      label: 'first', body: { recipient: follower.ref, text: 'S7B count first question',
         needsReply: true, waitAfterSend: true } });
     const second = await sendS7BWaitingInquiry(world, { goal, session: follower, taskId: tasks[1]!.taskId,
-      label: 'second', body: { recipient: sender.ref, text: 'S7B count second question', intent: 'inquiry',
+      label: 'second', body: { recipient: sender.ref, text: 'S7B count second question',
         needsReply: true, waitAfterSend: true, followupOf: first.ref } });
     expect(second.followupOf).toEqual(first.ref);
 
@@ -198,7 +198,7 @@ describe('X-expiry retired sender (SQLite only: the Host restart)', () => {
     const message = await sendS7BWaitingInquiry(world, { goal, session: sender, taskId: tasks[0]!.taskId,
       label: 'x-expiry-retired', trailingText: false,
       body: { recipient: recipient.ref, text: 'S7B retired question',
-        intent: 'inquiry', needsReply: true, waitAfterSend: true } });
+        needsReply: true, waitAfterSend: true } });
     await retireS7BSender(world, { goal, sender, task: tasks[0]!, label: 'x-expiry-retired' });
     const card = ready<{ record: { lifecycle: string; health: string; healthConclusion: string | null } }>(
       await world.post('sessions/read', plain(S6A_SCOPE, sender.ref)), 'the retired sender');

@@ -8,7 +8,10 @@ import { asRecord, asText } from './values.js';
 import { qualifyProjectPath, splitWorkspacePath } from '../contracts/workspace-path.js';
 import type { ChecksConfirmationV1 } from '../contracts/initialization-adoption.js';
 import { createAutoRefresh, type RefreshRead, type RefreshSnapshot, type RefreshSources } from './refresh.js';
-import { adaptNav, completionRevisionOf, goalHref, type LineKey, type NavData, type NavLineDetail } from './adapters/nav.js';
+import {
+  adaptNav, completionRevisionOf, goalHref,
+  type LineKey, type NavData, type NavLineDetail,
+} from './adapters/nav.js';
 import {
   adaptMember, adaptMemberLine, messageBodyKey, startupReportOf, taskOfLine, traceOf,
   type MemberData, type MemberLine, type MemberSource, type MemberWriteBasis,
@@ -19,8 +22,8 @@ import {
   readLine, readSessionTrace, requeueVisible, submitRunControl, type LineReadValue,
 } from './adapters/line-shared.js';
 import {
-  adaptMain, lvRecordOf, requestRootKey,
-  type MainData, type MainLineRecord, type MainPageCursorV1, type MainPageV1, type MainTrackRow,
+  adaptMain, lvRecordOf, mainRequestFeedbackOf, requestRootKey,
+  type MainData, type MainLineRecord, type MainPageCursorV1, type MainPageV1, type MainRequestFeedback, type MainTrackRow,
 } from './adapters/main.js';
 import {
   adaptPlan, adoptedPlanDoc, candidateReadOf, ideasRoundOf, versionRowsOf,
@@ -53,7 +56,7 @@ import type { GoalCopyDraftResultV1 } from '../contracts/goal-card.js';
 import type { MessageBody, SessionMessageReadV1 } from '../contracts/mailbox.js';
 import type { TaskExecutionRecord } from '../contracts/execution-read.js';
 import type { ArtifactRecord } from '../contracts/artifact.js';
-import type { RunRef } from '../contracts/dispatch.js';
+import type { RunRef, TaskTriple } from '../contracts/dispatch.js';
 import type { TaskGraph, TaskRow } from '../contracts/task-graph.js';
 import type { UncommittedFileListV1, UncommittedFileV1, UncommittedFilesV1 } from '../contracts/workspace-files.js';
 import type { MemberCopySource } from './adapters/member.js';
@@ -221,6 +224,9 @@ export type BoardActions = {
   /** D31/D43/D44: the card's question; returns the user's text, this round's root
    * key and answer. */
   askCard: (cardKey: string, text: string) => Promise<{ root: string; input: string; answer: string | null } | null>;
+  /** §2.5/§2.8: one `tasks/hold/release` (the task card's 撤销暂缓), releasing
+   * every hold reason of that Task in one commit. */
+  releaseHolds: (taskRef: TaskTriple) => Promise<void>;
   /** E3 Plan A §2.3: one `goals/confirm-draft` for the shown draft round. */
   confirmGoalDraft: (round: QueryJobRef, index: number) => Promise<void>;
   /** E3 Plan A §2.3: one `requests/select-idea` for the shown ideas round. */
@@ -1023,6 +1029,28 @@ export async function bootBoardPage(): Promise<void> {
       requeuedOrThrow(value);
       await refresh.reread();
     },
+    async releaseHolds(taskRef: TaskTriple): Promise<void> {
+      const scope = latestNavScope;
+      if (scope === null) throw new Error(writeTextOf(new Error('no navigation scope')));
+      let reply: RouteReply;
+      try {
+        /* The owner admits the configured operator and needs no revision pin;
+           `expected` is the route's required empty list, not a guessed one. */
+        reply = await client.write('tasks/hold/release', scope, {
+          input: { taskRef },
+          meta: { requestId: crypto.randomUUID(), expected: [] },
+        });
+      } catch (error) {
+        throw new Error(writeTextOf(error));
+      }
+      /* `unchanged` is the owner's "nothing held" success; only a committed or
+         unchanged reply means the release is done. */
+      if (reply.status !== 'committed' && reply.status !== 'unchanged') {
+        throw new Error(writeTextOf(new RouteReadError('tasks/hold/release',
+          reply.code || reply.status || 'no status', reply.reason ?? '')));
+      }
+      await refresh.reread();
+    },
     async askLine(question: string): Promise<void> {
       const data = latestLine;
       const line = data?.line ?? null;
@@ -1048,7 +1076,9 @@ export async function bootBoardPage(): Promise<void> {
       let reply: RouteReply;
       try {
         reply = await client.write('messages/send', data.scope, {
-          input: { recipient: line.key, text, intent: 'action_request', needsReply: true },
+          /* p2-frozen §2.1/§2.3: only this direct-intervention entry writes `entry`; the Host claims,
+             plans or opens a new-goal request only for a stored `person_intervention` (B20). */
+          input: { recipient: line.key, text, needsReply: true, entry: 'person_intervention' },
           meta: { requestId: crypto.randomUUID(), expected: [] },
         });
         /* the committed write is the reply's `value`; `sendStatus` is its
@@ -2594,12 +2624,13 @@ export async function readMain(
     const source = await readLineFacts(client, scope, demand.lineKey, nav.detail, nav);
     const memberLine = adaptMemberLine(source, nav.detail);
     const write = writeBasisOf(nav, memberLine, source.execution, source.taskGraph);
+    const rec = lvRecordOf({
+      executions: source.executions, messages: source.messages, messageViews: source.messageViews,
+      bodies: source.messageBodies, copies: source.copies, line: memberLine,
+    });
     line = {
       line: memberLine,
-      rec: lvRecordOf({
-        executions: source.executions, messageViews: source.messageViews,
-        bodies: source.messageBodies, copies: source.copies, line: memberLine,
-      }),
+      rec,
       rich: { reply: '', liveStep: null, page: memberLine.task !== null ? 'chain' : 'member' },
       write,
     };
@@ -2622,10 +2653,27 @@ export async function readMain(
       detailTaskId: demand.detailTaskId ?? null,
       workOnly: demand.workOnly === true,
     }, { allowed, runs });
-  return {
-    data: adaptMain({ nav, pages, decisions, older: cursor, track, line, aux }),
-    cursor: navRead.cursor,
-  };
+  /* §2.8/T37: the conversation's current request is the newest root on the
+     newest page; read that ORIGINAL root's own feedback, not a round, so the
+     request surface can show what the handling changed. `not_found` (the
+     request went away between the two reads) draws no block; any other failure
+     fails the read like the trace read does. */
+  let requestFeedback: MainRequestFeedback | null = null;
+  const newestRequest = pages[0]?.requests[0] ?? null;
+  if (newestRequest !== null) {
+    try {
+      const read = readyRouteValue<unknown>(
+        await client.post('requests/read', scope, { requestRoot: newestRequest.requestRoot }), 'requests/read',
+      );
+      requestFeedback = mainRequestFeedbackOf(read, nav, requestRootKey(newestRequest.requestRoot));
+    } catch (error) {
+      if (!(error instanceof RouteReadError) || error.code !== 'not_found') throw error;
+    }
+  }
+  const data: MainData = adaptMain({
+    nav, pages, decisions, older: cursor, track, line, aux, requestFeedback,
+  });
+  return { data, cursor: navRead.cursor };
 }
 
 /**
@@ -2680,7 +2728,7 @@ export async function readPlan(
     }
   }
   const data = adaptPlan({
-    main: adaptMain({ nav, ...thread }),
+    main: adaptMain({ nav, ...thread, requestFeedback: null }),
     pages: thread.pages, cand, versions,
   });
   /* The adopted card is the one the page just adopted: its proposal read
@@ -3012,7 +3060,9 @@ async function loadTaskMapForGoal(
     } catch (error) {
       if (!(error instanceof RouteReadError) || error.code !== 'unavailable') throw error;
     }
-    return adaptTaskMap(reads.goal, null, reads.display, { lines, hover });
+    const data = adaptTaskMap(reads.goal, null, reads.display, { lines, hover });
+    data.scope = scope;
+    return data;
   }
   const hover = readyRouteValue<TaskMapHoverRead>(
     await client.post('graph/hover', scope, { goalRef: ref }), 'graph/hover',
@@ -3020,6 +3070,9 @@ async function loadTaskMapForGoal(
   const decisionCards = await readDecisionCards(client, scope, ref);
   const graph = readyRouteValue<TaskMapGraphRead>(reply, 'tasks/query');
   const data = adaptTaskMap(reads.goal, graph, reads.display, { lines, hover });
+  /* The one task write (`releaseHolds`) sends with this read's own workspace,
+     never a second navigation read. */
+  data.scope = scope;
   data.decisionCards = decisionCards;
   /* Ruling 4: disposition dates are read only while the dropped list is open. */
   if (demand.dropped === true) await resolveDroppedDates(client, scope, ref, data);
@@ -3109,7 +3162,7 @@ async function resolveDroppedDates(
 async function readNodeDetail(
   client: ReturnType<typeof createHostClient>, scope: CoreScope,
   goalRef: { aggregateType: 'Goal'; projectId: string; goalId: string },
-  graph: { plan: { ref?: unknown }; tasks: readonly unknown[] }, taskId: string, state: string, mapWhy: string,
+  graph: TaskMapGraphRead, taskId: string, state: string, mapWhy: string,
 ): Promise<TaskMapNodeDetailData | null> {
   const planRef = graph.plan.ref;
   const row = graph.tasks.map(asRecord).find((entry) => asText(asRecord(entry.ref).taskId) === taskId);
@@ -3180,7 +3233,7 @@ async function readNodeDetail(
   const changeAt = change === null ? '' : await acceptedAtText(client, scope, goalRef, asRecord(change).setIn);
   return adaptTaskMapDetail(summary, participants, null,
     catalog as Parameters<typeof adaptTaskMapDetail>[3], state, mapWhy, change, changeAt, risks,
-    typeof row.attemptOrdinal === 'number' ? row.attemptOrdinal : null, uncommitted);
+    typeof row.attemptOrdinal === 'number' ? row.attemptOrdinal : null, uncommitted, graph.plan, row);
 }
 
 /** Ruling 7: the one write path. Read the real Workspace pin, commit, then let

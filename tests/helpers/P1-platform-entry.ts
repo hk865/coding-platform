@@ -23,6 +23,7 @@ import type { ActionRequestRef } from '../../src/contracts/action-request.js';
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { SessionMessageRef } from '../../src/contracts/core/session-message.js';
 import type { RunRef, TaskTriple } from '../../src/contracts/dispatch.js';
+import type { PlanRevisionRef } from '../../src/contracts/plan.js';
 import { WORKFLOW_AUTOMATION_ACTOR } from '../../src/contracts/task-requeue.js';
 import type { WorkflowAdvanceInput } from '../../src/business/workflow/contracts.js';
 import type { ClaimTaskInput } from '../../src/core/work-graph/model/claim-contracts.js';
@@ -64,10 +65,19 @@ export async function deliverStop(world: S6AHostWorld, request: ActionRequestRef
   return world.platform.actionRequests.deliverStop(automation(), { request });
 }
 
-/** P2's Goal loop: void a request (2.3 `settle`, AR-04). */
+/** The void cause and the adopted Plan revision the caller read for `platformSettle` (2.3 `settle`). */
+export type PlatformSettleBasisV1 = {
+  kind: 'goal_cancelled' | 'task_cancelled' | 'task_replaced' | 'task_completed' | 'person_stopped';
+  planRevision: PlanRevisionRef;
+};
+
+/**
+ * P2's Goal loop: void a request (2.3 `settle`, AR-04). The caller that judged the cause passes that cause and the
+ * adopted Plan revision it read; the stand-in neither guesses them from the request kind nor reads the Plan itself.
+ */
 export async function platformSettle(world: S6AHostWorld, request: ActionRequestRef, reason: string,
-  requestId: string) {
-  return world.platform.actionRequests.settle(automation(), { input: { request, reason },
+  requestId: string, basis: PlatformSettleBasisV1) {
+  return world.platform.actionRequests.settle(automation(), { input: { request, reason, basis },
     meta: { requestId, expected: [] } });
 }
 
