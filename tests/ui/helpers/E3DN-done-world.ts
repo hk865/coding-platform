@@ -481,7 +481,7 @@ export type DonePage = { page: BootedPage; log: PageLog };
  * first, because the page reads the request exactly once).
  */
 export const bootDone = (target: { readonly base: string; readonly token: string }, goalId: string | null,
-  options: { failOnce?: string; before?: Record<string, (log: PageLog) => Promise<void>> } = {}): Promise<DonePage> =>
+  options: { unavailable?: string; failOnce?: string; before?: Record<string, (log: PageLog) => Promise<void>> } = {}): Promise<DonePage> =>
   bootE3N(target, 'Done', { search: goalId === null ? '' : '?goal=' + goalId, mode: 'controlled', gate: true, ...options });
 
 /**

@@ -3622,16 +3622,31 @@ class Component extends DCLogic {
       const at = (s.dcAt || 0) % decideRows.length;
       const row = decideRows[at];
       const v = row.view || null;
+      /* X9/X7.3: a knowledge notice with a still-recoverable file keeps its one
+         “标为已读” but says where the recovery lives. The data is X9's own table. */
+      const noticeRecovery = v === null && !!(decisions && decisions.noticeFacts
+        && (decisions.noticeFacts[row.key] || []).some((fact) => fact.recover !== undefined));
+      /* X7.3: keep the recovery sentence its own sentence after `row.sub`; a space
+         when that line already ends with punctuation, otherwise 。 */
+      const recoveryLine = noticeRecovery
+        ? (row.sub === '' ? '' : /[。！？；.!?;]$/.test(row.sub) ? ' ' : '。') + '要恢复文件，到“需要你决定”页。'
+        : '';
       const same = decideRows.filter((r) => r.level === row.level);
       const k = same.indexOf(row);
       const stepPrimary = v !== null && v.primary !== null && v.primary.key !== 'answer';
       const isChoice = !!v && !v.readOnly && v.options.length > 0;
       const needsPick = isChoice && s.picked === null;
+      const reproposePicked = s.picked === 'repropose';
+      const REPROPOSE_GUIDE = '要写一句哪里不对：点上面的“全部”，到“需要你决定”页里提。';
       const opts = (v ? v.options : []).map((o) => {
         const on = s.picked === o.id;
-        return { title: o.label, how: '', on: on, cls: 'opt' + (on ? ' is-on' : ''), pick: () => set({ picked: o.id }) };
+        return { title: o.label, how: o.id === 'repropose' ? REPROPOSE_GUIDE : '', on: on,
+          cls: 'opt' + (on ? ' is-on' : ''), pick: () => set({ picked: o.id }) };
       });
-      const facts = (v ? v.facts : []).map((f) => ({ k: f.k, v: f.v }));
+      const facts = (v ? v.facts : []).map((f) => {
+        const paths = (f.files || []).map((file) => file.path).join('、');
+        return { k: f.k, v: paths === '' ? f.v : f.v === '' ? paths : f.v + '：' + paths };
+      });
       const submitAnswer = (optionId) => {
         Promise.resolve(actions.answerCard(row.key, optionId))
           .then(() => closeCard())
@@ -3641,7 +3656,7 @@ class Component extends DCLogic {
         show: true,
         sq: 'sq z8 ' + (row.level === 'decide' ? 's-decide' : 's-waiting'),
         lvl: row.level === 'decide' ? '要决定' : '请知悉',
-        title: row.label, line: v ? v.line : row.sub, path: v ? v.path : '',
+        title: row.label, line: v ? v.line : row.sub + recoveryLine, path: v ? v.path : '',
         pos: same.length > 1 ? (k + 1) + ' / ' + same.length : '',
         hasNext: decideRows.length > 1,
         next: () => set({ dcAt: ((s.dcAt || 0) + 1) % decideRows.length, picked: null, facts: false }),
@@ -3669,10 +3684,11 @@ class Component extends DCLogic {
               .catch((e) => closeCard({ err: msg(e) }));
           }
           : stepPrimary ? nc
-            : () => { if (s.picked !== null) submitAnswer(s.picked); },
-        primaryTip: stepPrimary ? '还没接通' : '',
-        primaryCls: 'btn btn-sm btn-primary' + (stepPrimary || needsPick ? ' is-off' : ''),
-        primaryOff: stepPrimary || needsPick ? 'true' : 'false',
+            : reproposePicked ? () => {}
+              : () => { if (s.picked !== null) submitAnswer(s.picked); },
+        primaryTip: reproposePicked ? REPROPOSE_GUIDE : stepPrimary ? '还没接通' : '',
+        primaryCls: 'btn btn-sm btn-primary' + (stepPrimary || needsPick || reproposePicked ? ' is-off' : ''),
+        primaryOff: stepPrimary || needsPick || reproposePicked ? 'true' : 'false',
         acts: (v ? v.acts : []).map((a) => ({ label: a.label, cls: 'btn btn-sm btn-line is-off',
           tip: '还没接通', off: 'true', go: nc })),
         allHref: 'Decide.dc.html' + (data.selectedGoalId ? '?goal=' + encodeURIComponent(data.selectedGoalId) : '')

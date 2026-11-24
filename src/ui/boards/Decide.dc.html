@@ -343,7 +343,7 @@ textarea.dc-input { min-height: 52px; }
                 <dl class="dc-facts" aria-label="详情">
                   <sc-for list="{{dc.facts}}" as="f" hint-placeholder-count="4">
                     <dt>{{f.k}}</dt>
-                    <dd>{{f.v}}<sc-for list="{{f.files}}" as="fl" hint-placeholder-count="0"><span class="d-file" title="{{fl.full}}"><sc-for list="{{fl.parts}}" as="fp" hint-placeholder-count="4"><span>{{fp}}</span></sc-for></span></sc-for></dd>
+                    <dd>{{f.v}}<sc-for list="{{f.files}}" as="fl" hint-placeholder-count="0"><span class="d-file" title="{{fl.full}}"><sc-for list="{{fl.parts}}" as="fp" hint-placeholder-count="4"><span>{{fp}}</span></sc-for></span></sc-for><sc-if value="{{f.recover}}" hint-placeholder-val="{{ false }}"><button class="link" type="button" onClick="{{f.recover.go}}">{{f.recover.label}}</button></sc-if></dd>
                   </sc-for>
                 </dl>
               </sc-if>
@@ -391,6 +391,9 @@ textarea.dc-input { min-height: 52px; }
                     <textarea id="dc-reason" class="dc-input" rows="2" placeholder="{{st.reasonPh}}" value="{{st.reason}}" onChange="{{st.onReason}}"></textarea>
                   </div>
                 </sc-if>
+                <sc-if value="{{st.hasFailed}}" hint-placeholder-val="{{ false }}">
+                  <p class="dc-line"><span class="tx-failed">{{st.failed}}</span></p>
+                </sc-if>
                 <sc-if value="{{st.hasBudget}}" hint-placeholder-val="{{ false }}">
                   <div class="dc-field">
                     <label for="dc-budget">预算（token）</label>
@@ -417,7 +420,7 @@ textarea.dc-input { min-height: 52px; }
                 </sc-if>
               </sc-if>
               <sc-if value="{{dc.inStep}}" hint-placeholder-val="{{ false }}">
-                <button class="btn btn-sm" type="button" onClick="{{st.back}}">返回</button>
+                <button class="btn btn-sm" type="button" onClick="{{st.back}}">{{st.backLabel}}</button>
                 <button class="btn btn-sm btn-primary{{st.offCls}}" type="button" aria-disabled="{{st.off}}" disabled="{{st.off}}" onClick="{{st.go}}">{{st.confirm}}</button>
               </sc-if>
             </div>
@@ -3501,24 +3504,49 @@ class Component extends DCLogic {
     let st = { title: '', text: '', hasEvidence: false, evidence: [], text2: '', hasName: false, name: '', onName: noop,
       hasChecks: false, checks: [], report: '', openReport: noop, after: '', hasNote: false, note: '', notePh: '', onNote: noop,
       hasReason: false, reason: '', reasonLabel: '', reasonPh: '', onReason: noop, hasBudget: false, budget: '', onBudget: noop,
-      budgetHint: '', budgetCls: 't3', back: noop, go: noop, confirm: '', off: true, offCls: ' is-off' };
+      hasFailed: false, failed: '',
+      budgetHint: '', budgetCls: 't3', back: noop, go: noop, confirm: '', off: true, offCls: ' is-off', backLabel: '返回' };
+    /* X9: the notice branch and the card branch share the step block below; these two
+       carry what only one of them supplies (the card's primary act, the notice's rows). */
+    let primary = null;
+    let noticeRows = [];
     const asking = !!(s.ask && list.some((row) => row.key === s.ask));
     if (cur !== null) {
       const filtered = !!gf;
       const answerBody = data.answerBodies && data.answerBodies[cur.key] ? data.answerBodies[cur.key] : '';
       if (cur.card === null) {
         const label = cur.label;
+        /* X9: the knowledge notice's own 详情. A row with a `recover` gets the row-end
+           button that opens the shared step; the count of those rows is what 标为已读
+           asks about. Every other notice has no rows and keeps its direct write. */
+        noticeRows = ((data.noticeFacts && data.noticeFacts[cur.key]) || []).map((fact) => ({
+          k: fact.k, v: fact.v, files: (fact.files || []).map((file) => ({ full: file.path, parts: file.parts })),
+          recover: fact.recover ? {
+            label: fact.recover.label,
+            go: () => set({ step: 'recover', form: {}, facts: false, recoverItem: {
+              itemNo: fact.recover.itemNo, path: fact.recover.path, source: fact.recover.source } }),
+          } : null,
+        }));
+        const recoverable = noticeRows.filter((fact) => fact.recover !== null).length;
         dc = Object.assign(dc, {
           show: !asking, sq: 'sq z8 s-waiting', lvl: '请知悉', path: nameOf(cur.goalId),
           title: label, line: cur.sub, pos: (peersOf(cur).indexOf(cur) + 1) + ' / ' + peersOf(cur).length,
           hasNext: list.length > 1,
           next: next, close: close, locate: A.notConnected,
           ask: () => set({ ask: cur.key, draft: '', step: null }),
+          facts: noticeRows, hasFacts: noticeRows.length > 0,
+          showFacts: !!s.facts && noticeRows.length > 0, factsLabel: s.facts ? '收起详情' : '详情',
+          toggleFacts: () => set({ facts: !(this.state || {}).facts }),
           hasPrimary: true, primaryLabel: '标为已读',
           primaryOff: filtered ? 'true' : 'false',
           primaryCls: 'btn btn-sm btn-primary' + (filtered ? ' is-off' : ''),
           primaryTip: filtered ? locTip : '',
-          primaryGo: filtered ? A.notConnected : () => { void A.markNoticeSeen(cur.key); },
+          primaryGo: filtered ? A.notConnected : () => {
+            /* Ruling 10: a still-recoverable notice asks before it hides its own door. */
+            if (recoverable > 0) { set({ step: 'seen', form: {}, facts: false, recoverItem: null }); return; }
+            set({ facts: false });
+            void A.markNoticeSeen(cur.key);
+          },
         });
       } else if (cardView !== null) {
         const picks = s.cfPick || null;
@@ -3529,7 +3557,7 @@ class Component extends DCLogic {
         }));
         const facts = cardView.facts.map((fact) => ({ k: fact.k, v: fact.v,
           files: (fact.files || []).map((file) => ({ full: file.path, parts: file.parts })) }));
-        const primary = cardView.primary;
+        primary = cardView.primary;
         const isChoice = cardView.options.length > 0 && !cardView.readOnly;
         const answerAct = cardView.answer && cardView.answer.bodyRef
           ? { label: '看答复', cls: 'btn btn-sm btn-line', off: 'false', tip: '',
@@ -3560,21 +3588,69 @@ class Component extends DCLogic {
           primaryTip: '',
           primaryGo: isChoice ? () => {
             if (!picks) return;
+            if (picks === 'repropose') { set({ step: 'repropose', form: {}, facts: false }); return; }
             void A.answerCard(cur.key, picks);
             set({ cfPick: null, step: null });
           } : () => actGo(primary)(),
         });
-        const stepKey = s.step;
-        const stepAct = stepKey ? [primary].concat(cardView.acts).filter((act) => act && act.step === stepKey)[0] || null : null;
-        if (stepAct !== null && stepKey !== null) {
-          dc.inMain = false; dc.inStep = true;
+      }
+      /* The one step block both branches share (X6/X9): the card's own step act, or the
+         notice's synthetic 恢复/标为已读 act. A step's own async `go` awaits its write
+         and stays open with the failure line; the synchronous steps keep the old close. */
+      const stepKey = s.step;
+      const syntheticAct = stepKey === 'repropose'
+        ? { key: 'answer', label: '重新提', step: 'repropose', primary: true, cls: 'btn btn-sm btn-primary', off: 'false', tip: '' }
+        : stepKey === 'recover'
+          ? { key: 'recover', label: '恢复', step: 'recover', primary: true, cls: 'btn btn-sm btn-primary', off: 'false', tip: '' }
+          : stepKey === 'seen'
+            ? { key: 'seen', label: '标为已读', step: 'seen', primary: true, cls: 'btn btn-sm btn-primary', off: 'false', tip: '' }
+            : null;
+      const stepAct = stepKey === null ? null
+        : syntheticAct !== null ? syntheticAct
+          : [primary].concat(cardView !== null ? cardView.acts : [])
+            .filter((act) => act && act.step === stepKey)[0] || null;
+      if (stepAct !== null && stepKey !== null) {
+          dc.inMain = false; dc.inStep = true; dc.isChoice = false;
           const form = s.form || {};
           const val = (e) => (e && e.target ? e.target.value : '');
           const setForm = (patch) => set({ form: Object.assign({}, (this.state || {}).form || {}, patch) });
           st = Object.assign(st, {
-            back: () => set({ step: null, form: {} }), confirm: stepAct.label, off: false,
-            go: () => {
+            back: () => set({ step: null, form: {} }), confirm: stepAct.label, off: false, backLabel: '返回',
+            go: async () => {
               if (st.off) return;
+              if (stepKey === 'repropose') {
+                if (((this.state || {}).form || {}).busy) return;
+                setForm({ busy: true, failed: '' });
+                try {
+                  await A.answerCard(cur.key, 'repropose', String(form.reason || ''));
+                  set({ step: null, form: {}, dec: null, cardClosed: true, facts: false });
+                } catch (error) {
+                  setForm({ busy: false, failed: String(error && error.message ? error.message : error) });
+                }
+                return;
+              }
+              if (stepKey === 'recover') {
+                const item = (this.state || {}).recoverItem || null;
+                if (!item) return;
+                setForm({ busy: true, failed: '' });
+                try {
+                  await A.recoverKnowledge(cur.key, item.itemNo);
+                  set({ step: null, form: {}, facts: false, recoverItem: null });
+                } catch (error) {
+                  setForm({ busy: false, failed: String(error && error.message ? error.message : error) });
+                }
+                return;
+              }
+              if (stepKey === 'seen') {
+                setForm({ busy: true, failed: '' });
+                try {
+                  await A.markNoticeSeen(cur.key);
+                  set({ step: null, form: {}, facts: false, dec: null, cardClosed: true });
+                } catch (error) {
+                  setForm({ busy: false, failed: String(error && error.message ? error.message : error) });
+                }
+                return;
+              }
               if (stepKey === 'requeue') {
                 void A.requeueCard(cur.key, { reason: String(form.reason || ''),
                   budget: cardView.budget ? String(form.budget === undefined ? cardView.budget.def : form.budget) : null });
@@ -3596,7 +3672,34 @@ class Component extends DCLogic {
               set({ step: null, form: {}, dec: null, cardClosed: true, facts: false });
             },
           });
-          if (stepKey === 'requeue') {
+          if (stepKey === 'repropose') {
+            const reason = String(form.reason || '');
+            Object.assign(st, {
+              title: '不对，重新提',
+              text: '写一句哪里不对。参谋会带着这句话再提一次；这张卡会关掉。新的提案按设置可能直接采用（请知悉里会说一声），也可能出一张新卡。',
+              hasReason: true, reason: reason, reasonLabel: '哪里不对（必填）', reasonPh: '例如：这两块不该分开',
+              onReason: (e) => setForm({ reason: val(e) }),
+              hasFailed: !!form.failed, failed: String(form.failed || ''),
+              confirm: '重新提', off: !reason.trim() || !!form.busy,
+            });
+          } else if (stepKey === 'recover') {
+            const item = s.recoverItem || null;
+            Object.assign(st, {
+              title: '恢复这个文件',
+              text: item === null ? '' : '把 ' + item.path + ' 写回' + item.source
+                + '。只动这一个文件，之后平台会重新核对一次。',
+              hasFailed: !!form.failed, failed: String(form.failed || ''),
+              confirm: '恢复', backLabel: '返回', off: item === null || !!form.busy,
+            });
+          } else if (stepKey === 'seen') {
+            const left = noticeRows.filter((fact) => fact.recover !== null).length;
+            Object.assign(st, {
+              title: '标为已读',
+              text: '还有 ' + left + ' 个文件没恢复，标为已读后这里就看不到恢复入口了。',
+              hasFailed: !!form.failed, failed: String(form.failed || ''),
+              confirm: '标为已读', backLabel: '取消', off: !!form.busy,
+            });
+          } else if (stepKey === 'requeue') {
             const reason = String(form.reason || '');
             const bud = cardView.budget ? String(form.budget === undefined ? cardView.budget.def : form.budget) : '';
             const ok = !cardView.budget || this.budgetOf(bud) > cardView.budget.min;
@@ -3641,9 +3744,11 @@ class Component extends DCLogic {
             Object.assign(st, { title: '恢复任务', text: '恢复后它回到目标里；能不能领取由 owner 判。',
               confirm: '恢复任务' });
           }
+          /* X6/X9: the confirm's `is-off` follows its own `off` after every branch, so an
+             enabled step is clickable in a real browser (`kit.css`'s pointer-events). */
+          st.offCls = st.off ? ' is-off' : '';
         }
       }
-    }
 
     /* ---------- the composer (D31/D41/D43/D44) ---------- */
     const askRow = asking ? list.filter((row) => row.key === s.ask)[0] || null : null;

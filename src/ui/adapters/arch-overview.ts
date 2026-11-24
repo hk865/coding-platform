@@ -16,10 +16,12 @@ import type { ArchitectureObservationStateV1 } from '../../contracts/architectur
 import type {
   ArchitectureChangeScopeV1, ArchitectureFindResultV1, ArchitectureWorkScopeV1,
 } from '../../contracts/architecture-search.js';
+import type { KnowledgeCommitStatus } from '../../contracts/knowledge.js';
 import type { NoteAnchorV1 } from '../../contracts/note.js';
 import type { WorkLineListV1 } from '../../contracts/work-line.js';
 import { pathOwnershipOf } from '../../contracts/path-ownership.js';
 import { canonicalJson } from '../../contracts/canonical-json.js';
+import { rawModuleId } from '../../contracts/workspace-module-id.js';
 import { adaptTaskMap, type TaskMapGraphRead } from './task-map.js';
 import { NOT_CONNECTED_TEXT } from '../not-connected.js';
 import { asRecord, asText } from '../values.js';
@@ -49,11 +51,30 @@ export type ArchNoteRead = {
   items: Array<{ label?: string; sections?: Record<string, string> }>;
 };
 
+/** One `role-lines/operations` row as the page reads it: the role-line fields the exploration and
+ * deepen rows use. A `member_create` row carries none of these and the guards skip it; the declared
+ * shape follows `role-line-operations-read.ts`'s `action: 'role_line'` arm. */
+export type ArchOperationRow = {
+  operation: { operationId: string };
+  phase: string;
+  actionPhase: string;
+  result: { status: 'done' | 'failed' | 'waiting'; reason: string | null } | null;
+  /** Only `exploration_followup` rows carry it; the model leaves it absent otherwise. */
+  followUp?: {
+    kind: 'repropose' | 'deepen' | 'knowledge_conflict';
+    moduleRefs: Array<{ moduleId: string }>;
+    reason: string | null;
+  } | null;
+};
+
 /** One read's whole input; each field is one route's value (null = not read). */
 export type ArchOverviewSource = {
   scope: { projectId: string; workspaceId: string };
   /** The bootstrap workspace name, when the caller has it. */
   projectName?: string;
+  /** boot's workspace names (`workspaceId` → name) for the per-workspace rows; a missing name
+   * falls back to the page's project name. */
+  workspaceNames?: Record<string, string>;
   goal: { id: string; ordinal: number | null; objective: string } | null;
   catalog: ArchCatalogRead | null;
   observation: ArchitectureObservationStateV1 | null;
@@ -67,6 +88,10 @@ export type ArchOverviewSource = {
   tasks: ArchTaskGraphRead | null;
   lines: WorkLineListV1 | null;
   notes: Record<string, ArchNoteRead>;
+  /** `role-lines/operations` per workspace, keyed by workspaceId; a failed read's workspace is absent. */
+  operations: Record<string, ArchOperationRow[]>;
+  /** `knowledge/status` per workspace, keyed by workspaceId; a failed read's workspace is absent. */
+  knowledge: Record<string, KnowledgeCommitStatus>;
 };
 
 /** The model the page's five data entry points read. */
@@ -143,6 +168,41 @@ export type ArchRail = {
   alt: Record<string, unknown>;
 };
 
+/** One workspace's unfinished initialization exploration: the caption's ruled line and its one
+ * stop/continue button. The words never carry a round count. */
+export type ArchExploreRow = {
+  projectId: string;
+  workspaceId: string;
+  workspaceName: string;
+  /** `cold_start` says 正在初始化; `workspace_join` says the workspace is 正在探索. */
+  kind: 'cold_start' | 'workspace_join';
+  /** The ruled caption line. */
+  text: string;
+  /** Stop while the operation runs, continue once it waits. */
+  action: 'stop' | 'continue';
+  actionLabel: string;
+};
+
+/** One workspace whose knowledge directory has uncommitted places. */
+export type ArchCommitBar = {
+  projectId: string;
+  workspaceId: string;
+  workspaceName: string;
+  branch: string;
+  dirty: number;
+  files: number;
+};
+
+/** One module that can go one layer deeper, or one already deepening. */
+export type ArchDeepenRow = {
+  projectId: string;
+  workspaceId: string;
+  workspaceName: string;
+  moduleId: string;
+  /** True while an unfinished deepen follow-up covers this module; false when it can be deepened. */
+  deepening: boolean;
+};
+
 export type ArchOverviewData = {
   repo: ArchRepoModel;
   taskModel: { tasks: ArchTaskModelRow[]; byId: Record<string, ArchTaskModelRow> };
@@ -163,6 +223,12 @@ export type ArchOverviewData = {
   /** The paths `architecture/query` could not resolve; shown as text, never
    * dropped, because an unresolved reference is not "no reference". */
   unresolvedPaths: string[];
+  /** One row per unfinished initialization exploration, with the row's own range. */
+  explore: ArchExploreRow[];
+  /** One row per workspace that has uncommitted knowledge files. */
+  commitBars: ArchCommitBar[];
+  /** One row per deepenable module, and one per module already deepening. */
+  deepen: ArchDeepenRow[];
   /** The one not-connected word. */
   notConnected: string;
 };
@@ -346,6 +412,122 @@ function emptyOf(catalog: ArchCatalogRead | null, observation: ArchitectureObser
   if (catalog === null) return 'no_catalog';
   if (observation === null || observation.current === null || observation.current.persistedRef === null) return 'no_observation';
   return null;
+}
+
+/** The operation id of the first workspace's cold start (state/cold-start.ts) and of a join. */
+function isColdStartOf(operationId: string, projectId: string): boolean {
+  return operationId === 'cold_start:' + projectId;
+}
+function isJoinOf(operationId: string, workspaceId: string): boolean {
+  return operationId === 'workspace_join:' + workspaceId;
+}
+
+/** One workspace's name for the rows; the page's own project name is the fallback. */
+function workspaceNameOf(source: ArchOverviewSource, workspaceId: string): string {
+  return source.workspaceNames?.[workspaceId] || source.projectName || '';
+}
+
+/** The ruled caption and button of one unfinished exploration. A `phase` of `accepted` or
+ * `running` means undone; `result.status === 'waiting'` means the person stopped it. */
+function exploreRowsOf(source: ArchOverviewSource): ArchExploreRow[] {
+  const out: ArchExploreRow[] = [];
+  for (const [workspaceId, entries] of Object.entries(source.operations)) {
+    const name = workspaceNameOf(source, workspaceId);
+    for (const entry of entries) {
+      const row = asRecord(entry);
+      const phase = asText(row.phase);
+      if (phase !== 'accepted' && phase !== 'running') continue;
+      const operationId = asText(asRecord(row.operation).operationId);
+      const cold = isColdStartOf(operationId, source.scope.projectId);
+      const join = isJoinOf(operationId, workspaceId);
+      if (!cold && !join) continue;
+      const stopped = asText(asRecord(row.result).status) === 'waiting';
+      out.push({
+        projectId: source.scope.projectId, workspaceId, workspaceName: name,
+        kind: cold ? 'cold_start' : 'workspace_join',
+        text: cold
+          ? stopped ? '还没初始化完：探索已停下，可以继续。' : '还没初始化完：正在初始化。'
+          : name + '加入中：' + (stopped ? '探索已停下，可以继续。' : '正在探索。'),
+        action: stopped ? 'continue' : 'stop',
+        actionLabel: stopped ? '继续探索' : '停止探索',
+      });
+    }
+  }
+  return out;
+}
+
+/** One bar per workspace with uncommitted knowledge files; clean, local-only and failed-read
+ * workspaces are absent. The bar names its workspace only when the project has more than one (X4). */
+function commitBarsOf(source: ArchOverviewSource): ArchCommitBar[] {
+  const out: ArchCommitBar[] = [];
+  const named = Object.keys(source.workspaceNames ?? {}).length > 1;
+  for (const [workspaceId, status] of Object.entries(source.knowledge)) {
+    if (status.dirty <= 0 || status.localOnly) continue;
+    out.push({
+      projectId: source.scope.projectId, workspaceId,
+      workspaceName: named ? workspaceNameOf(source, workspaceId) : '',
+      branch: status.branch, dirty: status.dirty, files: status.files,
+    });
+  }
+  return out;
+}
+
+/** The catalog modules with the workspace whose initialization they belong to. The read's
+ * own workspace is the main one (`rawModuleId`'s `null`). */
+function deepenModulesOf(source: ArchOverviewSource): Array<{ moduleId: string; workspaceId: string }> {
+  const out: Array<{ moduleId: string; workspaceId: string }> = [];
+  for (const module of moduleOf(source.catalog)) {
+    const moduleId = asText(module.ref.moduleId);
+    if (moduleId === '') continue;
+    const raw = rawModuleId(moduleId);
+    out.push({ moduleId, workspaceId: raw.workspaceId ?? source.scope.workspaceId });
+  }
+  return out;
+}
+
+/** The modules one workspace's completed initialization allows deepening, plus the modules an
+ * unfinished `deepen` follow-up already covers. A workspace whose operations read failed has no
+ * rows: without that read the page cannot know the initialization finished. */
+function deepenRowsOf(source: ArchOverviewSource): ArchDeepenRow[] {
+  const modules = deepenModulesOf(source);
+  const out: ArchDeepenRow[] = [];
+  const active = new Set<string>();
+  for (const [workspaceId, entries] of Object.entries(source.operations)) {
+    const name = workspaceNameOf(source, workspaceId);
+    for (const entry of entries) {
+      const row = asRecord(entry);
+      const phase = asText(row.phase);
+      if (phase !== 'accepted' && phase !== 'running') continue;
+      const follow = asRecord(row.followUp);
+      if (asText(follow.kind) !== 'deepen') continue;
+      const refs = Array.isArray(follow.moduleRefs) ? follow.moduleRefs : [];
+      for (const ref of refs) {
+        const moduleId = asText(asRecord(ref).moduleId);
+        if (moduleId === '') continue;
+        /* `beginDeepen` stores the page's node id, which is also `module.moduleId`. */
+        active.add(workspaceId + '\0' + moduleId);
+        out.push({ projectId: source.scope.projectId, workspaceId, workspaceName: name,
+          moduleId, deepening: true });
+      }
+    }
+  }
+  for (const [workspaceId, entries] of Object.entries(source.operations)) {
+    const complete = entries.some((entry) => {
+      const row = asRecord(entry);
+      if (asText(row.phase) !== 'completed') return false;
+      const operationId = asText(asRecord(row.operation).operationId);
+      return isColdStartOf(operationId, source.scope.projectId) || isJoinOf(operationId, workspaceId);
+    });
+    if (!complete) continue;
+    const name = workspaceNameOf(source, workspaceId);
+    for (const module of modules) {
+      if (module.workspaceId !== workspaceId) continue;
+      if (active.has(workspaceId + '\0' + module.moduleId)) continue;
+      out.push({ projectId: source.scope.projectId, workspaceId, workspaceName: name,
+        moduleId: module.moduleId, deepening: false });
+    }
+  }
+  return out;
 }
 
 export function adaptArchOverview(source: ArchOverviewSource, ui: ArchOverviewUi): ArchOverviewData {
@@ -711,6 +893,9 @@ export function adaptArchOverview(source: ArchOverviewSource, ui: ArchOverviewUi
     empty: emptyOf(source.catalog, source.observation),
     unresolved: unresolved.length,
     unresolvedPaths: unresolved.slice(),
+    explore: exploreRowsOf(source),
+    commitBars: commitBarsOf(source),
+    deepen: deepenRowsOf(source),
     notConnected: NOT_CONNECTED_TEXT,
   };
 }

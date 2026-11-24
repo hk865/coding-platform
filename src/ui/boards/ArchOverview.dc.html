@@ -97,6 +97,15 @@ body { margin: 0; background: #1F1F1F; }
 .ov-lg.back .ln { stroke-dasharray: 4 3; }
 .ov-lg.decl .ln { stroke-dasharray: 1 3; }
 .ov-side .d-rel { grid-template-columns: 40px minmax(0, 1fr); }
+/* the commit box's field: the frozen Decide reason field's rules, board-local (kit.css leaves them out) */
+.dc-field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; line-height: 18px; color: var(--text-3); }
+.dc-input { all: unset; box-sizing: border-box; display: block; width: 100%; padding: 6px 10px; border-radius: 6px; background: var(--ground); box-shadow: inset 0 0 0 1px var(--line-2); font-size: 13px; line-height: 20px; color: var(--text-strong); white-space: pre-wrap; }
+textarea.dc-input { min-height: 52px; }
+.dc-input::placeholder { color: var(--text-3); }
+.dc-input:focus-visible { box-shadow: inset 0 0 0 1px var(--text-3); }
+.btn-text.is-off, .btn-text[disabled] { opacity: .45; pointer-events: none; }
+.ov-cap-l .ov-wk .tx-failed { margin-left: 8px; }
+.ov-cap-l .ov-wk .ov-commit-btn { margin-left: 8px; }
 @media (max-width: 960px) {
   .ov { height: auto; min-height: 100vh; overflow: visible; }
   .ov-bar { flex-wrap: wrap; height: auto; padding: 8px 12px; row-gap: 4px; }
@@ -150,7 +159,13 @@ body { margin: 0; background: #1F1F1F; }
         <div class="ov-cap-l">
           <p class="ov-cap-main">{{cap.main}}</p>
           <p>{{cap.src}}</p>
+          <sc-for list="{{exploreRows}}" as="x" hint-placeholder-count="1">
+            <p class="ov-wk">{{x.text}} <button class="{{x.btnCls}}" type="button" disabled="{{x.busy}}" onClick="{{x.go}}">{{x.label}}</button><sc-if value="{{x.hasError}}" hint-placeholder-val="{{ false }}"><span class="tx-failed">{{x.error}}</span></sc-if></p>
+          </sc-for>
           <sc-if value="{{hasWorkNote}}" hint-placeholder-val="{{ false }}"><p class="ov-wk">{{workNote}}</p></sc-if>
+          <sc-for list="{{commitRows}}" as="c" hint-placeholder-count="1">
+            <p class="ov-wk">{{c.text}} <button class="{{c.btnCls}}" type="button" onClick="{{c.go}}">{{c.label}}</button></p>
+          </sc-for>
         </div>
         <sc-if value="{{vsw.show}}" hint-placeholder-val="{{ false }}">
           <div class="seg ov-view" role="group" aria-label="分组方式">
@@ -279,6 +294,21 @@ body { margin: 0; background: #1F1F1F; }
 
     <!-- ================= RIGHT COLUMN ================= -->
     <aside class="ov-side" aria-label="查找、图例与详情">
+      <sc-if value="{{commit.show}}" hint-placeholder-val="{{ false }}">
+        <div class="decision" role="alertdialog" aria-label="提交架构图和注记">
+          <p class="dc-title">提交架构图和注记</p>
+          <p class="dc-line">{{commit.line}}</p>
+          <div class="dc-field">
+            <label for="ov-commit-msg">提交说明</label>
+            <textarea id="ov-commit-msg" class="dc-input" rows="2" value="{{commit.draft}}" onChange="{{commit.onDraft}}"></textarea>
+          </div>
+          <sc-if value="{{commit.failed}}" hint-placeholder-val="{{ false }}"><p class="dc-line"><span class="tx-failed">{{commit.error}}</span></p></sc-if>
+          <div class="dc-foot">
+            <button class="btn btn-sm first" type="button" onClick="{{commit.keep}}">不提交</button>
+            <button class="btn btn-sm btn-primary" type="button" disabled="{{commit.busy}}" onClick="{{commit.go}}">提交</button>
+          </div>
+        </div>
+      </sc-if>
       <sc-if value="{{hasQList}}" hint-placeholder-val="{{ false }}">
         <div class="qlist" aria-label="查找结果">
           <sc-for list="{{qlist}}" as="h" hint-placeholder-count="4">
@@ -370,10 +400,12 @@ body { margin: 0; background: #1F1F1F; }
           </dl>
           <div class="d-acts">
             <sc-for list="{{det.acts}}" as="a" hint-placeholder-count="1">
-              <button class="btn-text" type="button" onClick="{{a.go}}">{{a.label}}</button>
+              <button class="btn-text{{a.offCls}}" type="button" disabled="{{a.off}}" onClick="{{a.go}}">{{a.label}}</button>
             </sc-for>
             <a class="btn-text" href="{{mainHref}}">在工作台里看</a>
           </div>
+          <sc-if value="{{det.deepenState.show}}" hint-placeholder-val="{{ false }}"><p class="d-state">{{det.deepenState.text}}</p></sc-if>
+          <sc-if value="{{det.deepenFailed.show}}" hint-placeholder-val="{{ false }}"><p class="d-state"><span class="tx-failed">{{det.deepenFailed.text}}</span></p></sc-if>
         </section>
       </sc-if>
 
@@ -392,7 +424,7 @@ body { margin: 0; background: #1F1F1F; }
 class Component extends DCLogic {
   constructor(...args) {
     super(...args);
-    this.state = { theme: null, aroot: 'SYS', asel: null, hover: null, hoverE: null, q: '', workOnly: false, legend: false, view: 'sem', ofold: {} };
+    this.state = { theme: null, aroot: 'SYS', asel: null, hover: null, hoverE: null, q: '', workOnly: false, legend: false, view: 'sem', ofold: {}, exploreBusy: {}, exploreFailed: {}, deepenBusy: {}, deepenFailed: {}, commitOpen: null, commitDraft: null, commitBusy: false, commitError: '' };
   }
 
   componentDidUpdate(prev) {
@@ -1898,10 +1930,50 @@ class Component extends DCLogic {
     if (path) rel.push(this.grp('路径', { files: [this.pathParts(path)] }));
     const acts = [];
     if (isGroup && id !== lid) acts.push({ label: '进入这一层', go: () => set({ aroot: id, view: 'sem', hover: null, hoverE: null }) });
+    /* A depth row names a catalog module whose workspace finished its initialization. While an
+       unfinished deepen follow-up covers it there is no button, only the ruled state line after
+       `d-acts`; a failed write writes its text in the same place until the next click. */
+    const row = this.props.data && Array.isArray(this.props.data.deepen)
+      ? (this.props.data.deepen.find((entry) => entry.moduleId === id) || null) : null;
+    const key = String(id);
+    const busy = !!((this.state.deepenBusy || {})[key]);
+    const error = (this.state.deepenFailed || {})[key] || '';
+    if (row && !row.deepening) {
+      acts.push({ label: '再深一层', go: () => this.deepenModule(row), off: busy, offCls: busy ? ' is-off' : '' });
+    }
     return { isEdge: false, hasSq: true, sq: 'sq ' + (isGroup ? this.archSq(n, 'collapsed') : this.sqAt(n.st)), name: n.name,
       tx: isGroup ? 'tx-plain' : 'tx-' + n.st, word: isGroup ? this.countLine(n) : n.st === 'none' ? this.changeText(n, false) : W[n.st],
       why: this.props.data ? (!isGroup && n.tasks.length ? '：' + n.tasks.length + ' 个任务计划改它 · ' + this.changeText(n, false) : '') : !isGroup && n.tasks.length ? '：' + n.tasks.length + ' 个任务改动它' : '',
-      crumbs: crumbs, agent: this.ownerOf(id), sem: this.semOf(n) || (this.props.data ? '' : '这一层还没有写下语义说明。'), rel: rel, acts: acts, close: () => set({ asel: null, hover: null, hoverE: null }) };
+      crumbs: crumbs, agent: this.ownerOf(id), sem: this.semOf(n) || (this.props.data ? '' : '这一层还没有写下语义说明。'), rel: rel, acts: acts,
+      deepenState: row && row.deepening ? { show: true, text: '正在再深一层。' } : { show: false, text: '' },
+      deepenFailed: error !== '' ? { show: true, text: error } : { show: false, text: '' },
+      close: () => set({ asel: null, hover: null, hoverE: null }) };
+  }
+  /* One module's deepen click: only that module's button greys, and the last read's row is
+     the write's whole range. The next click or a successful write clears the failure text. */
+  deepenModule(row) {
+    const key = String(row.moduleId);
+    if ((this.state.deepenBusy || {})[key]) return;
+    const failed = Object.assign({}, this.state.deepenFailed || {}); delete failed[key];
+    this.setState({ deepenBusy: Object.assign({}, this.state.deepenBusy || {}, { [key]: true }), deepenFailed: failed });
+    const act = this.props.actions || {};
+    if (typeof act.deepenBlock !== 'function') {
+      this.setState({ deepenBusy: Object.assign({}, this.state.deepenBusy || {}, { [key]: false }) });
+      return;
+    }
+    Promise.resolve(act.deepenBlock(row.projectId, row.workspaceId, row.moduleId)).then(
+      () => {
+        const done = Object.assign({}, this.state.deepenFailed || {}); delete done[key];
+        this.setState({
+          deepenBusy: Object.assign({}, this.state.deepenBusy || {}, { [key]: false }),
+          deepenFailed: done,
+        });
+      },
+      (e) => this.setState({
+        deepenBusy: Object.assign({}, this.state.deepenBusy || {}, { [key]: false }),
+        deepenFailed: Object.assign({}, this.state.deepenFailed || {},
+          { [key]: String(e && e.message ? e.message : e) }),
+      }));
   }
   /* a folder of the comparison overlay (WorkGraph · 按文件夹观测) */
   folderDetail(fid) {
@@ -2642,6 +2714,9 @@ class Component extends DCLogic {
       legend: false, legendCls: 'seg-btn', toggleLegend: blankNoop, legendSrc: '',
       vsw: { show: false, isSem: true, isDir: false, semCls: 'seg-btn is-on', dirCls: 'seg-btn', toSem: blankNoop, toDir: blankNoop },
       cap: { main: '', src: '' },
+      exploreRows: [],
+      commitRows: [],
+      commit: { show: false, line: '', draft: '', onDraft: blankNoop, busy: false, failed: false, error: '', keep: blankNoop, go: blankNoop },
       bnd: { ins: [], outs: [], hasIn: false, hasOut: false },
       isGraph: false, isFiles: false,
       stage: { w: 0, h: 0 }, boxes: [],
@@ -2650,7 +2725,7 @@ class Component extends DCLogic {
       ft: { x: 0, y: 0, w: 0, cls: 'tree g-outline' }, frows: [], arcs: [],
       card: this.noCard(), unhover: blankNoop, unhoverE: blankNoop,
       hasDet: false, noDet: true,
-      det: { isEdge: false, hasSq: false, sq: '', name: '', tx: '', word: '', why: '', crumbs: [], agent: '', sem: '', rel: [], acts: [], close: blankNoop },
+      det: { isEdge: false, hasSq: false, sq: '', name: '', tx: '', word: '', why: '', crumbs: [], agent: '', sem: '', rel: [], acts: [], deepenState: { show: false, text: '' }, deepenFailed: { show: false, text: '' }, close: blankNoop },
       intro: { name: '', count: '', lines: [] },
       blank: { show: true, text: text, canRetry: status === 'error', retry: retry }
     };
@@ -2865,6 +2940,87 @@ class Component extends DCLogic {
     const workMods = {}; R.work.forEach((f) => { workMods[R.anc(f)[1]] = true; });
     const workFiles = R.workCounts ? R.workCounts.files : R.work.length;
     const workModuleCount = R.workCounts ? R.workCounts.modules : Object.keys(workMods).length;
+    /* 7D2 EXC: one ruled caption row per unfinished initialization exploration. The row's own
+       range comes from the last read; the click sends one write and the board only greys that
+       row's button. A failed write's text stays in the same row until the next click or a
+       successful write. */
+    const exploreBusy = s.exploreBusy || {};
+    const exploreFailed = s.exploreFailed || {};
+    const exploreRows = (this.props.data && Array.isArray(this.props.data.explore) ? this.props.data.explore : []).map((r) => {
+      const key = String(r.projectId) + '/' + String(r.workspaceId);
+      const busy = !!exploreBusy[key];
+      const error = exploreFailed[key] || '';
+      const go = () => {
+        if ((this.state.exploreBusy || {})[key]) return;
+        const failed = Object.assign({}, this.state.exploreFailed || {}); delete failed[key];
+        this.setState({ exploreBusy: Object.assign({}, this.state.exploreBusy || {}, { [key]: true }), exploreFailed: failed });
+        const act = this.props.actions || {};
+        const run = r.action === 'stop' ? act.stopExploration : act.continueExploration;
+        if (typeof run !== 'function') {
+          this.setState({ exploreBusy: Object.assign({}, this.state.exploreBusy || {}, { [key]: false }) });
+          return;
+        }
+        Promise.resolve(run.call(act, r.projectId, r.workspaceId)).then(
+          () => {
+            const failed = Object.assign({}, this.state.exploreFailed || {}); delete failed[key];
+            this.setState({
+              exploreBusy: Object.assign({}, this.state.exploreBusy || {}, { [key]: false }),
+              exploreFailed: failed,
+            });
+          },
+          (e) => this.setState({
+            exploreBusy: Object.assign({}, this.state.exploreBusy || {}, { [key]: false }),
+            exploreFailed: Object.assign({}, this.state.exploreFailed || {},
+              { [key]: String(e && e.message ? e.message : e) }),
+          }));
+      };
+      return { key: key, text: r.text, label: r.actionLabel, busy: busy,
+        btnCls: 'btn-text' + (busy ? ' is-off' : ''), hasError: !!error, error: error, go: go };
+    });
+    /* 7D2 EXC: one ruled bar per workspace whose knowledge directory has uncommitted places. The
+       row's own {projectId, workspaceId} comes from the last read; the click opens the confirmation
+       box, which sends one write, greys its 提交 while in flight and keeps its failure text. */
+    const commitBars = this.props.data && Array.isArray(this.props.data.commitBars) ? this.props.data.commitBars : [];
+    const commitDefault = (files) => '更新架构图和注记（' + files + ' 个文件）';
+    const commitRows = commitBars.map((r) => {
+      const key = String(r.projectId) + '/' + String(r.workspaceId);
+      return { key: key,
+        text: (r.workspaceName ? r.workspaceName + '：' : '') + '架构图和注记有 ' + r.dirty + ' 处改动还没提交',
+        label: '提交架构图和注记', btnCls: 'btn-text ov-commit-btn',
+        go: () => {
+          const now = this.state || {};
+          if (now.commitBusy || now.commitOpen === key) return;
+          this.setState({ commitOpen: key, commitDraft: null, commitBusy: false, commitError: '' });
+        } };
+    });
+    const openBar = commitBars.filter((r) => String(r.projectId) + '/' + String(r.workspaceId) === s.commitOpen)[0] || null;
+    /* Ruling 5: whether the person touched the message is its own fact, not a comparison
+       against the prefill; while untouched the prefill follows the files the read names. */
+    const untouchedDraft = s.commitDraft === null || s.commitDraft === undefined;
+    const commitDraft = untouchedDraft ? (openBar ? commitDefault(openBar.files) : '') : s.commitDraft;
+    const commit = {
+      show: !!openBar,
+      line: openBar ? '只提交 .workbench/ 里的 ' + openBar.files + ' 个文件，提交到当前分支 ' + openBar.branch + '，不碰代码。' : '',
+      draft: commitDraft,
+      onDraft: (e) => set({ commitDraft: e && e.target ? e.target.value : '' }),
+      busy: !!s.commitBusy,
+      failed: !!s.commitError,
+      error: s.commitError || '',
+      keep: () => set({ commitOpen: null, commitDraft: null, commitBusy: false, commitError: '' }),
+      go: () => {
+        if (!openBar || s.commitBusy) return;
+        const act = this.props.actions || {};
+        const run = act.commitKnowledge;
+        if (typeof run !== 'function') return;
+        /* Ruling 5: untouched words, or nothing but whitespace, ask the Host to write its own
+           message from the files it commits; the page never counts them again. */
+        const message = untouchedDraft || String(s.commitDraft).trim() === '' ? null : s.commitDraft;
+        this.setState({ commitBusy: true, commitError: '' });
+        Promise.resolve(run.call(act, openBar.projectId, openBar.workspaceId, message)).then(
+          () => this.setState({ commitOpen: null, commitDraft: null, commitBusy: false, commitError: '' }),
+          (e) => this.setState({ commitBusy: false, commitError: String(e && e.message ? e.message : e) }));
+      },
+    };
     /* the right column when nothing is selected */
     const lines = [];
     if (lay.mode === 'files') lines.push(lay.edges.length ? '上面的文件引用下面的。选中一个文件，左侧的弧线画出它在这一组里的引用；详情里列出它和别的分组之间的引用。'
@@ -2912,11 +3068,14 @@ class Component extends DCLogic {
       vsw: { show: lid === WG, isSem: view === 'sem', isDir: view === 'dir', semCls: 'seg-btn' + (view === 'sem' ? ' is-on' : ''), dirCls: 'seg-btn' + (view === 'dir' ? ' is-on' : ''),
         toSem: () => set({ view: 'sem', hover: null, hoverE: null, asel: s.asel && R.dirById[s.asel] ? null : s.asel }), toDir: () => set({ view: 'dir', hover: null, hoverE: null }) },
       cap: cap, bnd: bnd,
+      exploreRows: exploreRows,
+      commitRows: commitRows,
+      commit: commit,
       isGraph: lay.mode === 'graph', isFiles: lay.mode === 'files',
       stage: stage, boxes: boxes, lvl: topV, edges: edges, nodes: nodes, counts: counts,
       ft: ft, frows: frows, arcs: arcs,
       card: card, unhover: () => set({ hover: null }), unhoverE: () => set({ hoverE: null }),
-      hasDet: !!det, noDet: !det, det: det || { isEdge: false, hasSq: false, sq: '', name: '', tx: '', word: '', why: '', crumbs: [], agent: '', sem: '', rel: [], acts: [], close: () => {} },
+      hasDet: !!det, noDet: !det, det: det || { isEdge: false, hasSq: false, sq: '', name: '', tx: '', word: '', why: '', crumbs: [], agent: '', sem: '', rel: [], acts: [], deepenState: { show: false, text: '' }, deepenFailed: { show: false, text: '' }, close: () => {} },
       intro: intro,
       blank: { show: false, text: '', canRetry: false, retry: () => {} }
     };

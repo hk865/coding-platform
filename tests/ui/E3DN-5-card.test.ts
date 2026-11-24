@@ -7,16 +7,15 @@ import type { FakeElement } from './helpers/dom.js';
 import { byLabel } from './helpers/E3C-world.js';
 import { card, sendButton, typeInto } from './helpers/E3D-page.js';
 import { buttonText, press, settle, UUID_V4, worldSlot } from './helpers/E3M-world.js';
-import { notConnected } from './helpers/E3N-interact.js';
 import { countRoute, descendants, hasClass, textOf } from './helpers/E3N-page.js';
 
 /**
- * E3DN-5 D13–D14b (test sheet §2.5): the delivery card shows only on a
- * completed Goal; its 接受 / 部分接受 / 要求补做 wait for the acceptance
- * package (unconnected); 问秘书 asks through `requests/submit` and reads the
- * request once. The world's request driver is off, so the test answers the
- * page's round through the public Query routes before the page's one
- * `requests/read` goes out (`answerDoneAsk`).
+ * E3DN-5 D13b–D14b (test sheet §2.5): the delivery card is 请知悉 and its
+ * 知道了 / 我要审查 / 有问题 writes are `goals/accept-delivery`, `queries/ask`
+ * and `messages/send` (D15 in E3DN-10); 问秘书 asks through `requests/submit`
+ * and reads the request once. The world's request driver is off, so the test
+ * answers the page's round through the public Query routes before the page's
+ * one `requests/read` goes out (`answerDoneAsk`).
  */
 
 const slot = worldSlot();
@@ -29,37 +28,17 @@ const bubbles = (root: FakeElement, name: string) => descendants(root)
   .filter((element) => hasClass(element, name)).map((element) => textOf(element));
 
 describe('E3DN-5 the delivery card and 问秘书', () => {
-  it.each([{ action: '接受' }, { action: '部分接受' }, { action: '要求补做' }])(
-    'D13 $action is unconnected and opens nothing', async ({ action }) => {
-      const done = await completedWorld();
-      const { page, log } = await bootDone(done.world, done.goal.goalId);
-      try {
-        await settle(() => card(page.root) !== undefined, 10_000);
-        const open = card(page.root)!;
-        /* 具名改坏: COMPLETED 的 why 写死“等你验收”；本行红。 */
-        expect(textOf(findClass(goalBar(page.root)!, 'gb-why'))).toBe('');
-        expect(textOf(findClass(open, 'dc-title'))).toContain('交付');
-        expect(textOf(findClass(open, 'dc-title'))).toContain('目标 1');
-        const before = log.calls.length;
-        /* 具名改坏: 去掉“接受”的 `aria-disabled`；本条目的 aria 断言红。 */
-        notConnected(buttonText(open, action)!);
-        expect(log.calls.length).toBe(before);
-        /* 具名改坏: 去掉“部分接受”的守卫（打开勾选面板）；本条目 notConnected 的 preventDefault 断言红。 */
-        expect(findClass(page.root, 'dv-pick')).toBeUndefined();
-      } finally {
-        await page.restore();
-      }
-    }, 180_000);
-
   it('D13b an active Goal shows the composer, not the delivery card', async () => {
     const done = await openWorld();
-    const { page } = await bootDone(done.world, done.goal.goalId);
+    const { page, log } = await bootDone(done.world, done.goal.goalId);
     try {
       await settle(() => buttonText(byLabel(page.root, '目标状态'), '暂停') !== undefined, 10_000);
       /* 具名改坏: 未完成也画卡；本行红。 */
       expect(card(page.root)).toBeUndefined();
       /* 具名改坏: `canView: !!D`；未完成的目标也画“查看交付”，本行红。 */
       expect(findLink(page.root, '查看交付')).toBeUndefined();
+      /* 具名改坏: 未完成也读 `goals/delivery`；本行红。 */
+      expect(countRoute(log, 'goals/delivery')).toBe(0);
       expect(composerBox(page.root)).toBeDefined();
     } finally {
       await page.restore();

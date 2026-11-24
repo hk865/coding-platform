@@ -24,6 +24,11 @@ import type {
 import type { QueryJobRef } from '../../contracts/query-job.js';
 import type { ArtifactRef } from '../../contracts/artifact.js';
 import type { RunRef, TaskTriple } from '../../contracts/dispatch.js';
+import type {
+  KnowledgeFileSourceV1, KnowledgeProblemKindV1, KnowledgeProblemV1, KnowledgeRecoveryItemV1,
+  KnowledgeRecoverySourceV1, ProposalBatchFileV1,
+} from '../../contracts/knowledge.js';
+import { rawModuleId } from '../../contracts/workspace-module-id.js';
 
 /** The `DecisionCardV1` fields this page reads (the UI keeps its own boundary
  * shape at the JSON edge; no `src/core` import). */
@@ -69,6 +74,11 @@ export type NoticeItemV1 = {
   itemKey: string; category: NoticeCategoryV1; subject: DecisionSubjectV1;
   position: NoticePositionV1; summary: string; objects: DecisionObjectV1[];
   rework: { requestedAt: string } | null;
+  /** KC-1 4-10: the three knowledge kinds carry their kind; every other project notice omits it.
+   * The five literals are `decision-contracts.ts:499-501`'s union, copied because `src/ui`
+   * cannot import `src/core`. */
+  noticeKind?: 'knowledge_write_unconfirmed' | 'knowledge_reverted' | 'knowledge_conflict'
+    | 'check_approved' | 'check_to_person';
 };
 
 export type DecisionQueueReadV1 = {
@@ -96,7 +106,22 @@ export type DecideSource = {
   queue: DecisionQueueReadV1[];
   tasks: Record<string, unknown | null>;
   selectedGoalId: string | null;
+  /** KC-1 G2: each waiting structural card's `architecture/proposal-batch-files`, by
+   * cardKey; `null` is that card's failed read. Absent when the caller did not read
+   * the list (the Plan page draws no structural card). */
+  proposalFiles?: Record<string, readonly ProposalBatchFileV1[] | null>;
+  /** X9: each knowledge notice's detail reads, by notice item key. `null` in either
+   * field is that read's failure; `'not_found'` is the route's “nothing there”. */
+  noticeFacts?: Record<string, KnowledgeNoticeRead>;
+  /** The project's workspace names; with more than one, every file row says which. */
+  workspaceNames?: Record<string, string>;
 };
+
+/** X9: one knowledge notice's two reads. `'not_found'` is the read saying there is
+ * nothing (recovery items all gone, or the notice's problems gone), never a failure. */
+export type KnowledgeRecoveryRead = readonly KnowledgeRecoveryItemV1[] | 'not_found' | null;
+export type KnowledgeProblemsRead = readonly KnowledgeProblemV1[] | 'not_found' | null;
+export type KnowledgeNoticeRead = { recovery: KnowledgeRecoveryRead; problems?: KnowledgeProblemsRead };
 
 /** The page's own state; the adapter only needs the two tab/filter switches. */
 export type DecideUi = {
@@ -131,6 +156,18 @@ export type DecideData = {
   taskGoalIds: string[];
   /** The on-demand answer body, by cardKey. */
   answerBodies: Record<string, string>;
+  /** X9: the knowledge notices' detail rows, by notice item key (the notice's
+   * `itemKey`, the same key `answerBodies` uses for cards). */
+  noticeFacts: Record<string, DecideFact[]>;
+};
+
+/** One row of a card's or a notice's 详情. X9 gives a notice row a row-end write:
+ * the recovery item it writes back and the words of the step that confirms it. */
+export type DecideFact = {
+  k: string;
+  v: string;
+  files?: { path: string; parts: string[] }[];
+  recover?: { itemNo: number; label: string; path: string; source: string };
 };
 
 export type DecideSection = { name: '要决定' | '请知悉' | '已处理'; level: 'decide' | 'notice' | 'done'; rows: DecideRow[] };
@@ -163,7 +200,7 @@ export type DecideCard = {
   line: string;
   path: string;
   position: string;
-  facts: { k: string; v: string; files?: { path: string; parts: string[] }[] }[];
+  facts: DecideFact[];
   options: { id: string; label: string; effect: 'apply' | 'reject' | 'defer' }[];
   actions: DecideActionKey[];
   subject: DecisionSubjectV1;
@@ -216,7 +253,7 @@ export type DecideActionKey =
   | 'requeue' | 'fix' | 'note' | 'attest' | 'answer-body';
 
 export type DecideStepKey = 'requeue' | 'fix' | 'note' | 'attest'
-  | 'defer' | 'cancel' | 'restore' | 'continue';
+  | 'defer' | 'cancel' | 'restore' | 'continue' | 'repropose' | 'recover' | 'seen';
 export type DecideForm = {
   reason?: string; budget?: string; name?: string; checks?: boolean[]; note?: string;
 };
@@ -270,8 +307,10 @@ function pinsOf(card: DecisionCardV1): Array<{ ref: unknown; revision: number }>
   return Array.isArray(card.source.pins) ? card.source.pins as Array<{ ref: unknown; revision: number }> : [];
 }
 
-/** §2.7: requisition's `meta.expected` takes only the Goal and this Run pin. */
-export function pinsFor(card: DecisionCardV1, kind: 'Goal' | 'Run'): Array<{ ref: unknown; revision: number }> {
+/** §2.7: requisition's `meta.expected` takes only the Goal and this Run pin; the
+ * structural card also takes its one batch pin by the same aggregate type. */
+export function pinsFor(card: DecisionCardV1,
+  kind: 'Goal' | 'Run' | 'ArchitectureProposalBatch'): Array<{ ref: unknown; revision: number }> {
   return pinsOf(card).filter((pin) => asText(asRecord(pin.ref).aggregateType) === kind);
 }
 
@@ -351,6 +390,145 @@ function factsOf(row: Record<string, unknown>): DecideCard['facts'] {
     { k: '尝试', v: attempt },
     { k: '最近拒绝', v: last },
   ];
+}
+
+/** KC-1 G2/X9: who last wrote a knowledge file, the one file-source word both the
+ * proposal card's file list and a conflict notice's place use. */
+const FILE_SOURCE_WORD: Record<KnowledgeFileSourceV1, string> = {
+  platform: '平台写的', committed: '已提交', uncommitted: '未提交',
+};
+
+/** X9: a recovery item's kind as the notice detail's key. */
+const RECOVERY_WORD: Record<KnowledgeRecoveryItemV1['kind'], string> = {
+  reverted: '被撤回', write_unconfirmed: '没确认落盘', unreadable: '读不出',
+};
+
+/** X9: a conflict notice place's kind as the notice detail's key (contracts/knowledge.ts:37-38). */
+const PROBLEM_WORD: Record<KnowledgeProblemKindV1, string> = {
+  bad_file: '读不出', duplicate_module_id: '模块号重了',
+  path_claimed_by_two_modules: '两个模块认领同一路径',
+  dangling_reference: '引用了不存在的模块', module_without_file: '缺模块文件',
+  unreachable: '走不到', partial_contains: '包含不全', cycle: '依赖成环',
+  project_merge: '几个工作区合不起来', other: '其他',
+};
+
+/** KC-2 121-106 ④: where a bad file's recovery takes its bytes; the button says “用 …”
+ * and the step's “写回” sentence names the same place without it. */
+function recoverySourceWords(source: KnowledgeRecoverySourceV1): { button: string; step: string } {
+  if (source.source === 'snapshot') {
+    const at = localShortAt(source.takenAt);
+    return { button: '用 ' + at + ' 的快照', step: ' ' + at + ' 快照里的版本' };
+  }
+  if (source.source === 'head') {
+    const at = localShortAt(source.takenAt);
+    return { button: '用上次提交（' + at + '）的版本', step: '上次提交（' + at + '）的版本' };
+  }
+  return { button: '用平台记录的版本', step: '平台记录的版本' };
+}
+
+/** One path's directory parts; the only split of a shown path in this file. Each
+ * part keeps its trailing slash the way the board's own `pathParts` draws it. */
+function filePartsOf(path: string): string[] {
+  const parts = path.split('/');
+  return parts.map((part, index) => (index < parts.length - 1 ? part + '/' : part));
+}
+
+/**
+ * X9 (121-106 ④): one knowledge notice's 详情. A reverted or unconfirmed notice
+ * lists every remaining recovery item as one 被撤回/没确认落盘 row with its path
+ * and one 恢复 button; once the items read says there is nothing, its one row
+ * says the files are all restored. A conflict notice lists every place instead
+ * (its kind word, the backend's own Chinese reason, then each file's writer): a
+ * place with a `recovery` source gets its button only while the same `itemNo` is
+ * still an `unreadable` recovery item; after the recovery the place stays and
+ * ends "已恢复". A conflict never says "都已恢复" (double claims, dangling refs
+ * and the like have no recovery item at all). Any failed read is this notice's
+ * one "暂时读不到" row, never a throw.
+ */
+export function knowledgeNoticeFactsOf(
+  noticeKind: string | undefined,
+  read: KnowledgeNoticeRead,
+): DecideFact[] {
+  if (noticeKind !== 'knowledge_reverted' && noticeKind !== 'knowledge_write_unconfirmed'
+    && noticeKind !== 'knowledge_conflict') return [];
+  if (noticeKind !== 'knowledge_conflict') {
+    if (read.recovery === null) return [{ k: '恢复', v: '暂时读不到' }];
+    if (read.recovery === 'not_found') return [{ k: '恢复', v: '这条通知里的文件都已恢复' }];
+    const source = noticeKind === 'knowledge_reverted' ? '被撤回之前的版本' : '平台当时要写的内容';
+    return read.recovery.map((item) => ({
+      k: RECOVERY_WORD[item.kind],
+      v: '',
+      files: [{ path: item.path, parts: filePartsOf(item.path) }],
+      recover: { itemNo: item.itemNo, label: '恢复', path: item.path, source },
+    }));
+  }
+  if (read.problems === undefined || read.problems === null || read.recovery === null) {
+    return [{ k: '问题', v: '暂时读不到' }];
+  }
+  if (read.problems === 'not_found') return [{ k: '问题', v: '这条通知里的问题已经没有了' }];
+  const items = read.recovery === 'not_found' ? [] : read.recovery;
+  return read.problems.map((problem): DecideFact => {
+    const places = problem.files.map((file) => file.path + ' ' + FILE_SOURCE_WORD[file.source]).join('；');
+    const v = problem.reason + (places === '' ? '' : '（' + places + '）');
+    const source = problem.recovery;
+    const path = problem.files[0]?.path ?? '';
+    if (source === undefined || path === '') return { k: PROBLEM_WORD[problem.kind], v };
+    const item = items.find((entry) => entry.itemNo === problem.itemNo && entry.kind === 'unreadable');
+    if (item === undefined) return { k: PROBLEM_WORD[problem.kind], v: v + '已恢复' };
+    const words = recoverySourceWords(source);
+    return { k: PROBLEM_WORD[problem.kind], v,
+      recover: { itemNo: problem.itemNo, label: '恢复（' + words.button + '）', path, source: words.step } };
+  });
+}
+
+/**
+ * §2.3 (KC-1 G2): the structural proposal card's file list. The backend's
+ * read-only trial already names each file's action and writer; this only groups
+ * the rows the page draws. A `willRevert` file appears once, in 会改回, because
+ * approving would overwrite the person's own bytes (ruling 4-9, user 问 3 甲).
+ * Paths are relative to their own workspace, so a project with more than one
+ * workspace prefixes every row's value (and a nameless new module's id is the
+ * module's own frame, `rawModuleId`).
+ */
+export function proposalFileFactsOf(
+  files: readonly ProposalBatchFileV1[] | null,
+  workspaceNames: Record<string, string>,
+): DecideCard['facts'] {
+  if (files === null) return [{ k: '会改的文件', v: '暂时读不到' }];
+  const byWorkspace = new Map<string, ProposalBatchFileV1[]>();
+  for (const file of files) {
+    const rows = byWorkspace.get(file.workspaceId);
+    if (rows === undefined) byWorkspace.set(file.workspaceId, [file]);
+    else rows.push(file);
+  }
+  const multiWorkspace = Object.keys(workspaceNames).length > 1;
+  const proposalFileParts = (rows: readonly ProposalBatchFileV1[]): { path: string; parts: string[] }[] =>
+    rows.flatMap((file) => file.path === null ? [] : [{ path: file.path, parts: filePartsOf(file.path) }]);
+  const out: DecideCard['facts'] = [];
+  for (const [workspaceId, rows] of byWorkspace) {
+    const name = workspaceNames[workspaceId] ?? '';
+    const prefix = multiWorkspace && name !== '' ? name + '：' : '';
+    const revert = rows.filter((file) => file.willRevert);
+    if (revert.length > 0) {
+      out.push({ k: '会改回', v: prefix + '批准后会改回平台记录的版本，你在这个文件里的改动会被盖掉',
+        files: proposalFileParts(revert) });
+    }
+    for (const file of rows) {
+      if (file.willRevert || file.action !== 'create' || file.path !== null) continue;
+      const moduleId = file.moduleId === null ? '' : rawModuleId(file.moduleId).moduleId;
+      out.push({ k: '会新建', v: prefix + '新模块 ' + moduleId + ' 的文件，批准时定名' });
+    }
+    const creates = rows.filter((file) => !file.willRevert && file.action === 'create' && file.path !== null);
+    if (creates.length > 0) out.push({ k: '会新建', v: prefix, files: proposalFileParts(creates) });
+    for (const action of ['modify', 'delete'] as const) {
+      const word = action === 'modify' ? '会修改' : '会删除';
+      for (const source of ['platform', 'committed', 'uncommitted'] as const) {
+        const subset = rows.filter((file) => !file.willRevert && file.action === action && file.source === source);
+        if (subset.length > 0) out.push({ k: word, v: prefix + FILE_SOURCE_WORD[source], files: proposalFileParts(subset) });
+      }
+    }
+  }
+  return out;
 }
 
 /**
@@ -525,6 +703,8 @@ function makeView(args: {
   path: string; state: string; goalId: string; ordinal: number | null; taskRef: TaskTriple | null;
   goalName: string; taskName: string; taskRow: Record<string, unknown> | null;
   plan: unknown; pins: Array<{ ref: unknown; revision: number }>; files: { path: string; parts: string[] }[];
+  proposalFiles?: readonly ProposalBatchFileV1[] | null;
+  workspaceNames: Record<string, string>;
 }): DecideCard {
   const { card, taskRow } = args;
   const files = args.files;
@@ -571,9 +751,10 @@ function makeView(args: {
     line: answer !== null ? answer.selection + (answer.application === 'pending' ? '；等落实' : answer.application === 'applied' ? '；已落实' : '') : '',
     path: args.path,
     position: '',
-    facts: release !== null ? actionFacts
-      : taskRow !== null ? factsOf(taskRow)
-        : conflict ? [{ k: '重叠文件', v: '', files }] : [],
+    facts: args.proposalFiles !== undefined ? proposalFileFactsOf(args.proposalFiles, args.workspaceNames)
+      : release !== null ? actionFacts
+        : taskRow !== null ? factsOf(taskRow)
+          : conflict ? [{ k: '重叠文件', v: '', files }] : [],
     options,
     actions: [...new Set([
       ...(card.options.length > 0 && !card.readOnly ? ['answer' as const] : []),
@@ -626,6 +807,9 @@ export function adaptDecide(source: DecideSource, ui: DecideUi): DecideData {
   };
 
   const rows: DecideRow[] = [];
+  /* X9: one table for the knowledge notices' details, keyed by the notice's own
+     item key (like `answerBodies`); a read that did not happen leaves no entry. */
+  const noticeFacts: Record<string, DecideFact[]> = {};
   const pushCard = (card: DecisionCardV1, level: DecideRow['level'], window: DecideRow['noticeWindow']): void => {
     const triple = taskTripleOf(card);
     const goalId = subjectGoalId(card.subject) ?? triple?.goalId ?? null;
@@ -645,7 +829,7 @@ export function adaptDecide(source: DecideSource, ui: DecideUi): DecideData {
     const files = (Array.isArray(card.objects) ? card.objects : [])
       .map((entry) => asRecord(entry))
       .filter((object) => object.kind === 'file' && asText(object.path) !== '')
-      .map((object) => ({ path: asText(object.path), parts: asText(object.path).split('/') }));
+      .map((object) => ({ path: asText(object.path), parts: filePartsOf(asText(object.path)) }));
     const ordinal = ordinalOf(goalId);
     const label = conflict
       ? '与目标 ' + String(otherId === null ? '' : ordinalOf(otherId) ?? '') + ' 冲突'
@@ -680,10 +864,13 @@ export function adaptDecide(source: DecideSource, ui: DecideUi): DecideData {
     const path = '目标 ' + String(ordinal ?? '') + (taskName === '' ? ' / ' + nameOf(goalId) : ' / ' + taskName);
     const time = timeOf(level === 'done'
       ? card.answer?.respondedAt ?? card.openedAt : card.openedAt);
+    const proposalFiles = card.source.kind === 'structural_proposal'
+      ? source.proposalFiles?.[card.cardKey] : undefined;
     const view = makeView({
       card, nav: source.nav, level, key: card.cardKey, label, title: label, path, state,
       goalId: goalId ?? '', ordinal, goalName: nameOf(goalId), taskName, taskRow, taskRef: triple,
       plan: taskGoalId === null ? null : source.tasks[taskGoalId] ?? null, pins, files,
+      ...(proposalFiles === undefined ? {} : { proposalFiles }), workspaceNames: source.workspaceNames ?? {},
     });
     rows.push({
       key: card.cardKey, level, card, notice: null, label, sub, time, state,
@@ -695,6 +882,8 @@ export function adaptDecide(source: DecideSource, ui: DecideUi): DecideData {
     const rework = notice.rework;
     const time = timeOf(rework === null ? null : rework.requestedAt);
     const sub = nameOf(goalId) + ' · ' + (CATEGORY_WORD[notice.category] ?? notice.category);
+    const detail = source.noticeFacts?.[notice.itemKey];
+    if (detail !== undefined) noticeFacts[notice.itemKey] = knowledgeNoticeFactsOf(notice.noticeKind, detail);
     rows.push({
       key: notice.itemKey, level: 'notice', card: null, notice, label: notice.summary, sub, time,
       state: 'waiting', goalId, askRef: notice.summary, noticeWindow: window, view: null,
@@ -773,6 +962,7 @@ export function adaptDecide(source: DecideSource, ui: DecideUi): DecideData {
     plans,
     taskGoalIds: Object.keys(source.tasks),
     answerBodies,
+    noticeFacts,
   };
 }
 

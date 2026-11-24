@@ -547,8 +547,9 @@ body { margin: 0; background: #1F1F1F; }
           <sc-for list="{{log}}" as="l" hint-placeholder-count="1">
             <sc-if value="{{l.isSys}}" hint-placeholder-val="{{ true }}">
               <div class="sys-line">
-                <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="m3.25 8.5 3 3 6.5-7"></path></svg>
-                <span>{{l.text}}</span>
+                <sc-if value="{{l.hasIcon}}" hint-placeholder-val="{{ true }}"><svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="m3.25 8.5 3 3 6.5-7"></path></svg></sc-if>
+                <sc-if value="{{l.noGo}}" hint-placeholder-val="{{ true }}"><span>{{l.text}}</span></sc-if>
+                <sc-if value="{{l.goLink}}" hint-placeholder-val="{{ false }}"><a class="ref" href="{{l.href}}" title="{{l.goTip}}">{{l.text}}</a></sc-if>
                 <span class="t">{{l.t}}</span>
               </div>
             </sc-if>
@@ -703,7 +704,7 @@ body { margin: 0; background: #1F1F1F; }
               <sc-for list="{{dc.acts}}" as="a" hint-placeholder-count="2">
                 <button class="{{a.cls}}" type="button" onClick="{{a.go}}" title="{{a.title}}" aria-disabled="{{a.aria}}">{{a.label}}</button>
               </sc-for>
-              <button class="{{dc.primaryCls}}" type="button" onClick="{{dc.primaryGo}}" title="还没接通" aria-disabled="{{dc.primaryOff}}">{{dc.primaryLabel}}</button>
+              <button class="{{dc.primaryCls}}" type="button" onClick="{{dc.primaryGo}}" title="{{dc.primaryTip}}" aria-disabled="{{dc.primaryOff}}">{{dc.primaryLabel}}</button>
             </div>
           </section>
         </sc-if>
@@ -1527,6 +1528,9 @@ class Component extends DCLogic {
   componentDidUpdate(prev) {
     const s = this.state || {};
     if (prev && prev.theme !== this.props.theme && s.theme) this.setState({ theme: null });
+    const before = prev && prev.data && prev.data.nav ? prev.data.nav.selectedGoalId : null;
+    const after = this.props.data && this.props.data.nav ? this.props.data.nav.selectedGoalId : null;
+    if (before !== after) this.setState({ problemOpen: false, askRef: '', askSq: '', draft: '', cardClosed: false, facts: false });
     this.revealSel();
   }
 
@@ -2810,7 +2814,7 @@ class Component extends DCLogic {
       later: T.later.map((t) => ({ name: t.name, sq: 'sq z8 s-' + t.phase, go: ncGo,
         cls: 'd-item ' + nc.class, tip: nc.title, aria: nc['aria-disabled'] })),
       differLabel: '在任务图里看', differ: '还没接通', differGo: ncGo, differCls: 'btn-text ' + nc.class,
-      differTip: nc.title, differAria: nc['aria-disabled'], commit: '还没接通' });
+      differTip: nc.title, differAria: nc['aria-disabled'], commit: T.commit });
 
     const R = D ? D.rework : { sum: '', rows: [], autoNote: '' };
     const rws = R.rows.map((r) => {
@@ -2856,11 +2860,42 @@ class Component extends DCLogic {
     });
 
     /* ---------- the delivery card, its on/off actions and the composer ---------- */
+    const busy = this._dlvBusy || (this._dlvBusy = {});
+    const hold = (key, started) => {
+      busy[key] = true;
+      set({ dlvBusy: Object.assign({}, busy) });
+      return Promise.resolve(started).finally(() => {
+        busy[key] = false;
+        set({ dlvBusy: Object.assign({}, busy) });
+      });
+    };
+    const pushLog = (entry) => {
+      const prev = (this.state || {}).log || [];
+      set({ log: prev.concat([entry]) });
+    };
+    const logWriteFailure = (label, goal) => (error) => pushLog({ goal, isSys: true, noIcon: true,
+      text: '「' + label + '」没有成功：' + String(error && error.message ? error.message : error), t: '' });
     const CD = data ? data.card : null;
     const cardOpen = CD !== null && CD !== undefined && !s.cardClosed;
     let dc;
     if (cardOpen) {
-      dc = { show: true, lvl: CD.level, sq: 'sq z8 s-decide', locate: ncGo, locateTip: nc.title,
+      const review = () => {
+        if (busy.review || typeof A.reviewDelivery !== 'function') return;
+        hold('review', A.reviewDelivery()).then((reply) => pushLog({ goal: nav.selectedGoalId, isSys: true,
+          text: '已请秘书审查，回答在秘书的工作线里', t: '',
+          goLink: true, href: reply.href, goTip: '打开秘书的工作线' }))
+          .catch(logWriteFailure('我要审查', nav.selectedGoalId));
+      };
+      /* K5: 有问题 starts its own draft and drops the old one; the sample's `redo` would carry the
+         sample words into the data branch, so the state key is `problemOpen`. */
+      const openProblemDraft = () => set({ problemOpen: true, askOpen: true, askRef: CD.askRef,
+        askSq: 'sq z8 s-waiting', draft: '' });
+      const ack = () => {
+        if (CD.primary.off || busy.ack || typeof A.ackDelivery !== 'function') return;
+        hold('ack', A.ackDelivery()).catch(logWriteFailure('知道了', nav.selectedGoalId));
+      };
+      dc = { show: true, lvl: CD.level, sq: 'sq z8 s-waiting',
+        locate: ncGo, locateTip: nc.title,
         locateCls: 'btn-text ellipsis ' + nc.class, locateAria: nc['aria-disabled'],
         path: CD.path, pos: '', hasNext: false, next: noop,
         close: () => set({ cardClosed: true }),
@@ -2870,18 +2905,36 @@ class Component extends DCLogic {
         toggleFacts: () => set({ facts: !(this.state || {}).facts }),
         facts: CD.facts.map((f) => ({ k: f.k, v: f.v })),
         picking: false, picks: [], pickNote: '',
-        acts: CD.actions.map((a) => ({ label: a.label, cls: 'btn btn-sm btn-line ' + nc.class,
-          go: ncGo, title: nc.title, aria: nc['aria-disabled'] })),
-        primaryCls: 'btn btn-sm btn-primary is-off', primaryLabel: CD.primary.label,
-        primaryGo: ncGo, primaryOff: true,
-        ask: () => set({ askOpen: true, askRef: CD.askRef, askSq: 'sq z8 s-decide' }) };
+        acts: CD.actions.map((a) => {
+          const off = a.off || !!busy[a.key];
+          return { label: a.label, cls: 'btn btn-sm btn-line' + (off ? ' is-off' : ''),
+            go: () => { if (off) return; if (a.key === 'review') review(); else openProblemDraft(); },
+            title: a.tip, aria: off ? 'true' : 'false' };
+        }),
+        primaryCls: 'btn btn-sm btn-primary' + (CD.primary.off || busy.ack ? ' is-off' : ''),
+        primaryLabel: CD.primary.label,
+        primaryGo: ack, primaryOff: CD.primary.off || !!busy.ack, primaryTip: CD.primaryTip,
+        ask: () => set({ problemOpen: false, askOpen: true, askRef: CD.askRef, askSq: 'sq z8 s-waiting' }) };
     } else dc = Object.assign({}, base.dc, { show: false });
 
     const draft = s.draft || '';
     const send = () => {
+      if (busy.send) return;
       const text = String((this.state || {}).draft || '').trim();
-      if (!text || typeof A.askSecretary !== 'function') return;
+      if (!text) return;
       const goalId = nav.selectedGoalId;
+      if (s.problemOpen) {
+        if (typeof A.reportDeliveryProblem !== 'function') return;
+        hold('send', A.reportDeliveryProblem(text)).then(() => {
+          const prev = (this.state || {}).log || [];
+          set({ log: prev.concat([
+            { goal: goalId, isUser: true, text: '有问题：' + text, t: '' },
+            { goal: goalId, isSys: true, text: '已发给秘书。目标已经完成，会先请你确认一个接续的新目标。', t: '' },
+          ]), draft: '', askRef: '', askSq: '', askOpen: false, problemOpen: false });
+        }).catch(logWriteFailure('有问题', goalId));
+        return;
+      }
+      if (typeof A.askSecretary !== 'function') return;
       A.askSecretary(text, null).then((reply) => {
         if (reply === null) return;
         const prev = (this.state || {}).log || [];
@@ -2895,7 +2948,9 @@ class Component extends DCLogic {
     };
     const log = ((s.log || [])).filter((l) => l.goal === nav.selectedGoalId).map((l) => ({
       isSys: !!l.isSys, isUser: !!l.isUser, isAgent: !!l.isAgent, text: l.text, t: l.t || '',
-      from: l.from || '', hasFrom: !!l.from }));
+      from: l.from || '', hasFrom: !!l.from, hasIcon: !l.noIcon,
+      goLink: !!l.goLink, noGo: !l.goLink, href: l.href || '', goTip: l.goTip || '' }));
+    const problemOpen = !!s.problemOpen;
 
     const selectedGoal = nav.goals.filter((g) => g.goalId === nav.selectedGoalId)[0] || null;
     const ax = Object.assign({}, base.ax, {
@@ -2918,11 +2973,15 @@ class Component extends DCLogic {
       log: log,
       lv: Object.assign({}, base.lv, { hide: true, show: false }),
       composerOpen: (!!s.askOpen || !dc.show) && !gb.confirm,
-      hasAsk: !!s.askRef, askRef: s.askRef || '', askLead: '引用',
+      hasAsk: !!s.askRef, askRef: s.askRef || '', askLead: problemOpen ? '有问题' : '引用',
       askSq: s.askSq || 'sq z8 s-pending',
-      clearAsk: () => set({ askOpen: false, askRef: '', askSq: '' }), clearAskLabel: '移除引用',
+      clearAsk: () => set({ problemOpen: false, askOpen: false, askRef: '', askSq: '' }),
+      clearAskLabel: problemOpen ? '不说了' : '移除引用',
+      composerLabel: problemOpen ? '说说哪里有问题' : '发给秘书',
+      composerPh: problemOpen ? '说说哪里不对。目标已经完成，秘书会先请你确认一个接续的新目标'
+        : '问秘书，或说出你要做的事。输入 # 引用任务或模块',
       draft: draft, onDraft: (e) => set({ draft: e && e.target ? e.target.value : '' }),
-      sendCls: 'send' + (draft.trim() ? '' : ' is-off'), send: send,
+      sendCls: 'send' + (draft.trim() && !busy.send ? '' : ' is-off'), send: send,
       ax: ax,
     });
   }
@@ -3040,7 +3099,7 @@ class Component extends DCLogic {
     const switchGoal = (id) => () => {
       const st = this.state || {};
       if (st.goal === id) { if (st.line) set(this.lvLeave()); return; }
-      set(Object.assign(this.mapReset(), this.lvLeave(), { goal: id, pane: st.pane || 'chat', densMenu: false, confirmCancel: false }, dropRedo()));
+      set(Object.assign(this.mapReset(), this.lvLeave(), { goal: id, pane: st.pane || 'chat', densMenu: false, confirmCancel: false, draft: '' }, dropRedo()));
     };
     const goals = ['g1', 'g2', 'g3'].map((id, i) => {
       const n = decideOf(id).length;
@@ -3258,7 +3317,7 @@ class Component extends DCLogic {
     /* decision card (the delivery's verdict lives here, where the composer is) */
     const cur = s.dec && !gb.confirm ? openQ.filter((x) => x.id === s.dec)[0] : null;
     const dc = { show: !!cur, picking: false, picks: [], pickNote: '', hasFacts: false, showFacts: false, facts: [], acts: [],
-      locateCls: 'btn-text ellipsis', primaryCls: 'btn btn-sm btn-primary', primaryOff: false, lineCls: 'dc-line' };
+      locateCls: 'btn-text ellipsis', primaryCls: 'btn btn-sm btn-primary', primaryOff: false, primaryTip: '还没接通', lineCls: 'dc-line' };
     if (cur) {
       const pos = openQ.indexOf(cur);
       const nextItem = openQ[(pos + 1) % openQ.length];
@@ -3531,7 +3590,7 @@ class Component extends DCLogic {
       refT21: () => go.selTask('T21', 'g1'), refT21Sq: 'sq ' + this.sqAt((tm1.byId.T21 || {}).st || 'satisfied'),
       refT44: () => go.selTask('T44', 'g1'), refT44Sq: 'sq ' + this.sqAt((tm1.byId.T44 || {}).st || 'future'),
       dv: dv,
-      log: (s.log || []).filter((l) => (l.goal || 'g1') === goal).map((l) => ({ isSys: !!l.isSys, isUser: !!l.isUser, isAgent: !!l.isAgent, text: l.text, t: l.t, from: l.from || '', hasFrom: !!l.from })),
+      log: (s.log || []).filter((l) => (l.goal || 'g1') === goal).map((l) => ({ isSys: !!l.isSys, isUser: !!l.isUser, isAgent: !!l.isAgent, text: l.text, t: l.t, from: l.from || '', hasFrom: !!l.from, hasIcon: true, noGo: true, goLink: false })),
 
       mainHref: this.props.mainHref || 'Main.dc.html',
       gb: gb, dc: dc,

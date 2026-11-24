@@ -14,6 +14,10 @@ import type { ArchitectureChangeScopeV1 } from '../../contracts/architecture-sea
 import type { ArtifactRef } from '../../contracts/artifact.js';
 import type { ContinuationBriefV1 } from '../../contracts/continuation-brief.js';
 import type { EvidenceOutcome } from '../../contracts/evidence.js';
+import type { GoalDeliveryAcceptanceV1 } from '../../contracts/goal-delivery.js';
+import type { SessionRef } from '../../contracts/core/identity.js';
+import type { CoreScope } from '../host-client.js';
+import type { GoalRef } from '../../contracts/ledger.js';
 import type { RunRef } from '../../contracts/dispatch.js';
 import type { TaskExecutionRecord } from '../../contracts/execution-read.js';
 import type { TaskRow } from '../../contracts/task-graph.js';
@@ -25,7 +29,7 @@ import { taskProgressOf } from './goals.js';
 import { briefRowsOf } from './member.js';
 import { WITNESS_CHECK_WORD } from './chain.js';
 import {
-  CHECK_RESULT_WORD, requirementWordOf, FAILURE_CLASS_WORD, goalDisplayState, reworkLines, taskStateOfRow,
+  CHECK_RESULT_WORD, requirementWordOf, FAILURE_CLASS_WORD, goalDisplayState, localShortAt, reworkLines, taskStateOfRow,
 } from './task-map.js';
 
 /** The `verification/round` projection this page reads (§2.3): the delivery's
@@ -60,6 +64,35 @@ export type DoneRunActivity = {
   runRef: RunRef;
   status: 'counted' | 'not_entered' | 'in_progress' | 'unknown';
   readings: { usage: { tokens: number | null; complete: boolean } };
+};
+
+/** `goals/delivery`'s fields this page reads (K2). The route's value is
+ * `GoalDeliveryReadV1`; `src/ui` declares only what it draws. */
+export type DoneDeliveryRead = {
+  goal: {
+    revision: number;
+    workspaceRef: { projectId: string; workspaceId: string };
+    settings: { autonomy: string };
+    objective: string;
+  };
+  phaseRevision: number | null;
+  acceptance: GoalDeliveryAcceptanceV1 | null;
+  /** Each row's `review` is the `TaskNodeCommitV1` record; its own `review.kind` is the fact. */
+  nodes: { review: { review: { kind: 'committed' | 'acknowledged' } } | null }[];
+  secretary: SessionRef | null;
+};
+
+/** The card's three writes' facts, all from the one `goals/delivery` read; the
+ * scope is the Goal's own workspace (K2/K3, ruling 9). `null` when the read
+ * failed, so a stale revision never becomes the next write's pin. */
+export type DoneDeliveryWrite = {
+  goalRef: GoalRef;
+  goalRevision: number;
+  phaseRevision: number;
+  secretary: SessionRef | null;
+  scope: CoreScope;
+  goalOrdinal: number | null;
+  goalName: string;
 };
 
 export type DoneBlank = 'no_goal' | 'no_completed_goal' | null;
@@ -111,6 +144,8 @@ export type DoneFilesSection = {
 export type DoneTodoSection = {
   sum: string;
   later: { taskId: string; name: string; phase: string }[];
+  /** K8: what the platform did with commits and pushes, from `goals/delivery`. */
+  commit: string;
 };
 
 export type DoneReworkSection = {
@@ -141,7 +176,7 @@ export type DoneDelivery = {
 
 export type DoneDeliveryCard = {
   key: 'delivery';
-  level: '要决定';
+  level: '请知悉';
   title: string;
   line: string;
   path: string;
@@ -149,8 +184,12 @@ export type DoneDeliveryCard = {
   hasFacts: boolean;
   /** §2.10/N43: the composer's prefill, built here so the page never parses `path`. */
   askRef: string;
-  actions: { key: 'redo' | 'partial'; label: string }[];
-  primary: { key: 'accept'; label: '接受' };
+  /** K1: the current completion already has its acceptance record. */
+  acked: boolean;
+  /** K1/K2: `off` and `tip` are the read's own answer, never the page's guess. */
+  actions: { key: 'review' | 'problem'; label: string; off: boolean; tip: string }[];
+  primary: { key: 'ack'; label: '知道了'; off: boolean };
+  primaryTip: string;
 };
 
 export type DoneData = {
@@ -160,6 +199,8 @@ export type DoneData = {
   delivery: DoneDelivery | null;
   deliveryState: DoneDeliveryState;
   card: DoneDeliveryCard | null;
+  /** K2: the three card writes' facts; null when the delivery read failed. */
+  deliveryWrite: DoneDeliveryWrite | null;
   reports: Record<string, string>;
   reportError: string | null;
   /** §2.7 A07 (F5): the one `taskProgressOf` rule Goals and Main draw. The
@@ -183,6 +224,10 @@ export type DoneSource = {
   /** A continuing Run's brief; `null` is "no continuation brief". */
   briefs: Record<string, ContinuationBriefV1 | null>;
   activity: DoneRunActivity[];
+  /** K2: the one `goals/delivery` read of a completed Goal; `null` is "not read
+   * or failed", with `deliveryError` naming a failure. */
+  delivery: DoneDeliveryRead | null;
+  deliveryError: string | null;
   reports: Record<string, string>;
   reportError: string | null;
 };
@@ -320,13 +365,27 @@ function filesSectionOf(source: DoneSource): DoneFilesSection {
   };
 }
 
-function todoSectionOf(tasks: readonly TaskRow[]): DoneTodoSection {
+function todoSectionOf(source: DoneSource, tasks: readonly TaskRow[]): DoneTodoSection {
   const later = tasks.filter((row) => row.definition.taskKind === 'work').map((row) => {
     const state = taskStateOfRow(row);
     if (state !== 'future' && state !== 'deferred') return null;
     return { taskId: row.ref.taskId, name: doneTaskTitle(row) + (state === 'deferred' ? '（已延后）' : ''), phase: state };
   }).filter((row): row is { taskId: string; name: string; phase: string } => row !== null);
-  return { sum: '以后再做 ' + String(later.length) + ' 项', later };
+  return { sum: '以后再做 ' + String(later.length) + ' 项', later, commit: commitTextOf(source) };
+}
+
+/** K8/ruling 10: the delivery's own node rows say what was committed. A cancelled
+ * Goal says so; a completed Goal whose delivery read failed says so. */
+function commitTextOf(source: DoneSource): string {
+  const phase = source.nav.selectedDisplay?.phase;
+  if (phase === 'CANCELLED') return '目标已取消';
+  if (phase !== 'COMPLETED') return '目标还没完成';
+  const delivery = source.delivery;
+  if (delivery === null) return '交付暂时读不到';
+  const committed = delivery.nodes.filter((node) => node.review?.review.kind === 'committed').length;
+  if (committed > 0) return '平台已为 ' + String(committed) + ' 个任务提交，没有推送';
+  if (delivery.goal.settings.autonomy === 'after_plan_confirmation') return '方案确认后自动的目标，平台不替你提交；没有推送';
+  return '没有节点需要提交；没有推送';
 }
 
 function reworkSectionOf(source: DoneSource, tasks: readonly TaskRow[]): DoneReworkSection {
@@ -420,27 +479,66 @@ function doneDelivery(source: DoneSource): DoneDelivery | null {
     title,
     acc: { sum: accSumOf(source.deliveryState, round), reqs, note: policyNote(source.policy) },
     files: filesSectionOf(source),
-    todo: todoSectionOf(nav.tasks?.tasks ?? []),
+    todo: todoSectionOf(source, nav.tasks?.tasks ?? []),
     rework: reworkSectionOf(source, nav.tasks?.tasks ?? []),
     usage: usageSectionOf(source),
   };
 }
 
+/** K2: the write facts come from the one `goals/delivery` read and the Goal
+ * row the page shows; a failed read leaves `null` so no stale pin is reused. */
+function deliveryWriteOf(source: DoneSource, goalId: string | null, ordinal: number | null): DoneDeliveryWrite | null {
+  const delivery = source.delivery;
+  const scope = source.nav.scope;
+  if (delivery === null || delivery.phaseRevision === null || scope === null || goalId === null) return null;
+  return {
+    goalRef: { aggregateType: 'Goal', projectId: scope.projectId, goalId },
+    goalRevision: delivery.goal.revision,
+    phaseRevision: delivery.phaseRevision,
+    secretary: delivery.secretary,
+    scope: { projectId: delivery.goal.workspaceRef.projectId, workspaceId: delivery.goal.workspaceRef.workspaceId },
+    goalOrdinal: ordinal,
+    goalName: delivery.goal.objective,
+  };
+}
+
+/** K1: the card is 请知悉 (nothing waits on it), its three actions come from
+ * the delivery read, and "知道了" is not a review (121-45). */
 function doneCard(source: DoneSource, delivery: DoneDelivery | null, ordinal: number | null): DoneDeliveryCard | null {
   const phase = source.nav.selectedDisplay?.phase ?? '';
   if (phase !== 'COMPLETED' || delivery === null) return null;
   const number = ordinal === null ? '' : ' ' + String(ordinal);
+  const acceptance = source.delivery?.acceptance ?? null;
+  const errorTip = source.deliveryError ?? '';
+  const secretaryTip = source.delivery?.secretary === null ? '这个工作区还没有秘书，发不出去' : '';
+  const facts = [{ k: '现在', v: goalDisplayState('COMPLETED').word }];
+  if (acceptance !== null) {
+    facts.push({ k: '确认', v: localShortAt(acceptance.acceptedAt) + ' 你点了“知道了”，这不等于审查过' });
+  }
+  const lines = [
+    '知道了：记下你看过这次交付，这不等于审查过。',
+    '我要审查：请秘书审查实现、改动和规格是否一致，回答在秘书的工作线里。',
+    '有问题：说说哪里不对。目标已经完成，秘书会先请你确认一个接续的新目标。',
+  ];
+  if (errorTip !== '') lines.push('现在点不了：交付暂时读不到。');
+  else if (secretaryTip !== '') lines.push('现在发不出去：这个工作区还没有秘书。');
+  if (acceptance !== null) lines.push('这次交付已经确认过。');
   return {
     key: 'delivery',
-    level: '要决定',
+    level: '请知悉',
     title: '交付：目标' + number,
-    line: '交付还等你验收：可以接受、部分接受，或者要求补做。',
+    line: lines.join('\n'),
     path: '目标' + number + ' / 交付',
-    facts: [{ k: '现在', v: goalDisplayState('COMPLETED').word }],
+    facts,
     hasFacts: true,
     askRef: ordinal === null ? '交付' : '目标 ' + String(ordinal) + ' 的交付',
-    actions: [{ key: 'redo', label: '要求补做' }, { key: 'partial', label: '部分接受' }],
-    primary: { key: 'accept', label: '接受' },
+    acked: acceptance !== null,
+    actions: [
+      { key: 'review', label: '我要审查', off: errorTip !== '' || secretaryTip !== '', tip: errorTip || secretaryTip },
+      { key: 'problem', label: '有问题', off: errorTip !== '' || secretaryTip !== '', tip: errorTip || secretaryTip },
+    ],
+    primary: { key: 'ack', label: '知道了', off: errorTip !== '' || acceptance !== null },
+    primaryTip: errorTip || (acceptance !== null ? '已经确认过这次交付' : ''),
   };
 }
 
@@ -469,6 +567,7 @@ export function adaptDone(source: DoneSource): DoneData {
     delivery,
     deliveryState: source.deliveryState,
     card: doneCard(source, delivery, goal === null ? null : goal.ordinal),
+    deliveryWrite: deliveryWriteOf(source, nav.selectedGoalId, goal === null ? null : goal.ordinal),
     reports: source.reports,
     reportError: source.reportError,
     progress: taskProgressOf(nav.tasks),

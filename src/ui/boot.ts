@@ -20,7 +20,9 @@ import { adaptChain, type ChainData, type ChainSource } from './adapters/chain.j
 import {
   readSettings, saveSettings, SettingsNotEffectiveError, type SettingsData,
 } from './adapters/settings.js';
-import { adaptDone, type DoneData, type DonePolicyRead, type DoneRoundRead, type DoneRunActivity, type DoneSource } from './adapters/done.js';
+import {
+  adaptDone, type DoneData, type DoneDeliveryRead, type DonePolicyRead, type DoneRoundRead, type DoneRunActivity, type DoneSource,
+} from './adapters/done.js';
 import {
   readLine, readSessionTrace, requeueVisible, submitRunControl, type LineReadValue,
 } from './adapters/line-shared.js';
@@ -43,13 +45,17 @@ import {
 } from './adapters/aux-panel.js';
 import { adaptGoals, conflictSelectionOf, goalOrderOf, type GoalsData } from './adapters/goals.js';
 import {
-  adaptDecide, budgetTokensOf, draftOf, pinsFor, subjectGoalId, taskTripleOf, type DecideCard, type DecideData, type DecideRow, type DecideStepKey,
+  adaptDecide, budgetTokensOf, draftOf, pinsFor, subjectGoalId, taskTripleOf,
+  type DecideCard, type DecideData, type DecideRow, type DecideStepKey, type KnowledgeNoticeRead,
 } from './adapters/decide.js';
 import {
-  adaptArchOverview, type ArchCatalogRead, type ArchNoteRead, type ArchObservedRead, type ArchOverviewData,
-  type ArchOverviewSource,
+  adaptArchOverview, type ArchCatalogRead, type ArchNoteRead, type ArchObservedRead, type ArchOperationRow,
+  type ArchOverviewData, type ArchOverviewSource,
 } from './adapters/arch-overview.js';
 import type { ArchitectureObservationStateV1 } from '../contracts/architecture-observation.js';
+import type {
+  KnowledgeCommitResult, KnowledgeCommitStatus, KnowledgeProblemV1, KnowledgeRecoveryItemV1, ProposalBatchFileV1,
+} from '../contracts/knowledge.js';
 import type { ControlIntentSnapshotV1 } from '../contracts/control-intent.js';
 import type { ContinuationBriefV1 } from '../contracts/continuation-brief.js';
 import type { GraphHoverReadV1, LineExecutionItemV1, LineMessageStateV1, WorkLineDetailV1, WorkLineSectionPageV1 } from '../contracts/work-line.js';
@@ -97,6 +103,9 @@ let latestSelectedGoalId: string | null = null;
 /** §2.7: the one line the four line actions read, set by `publish` from a
  * successful Member or Main read only (READS-1); a failed reread keeps none. */
 let latestLine: { scope: CoreScope; line: MemberLine; write: MemberWriteBasis | null } | null = null;
+/** K2: the shown delivery's write facts, set by `publish` from a successful Done
+ * read only; a failed reread keeps the previous ones like every other write seam. */
+let latestDelivery: DoneData['deliveryWrite'] = null;
 /** D42/decision 121-…: after 采用 the request's candidate closes, so the Plan
  * read no longer carries the adopted draft; the page keeps the adopted card
  * (prototype `Plan.dc.html:4506` 已采用, checks included) while that version is
@@ -448,6 +457,13 @@ export type BoardActions = {
   /** §2.8: one `goals/control` write with the Goal and GoalPhase pins the page
    * last showed, then the same refresh loop rereads the chrome. */
   controlGoal: (control: 'pause' | 'resume' | 'cancel') => Promise<void>;
+  /** K3: one `goals/accept-delivery` with the shown delivery's Goal and GoalPhase pins. */
+  ackDelivery: () => Promise<void>;
+  /** K4: one `queries/ask` to the delivery's secretary; returns the Member-page
+   * link the page puts on its own system line. */
+  reviewDelivery: () => Promise<{ href: string }>;
+  /** K5: one `messages/send` from the delivery page, with `entry: person_intervention`. */
+  reportDeliveryProblem: (text: string) => Promise<void>;
   /** §2.3: one `goals/reorder` write with every Goal's current revision, then
    * the same refresh loop rereads the list. */
   reorderGoal: (goalId: string, direction: 'up' | 'down') => Promise<void>;
@@ -464,8 +480,21 @@ export type BoardActions = {
     reference: RequestReferenceInputV1 | readonly RequestReferenceInputV1[] | null,
     options?: { continues?: QueryJobRef | null },
   ) => Promise<{ root: string; input: string; answer: string | null } | null>;
-  /** D18/D30: one `decisions/answer` with the card's own source and pins. */
-  answerCard: (cardKey: string, optionId: string) => Promise<void>;
+  /** D18/D30: one `decisions/answer` with the card's own source and pins. `text` is
+   * the repropose reason; every other card sends `''`. */
+  answerCard: (cardKey: string, optionId: string, text?: string) => Promise<void>;
+  /** 7D2 X9: one `knowledge/recover` for the shown knowledge notice's recovery
+   * item (the notice id is the row's `project_notice:` suffix), then a reread. */
+  recoverKnowledge: (itemKey: string, itemNo: number) => Promise<void>;
+  /** 7D2 EXC: stop the shown workspace's unfinished initialization exploration; the range and
+   * `input.workspace` come from the row of the last ArchOverview read. */
+  stopExploration: (projectId: string, workspaceId: string) => Promise<void>;
+  /** 7D2 EXC: continue the shown workspace's stopped exploration, from the same last read. */
+  continueExploration: (projectId: string, workspaceId: string) => Promise<void>;
+  /** 7D2 EXC: open one more exploration round for the shown module, from the same last read. */
+  deepenBlock: (projectId: string, workspaceId: string, moduleId: string) => Promise<void>;
+  /** 121-74: commit the shown workspace's architecture and note files, from the same last read. */
+  commitKnowledge: (projectId: string, workspaceId: string, message: string | null) => Promise<void>;
   /** D22/D24/D34/D35: `tasks/requeue`, afterRun and pins from the card itself. */
   requeueCard: (cardKey: string, input: { reason: string; budget: string | null }) => Promise<void>;
   /** D26/D39: `verification/reverify` with the Task's head round and its one pin. */
@@ -632,6 +661,9 @@ export async function bootBoardPage(): Promise<void> {
    * its source/pins/task/run from these, never from a route shape the page sends. */
   let latestDecide: DecideData | null = null;
   let latestDecideScope: CoreScope | null = null;
+  /** The ArchOverview read the page last published; its rows carry the range each exploration
+   * and knowledge write sends, so a click never reads a second time. */
+  let latestArch: ArchOverviewData | null = null;
   /** §2.7: the one line the four line actions read, set by both readers. */
   /** Chain's last successful read; the write seams live beside the reader. */
   let latestChain: ChainData | null = null;
@@ -646,6 +678,12 @@ export async function bootBoardPage(): Promise<void> {
       .find((row) => row.key === key) ?? null;
   };
   const decideCardOf = (key: string): DecisionCardV1 | null => decideRowOf(key)?.card ?? null;
+  /** One ArchOverview row's own range; a row that is no longer in the last read never becomes a
+   * guessed scope. */
+  const archRowScope = (row: { projectId: string; workspaceId: string } | null): CoreScope => {
+    if (row === null) throw new Error(knowledgeWriteTextOf(new Error('the architecture row is gone')));
+    return { projectId: row.projectId, workspaceId: row.workspaceId };
+  };
   /** §2.7 D20/D21: one propose, then one apply only when the proposal is
    * committed and has no issues; both pin the displayed Goal revision. */
   async function writePlanChange(
@@ -818,6 +856,80 @@ export async function bootBoardPage(): Promise<void> {
         },
       });
       committedRouteValue(reply, 'goals/control');
+      await refresh.reread();
+    },
+    async ackDelivery(): Promise<void> {
+      const data = latestDelivery;
+      if (data === null) throw new Error(writeTextOf(new Error('no delivery')));
+      const phaseRef = { aggregateType: 'GoalPhase' as const, projectId: data.scope.projectId, goalId: data.goalRef.goalId };
+      try {
+        /* K3/ACC-02: exactly the Goal and GoalPhase pins the delivery read showed. */
+        const reply = await client.write('goals/accept-delivery', data.scope, {
+          input: { goalRef: data.goalRef },
+          meta: {
+            requestId: crypto.randomUUID(),
+            expected: [
+              { ref: data.goalRef, revision: data.goalRevision },
+              { ref: phaseRef, revision: data.phaseRevision },
+            ],
+          },
+        });
+        committedRouteValue(reply, 'goals/accept-delivery');
+      } catch (error) {
+        throw new Error(deliveryWriteTextOf(error));
+      }
+      await refresh.reread();
+    },
+    async reviewDelivery(): Promise<{ href: string }> {
+      const data = latestDelivery;
+      if (data === null || data.secretary === null) {
+        throw new Error(writeTextOf(new Error('no secretary')));
+      }
+      /* K4/ruling 4: the secretary is the workspace's one line and `queries/ask`
+         carries no Goal, so the question names the Goal and its number. */
+      const target = data.goalOrdinal === null
+        ? '目标「' + data.goalName + '」'
+        : '目标 ' + String(data.goalOrdinal) + '「' + data.goalName + '」';
+      const question = '请审查' + target + '的交付：实现、改动和规格是否一致，行为有没有偏离。';
+      let reply: RouteReply;
+      try {
+        reply = await client.post('queries/ask', data.scope, {
+          sessionRef: data.secretary, question, commandId: crypto.randomUUID(),
+        });
+      } catch (error) {
+        throw new Error(deliveryWriteTextOf(error));
+      }
+      if (reply.status !== 'queued') {
+        throw new Error(deliveryWriteTextOf(new RouteReadError('queries/ask',
+          reply.code || reply.status || 'no status', reply.reason ?? '')));
+      }
+      await refresh.reread();
+      return { href: lineHref('Member.dc.html', data.goalRef.goalId, data.secretary) };
+    },
+    async reportDeliveryProblem(text: string): Promise<void> {
+      const data = latestDelivery;
+      if (data === null || data.secretary === null) {
+        throw new Error(writeTextOf(new Error('no secretary')));
+      }
+      let reply: RouteReply;
+      try {
+        /* K5/ACC-11: the person's own intervention entry needs the Goal on a
+           completed delivery; the Host then opens the follow-up request. */
+        reply = await client.write('messages/send', data.scope, {
+          input: {
+            recipient: data.secretary, goalRef: data.goalRef, needsReply: true,
+            entry: 'person_intervention', text,
+          },
+          meta: { requestId: crypto.randomUUID(), expected: [] },
+        });
+        committedRouteValue(reply, 'messages/send');
+      } catch (error) {
+        throw new Error(deliveryWriteTextOf(error));
+      }
+      const result = asRecord(reply);
+      if (result.sendStatus !== 'sent' && result.sendStatus !== 'awaiting_release') {
+        throw new Error(deliveryWriteTextOf(new Error('messages/send did not send')));
+      }
       await refresh.reread();
     },
     async reorderGoal(goalId: string, direction: 'up' | 'down'): Promise<void> {
@@ -1052,7 +1164,7 @@ export async function bootBoardPage(): Promise<void> {
       }
       return { root: requestRootKey(requestRoot as QueryJobRef), input: text, answer };
     },
-    async answerCard(cardKey: string, optionId: string): Promise<void> {
+    async answerCard(cardKey: string, optionId: string, text = ''): Promise<void> {
       const card = decideCardOf(cardKey);
       const scope = latestDecideScope;
       if (card === null || scope === null) throw new Error(writeTextOf(new Error('the shown card is gone')));
@@ -1074,7 +1186,7 @@ export async function bootBoardPage(): Promise<void> {
       }
       try {
         const reply = await client.write('decisions/answer', scope, {
-          input: { source: card.source, selection, text: '', annotations: [] },
+          input: { source: card.source, selection, text, annotations: [] },
           meta: { requestId: crypto.randomUUID(), expected: pins },
         });
         const receipt = reply.status === 'ready' ? asRecord(asRecord(reply.value).answer) : null;
@@ -1083,6 +1195,85 @@ export async function bootBoardPage(): Promise<void> {
         }
       } catch (error) {
         throw new Error(writeTextOf(error));
+      }
+      await refresh.reread();
+    },
+    async recoverKnowledge(itemKey: string, itemNo: number): Promise<void> {
+      const row = decideRowOf(itemKey);
+      const scope = latestDecideScope;
+      if (row === null || row.notice === null || scope === null) {
+        throw new Error(writeTextOf(new Error('the shown notice is gone')));
+      }
+      /* X9: the notice's id is the queue item key without its `project_notice:` prefix
+         (project-notice-notices.ts:87); no second read of the queue is made here. */
+      const prefix = 'project_notice:';
+      const noticeId = row.key.startsWith(prefix) ? row.key.slice(prefix.length) : '';
+      if (noticeId === '') throw new Error(writeTextOf(new Error('this notice names no project notice')));
+      try {
+        const reply = await client.post('knowledge/recover', scope, { noticeId, itemNo });
+        committedRouteValue(reply, 'knowledge/recover');
+      } catch (error) {
+        throw new Error(knowledgeWriteTextOf(error));
+      }
+      await refresh.reread();
+    },
+    async stopExploration(projectId: string, workspaceId: string): Promise<void> {
+      const row = latestArch?.explore.find((entry) => entry.projectId === projectId
+        && entry.workspaceId === workspaceId && entry.action === 'stop') ?? null;
+      const scope = archRowScope(row);
+      try {
+        const reply = await client.write('workspaces/exploration/stop', scope, {
+          input: { workspace: scope },
+          /* The owner checks the person, not a version; the route requires `expected` to be an
+             array, and the stop write carries no pins. */
+          meta: { requestId: crypto.randomUUID(), expected: [] },
+        });
+        committedRouteValue(reply, 'workspaces/exploration/stop');
+      } catch (error) {
+        throw new Error(knowledgeWriteTextOf(error));
+      }
+      await refresh.reread();
+    },
+    async continueExploration(projectId: string, workspaceId: string): Promise<void> {
+      const row = latestArch?.explore.find((entry) => entry.projectId === projectId
+        && entry.workspaceId === workspaceId && entry.action === 'continue') ?? null;
+      const scope = archRowScope(row);
+      try {
+        const reply = await client.write('workspaces/exploration/continue', scope, {
+          input: { workspace: scope },
+          meta: { requestId: crypto.randomUUID(), expected: [] },
+        });
+        committedRouteValue(reply, 'workspaces/exploration/continue');
+      } catch (error) {
+        throw new Error(knowledgeWriteTextOf(error));
+      }
+      await refresh.reread();
+    },
+    async deepenBlock(projectId: string, workspaceId: string, moduleId: string): Promise<void> {
+      const row = latestArch?.deepen.find((entry) => entry.projectId === projectId
+        && entry.workspaceId === workspaceId && entry.moduleId === moduleId && !entry.deepening) ?? null;
+      const scope = archRowScope(row);
+      try {
+        const reply = await client.write('workspaces/exploration/deepen', scope, {
+          input: { workspace: scope, module: { projectId: scope.projectId, moduleId } },
+          meta: { requestId: crypto.randomUUID(), expected: [] },
+        });
+        committedRouteValue(reply, 'workspaces/exploration/deepen');
+      } catch (error) {
+        throw new Error(knowledgeWriteTextOf(error));
+      }
+      await refresh.reread();
+    },
+    async commitKnowledge(projectId: string, workspaceId: string, message: string | null): Promise<void> {
+      const row = latestArch?.commitBars.find((entry) => entry.projectId === projectId
+        && entry.workspaceId === workspaceId) ?? null;
+      const scope = archRowScope(row);
+      try {
+        const reply = await client.post('knowledge/commit', scope, { message });
+        /* `knowledge/commit` writes no record: its one success status is `ready`. */
+        readyRouteValue<KnowledgeCommitResult>(reply, 'knowledge/commit');
+      } catch (error) {
+        throw new Error(knowledgeWriteTextOf(error));
       }
       await refresh.reread();
     },
@@ -1390,8 +1581,9 @@ export async function bootBoardPage(): Promise<void> {
       let reply: RouteReply;
       try {
         reply = await client.write('messages/send', data.scope, {
-          /* p2-frozen §2.1/§2.3: only this direct-intervention entry writes `entry`; the Host claims,
-             plans or opens a new-goal request only for a stored `person_intervention` (B20). */
+          /* p2-frozen §2.1/§2.3: two entries write `entry` — this direct-intervention line send and
+             Done's 有问题 (`reportDeliveryProblem`); the Host claims, plans or opens a new-goal
+             request only for a stored `person_intervention` (B20). */
           input: { recipient: line.key, text, needsReply: true, entry: 'person_intervention' },
           meta: { requestId: crypto.randomUUID(), expected: [] },
         });
@@ -1557,6 +1749,7 @@ export async function bootBoardPage(): Promise<void> {
           latestDecide = snapshot.data as DecideData | null;
           latestDecideScope = latestDecide?.scope ?? null;
         }
+        if (boardName === 'ArchOverview') latestArch = snapshot.data as ArchOverviewData | null;
         /* MainData is flat `NavData &` extras, so the card writes use this
            read's queue exactly like Decide's own. */
         const main = snapshot.data as MainData | null;
@@ -1573,6 +1766,7 @@ export async function bootBoardPage(): Promise<void> {
         if (boardName === 'Main') {
           latestLine = main?.line && main.scope ? { scope: main.scope, line: main.line.line, write: main.line.write } : null;
         }
+        if (boardName === 'Done') latestDelivery = (snapshot.data as DoneData | null)?.deliveryWrite ?? null;
       }
       const props = pageProps(defaults, snapshot, restart, actions);
       if (snapshot.error === null && snapshot.data !== null) {
@@ -1687,9 +1881,11 @@ async function readUncommittedByWorkspace(
  * verification round, `architecture/change-scope`, one `graph/detail` per Task
  * (only its actual files), `files/uncommitted` for those paths, the Runs and
  * their briefs, `activity/runs`, and — only when the page asks for one digest —
- * `materials/open`. `not_found` is a legitimate empty state only where §2.2
- * names it; every other failure is the read's own error. No route shape reaches
- * the page: `adaptDone` folds it into `DoneData`.
+ * `materials/open`. A completed Goal also reads `goals/delivery`; a
+ * `RouteReadError` there only greys the card's three actions, while every other
+ * failure is the read's own error. `not_found` is a legitimate empty state only
+ * where §2.2 names it. No route shape reaches the page: `adaptDone` folds it
+ * into `DoneData`.
  */
 export async function readDone(
   client: ReturnType<typeof createHostClient>, goalId: string | null,
@@ -1710,7 +1906,7 @@ export async function readDone(
         files: [], modules: [], counts: { files: 0, changed: 0, possible: 0 }, complete: true, sourceCursor: null,
       },
       taskFiles: {}, taskFilesIncomplete: false, files: null, runs: [], briefs: {}, activity: [],
-      reports: {}, reportError: null,
+      delivery: null, deliveryError: null, reports: {}, reportError: null,
     };
     return { data: adaptDone(blankSource), cursor };
   }
@@ -1749,6 +1945,22 @@ export async function readDone(
     } catch (error) {
       if (!(error instanceof RouteReadError) || error.code !== 'not_found') throw error;
       deliveryState = 'no_round';
+    }
+  }
+
+  /* ⑤b K2: the delivery card's own read, only while the shown Goal displays as
+     completed. A failed read greys its three actions and drops the write facts,
+     but the five sections from the routes above are still drawn. */
+  let delivery: DoneDeliveryRead | null = null;
+  let deliveryError: string | null = null;
+  if (nav.selectedDisplay?.phase === 'COMPLETED') {
+    try {
+      delivery = readyRouteValue<DoneDeliveryRead>(
+        await client.post('goals/delivery', scope, { goalRef }), 'goals/delivery');
+    } catch (error) {
+      if (!(error instanceof RouteReadError)) throw error;
+      logReadError(error);
+      deliveryError = pageTextOf(error);
     }
   }
 
@@ -1864,7 +2076,7 @@ export async function readDone(
   return {
     data: adaptDone({
       nav, deliveryState, round, policy, changeScope, taskFiles, taskFilesIncomplete,
-      files, runs, briefs, activity, reports, reportError,
+      files, runs, briefs, activity, delivery, deliveryError, reports, reportError,
     }),
     cursor,
   };
@@ -2121,11 +2333,14 @@ export async function readNav(
  * token, and `tasks/query` is read only for Goals that actually carry a Task
  * card. A card-bearing Goal the navigation read already read
  * (`nav.phaseRevision`) is not read twice. `materials/open` stays the caller's
- * on-demand step.
+ * on-demand step. With `readProposalFiles`, every waiting structural card also
+ * reads its own batch's file list (KC-1 G2), and every knowledge notice in 请知悉
+ * reads its places or recovery items (X9): Main and Decide draw them, Plan does
+ * not, and a failed read is that notice's one "暂时读不到" row.
  */
 export async function readDecisionQueue(
   client: ReturnType<typeof createHostClient>, scope: CoreScope, nav: NavData,
-  demand: BoardReadDemand, workspaceRevision: number,
+  demand: BoardReadDemand, workspaceRevision: number, readProposalFiles = false,
 ): Promise<DecideData> {
   const sections: Array<'waiting_answer' | 'notices' | 'answered_pending_application' | 'history'> =
     demand.decideDone === true ? ['answered_pending_application', 'history'] : ['waiting_answer', 'notices'];
@@ -2142,6 +2357,77 @@ export async function readDecisionQueue(
     pages.push(page);
     after = page.nextCursor ?? null;
     if (after === null) break;
+  }
+  /* KC-1 G2: each waiting structural card's batch files, by cardKey. `null` is
+     that card's failed read; a card without a batch pin is not read. */
+  let proposalFiles: Record<string, readonly ProposalBatchFileV1[] | null> | undefined;
+  let workspaceNames: Record<string, string> | undefined;
+  if (readProposalFiles) {
+    const cards = pages.flatMap((page) => page.waitingAnswer ?? [])
+      .filter((card) => card.source.kind === 'structural_proposal');
+    if (cards.length > 0) {
+      const boot = await client.bootstrap();
+      workspaceNames = {};
+      for (const entry of boot.workspaces) {
+        if (entry.scope.projectId === scope.projectId) workspaceNames[entry.scope.workspaceId] = entry.name;
+      }
+      proposalFiles = {};
+      for (const card of cards) {
+        const batch = pinsFor(card, 'ArchitectureProposalBatch')[0];
+        if (batch === undefined) continue;
+        try {
+          const read = readyRouteValue<{ files?: readonly ProposalBatchFileV1[] }>(
+            await client.post('architecture/proposal-batch-files', scope, { batchRef: batch.ref }),
+            'architecture/proposal-batch-files',
+          );
+          proposalFiles[card.cardKey] = read.files ?? [];
+        } catch (error) {
+          logReadError(error);
+          proposalFiles[card.cardKey] = null;
+        }
+      }
+    }
+  }
+  /* X9: a knowledge notice's detail. The notice id is the item key's suffix; a
+     conflict reads its places first and then the recovery items, the other two
+     kinds read only the recovery items. `not_found` is “nothing there”; every
+     other failure is that notice's one "暂时读不到" row, logged and not thrown. */
+  let noticeFacts: Record<string, KnowledgeNoticeRead> | undefined;
+  const notices = pages.flatMap((page) => page.notices ?? []).filter((notice) =>
+    notice.noticeKind === 'knowledge_reverted' || notice.noticeKind === 'knowledge_write_unconfirmed'
+    || notice.noticeKind === 'knowledge_conflict');
+  if (readProposalFiles && notices.length > 0) {
+    noticeFacts = {};
+    for (const notice of notices) {
+      const noticeId = notice.itemKey.startsWith('project_notice:')
+        ? notice.itemKey.slice('project_notice:'.length) : '';
+      let problems: KnowledgeNoticeRead['problems'] = 'not_found';
+      let recovery: KnowledgeNoticeRead['recovery'] = null;
+      if (notice.noticeKind === 'knowledge_conflict') {
+        if (noticeId === '') {
+          problems = null;
+        } else {
+          try {
+            problems = readyRouteValue<{ problems: readonly KnowledgeProblemV1[] }>(
+              await client.post('knowledge/problems', scope, { noticeId }), 'knowledge/problems').problems;
+          } catch (error) {
+            if (error instanceof RouteReadError && error.code === 'not_found') problems = 'not_found';
+            else { logReadError(error); problems = null; }
+          }
+        }
+      }
+      if (noticeId !== '' && problems !== null) {
+        try {
+          recovery = readyRouteValue<{ items: readonly KnowledgeRecoveryItemV1[] }>(
+            await client.post('knowledge/recovery-items', scope, { noticeId }), 'knowledge/recovery-items').items;
+        } catch (error) {
+          if (error instanceof RouteReadError && error.code === 'not_found') recovery = 'not_found';
+          else { logReadError(error); recovery = null; }
+        }
+      }
+      noticeFacts[notice.itemKey] = notice.noticeKind === 'knowledge_conflict'
+        ? { recovery, problems } : { recovery };
+    }
   }
   const tasks: Record<string, unknown | null> = {};
   const goalIds = new Set<string>();
@@ -2168,6 +2454,9 @@ export async function readDecisionQueue(
   }
   return adaptDecide({
     nav, scope, workspaceRevision, queue: pages, tasks, selectedGoalId: nav.selectedGoalId,
+    ...(proposalFiles === undefined ? {} : { proposalFiles }),
+    ...(noticeFacts === undefined ? {} : { noticeFacts }),
+    ...(workspaceNames === undefined ? {} : { workspaceNames }),
   }, {
     tab: demand.decideDone === true ? 'done' : 'open',
     goalFilter: demand.decideGoal ?? null,
@@ -2203,7 +2492,7 @@ export async function readDecide(
   const navRead = await readNav(client, goalId, demand, boot, false);
   if (navRead.data === null) return { data: null, cursor };
   const queue = await readDecisionQueue(client, scope, navRead.data, demand,
-    registration.workspace.revision);
+    registration.workspace.revision, true);
   /* §2.2 step 8: a card-bearing selected Goal hands its own `tasks/query`
      completion revision to the navigation segment; no separate read. A
      `not_found` read is still a read and keeps the original 0. */
@@ -3031,7 +3320,8 @@ export async function readMainThread(
      is not an error of the page. */
   let decisions: DecideData | null = null;
   try {
-    decisions = await readDecisionQueue(client, scope, nav, { decideGoal: null }, 0);
+    decisions = await readDecisionQueue(client, scope, nav, { decideGoal: null }, 0,
+      options.noticeTokens !== false);
   } catch {
     decisions = null;
   }
@@ -3352,6 +3642,30 @@ export async function readArchOverview(
       await client.post('architecture/change-scope', scope, { goalRef: found.goal.ref }), 'architecture/change-scope',
     );
   }
+  /* Each workspace of this project reads its own operation rows and knowledge status before
+     `lines/list`. A `role-lines/operations` or `knowledge/status` failure only drops that
+     workspace from those two rows and is logged; the whole page still reads (ruling 3). */
+  const operations: ArchOverviewSource['operations'] = {};
+  const knowledge: ArchOverviewSource['knowledge'] = {};
+  const workspaceNames: Record<string, string> = {};
+  for (const entry of boot.workspaces) {
+    if (entry.scope.projectId !== scope.projectId) continue;
+    workspaceNames[entry.scope.workspaceId] = entry.name;
+    try {
+      operations[entry.scope.workspaceId] = readyRouteValue<ArchOperationRow[]>(
+        await client.post('role-lines/operations', entry.scope, { workspace: entry.scope }), 'role-lines/operations',
+      );
+    } catch (error) {
+      logReadError(error);
+    }
+    try {
+      knowledge[entry.scope.workspaceId] = readyRouteValue<KnowledgeCommitStatus>(
+        await client.post('knowledge/status', entry.scope, {}), 'knowledge/status',
+      );
+    } catch (error) {
+      logReadError(error);
+    }
+  }
   const lines = readyRouteValue<ArchOverviewSource['lines']>(
     await client.post('lines/list', scope, { workspace: scope }), 'lines/list',
   );
@@ -3372,12 +3686,12 @@ export async function readArchOverview(
 
   const workspace = boot.workspaces.find((entry) => entry.scope.workspaceId === scope.workspaceId);
   const source: ArchOverviewSource = {
-    scope, projectName: workspace?.name ?? '',
+    scope, projectName: workspace?.name ?? '', workspaceNames,
     goal: found.goal === null ? null : {
       id: found.goal.ref.goalId, ordinal: found.goal.read.ordinal ?? null,
       objective: asText(found.goal.read.goal.objective),
     },
-    catalog, observation, observed, changes, files, search, work, tasks, lines, notes,
+    catalog, observation, observed, changes, files, search, work, tasks, lines, notes, operations, knowledge,
   };
   const ui = {
     level: 'SYS', view: demand.dirView === true ? 'dir' as const : 'sem' as const,
@@ -3805,6 +4119,18 @@ function commandWriteTextOf(error: unknown): string {
     : writeTextOf(error);
 }
 
+/** K7: the delivery card's own translations; every other failure keeps `writeTextOf`. */
+function deliveryWriteTextOf(error: unknown): string {
+  if (error instanceof RouteReadError && error.code === 'revision_conflict') {
+    return '目标刚变过，等页面刷新后再点一次。';
+  }
+  if (error instanceof RouteReadError && error.code === 'invalid'
+    && error.reason === 'the delivery was already accepted') {
+    return '这次交付已经确认过。';
+  }
+  return writeTextOf(error);
+}
+
 /** A35 (§2.6, §2.7; lead ruling 4): the outer `committed` of `tasks/requeue`
  * only says the write was recorded; its inner `refused` is a business result,
  * never a success, and the page shows the refusal's own reason. Shared by the
@@ -3816,6 +4142,55 @@ function requeuedOrThrow(value: unknown): void {
     throw new Error(reason === '' ? '重新入队被拒绝。' : '重新入队被拒绝：' + reason);
   }
   if (outcome.kind !== 'requeued') throw new Error(writeTextOf(new Error('tasks/requeue returned no outcome')));
+}
+
+/** The exploration and knowledge writes' failure text. The stop/continue/deepen reasons are the
+ * owner's own words; a commit's `unavailable` is git's (shown as it is), the two platform lease
+ * reasons are shown as they are, and a bad workspace or a failed `git status` keeps the common
+ * write text. `revision_conflict` and everything else falls back to `writeTextOf`. */
+function knowledgeWriteTextOf(error: unknown): string {
+  if (error instanceof RouteReadError) {
+    const exploration = error.route.startsWith('workspaces/exploration/');
+    if (error.code === 'unsupported') {
+      return exploration ? '这台 Host 没有开放探索控制。' : writeTextOf(error);
+    }
+    const reason = error.reason;
+    if (exploration && error.code === 'invalid') {
+      if (reason.includes('this workspace has no unfinished exploration')) return '这个工作区没有在进行的探索。';
+      if (reason.includes('this exploration is not stopped')) return '探索没有停下，不用继续。';
+      if (reason.includes('the exploration command was refused')) return '这次没能停下或继续，请重读后再试。';
+      if (reason.includes('initialization is not complete')) return '初始化还没做完，不能再深一层。';
+      if (reason.includes('the block is not in the catalogue')) return '这一块不在当前的架构图里。';
+    }
+    if (error.code === 'forbidden' && reason === '架构图和注记设置为只留在本机') {
+      return '架构图和注记设置为只留在本机，不提交。';
+    }
+    if (error.code === 'unavailable' && error.route === 'knowledge/commit') {
+      if (reason.startsWith('租约目录建不了：') || reason.startsWith('另一个 Host 正在写这个检出：')) return reason;
+      if ((reason.startsWith('the workspace ') && reason.includes(' is not registered in the project'))
+        || reason.startsWith('git status of ')) return writeTextOf(error);
+      if (reason !== '') return '提交没成功：' + reason;
+    }
+    /* X9 (121-75, group2): a recovery shows only the backend's own Chinese sentence;
+       every other reason keeps the common write text. */
+    if (error.route === 'knowledge/recover') {
+      if (error.code === 'revision_conflict') {
+        if (reason === '检出的分支已经变了') return '检出的分支已经变了，没恢复。';
+        if (reason === '文件在通知之后又被改过') return '这个文件在通知之后又被改过，没恢复。';
+      }
+      if (error.code === 'not_found') return '这一项已经恢复过了，或者不在了。';
+      if (error.code === 'unavailable' && (
+        reason.endsWith(' 的写日志读不出来')
+        || reason.endsWith(' 按事件重建的内容不是平台当时写的')
+        || reason.endsWith(' 的快照不在了')
+        || reason.endsWith(' 在平台记录里已经没有了')
+        || reason.includes(' 按事件重建不出来：')
+        || reason.startsWith('租约目录建不了：')
+        || reason.startsWith('另一个 Host 正在写这个检出：')
+      )) return '没恢复：' + reason;
+    }
+  }
+  return writeTextOf(error);
 }
 
 /** Ruling item 6: the page text is chosen by the reply code, never the raw
