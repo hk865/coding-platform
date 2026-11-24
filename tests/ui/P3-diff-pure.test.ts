@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { lineEditCounts, lineEditScript, LINE_DIFF_MAX_DISTANCE } from '../../src/contracts/line-delta.js';
 import {
   auxDiffHunksOf, auxDiffViewOf,
   type AuxChangedRow, type AuxDiffHunk, type AuxDiffView,
@@ -116,5 +117,19 @@ describe('P3 T2 auxDiffViewOf（冻结稿第五节，R3）', () => {
   /* 行上的具名变异：不按 state 分（a 写成 N2）；把 `[]` 当成有内容（d 不出 N3，或回 `hunks: []`）。 */
   it.each(cases)('T2 $name', ({ row: changed, read, view }) => {
     expect(auxDiffViewOf(changed, read)).toEqual(view);
+  });
+});
+
+describe('P3 T3 lineEditScript 小文件走 LCS 回走（D121-148-5）', () => {
+  /* 300 × 800 = 24 万格，不超过 25 万；整篇改写，手算 +800/−300。
+     今天红：lineEditScript 总用 LINE_DIFF_MAX_DISTANCE，距离 1100 超过 1000 回 null。 */
+  it('T3 300 行整篇改写成 800 行，仍给逐行脚本', () => {
+    const before = numbered('old', 0, 299);
+    const after = numbered('new', 0, 799);
+    expect(lineEditCounts(before, after, LINE_DIFF_MAX_DISTANCE)).toEqual({ added: 800, deleted: 300 });
+    expect(lineEditScript(before, after, LINE_DIFF_MAX_DISTANCE)).toEqual([
+      ...Array.from({ length: 300 }, () => '-' as const),
+      ...Array.from({ length: 800 }, () => '+' as const),
+    ]);
   });
 });

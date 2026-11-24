@@ -12,6 +12,7 @@ const EXPECTED = {
   Member: { scIf: 161, scFor: 38, holes: 837, events: 126 },
   Phone: { scIf: 68, scFor: 22, holes: 362, events: 56 },
   Plan: { scIf: 225, scFor: 57, holes: 1190, events: 201 },
+  Settings: { scIf: 18, scFor: 4, holes: 123, events: 25 },
   TaskMap: { scIf: 80, scFor: 49, holes: 644, events: 110 },
 } as const;
 

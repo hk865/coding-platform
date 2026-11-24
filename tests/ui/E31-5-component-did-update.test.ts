@@ -19,6 +19,7 @@ const NEXT_PROPS = {
   Member: { theme: 'light', start: '直接干预' },
   Phone: { theme: 'light', screen: '待决' },
   Plan: { theme: 'light', start: '方案第 2 版' },
+  Settings: { theme: 'light' },
   TaskMap: { theme: 'light', scale: '600 个任务' },
 } as const;
 

@@ -137,6 +137,23 @@ describe('P4C 命令页 (real bubblewrap, memory)', () => {
     });
   }, 60_000);
 
+  /* B5：同一行连点两下只发一次启动；点下去这一行立刻是“正在启动”，回答后“运行中”加“取消”。 */
+  it('C8 starts a double-clicked command once and shows 正在启动 at once', async () => {
+    await onCommands(async (page, log) => {
+      await openCommands(page, log);
+      const run = buttonOf(page.root, 'p4c-slow', '运行')!;
+      click(run);
+      click(run);
+      expect(callsTo(log, 'commands/start')).toHaveLength(1);
+      expect(textOf(partOf(page.root, 'p4c-slow', 'cmd-st'))).toBe('正在启动');
+      expect(partOf(page.root, 'p4c-slow', 'dot')?.getAttribute('class')).toBe('dot s-running');
+      expect(buttonOf(page.root, 'p4c-slow', '运行')).toBeUndefined();
+      await waitWord(page.root, 'p4c-slow', /^运行中/);
+      expect(buttonOf(page.root, 'p4c-slow', '取消')).toBeDefined();
+      await press(page, log, 'p4c-slow', '取消');
+    });
+  });
+
   /* C7 关掉这个工作区的“跑命令”授权，所以排在最后。 */
   it('C7 shows the no-command-authorization note and disables 运行', async () => {
     const changed = await world.world.settings('workspaces/access', {

@@ -1,0 +1,534 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>设置</title>
+<script src="./support.js"></script>
+<link rel="stylesheet" href="./kit.css">
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500&family=Noto+Sans+SC:wght@400;500&display=swap">
+<style>
+body { margin: 0; background: #1F1F1F; }
+/* full page: header across the top, the setting groups at the left and the page body at the right */
+.st { height: 100vh; min-height: 560px; display: grid; grid-template-columns: 232px minmax(0, 1fr); grid-template-rows: 48px minmax(0, 1fr); overflow: hidden; background: var(--ground); }
+.st > .head { grid-column: 1 / -1; padding-left: 16px; }
+.st-back { margin-left: -8px; margin-right: 4px; }
+.st-nav { background: var(--side); border-right: 1px solid var(--line); padding: 12px 8px; overflow-y: auto; display: flex; flex-direction: column; gap: 1px; }
+.st-body { overflow-y: auto; min-width: 0; }
+.st-col { max-width: 720px; margin: 0 auto; padding: 28px 40px 120px; display: flex; flex-direction: column; gap: 48px; }
+.sx { display: flex; flex-direction: column; gap: 28px; scroll-margin-top: 20px; }
+.sx-head { display: flex; flex-direction: column; gap: 6px; }
+.sx-title { margin: 0; font-size: 16px; line-height: 24px; font-weight: 500; color: var(--text-strong); }
+.sx-lead { margin: 0; font-size: 13px; line-height: 22px; color: var(--text-2); }
+/* the setting blocks and the check list, from the settings draft (kit colours only) */
+.blk { display: flex; flex-direction: column; gap: 10px; }
+.blk-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 10px; }
+.blk-name { font-size: 14px; line-height: 22px; font-weight: 500; color: var(--text-strong); }
+.blk-scope { font-size: 12px; color: var(--text-3); }
+.blk-desc { margin: 0; font-size: 13px; line-height: 22px; color: var(--text-2); }
+.blk-notes { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; font-size: 12px; line-height: 18px; color: var(--text-3); }
+.blk-notes li { display: flex; gap: 6px; }
+.blk-notes li::before { content: "·"; color: var(--text-3); flex: none; }
+.ws-list { display: flex; flex-direction: column; gap: 2px; margin: 0 -8px; }
+.ws { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 20px; row-gap: 2px; padding: 8px; border-radius: 6px; }
+.ws-id { display: flex; flex-direction: column; min-width: 0; }
+.ws-name { color: var(--text-strong); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ws-path { font-family: var(--font-mono); font-size: 12px; line-height: 18px; color: var(--text-3); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ws-acts { display: flex; align-items: center; gap: 18px; }
+.ws-why { grid-column: 1 / -1; font-size: 12px; line-height: 18px; color: var(--text-3); padding-top: 2px; }
+.ck { display: inline-flex; align-items: center; gap: 8px; min-height: 28px; font-size: 13px; color: var(--text); cursor: pointer; user-select: none; }
+.ck input { appearance: none; -webkit-appearance: none; width: 14px; height: 14px; margin: 0; flex: none; border-radius: 3px; box-shadow: inset 0 0 0 1.5px var(--text-3); display: inline-grid; place-content: center; cursor: pointer; background: transparent; }
+.ck input:checked { background: var(--ink); box-shadow: none; }
+.ck input:checked::after { content: ""; width: 7px; height: 4px; margin-top: -2px; border-left: 1.5px solid var(--ink-text); border-bottom: 1.5px solid var(--ink-text); transform: rotate(-45deg); }
+.ck input:disabled { cursor: default; opacity: .45; }
+.ck.is-dim { color: var(--text-3); cursor: default; }
+.cl-ws { display: flex; flex-direction: column; gap: 2px; }
+.cl-ws + .cl-ws { margin-top: 12px; }
+.cl-ws .ws-id { padding-bottom: 6px; }
+.rl-list { display: flex; flex-direction: column; gap: 2px; margin: 0 -8px; }
+.rl { display: flex; flex-direction: column; padding: 8px; border-radius: 6px; }
+.rl-top { display: flex; align-items: flex-start; gap: 16px; }
+.rl-main { display: flex; flex-direction: column; min-width: 0; flex: 1 1 auto; }
+.rl-name { color: var(--text-strong); }
+.rl-sub { font-size: 12px; line-height: 18px; color: var(--text-3); }
+.rl-acts { display: flex; gap: 14px; flex: none; font-size: 12px; line-height: 20px; }
+.rl.is-revoked .rl-name { color: var(--text-3); }
+.rl-fold { display: inline-flex; align-items: center; gap: 6px; padding: 4px 0; font-size: 12px; color: var(--text-3); align-self: flex-start; }
+.rl-fold:hover { color: var(--text-2); }
+.rl-empty { margin: 0; font-size: 13px; color: var(--text-3); padding: 4px 8px; }
+.rl-edit { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px; font-size: 12px; color: var(--text-3); }
+/* the structural switches and the command review line, from the settings draft */
+.sw-list { display: flex; flex-direction: column; gap: 18px; }
+.sw { display: flex; flex-direction: column; gap: 6px; }
+.sw-top { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 16px; }
+.sw-top .mode { align-self: center; }
+.sw-name { min-width: 8.5em; font-size: 14px; line-height: 22px; color: var(--text-strong); }
+.sw-desc { margin: 0; font-size: 13px; line-height: 22px; color: var(--text-2); }
+.saved { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-3); }
+.err { font-size: 12px; color: var(--red-text); }
+.blk-foot { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-height: 28px; }
+.fld { display: grid; grid-template-columns: 104px minmax(0, 1fr); align-items: center; gap: 8px 12px; }
+.fld-k { font-size: 13px; color: var(--text-2); }
+.fld-v { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-width: 0; }
+.fld-hint { font-size: 12px; color: var(--text-3); }
+.cur { color: var(--text-strong); font-variant-numeric: tabular-nums; }
+.in { all: unset; box-sizing: border-box; display: inline-block; height: 28px; padding: 4px 10px; border-radius: 6px; background: var(--ground); box-shadow: inset 0 0 0 1px var(--line-2); font-size: 13px; line-height: 20px; color: var(--text-strong); font-variant-numeric: tabular-nums; }
+.in:focus-visible { box-shadow: inset 0 0 0 1px var(--text-3); }
+.in::placeholder { color: var(--text-3); }
+.in.w-l { width: 140px; }
+.in.is-bad { box-shadow: inset 0 0 0 1px var(--red-text); }
+@media (max-width: 820px) {
+  .st { grid-template-columns: minmax(0, 1fr); grid-template-rows: 48px auto minmax(0, 1fr); }
+  .st-nav { flex-direction: row; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--line); padding: 6px 8px; }
+  .st-nav .row { width: auto; flex: none; }
+  .st-col { padding: 20px 16px 80px; }
+  .ws { grid-template-columns: minmax(0, 1fr); }
+  .fld { grid-template-columns: minmax(0, 1fr); }
+}
+</style>
+</helmet>
+
+<div class="kit st {{rootMod}}">
+  <header class="head">
+    <a class="btn btn-sm st-back" href="{{backHref}}" title="回到点进来之前的页面（Esc）">
+      <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="m10 4-4 4 4 4"></path></svg>
+      返回工作台
+    </a>
+    <span class="head-title">设置</span>
+    <span class="head-sub">{{projectName}}</span>
+    <span class="sp"></span>
+    <button class="btn btn-icon btn-sm" type="button" onClick="{{toggleTheme}}" aria-label="{{themeLabel}}" title="{{themeLabel}}">
+      <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5.25"></circle><path class="fill" d="M8 2.75a5.25 5.25 0 0 1 0 10.5Z"></path></svg>
+    </button>
+  </header>
+
+  <nav class="st-nav" aria-label="设置分组">
+    <a class="{{nav.wsCls}}" href="#g-ws" onClick="{{nav.pick.ws}}"><span class="row-name">工作区与权限</span><span class="row-meta">{{nav.workspaceCount}}</span></a>
+    <a class="{{nav.autoCls}}" href="#g-auto" onClick="{{nav.pick.auto}}"><span class="row-name">自动化与规则</span></a>
+    <a class="{{nav.limCls}}" href="#g-lim" onClick="{{nav.pick.lim}}"><span class="row-name">运行上限</span></a>
+  </nav>
+
+  <div class="st-body" onScroll="{{nav.onScroll}}">
+    <div class="st-col">
+      <sc-if value="{{blank.show}}" hint-placeholder-val="{{ false }}">
+        <p class="empty">{{blank.text}}<sc-if value="{{blank.canRetry}}" hint-placeholder-val="{{ false }}"> <button class="btn-text" type="button" onClick="{{blank.retry}}">重试</button></sc-if></p>
+      </sc-if>
+
+      <sc-if value="{{page.show}}" hint-placeholder-val="{{ true }}">
+        <section class="sx" id="g-ws" aria-labelledby="g-ws-t">
+          <div class="sx-head">
+            <h2 class="sx-title" id="g-ws-t">工作区与权限</h2>
+            <p class="sx-lead">执行者在每个工作区里能不能改文件、跑命令，以及装上了哪些检查。</p>
+          </div>
+
+          <div class="blk">
+            <div class="blk-head">
+              <span class="blk-name">执行者能做什么</span><span class="blk-scope">每个工作区</span>
+            </div>
+            <div class="ws-list">
+              <sc-for list="{{workspaces}}" as="w" hint-placeholder-count="2">
+                <div class="ws" data-ws="{{w.key}}">
+                  <div class="ws-id">
+                    <span class="ws-name">{{w.name}}</span>
+                    <span class="ws-path">{{w.path}}</span>
+                  </div>
+                  <div class="ws-acts">
+                    <label class="{{w.writeCls}}" title="{{w.writeTip}}"><input type="checkbox" checked="{{w.writeAllowed}}" disabled="{{w.fixed}}" onChange="{{w.toggleWrite}}" /> 允许改文件</label>
+                    <label class="{{w.commandCls}}" title="{{w.commandTip}}"><input type="checkbox" checked="{{w.commandsAllowed}}" disabled="{{w.commandDisabled}}" onChange="{{w.toggleCommands}}" /> 允许跑命令</label>
+                  </div>
+                  <span class="ws-why">{{w.why}}<sc-if value="{{w.saved}}" hint-placeholder-val="{{ false }}"> <span class="saved">已保存</span></sc-if><sc-if value="{{w.pending}}" hint-placeholder-val="{{ false }}"> <span class="saved">已保存，尚未生效</span> <button class="btn-text" type="button" onClick="{{w.retryPending}}">重试</button></sc-if></span>
+                </div>
+              </sc-for>
+            </div>
+            <ul class="blk-notes">
+              <li>正在跑的不受影响，下一次开工起生效；你在平台里保存、跑命令马上生效。</li>
+              <li>跑命令要先允许改文件；关掉改文件，跑命令也一起关。</li>
+              <li>关掉跑命令以后，已经批准的检查照跑；但批准新的检查、采用带检查的计划会被拒。</li>
+              <li>秘书、参谋、书记只读，不受这里影响。</li>
+            </ul>
+          </div>
+
+          <div class="blk">
+            <div class="blk-head">
+              <span class="blk-name">检查和已撤回</span><span class="blk-scope">每个工作区</span>
+            </div>
+            <p class="blk-desc">启动配置里的检查在启动配置里改；这里列的是在平台里装上的检查。</p>
+            <sc-for list="{{workspaces}}" as="w" hint-placeholder-count="2">
+              <div class="cl-ws" data-check-ws="{{w.key}}">
+                <div class="ws-id">
+                  <span class="ws-name">{{w.name}}</span>
+                  <span class="ws-path">{{w.path}}</span>
+                </div>
+                <div class="rl-list">
+                  <sc-for list="{{w.checks}}" as="c" hint-placeholder-count="2">
+                    <div class="rl rl-check" data-check="{{c.checkId}}" data-source="{{c.source}}">
+                      <div class="rl-top">
+                        <div class="rl-main">
+                          <span class="rl-name">{{c.checkId}}</span>
+                          <span class="rl-sub">{{c.command}} · {{c.tasksText}} · {{c.sourceText}}</span>
+                          <span class="rl-sub">{{c.error}}<sc-if value="{{c.pending}}" hint-placeholder-val="{{ false }}"> <span class="saved">已保存，尚未生效</span> <button class="btn-text" type="button" onClick="{{c.retryPending}}">重试</button></sc-if></span>
+                        </div>
+                        <div class="rl-acts"><button class="btn-text" type="button" onClick="{{c.withdraw}}">撤回</button></div>
+                      </div>
+                      <sc-if value="{{c.confirm}}" hint-placeholder-val="{{ false }}">
+                        <div class="rl-edit"><span>撤回以后，这条检查不再跑；要用得重新加</span><button class="btn btn-sm btn-primary" type="button" onClick="{{c.confirmWithdraw}}">撤回</button><button class="btn btn-sm" type="button" onClick="{{c.cancelWithdraw}}">取消</button></div>
+                      </sc-if>
+                    </div>
+                  </sc-for>
+                </div>
+                <sc-if value="{{w.noChecks}}" hint-placeholder-val="{{ false }}">
+                  <p class="rl-empty">这个工作区没有在平台里装上的检查。</p>
+                </sc-if>
+                <sc-if value="{{w.hasWithdrawn}}" hint-placeholder-val="{{ false }}">
+                  <button class="rl-fold" type="button" aria-expanded="{{w.revokedOpen}}" onClick="{{w.toggleRevoked}}">
+                    <svg class="{{w.foldCls}}" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4"></path></svg>
+                    <span>{{w.withdrawnText}}</span>
+                  </button>
+                  <sc-if value="{{w.revokedOpen}}" hint-placeholder-val="{{ false }}">
+                    <div class="rl-list">
+                      <sc-for list="{{w.withdrawn}}" as="r" hint-placeholder-count="1">
+                        <div class="rl is-revoked rl-withdrawn" data-withdrawn="{{r.checkId}}" data-source="{{r.source}}">
+                          <div class="rl-main">
+                            <span class="rl-name">{{r.checkId}}</span>
+                            <span class="rl-sub">{{r.sourceText}} · {{r.withdrawnText}} 撤回<sc-if value="{{r.pending}}" hint-placeholder-val="{{ false }}"> <span class="saved">已保存，尚未生效</span> <button class="btn-text" type="button" onClick="{{r.retryPending}}">重试</button></sc-if></span>
+                          </div>
+                        </div>
+                      </sc-for>
+                    </div>
+                  </sc-if>
+                </sc-if>
+              </div>
+            </sc-for>
+          </div>
+        </section>
+
+        <section class="sx" id="g-auto" aria-labelledby="g-auto-t">
+          <div class="sx-head">
+            <h2 class="sx-title" id="g-auto-t">自动化与规则</h2>
+            <p class="sx-lead">平台什么时候不问你、直接做。没人答的卡平台不会自己放行；只有这里设成“自动”的和你存下的规则才直接做。</p>
+          </div>
+
+          <div class="blk">
+            <div class="blk-head">
+              <span class="blk-name">结构改动</span><span class="blk-scope">这个项目</span>
+            </div>
+            <p class="blk-desc">agent 提结构改动（加、拆、并模块，挪负责关系）时，平台照旧试算。设成“自动”时不出卡：试算通过就直接采用、写文件，事后在“请知悉”留一条“已自动采用”，写明改了什么。设成“出卡问我”就照旧出卡等你答。</p>
+            <div class="sw-list">
+              <div class="sw" data-sw="proposals">
+                <div class="sw-top">
+                  <span class="sw-name">结构提案自动批准</span>
+                  <span class="mode" role="radiogroup" aria-label="结构提案自动批准">
+                    <button class="{{structural.proposals.autoCls}}" type="button" role="radio" aria-checked="{{structural.proposals.autoOn}}" onClick="{{structural.proposals.pickAuto}}">自动<sc-if value="{{structural.proposals.autoIsDefault}}" hint-placeholder-val="{{ false }}"> <span class="t3">· 默认</span></sc-if></button>
+                    <button class="{{structural.proposals.askCls}}" type="button" role="radio" aria-checked="{{structural.proposals.askOn}}" onClick="{{structural.proposals.pickAsk}}">出卡问我<sc-if value="{{structural.proposals.askIsDefault}}" hint-placeholder-val="{{ false }}"> <span class="t3">· 默认</span></sc-if></button>
+                  </span>
+                  <span class="saved sw-saved">{{structural.proposals.savedText}}<sc-if value="{{structural.proposals.pending}}" hint-placeholder-val="{{ false }}"> 已保存，尚未生效 <button class="btn-text" type="button" onClick="{{structural.proposals.retryPending}}">重试</button></sc-if></span>
+                </div>
+                <p class="sw-desc">agent 提的结构提案；待审的注记卡跟着一起。</p>
+                <ul class="blk-notes">
+                  <li>改了只影响以后；已经在等的卡照旧。</li>
+                  <li>会盖掉不是平台写的文件（你的手改、没提交的改动）、或会新增冲突时照旧出卡，并在“请知悉”说明为什么没自动采用。</li>
+                  <li>初始架构照旧出卡。</li>
+                </ul>
+              </div>
+              <div class="sw" data-sw="repairs">
+                <div class="sw-top">
+                  <span class="sw-name">结构修补自动批准</span>
+                  <span class="mode" role="radiogroup" aria-label="结构修补自动批准">
+                    <button class="{{structural.repairs.autoCls}}" type="button" role="radio" aria-checked="{{structural.repairs.autoOn}}" onClick="{{structural.repairs.pickAuto}}">自动<sc-if value="{{structural.repairs.autoIsDefault}}" hint-placeholder-val="{{ false }}"> <span class="t3">· 默认</span></sc-if></button>
+                    <button class="{{structural.repairs.askCls}}" type="button" role="radio" aria-checked="{{structural.repairs.askOn}}" onClick="{{structural.repairs.pickAsk}}">出卡问我<sc-if value="{{structural.repairs.askIsDefault}}" hint-placeholder-val="{{ false }}"> <span class="t3">· 默认</span></sc-if></button>
+                  </span>
+                  <span class="saved sw-saved">{{structural.repairs.savedText}}<sc-if value="{{structural.repairs.pending}}" hint-placeholder-val="{{ false }}"> 已保存，尚未生效 <button class="btn-text" type="button" onClick="{{structural.repairs.retryPending}}">重试</button></sc-if></span>
+                </div>
+                <p class="sw-desc">做修补时要动模块结构的那一类（结构性修补）。</p>
+                <ul class="blk-notes">
+                  <li>改了只影响以后；已经在等的卡照旧。</li>
+                  <li>会盖掉不是平台写的文件（你的手改、没提交的改动）、或会新增冲突时照旧出卡，并在“请知悉”说明为什么没自动采用。</li>
+                </ul>
+              </div>
+            </div>
+            <span class="err">{{structural.error}}</span>
+          </div>
+        </section>
+
+        <section class="sx" id="g-lim" aria-labelledby="g-lim-t">
+          <div class="sx-head">
+            <h2 class="sx-title" id="g-lim-t">运行上限</h2>
+            <p class="sx-lead">同时开多少条线、一次执行最多花多少 token、一条命令最多用多少内存和进程。命令跑得太久，先发一条请知悉给你。</p>
+          </div>
+
+          <div class="blk">
+            <div class="blk-head">
+              <span class="blk-name">命令审查线</span><span class="blk-scope">这台机器上的所有项目</span>
+            </div>
+            <p class="blk-desc">命令超过 agent 自填的时长或这条线时先发一条请知悉，不停命令。现在是 <span class="cur lim-cur">{{lim.currentText}}</span>。</p>
+            <div class="fld">
+              <span class="fld-k">改成</span>
+              <span class="fld-v">
+                <input class="{{lim.inputCls}}" type="text" inputmode="numeric" value="{{lim.input}}" placeholder="{{lim.placeholder}}" aria-label="命令审查线" onChange="{{lim.onInput}}" onKeyDown="{{lim.onKey}}">
+                <span class="fld-hint">整数分钟；清空就回默认 {{lim.default}} 分钟</span>
+              </span>
+            </div>
+            <div class="blk-foot">
+              <button class="btn btn-sm btn-line" type="button" onClick="{{lim.save}}">保存</button>
+              <span class="saved lim-saved">{{lim.savedText}}<sc-if value="{{lim.pending}}" hint-placeholder-val="{{ false }}"> 已保存，尚未生效 <button class="btn-text" type="button" onClick="{{lim.retryPending}}">重试</button></sc-if></span>
+              <span class="err">{{lim.error}}</span>
+            </div>
+          </div>
+        </section>
+      </sc-if>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script data-dc-script data-props='{"theme":{"default":"dark"}}'>
+class Component extends DCLogic {
+  dataVals() {
+    const read = this.props.readState === undefined ? null : this.props.readState;
+    const data = this.props.data || null;
+    const s = this.state || {};
+    const set = (p) => this.setState(p);
+    const actions = this.props.actions || {};
+    const theme = s.theme || this.props.theme || 'dark';
+    const err = read !== null && read.status === 'error' ? String(read.message || '') : '';
+    const loading = read !== null && read.status === 'loading';
+    const blankText = err !== '' ? err : loading ? '正在读设置…' : '';
+    const retry = read && typeof read.retry === 'function' ? read.retry : () => {};
+    const rows = data && Array.isArray(data.workspaces) ? data.workspaces : [];
+    const wsErrors = s.wsErrors || {};
+    const wsPending = s.wsPending || {};
+    const wsSaved = s.wsSaved || {};
+    const checkErrors = s.checkErrors || {};
+    const checkPending = s.checkPending || {};
+    const checkConfirm = s.checkConfirm || {};
+    const revokedOpen = s.revokedOpen || {};
+    const clearKey = (map, key) => { const next = Object.assign({}, map); delete next[key]; return next; };
+    /* The Host's “saved but not confirmed” answer keeps the same write for 重试;
+       a real failure clears that pending write and shows the Host's reason. */
+    const notEffectiveOf = (outcome) => !!(outcome && outcome.notEffective === true);
+    const saveSettingField = (route, input, key, field, pendingField, message, savedField) => {
+      Promise.resolve(actions.saveSettings(route, input))
+        .then((outcome) => {
+          if (notEffectiveOf(outcome)) {
+            set({
+              [field]: clearKey(this.state[field] || {}, key),
+              [pendingField]: Object.assign({}, this.state[pendingField] || {}, { [key]: input }),
+            });
+            return;
+          }
+          set({
+            [field]: clearKey(this.state[field] || {}, key),
+            [pendingField]: clearKey(this.state[pendingField] || {}, key),
+            ...(savedField === undefined ? {}
+              : { [savedField]: Object.assign({}, this.state[savedField] || {}, { [key]: true }) }),
+          });
+        })
+        .catch((error) => set({
+          [field]: Object.assign({}, this.state[field] || {}, { [key]: message(error) }),
+          [pendingField]: clearKey(this.state[pendingField] || {}, key),
+        }));
+    };
+    const whyOf = (error) => String(error && error.message ? error.message : error);
+    const workspaces = rows.map((w) => {
+      const writeAccess = (input) => saveSettingField('workspaces/access', input, w.key,
+        'wsErrors', 'wsPending', whyOf, 'wsSaved');
+      const withdrawSavedCheck = (checkId, input) => saveSettingField('checks/withdraw', input,
+        w.key + '\u0000' + checkId, 'checkErrors', 'checkPending', whyOf);
+      /* A withdraw's “saved but not effective” answer sits inside the 已撤回
+         fold, so the fold opens while that write still waits (and its 重试 is
+         reachable); the user's own toggle is the rest of the state. */
+      const withdrawnPending = w.withdrawn.some((r) => !!checkPending[w.key + '\u0000' + r.checkId]);
+      const withdrawnOpen = !!revokedOpen[w.key] || withdrawnPending;
+      return Object.assign({}, w, {
+        writeCls: w.fixed ? 'ck is-dim' : 'ck',
+        commandCls: w.commandDisabled ? 'ck is-dim' : 'ck',
+        writeTip: w.fixed ? w.fixedText : '',
+        commandTip: w.fixed ? w.fixedText : (w.writeAllowed ? '' : '要先允许改文件'),
+        why: wsErrors[w.key] || w.fixedText || '',
+        saved: !!wsSaved[w.key] && !wsErrors[w.key] && !wsPending[w.key],
+        pending: !!wsPending[w.key],
+        retryPending: () => writeAccess(wsPending[w.key]),
+        toggleWrite: (event) => {
+          const next = !!(event && event.target && event.target.checked);
+          writeAccess({ scope: w.scope, writeAllowed: next, commandsAllowed: next ? w.commandsAllowed : false });
+        },
+        toggleCommands: (event) => {
+          const next = !!(event && event.target && event.target.checked);
+          if (next && !w.writeAllowed) return;
+          writeAccess({ scope: w.scope, writeAllowed: w.writeAllowed, commandsAllowed: next });
+        },
+        checks: w.checks.map((c) => {
+          const key = w.key + '\u0000' + c.checkId;
+          const input = { scope: w.scope, checkId: c.checkId };
+          return Object.assign({}, c, {
+            error: checkErrors[key] || '',
+            pending: !!checkPending[key],
+            retryPending: () => withdrawSavedCheck(c.checkId, checkPending[key]),
+            /* 备注 8: 撤回 asks inline first; 取消 only closes the question. */
+            confirm: !!checkConfirm[key],
+            withdraw: () => set({ checkConfirm: Object.assign({}, checkConfirm, { [key]: true }) }),
+            confirmWithdraw: () => {
+              set({ checkConfirm: clearKey(checkConfirm, key) });
+              withdrawSavedCheck(c.checkId, input);
+            },
+            cancelWithdraw: () => set({ checkConfirm: clearKey(checkConfirm, key) }),
+          });
+        }),
+        /* A reread after the Host saved a withdraw puts the check here; the pending
+           write and 重试 follow it (表一 2). */
+        withdrawn: w.withdrawn.map((r) => {
+          const key = w.key + '\u0000' + r.checkId;
+          return Object.assign({}, r, {
+            pending: !!checkPending[key],
+            retryPending: () => withdrawSavedCheck(r.checkId, checkPending[key]),
+          });
+        }),
+        revokedOpen: withdrawnOpen,
+        foldCls: 'ico xs chev' + (withdrawnOpen ? ' is-open' : ''),
+        toggleRevoked: () => {
+          const next = Object.assign({}, revokedOpen);
+          next[w.key] = !withdrawnOpen;
+          set({ revokedOpen: next });
+        },
+      });
+    });
+    const structuralSource = data && data.structural ? data.structural : {
+      proposals: { mode: 'auto', autoOn: true, askOn: false, autoIsDefault: true, askIsDefault: false },
+      repairs: { mode: 'auto', autoOn: true, askOn: false, autoIsDefault: true, askIsDefault: false },
+    };
+    const structuralSaved = s.structuralSaved || '';
+    const structuralPending = s.structuralPending || null;
+    const sendStructural = (field, input) => {
+      Promise.resolve(actions.saveSettings('structural-approval/save', input))
+        .then((outcome) => (notEffectiveOf(outcome)
+          ? set({ structuralSaved: '', structuralError: '', structuralPending: { field, input } })
+          : set({ structuralSaved: field, structuralError: '', structuralPending: null })))
+        .catch((error) => set({ structuralSaved: '', structuralError: whyOf(error), structuralPending: null }));
+    };
+    const saveStructural = (field, next) => {
+      if (!data || !data.projectId) return;
+      const value = {
+        proposals: structuralSource.proposals.mode,
+        repairs: structuralSource.repairs.mode,
+        [field]: next,
+      };
+      sendStructural(field, { projectId: data.projectId, value });
+    };
+    const structuralRow = (field, source) => {
+      const pending = structuralPending !== null && structuralPending.field === field;
+      return {
+        mode: source.mode,
+        autoOn: source.autoOn ? 'true' : 'false',
+        askOn: source.askOn ? 'true' : 'false',
+        autoCls: 'mode-btn' + (source.autoOn ? ' is-on' : ''),
+        askCls: 'mode-btn' + (source.askOn ? ' is-on' : ''),
+        autoIsDefault: source.autoIsDefault,
+        askIsDefault: source.askIsDefault,
+        savedText: structuralSaved === field ? '已保存' : '',
+        pending: pending,
+        retryPending: () => sendStructural(field, structuralPending.input),
+        pickAuto: () => saveStructural(field, 'auto'),
+        pickAsk: () => saveStructural(field, 'ask'),
+      };
+    };
+    const review = data && data.commandReviewLine ? data.commandReviewLine : null;
+    const limInput = s.limInput !== undefined ? String(s.limInput)
+      : review !== null && review.saved !== null ? String(review.saved) : '';
+    const limPending = s.limPending || null;
+    const sendLim = (input) => {
+      Promise.resolve(actions.saveSettings('command-review/save', input))
+        .then((outcome) => (notEffectiveOf(outcome)
+          /* 表一 2: the reread already drew the Host's stored value; the retry keeps
+             the same write. */
+          ? set({ limSaved: false, limError: '', limPending: input, limInput: undefined })
+          : set({ limSaved: true, limInput: undefined, limError: '', limPending: null })))
+        .catch((error) => set({ limSaved: false, limError: whyOf(error), limPending: null }));
+    };
+    const lim = {
+      currentText: review === null ? ''
+        : review.saved === null ? review.default + ' 分钟（默认）' : review.effective + ' 分钟',
+      input: limInput,
+      inputCls: 'in w-l' + (s.limBad ? ' is-bad' : ''),
+      placeholder: review === null ? '' : String(review.effective),
+      default: review === null ? 60 : review.default,
+      savedText: s.limSaved === true ? '已保存' : '',
+      pending: limPending !== null,
+      retryPending: () => sendLim(limPending),
+      error: s.limError || '',
+      /* 备注 9: Esc in the field only blurs it and never reaches the page's leave handler. */
+      onKey: (event) => {
+        if (event && event.key === 'Escape') {
+          event.preventDefault();
+          event.stopPropagation();
+          event.target.blur();
+        }
+      },
+      onInput: (event) => set({
+        limInput: String(event && event.target ? event.target.value : ''), limSaved: false,
+        limError: '', limBad: false, limPending: null,
+      }),
+      /* 表一 5: empty clears to the default; a positive integer saves; anything
+         else is refused here and never sent. */
+      save: () => {
+        const raw = limInput.trim();
+        if (raw === '') {
+          set({ limBad: false, limError: '' });
+          sendLim({ commandReviewLineMinutes: null });
+          return;
+        }
+        if (!/^\d+$/.test(raw) || Number(raw) < 1) {
+          set({ limBad: true, limError: '要 1 或更大的整数分钟；清空就回默认' });
+          return;
+        }
+        set({ limBad: false, limError: '' });
+        sendLim({ commandReviewLineMinutes: Number(raw) });
+      },
+    };
+    const navOn = s.navOn || 'g-ws';
+    const pickNav = (id) => () => set({ navOn: id });
+    const onScroll = (event) => {
+      const body = event.currentTarget;
+      const top = body.getBoundingClientRect().top + 80;
+      let cur = 'g-ws';
+      body.querySelectorAll('.sx').forEach((section) => {
+        if (section.getBoundingClientRect().top <= top) cur = section.id;
+      });
+      if (body.scrollTop + body.clientHeight >= body.scrollHeight - 4) cur = 'g-lim';
+      if (cur !== navOn) set({ navOn: cur });
+    };
+    return {
+      rootMod: theme === 'light' ? 't-light' : '',
+      themeLabel: theme === 'light' ? '切换到深色' : '切换到浅色',
+      toggleTheme: () => set({ theme: theme === 'light' ? 'dark' : 'light' }),
+      backHref: typeof this.props.backHref === 'string' && this.props.backHref !== '' ? this.props.backHref : 'Main.dc.html',
+      projectName: data && typeof data.projectName === 'string' ? data.projectName : '',
+      workspaces: workspaces,
+      structural: {
+        proposals: structuralRow('proposals', structuralSource.proposals),
+        repairs: structuralRow('repairs', structuralSource.repairs),
+        error: s.structuralError || '',
+      },
+      lim: lim,
+      nav: {
+        workspaceCount: rows.length,
+        wsCls: 'row' + (navOn === 'g-ws' ? ' is-on' : ''),
+        autoCls: 'row' + (navOn === 'g-auto' ? ' is-on' : ''),
+        limCls: 'row' + (navOn === 'g-lim' ? ' is-on' : ''),
+        pick: { ws: pickNav('g-ws'), auto: pickNav('g-auto'), lim: pickNav('g-lim') },
+        onScroll: onScroll,
+      },
+      blank: { show: blankText !== '', text: blankText,
+        canRetry: err !== '' && read !== null && typeof read.retry === 'function', retry: retry },
+      page: { show: blankText === '' }
+    };
+  }
+
+  renderVals() {
+    return this.dataVals();
+  }
+}
+</script>
+</body>
+</html>

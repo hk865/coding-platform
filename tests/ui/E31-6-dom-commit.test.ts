@@ -20,7 +20,7 @@ const ROOT = fileURLToPath(new URL('../..', import.meta.url));
 const NATIVE_EVENTS = new Set([
   'click', 'dblclick', 'focus', 'blur', 'mouseenter', 'mouseleave', 'contextmenu',
   'pointerdown', 'pointermove', 'pointerup', 'pointercancel', 'keydown', 'wheel',
-  'select', 'input', 'change',
+  'select', 'input', 'change', 'scroll',
 ]);
 
 let dom: FakeDocument;

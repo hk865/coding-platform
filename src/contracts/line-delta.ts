@@ -87,8 +87,8 @@ export const LINE_DIFF_MAX_DISTANCE = 1000;
 
 /** P3 Diff：两份行列表之间改动最少的逐行脚本，每行一个记号（' ' 保留、'-' 删、'+' 加），按顺序；
  *  每一段连续的改动里删的行在前、加的行在后（git 的写法）：照 lineEditCounts 的前沿规则，删的行自然排在加的行前面，不另重排。
- *  头尾相同的行直接保留，不搜；两边中间都不空时用 Myers 搜，编辑距离超过 maxDistance 就回 null。
- *  上限和 lineEditCounts 不同：那边只在 Myers 一支（超过 25 万格）用上限，LCS 一支没有上限；这里总用上限。 */
+ *  头尾相同的行直接保留，不搜；两边中间都不空时，乘积不超过 MAX_LCS_CELLS 就用 LCS 回走（不受 maxDistance 限制），
+ *  超过才用 Myers 搜，编辑距离超过 maxDistance 就回 null。 */
 export function lineEditScript(
   before: readonly string[], after: readonly string[], maxDistance: number,
 ): Array<' ' | '-' | '+'> | null {
@@ -106,6 +106,31 @@ export function lineEditScript(
     for (let index = 0; index < b.length; index += 1) middle.push('+');
   } else if (b.length === 0) {
     for (let index = 0; index < a.length; index += 1) middle.push('-');
+  } else if (before.length * after.length <= MAX_LCS_CELLS) {
+    /* 小文件：整张 LCS 表回走，不受 maxDistance 限制。平局走加，倒过来看就是删的行在前。 */
+    const columns = b.length + 1;
+    const table = new Int32Array((a.length + 1) * columns);
+    for (let i = 1; i <= a.length; i += 1) {
+      for (let j = 1; j <= b.length; j += 1) {
+        table[i * columns + j] = a[i - 1] === b[j - 1]
+          ? table[(i - 1) * columns + j - 1]! + 1
+          : Math.max(table[(i - 1) * columns + j]!, table[i * columns + j - 1]!);
+      }
+    }
+    let i = a.length;
+    let j = b.length;
+    while (i > 0 && j > 0) {
+      if (a[i - 1] === b[j - 1]) {
+        middle.push(' '); i -= 1; j -= 1;
+      } else if (table[(i - 1) * columns + j]! > table[i * columns + j - 1]!) {
+        middle.push('-'); i -= 1;
+      } else {
+        middle.push('+'); j -= 1;
+      }
+    }
+    while (i > 0) { middle.push('-'); i -= 1; }
+    while (j > 0) { middle.push('+'); j -= 1; }
+    middle.reverse();
   } else {
     /* 前沿照 lineEditCounts 的规则（平局走删除）；每一轮存下 [-d, d] 这一段，好倒着走回脚本。 */
     const trace: Array<Map<number, number>> = [];

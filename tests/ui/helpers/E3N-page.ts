@@ -42,6 +42,7 @@ export type PageLog = {
 export type ChangeMode = 'stream' | 'controlled' | '429' | '429-once';
 
 export const CORE = '/api/real/core/';
+export const SETTINGS = '/api/real/settings/';
 
 export function newPageLog(): PageLog {
   let release: () => void = () => undefined;
@@ -68,6 +69,12 @@ export function routeOf(url: string): string {
   return at < 0 ? url : url.slice(at + CORE.length);
 }
 
+/** The settings route of a `/api/real/settings/` URL, or '' for any other URL. */
+export function settingsRouteOf(url: string): string {
+  const at = url.indexOf(SETTINGS);
+  return at < 0 ? '' : 'settings/' + url.slice(at + SETTINGS.length);
+}
+
 function tokenOf(init: RequestInit | undefined): string {
   const headers = init?.headers as Record<string, string> | undefined;
   return headers?.['x-platform-token'] ?? '';
@@ -86,13 +93,17 @@ function bodyOf(init: RequestInit | undefined): Record<string, unknown> {
 /** A2 (tests/RULES.md): the one route a row holds `unavailable`, answered as the Host's own rejection shape. */
 const UNAVAILABLE = { status: 'rejected', code: 'unavailable', reason: 'E3U: this route is held unavailable' };
 
+type OneShotRejection = { route: string; input?: (input: unknown) => boolean; code: string; reason: string };
+
 /**
  * The forwarded Host origin is read on every call, so a reopen's new address
  * is used. `unavailable` names one core route whose every call answers the
- * Host's `unavailable` rejection instead of reaching the Host.
+ * Host's `unavailable` rejection instead of reaching the Host; `rejectOnce`
+ * answers the first call it matches with its own code and then forwards.
  */
 export function forwardPage(world: Pick<E3NTarget, 'base'>, log: PageLog, mode: ChangeMode = 'stream',
-  unavailable: string | null = null): PageFetch {
+  unavailable: string | null = null, rejectOnce: OneShotRejection | null = null): PageFetch {
+  let rejected = false;
   return async (url, init, realFetch) => {
     const route = routeOf(url);
     if (route === 'changes') {
@@ -120,6 +131,15 @@ export function forwardPage(world: Pick<E3NTarget, 'base'>, log: PageLog, mode: 
         call.reply = UNAVAILABLE;
         return new Response(JSON.stringify(UNAVAILABLE), { status: 200, headers: { 'content-type': 'application/json' } });
       }
+      if (!rejected && rejectOnce?.route === route && (rejectOnce.input === undefined || rejectOnce.input(call.input))) {
+        rejected = true;
+        const answer = { status: 'rejected', code: rejectOnce.code, reason: rejectOnce.reason };
+        call.reply = answer;
+        return new Response(JSON.stringify(answer), { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+    } else if (route !== 'changes' && settingsRouteOf(url) !== '') {
+      call = { route: settingsRouteOf(url), url, input: body, body, token: tokenOf(init), reply: undefined };
+      log.calls.push(call);
     }
     const target = /^https?:/i.test(url) ? url : new URL(url, world.base).href;
     const answer = await realFetch(target, init);
@@ -134,19 +154,27 @@ export function forwardPage(world: Pick<E3NTarget, 'base'>, log: PageLog, mode: 
   };
 }
 
-export async function bootE3N(world: E3NTarget, name: 'Main' | 'TaskMap' | 'Goals' | 'ArchOverview' | 'Decide' | 'Member' | 'Chain' | 'Done' | 'Plan', options: {
+export async function bootE3N(world: E3NTarget, name: 'Main' | 'TaskMap' | 'Goals' | 'ArchOverview' | 'Decide' | 'Member' | 'Chain' | 'Done' | 'Plan' | 'Settings', options: {
   search?: string; mode?: ChangeMode; token?: string | (() => string | null); source?: string;
-  gate?: boolean; unavailable?: string; failOnce?: string; before?: Record<string, (log: PageLog) => Promise<void>>;
+  gate?: boolean; unavailable?: string; unavailableOnce?: string; failOnce?: string; rejectOnce?: OneShotRejection;
+  before?: Record<string, (log: PageLog) => Promise<void>>;
 } = {}): Promise<{ page: BootedPage; log: PageLog }> {
   const log = newPageLog();
   if (options.gate === true) gateChanges(log);
-  const forward = forwardPage(world, log, options.mode ?? 'stream', options.unavailable ?? null);
+  const forward = forwardPage(world, log, options.mode ?? 'stream', options.unavailable ?? null, options.rejectOnce ?? null);
   let failed = false;
+  let unavailableOnce = false;
   const pageRequest: PageFetch = async (url, init, realFetch) => {
     const route = routeOf(url);
     if (options.failOnce !== undefined && !failed && route === options.failOnce) {
       failed = true;
       throw new TypeError('E3N: the network dropped this request');
+    }
+    const settingsRoute = settingsRouteOf(url);
+    if (options.unavailableOnce !== undefined && !unavailableOnce
+      && (route === options.unavailableOnce || settingsRoute === options.unavailableOnce)) {
+      unavailableOnce = true;
+      return new Response(JSON.stringify(UNAVAILABLE), { status: 200, headers: { 'content-type': 'application/json' } });
     }
     if (options.before !== undefined && options.before[route] !== undefined) await options.before[route]!(log);
     return await forward(url, init, realFetch);

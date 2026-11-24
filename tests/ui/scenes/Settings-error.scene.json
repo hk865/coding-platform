@@ -1,0 +1,12 @@
+{
+  "now": "2026-11-24T09:00:00+08:00",
+  "routes": {
+    "bootstrap": {"workspaces":[{"scope":{"projectId":"scene-settings","workspaceId":"scene-main"},"name":"设置场景项目"},{"scope":{"projectId":"scene-settings","workspaceId":"scene-other"},"name":"设置场景项目 · 另一个工作区"}],"changesHead":"c0000000010"},
+    "goals/read": {"status":"ready","value":{}},
+    "settings/snapshot": {
+      "status": "rejected",
+      "code": "unavailable",
+      "reason": "the settings snapshot could not be read"
+    }
+  }
+}

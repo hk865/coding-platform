@@ -1,6 +1,6 @@
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { afterAll, afterEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 import { findAllClass, findClass } from './helpers/boot-page.js';
 import type { FakeElement } from './helpers/dom.js';
 import { auxTab, descendants, onMain, quietPage, textOf, waitFor } from './helpers/E3N-page.js';
@@ -17,6 +17,11 @@ import { gitIn } from '../scenarios/support/git-workspace.js';
 
 const N1 = '这个文件比较不了：读不到、不是普通文件或超过 1 MiB';
 const N2 = '这个文件没有逐行内容：二进制或不是 UTF-8 文本、超过 1 MiB，或改动超过 1000 行';
+const SIDE_NOTE = '另一侧不是 UTF-8 文本，只画能读的一侧';
+/* Latin-1 bytes that are not UTF-8, two different texts. */
+const LATIN = Buffer.from([0x63, 0x61, 0x66, 0xe9, 0x0a]);
+const LATIN2 = Buffer.from([0x63, 0x61, 0x66, 0xe9, 0x21, 0x0a]);
+const UTF8 = Buffer.from('café\n新\n');
 
 const slot = worldSlot();
 afterAll(async () => { await slot.close(); }, 180_000);
@@ -26,6 +31,7 @@ const wg = async (options: { oddFiles?: true } = {}): Promise<E3NWorld> =>
 /* 一行自己的世界，行结束时关掉（照 E3U-main-aux-files:30-41 写，不共用）。 */
 const owned: E3NWorld[] = [];
 afterEach(async () => {
+  vi.restoreAllMocks();
   for (const opened of owned.splice(0)) await opened.world.close();
 });
 async function own(open: () => Promise<E3NWorld>): Promise<E3NWorld> {
@@ -101,13 +107,18 @@ describe('P3 Main Diff, line by line', () => {
     });
   }, 180_000);
 
-  it('T5 a binary HEAD side is the only read and shows N2, with the rows still listed', async () => {
+  /* B2: both sides are read; exactly one side not text draws the readable side whole (add or delete). */
+  it.each([
+    { name: 'HEAD side', head: LATIN, work: UTF8, note: SIDE_NOTE, hunks: ['@@ -0,0 +1,2 @@'], rows: [['', '1', '+', 'café'], ['', '2', '+', '新']] },
+    { name: 'working tree side', head: UTF8, work: LATIN, note: SIDE_NOTE, hunks: ['@@ -1,2 +0,0 @@'], rows: [['1', '', '−', 'café'], ['2', '', '−', '新']] },
+    { name: 'both sides', head: LATIN, work: LATIN2, note: N2, hunks: [], rows: [] },
+  ])('T5 $name is not UTF-8: $note', async ({ head, work, note, hunks: expectedHunks, rows: expectedRows }) => {
     const opened = await own(() => openWGit());
     const latin = join(opened.world.root, 'src/latin.txt');
-    await writeFile(latin, Buffer.from([0x63, 0x61, 0x66, 0xe9, 0x0a]));
+    await writeFile(latin, head);
     gitIn(opened.world.root, 'add', '--', 'src/latin.txt');
     gitIn(opened.world.root, 'commit', '-q', '-m', 'P3 latin');
-    await writeFile(latin, Buffer.from([0x63, 0x61, 0x66, 0xe9, 0x21, 0x0a]));
+    await writeFile(latin, work);
     await onMain(opened.world, async (page, log) => {
       click(auxTab(page.root, 'Diff')!);
       await waitFor(() => changedRow(page.root, 'src/latin.txt') !== undefined);
@@ -115,16 +126,43 @@ describe('P3 Main Diff, line by line', () => {
       const from = log.calls.length;
       click(changedRow(page.root, 'src/latin.txt')!);
       await quietPage(log);
-      expect(diffNote(page.root)).toBe(N2);
       /* 具名改坏: `unsupported` 照旧往外抛（页签整页报错、行没了）；这一句红。 */
       expect(changedRows(page.root)).toHaveLength(3);
+      expect(diffNote(page.root)).toBe(note);
       const reads = callsOf(log, 'files/read', from);
-      /* 具名改坏: 读完 HEAD 一侧还去读工作区；这一句是 2。 */
-      expect(reads).toHaveLength(1);
-      expect((reads[0]!.input as { version?: { kind?: unknown } }).version?.kind).toBe('git');
-      expect((reads[0]!.reply as { code?: unknown }).code).toBe('unsupported');
+      /* 具名改坏: 读完 HEAD 一侧不是文本就停读工作区；这一句是 1。 */
+      expect(reads).toHaveLength(2);
+      expect(reads.map((call) => (call.input as { version?: { kind?: unknown } }).version?.kind)).toEqual(['git', 'working_tree']);
+      expect(hunks(page.root)).toEqual(expectedHunks);
+      expect(lineRows(page.root)).toEqual(expectedRows);
     });
   }, 180_000);
+
+  /* B1: one selected file's read fails; the list stays, the line area writes the page text, the next refresh rereads. */
+  it('T5b a transient read failure keeps the changed list and the next refresh draws the lines', async () => {
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    await onMain((await wg()).world, async (page, log) => {
+        click(auxTab(page.root, 'Diff')!);
+        await waitFor(() => changedRow(page.root, 'src/module.ts') !== undefined);
+        await quietPage(log);
+        const from = log.calls.length;
+        click(changedRow(page.root, 'src/module.ts')!);
+        await quietPage(log);
+        const failed = callsOf(log, 'files/read', from);
+        expect(failed).toHaveLength(1);
+        expect((failed[0]!.reply as { code?: unknown }).code).toBe('source_stale');
+        /* 具名改坏: `readDiffSide` 照旧往外抛；清单和逐行区都红。 */
+        expect(changedRows(page.root)).toHaveLength(2);
+        expect(diffNote(page.root)).toBe('文件正在被改，下次刷新再读。');
+        expect(logged.mock.calls.some((args) => args[0] === 'files/read' && args[1] === 'source_stale')).toBe(true);
+        const before = log.calls.length;
+        log.openings.at(-1)!.enqueue(new TextEncoder().encode('event: change\nid: c0000000002\ndata: {}\n\n'));
+        await waitFor(() => callsOf(log, 'files/read', before).length >= 2);
+        await quietPage(log);
+        expect(hunks(page.root)).toEqual(['@@ -1,2 +1,3 @@']);
+        expect(diffNote(page.root)).toBe('');
+      }, { mode: 'controlled', rejectOnce: { route: 'files/read', input: (input) => (input as { path?: unknown }).path === 'src/module.ts', code: 'source_stale', reason: 'T5b the selected file moved' } });
+  });
 
   /* 审查 B4：R4 的 not_found 那一支（新文件没有 HEAD 一侧）。这一行自己的世界里加一个未跟踪的新文件。 */
   it('T6 a new file has no HEAD side, so every line is drawn as added', async () => {

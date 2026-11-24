@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { findAllClass, findButton, findElement } from './helpers/boot-page.js';
+import { findAllClass, findButton, findClass, findElement } from './helpers/boot-page.js';
 import {
   bootE3N, countRoute, descendants, hasClass, quietPage, textOf, thread, userTexts, waitFor,
 } from './helpers/E3N-page.js';
-import { notConnected } from './helpers/E3N-interact.js';
+import { click } from './helpers/E3N-interact.js';
 import { answerRequest, openW1, openWA } from './helpers/E3N-world.js';
 import type { S6ARequestWorld } from '../helpers/S6A-request-fixture.js';
 
@@ -51,7 +51,7 @@ describe('E3U Main read failures and the unconnected run block', () => {
     }
   }, 60_000);
 
-  it('T-A14 a round with a session draws the prototype run button, unconnected, between the bubble and the answer', async () => {
+  it('T-A14 a round with a session draws its own run block, between the bubble and the answer', async () => {
     const opened = await openWA();
     worlds.push(opened.world);
     await answerRequest(opened, { commandId: 'e3u-a14', text: '跑一下', answer: '跑完了' });
@@ -61,7 +61,9 @@ describe('E3U Main read failures and the unconnected run block', () => {
       const holder = thread(page.root)!;
       const run = findElement(holder, (element) => element.tagName.toLowerCase() === 'button' && hasClass(element, 'run'));
       expect(run).toBeDefined();
-      expect(textOf(run)).toBe('运行步骤还没接通');
+      /* The page read the round's real `executions/steps`; the text-only round
+         ran no tool, so its head is the projection's zero counts. */
+      expect(textOf(run!)).toMatch(/用时 \d+ 分，已读取 0 个文件、编辑 0 个文件、运行命令 0 次/);
       const order = descendants(holder);
       const user = findAllClass(holder, 'msg-user').find((row) => textOf(row).includes('跑一下'))!;
       const agent = findAllClass(holder, 'msg-agent').find((row) => textOf(row).includes('跑完了'))!;
@@ -71,12 +73,18 @@ describe('E3U Main read failures and the unconnected run block', () => {
       await quietPage(log);
       const calls = log.calls.length;
       const before = page.root.textContent;
-      /* 具名改坏: `Main.dc.html` 删掉运行块的 `is-off`；`is-off` 断言红。 */
-      expect(notConnected(run!)).toBe('未接通');
+      /* 具名改坏: `Main.dc.html` 的运行块又画回 `is-off`/`还没接通`；这三句红。 */
+      expect(run!.getAttribute('aria-disabled')).not.toBe('true');
+      expect(run!.getAttribute('title')).toBeNull();
+      expect(hasClass(run!, 'is-off')).toBe(false);
       await quietPage(log);
       expect(log.calls.length).toBe(calls);
       expect(page.root.textContent).toBe(before);
-      expect(findAllClass(holder, 'steps')).toEqual([]);
+      /* 具名改坏: `readMainThread` 不读 `executions/steps`；这一句红（0 次）。
+         具名改坏: 运行块不展开 `.steps`；下面一句红。 */
+      expect(countRoute(log, 'executions/steps')).toBeGreaterThanOrEqual(1);
+      click(run!);
+      await waitFor(() => findClass(holder, 'steps') !== undefined);
     } finally {
       await page.restore();
     }

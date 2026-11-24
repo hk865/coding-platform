@@ -189,6 +189,11 @@ button.deliv:hover .on { color: var(--text); }
     </div>
 
     <div class="rail-foot">
+      <a class="btn btn-sm" href="{{settingsHref}}" title="设置：工作区权限、自动化与规则、运行上限">
+        <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.75 4.5h6.25M12 4.5h1.25M2.75 11.5h1.25M7 11.5h6.25"></path><circle cx="10.5" cy="4.5" r="1.5"></circle><circle cx="5.5" cy="11.5" r="1.5"></circle></svg>
+        设置
+      </a>
+      <span class="sp"></span>
       <button class="btn btn-icon btn-sm" type="button" onClick="{{toggleTheme}}" aria-label="{{themeLabel}}" title="{{themeLabel}}">
         <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5.25"></circle><path class="fill" d="M8 2.75a5.25 5.25 0 0 1 0 10.5Z"></path></svg>
       </button>
@@ -472,7 +477,7 @@ button.deliv:hover .on { color: var(--text); }
             <sc-if value="{{e.isRun}}" hint-placeholder-val="{{ true }}">
               <div>
                 <button class="{{e.runCls}}" type="button" onClick="{{e.toggle}}" aria-expanded="{{e.open}}">
-                  <svg class="ico sm chev" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4"></path></svg>
+                  <sc-if value="{{e.chev}}" hint-placeholder-val="{{ true }}"><svg class="ico sm chev" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4"></path></svg></sc-if>
                   <span class="{{e.headCls}}">{{e.head}}</span>
                   <span class="t">{{e.time}}</span>
                 </button>
@@ -488,9 +493,12 @@ button.deliv:hover .on { color: var(--text); }
                         <sc-if value="{{p.hasVerb}}" hint-placeholder-val="{{ true }}"><span class="step-verb">{{p.verb}}</span><span class="step-dot">·</span></sc-if><span class="{{p.objCls}}">{{p.obj}}</span>
                         <sc-if value="{{p.hasMeta}}" hint-placeholder-val="{{ false }}"><span class="step-meta">{{p.meta}}</span></sc-if>
                         <sc-if value="{{p.isDiff}}" hint-placeholder-val="{{ false }}"><span class="step-meta"><span class="add">{{p.add}}</span> <span class="del">{{p.del}}</span></span></sc-if>
+                        <sc-if value="{{p.hasStop}}" hint-placeholder-val="{{ false }}"><button class="{{p.stopCls}}" type="button" onClick="{{p.stopGo}}" title="取消这次运行">停止</button></sc-if><sc-if value="{{p.hasStopFail}}" hint-placeholder-val="{{ false }}"> <span class="tx-failed">{{p.stopFail}}</span></sc-if>
                         <sc-if value="{{p.hasDetail}}" hint-placeholder-val="{{ false }}"><div class="{{p.detCls}}">{{p.detail}}</div></sc-if>
                       </div>
                     </sc-for>
+                    <sc-if value="{{e.more}}" hint-placeholder-val="{{ false }}"><button class="btn-text plink" type="button" onClick="{{e.moreGo}}">再看 50 步</button></sc-if>
+                    <sc-if value="{{e.raw}}" hint-placeholder-val="{{ false }}"><a class="btn-text plink" href="{{e.rawHref}}">看原始记录<svg class="ico xs" viewBox="0 0 16 16" aria-hidden="true"><path d="M9.25 2.75h4v4M13.25 2.75 7.75 8.25"></path><path d="M11.75 9.5v3.75h-9V4.25h3.75"></path></svg></a></sc-if>
                   </div>
                 </sc-if>
               </div>
@@ -797,7 +805,7 @@ button.deliv:hover .on { color: var(--text); }
             <sc-if value="{{e.isRun}}" hint-placeholder-val="{{ true }}">
               <div class="lv-it">
                 <button class="{{e.cls}}" type="button" onClick="{{e.toggle}}" aria-expanded="{{e.open}}">
-                  <svg class="ico sm chev" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4"></path></svg>
+                  <sc-if value="{{e.chev}}" hint-placeholder-val="{{ true }}"><svg class="ico sm chev" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4"></path></svg></sc-if>
                   <span class="{{e.headCls}}">{{e.head}}<sc-if value="{{e.hasWord}}" hint-placeholder-val="{{ true }}"><span class="lv-dot" aria-hidden="true">·</span><span class="{{e.wordCls}}">{{e.word}}</span></sc-if></span>
                   <span class="t">{{e.time}}</span>
                 </button>
@@ -813,9 +821,12 @@ button.deliv:hover .on { color: var(--text); }
                         <span class="step-verb">{{p.verb}}</span><span class="step-dot">·</span><span class="{{p.objCls}}">{{p.obj}}</span>
                         <sc-if value="{{p.hasMeta}}" hint-placeholder-val="{{ false }}"><span class="step-meta">{{p.meta}}</span></sc-if>
                         <sc-if value="{{p.isDiff}}" hint-placeholder-val="{{ false }}"><span class="step-meta"><span class="add">{{p.add}}</span> <span class="del">{{p.del}}</span></span></sc-if>
+                        <sc-if value="{{p.hasStop}}" hint-placeholder-val="{{ false }}"><button class="{{p.stopCls}}" type="button" onClick="{{p.stopGo}}" title="取消这次运行">停止</button></sc-if><sc-if value="{{p.hasStopFail}}" hint-placeholder-val="{{ false }}"> <span class="tx-failed">{{p.stopFail}}</span></sc-if>
                         <sc-if value="{{p.hasDetail}}" hint-placeholder-val="{{ false }}"><div class="{{p.detCls}}">{{p.detail}}</div></sc-if>
                       </div>
                     </sc-for>
+                    <sc-if value="{{e.more}}" hint-placeholder-val="{{ false }}"><button class="btn-text plink" type="button" onClick="{{e.moreGo}}">再看 50 步</button></sc-if>
+                    <sc-if value="{{e.raw}}" hint-placeholder-val="{{ false }}"><a class="btn-text plink" href="{{e.rawHref}}">看原始记录<svg class="ico xs" viewBox="0 0 16 16" aria-hidden="true"><path d="M9.25 2.75h4v4M13.25 2.75 7.75 8.25"></path><path d="M11.75 9.5v3.75h-9V4.25h3.75"></path></svg></a></sc-if>
                     <sc-if value="{{e.hasNote}}" hint-placeholder-val="{{ true }}"><p class="lv-snote">{{e.note}}</p></sc-if>
                   </div>
                 </sc-if>
@@ -1119,6 +1130,7 @@ button.deliv:hover .on { color: var(--text); }
                     <sc-if value="{{p.isFile}}" hint-placeholder-val="{{ true }}"><svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 1.75h5.25l3 3v9.5H4Z"></path><path d="M9 1.75V5h3.25"></path></svg></sc-if>
                     <span class="step-verb">{{p.verb}}</span><span class="step-dot">·</span><span class="{{p.objCls}}">{{p.obj}}</span>
                     <sc-if value="{{p.hasMeta}}" hint-placeholder-val="{{ false }}"><span class="step-meta">{{p.meta}}</span></sc-if>
+                    <sc-if value="{{p.hasStop}}" hint-placeholder-val="{{ false }}"><button class="{{p.stopCls}}" type="button" onClick="{{p.stopGo}}" title="取消这次运行">停止</button></sc-if><sc-if value="{{p.hasStopFail}}" hint-placeholder-val="{{ false }}"> <span class="tx-failed">{{p.stopFail}}</span></sc-if>
                   </div>
                 </sc-for>
               </div>
@@ -2223,6 +2235,7 @@ class Component extends DCLogic {
       rows: d[2].map((r) => ({ k: r[0], v: r[1], cls: '' })), hint: d[3] };
   }
   memberDataVals(D, s, set, DUTY, read) {
+    const actions = this.props.actions || {};
     const line = D.line;
     /* M10 (Decide's D11): a failed first read has no data; the base's error text and its retry are the only body. */
     const err = read !== null && read.status === 'error' ? String(read.message || '') : '';
@@ -2247,6 +2260,20 @@ class Component extends DCLogic {
     const empty = !draft.trim();
     const status = line === null ? { live: false, advancing: false, still: true, word: '', dot: 'dot s-idle', advText: '' } : line.status;
     const report = (error) => console.error(error);
+    /* A8: a Query command's 停止 cancels its own run; a Work one opens this
+       line's existing cancel confirmation, whose 取消执行 stays the one path. */
+    const stopStep = (stop, failKey) => {
+      if (!stop) return;
+      if (stop.kind === 'query') { this.stopQueryRunOf(stop, failKey, set); return; }
+      set({ confirm: true, tip: null, densMenu: false });
+    };
+    /* Another line's view has its own cancel confirmation (`lvConfirm`); it
+       never sets the page's card, so returning to the page's own line leaves
+       no stray card there. A Query command still cancels its own run. */
+    const lvStop = (stop, failKey) => {
+      if (stop.kind === 'query') { this.stopQueryRunOf(stop, failKey, set); return; }
+      set({ lvConfirm: true, tip: null, densMenu: false });
+    };
     const control = (kind) => { this.props.actions.controlLine(kind).catch(report); };
     const hs = {
       /* §2.6: the head writes the line's duty word (执行者 …), even when
@@ -2282,10 +2309,6 @@ class Component extends DCLogic {
     const confirmOpen = !!s.confirm && c.canCancel;
     const ropen = s.ropen || {};
 
-    /* one not-connected step: the step projection is "部分" (M17/M19) */
-    const notConnected = { cls: 'step', isThink: false, isFile: false, isEdit: false, isCmd: false, isInt: false,
-      verb: '', hasVerb: false, obj: '还没接通', objCls: 'step-obj', hasMeta: false, meta: '', isDiff: false, add: '', del: '',
-      hasDetail: false, detail: '', detCls: 'step-detail' };
     const runOpen = (id, live) => { const value = ropen[id]; return value === undefined || value === null ? live || autoOpen : !!value; };
     const itemV = (e, index) => {
       const base = { isSys: false, isSep: false, isBrief: false, isRun: false, isMsg: false };
@@ -2296,14 +2319,31 @@ class Component extends DCLogic {
       if (e.kind === 'brief') return Object.assign(base, { isBrief: true, rows: e.rows.map((r) => ({ k: r.k, v: r.v })) });
       if (e.kind === 'run') {
         const id = 'run:' + e.runRef.goalId + '/' + e.runRef.runId;
-        const live = e.word.indexOf('执行中') === 0;
-        const open = runOpen(id, live);
-        return Object.assign(base, { isRun: true, open: open,
+        /* A5 (121-147): the head, time and steps are the shared projection's
+           (`executions/steps` via `runStepsOf`); a Run without a projection
+           keeps its own row and draws no made-up step. */
+        const proj = e.runSteps || null;
+        const live = proj !== null ? proj.live : e.word.indexOf('执行中') === 0;
+        /* Note 2: a non-empty sentence is the whole block; it neither opens nor
+           shows a chevron and a click does nothing. The Run's terminal word
+           stays in the head, so an ended Run still reads 已结束 · 中断. */
+        const sentenceOnly = proj !== null && proj.sentence !== '';
+        const open = sentenceOnly ? false : runOpen(id, live);
+        /* A6: the record's own open state (including 详细/完全展开's default)
+           drives boot's 5 s chain for exactly the open live blocks. */
+        if (proj !== null && proj.key && typeof actions.runOpen === 'function') actions.runOpen(proj.key, open);
+        return Object.assign(base, { isRun: true, open: open, chev: !sentenceOnly,
           runCls: 'run' + (open ? ' is-open' : '') + (live ? ' is-live' : ''),
-          head: live ? '正在执行：' + e.head : e.head + (e.word === '' ? '' : ' · ' + e.word),
-          headCls: live ? 'live-tx' : '', time: live ? e.at + ' 起' : e.at,
-          toggle: () => set({ ropen: Object.assign({}, ropen, { [id]: !open }) }),
-          steps: open ? [Object.assign({}, notConnected)] : [] });
+          head: sentenceOnly ? proj.sentence + (e.word === '' ? '' : ' · ' + e.word) : live ? '正在执行：' + (proj !== null ? proj.head : e.head) : (proj !== null ? proj.head : e.head) + (e.word === '' ? '' : ' · ' + e.word),
+          headCls: live ? 'live-tx' : '', time: proj !== null ? proj.time : live ? e.at + ' 起' : e.at,
+          toggle: sentenceOnly ? () => {} : () => set({ ropen: Object.assign({}, ropen, { [id]: !open }) }),
+          steps: open && proj !== null ? this.lvSteps(proj.steps, proj.live, showThink, full, stopStep,
+            proj.key, proj.callIds) : [],
+          /* A6/A7: the record's next page and its whole-line raw record (Chain). */
+          more: open && proj !== null && proj.next !== null,
+          moreGo: () => { if (proj !== null && typeof actions.readRunSteps === 'function') actions.readRunSteps(proj.key); },
+          raw: open && proj !== null && !!proj.rawHref,
+          rawHref: proj !== null && proj.rawHref ? proj.rawHref : '' });
       }
       if (e.kind === 'mark') return Object.assign(base, { isSys: true, text: e.text, t: e.at, icCheck: false });
       if (e.kind === 'ask') {
@@ -2452,11 +2492,28 @@ class Component extends DCLogic {
         if (e.kind === 'brief') { lvRows.push(Object.assign(base, { isBrief: true, rows: e.rows.map((r) => ({ k: r.k, v: r.v })) })); return; }
         if (e.kind === 'run') {
           const id = 'lv:' + e.runRef.goalId + '/' + e.runRef.runId;
-          const open = lvOpen[id] === undefined ? autoOpen : !!lvOpen[id];
-          lvRows.push(Object.assign(base, { isRun: true, open: open, cls: 'run lv-run' + (open ? ' is-open' : ''),
-            head: e.head, headCls: 'lv-rt', hasWord: e.word !== '', word: e.word, wordCls: 'lv-w tx-plain', time: e.at,
-            toggle: () => set({ lvOpen: Object.assign({}, lvOpen, { [id]: !open }) }),
-            steps: open ? [Object.assign({}, notConnected)] : [], hasNote: false, note: '' }));
+          const proj = e.runSteps || null;
+          /* Note 2: `not_started`/`not_entered`/`unknown` are one sentence, so the
+             block neither opens nor shows a chevron; clicking it does nothing. */
+          const sentenceOnly = proj !== null && proj.sentence !== '';
+          const open = sentenceOnly ? false : lvOpen[id] === undefined ? (autoOpen || (proj !== null && proj.live)) : !!lvOpen[id];
+          const live = proj !== null && proj.live;
+          /* A6: another line's conversation reports the same open state. */
+          if (proj !== null && proj.key && typeof actions.runOpen === 'function') actions.runOpen(proj.key, open);
+          lvRows.push(Object.assign(base, { isRun: true, open: open, chev: !sentenceOnly,
+            cls: 'run lv-run' + (open ? ' is-open' : '') + (live ? ' is-live' : ''),
+            head: sentenceOnly ? proj.sentence : proj !== null ? (live ? '正在执行：' + proj.head : proj.head) : e.head,
+            headCls: 'lv-rt' + (live ? ' live-tx' : ''),
+            hasWord: !sentenceOnly && !live && e.word !== '', word: e.word, wordCls: 'lv-w tx-plain',
+            time: proj !== null ? proj.time : e.at,
+            toggle: sentenceOnly ? () => {} : () => set({ lvOpen: Object.assign({}, lvOpen, { [id]: !open }) }),
+            steps: open && proj !== null ? this.lvSteps(proj.steps, proj.live, showThink, full, lvStop,
+              proj.key, proj.callIds) : [],
+            more: open && proj !== null && proj.next !== null,
+            moreGo: () => { if (proj !== null && typeof actions.readRunSteps === 'function') actions.readRunSteps(proj.key); },
+            raw: open && proj !== null && !!proj.rawHref,
+            rawHref: proj !== null && proj.rawHref ? proj.rawHref : '',
+            view: proj, hasNote: false, note: '' }));
           return;
         }
         if (e.kind === 'ask') {
@@ -2584,6 +2641,7 @@ class Component extends DCLogic {
 
     return {
       rootMod: (theme === 'light' ? 't-light' : '') + (s.panel === false || lvShow ? ' no-panel' : ''),
+      settingsHref: this.props.settingsHref || 'Settings.dc.html',
       themeLabel: theme === 'light' ? '切换到深色' : '切换到浅色',
       toggleTheme: () => set({ theme: theme === 'light' ? 'dark' : 'light' }),
       togglePanel: () => set({ panel: (this.state || {}).panel === false }),
@@ -2910,6 +2968,7 @@ class Component extends DCLogic {
     return {
       rootMod: (theme === 'light' ? 't-light' : '') + (s.panel === false || lv.show ? ' no-panel' : ''),
       themeLabel: theme === 'light' ? '切换到深色' : '切换到浅色',
+      settingsHref: this.props.settingsHref || 'Settings.dc.html',
       toggleTheme: () => set({ theme: theme === 'light' ? 'dark' : 'light' }),
       togglePanel: () => set({ panel: (this.state || {}).panel === false }),
 
@@ -3153,13 +3212,35 @@ class Component extends DCLogic {
   /* minutes of 'HH:MM' (or 'MM-DD HH:MM'), for a duration on the board's clock */
   lvMin(t) { const m = /(\d\d):(\d\d)$/.exec(String(t)); return m ? +m[1] * 60 + +m[2] : 0; }
   /* steps in Member's shape: { ic: 'think' | 'file' | 'edit' | 'cmd' | 'int', verb, obj, path, meta, detail, prose, live, fail } */
-  lvSteps(arr, isLive, showThink, full) {
-    return (arr || []).filter((p) => showThink || p.ic !== 'think').map((p) => {
-      const meta = p.live ? (isLive ? '进行中' : '停在安全点') : p.meta || ''; const diff = /^\+\d+ −\d+$/.test(meta);
+  lvSteps(arr, isLive, showThink, full, stopAt, runKey, callIds) {
+    const fails = (this.state || {}).stopFail || {};
+    return (arr || []).map((p, i) => ({ p, i })).filter(({ p }) => showThink || p.ic !== 'think').map(({ p, i }) => {
+      /* A8: a running command's own meta wins over A1's 进行中. */
+      const meta = p.live ? (p.meta || (isLive ? '进行中' : '停在安全点')) : p.meta || ''; const diff = /^\+\d+ −\d+$/.test(meta);
+      const hasStop = !!p.stop && typeof stopAt === 'function';
+      const callId = callIds === undefined ? '' : (callIds[i] || '');
+      const failKey = runKey !== undefined && callId !== '' ? runKey + '\u0000' + callId : '';
       return { cls: 'step' + (p.fail ? ' is-fail' : ''), isThink: p.ic === 'think', isFile: p.ic === 'file', isEdit: p.ic === 'edit', isCmd: p.ic === 'cmd', isInt: p.ic === 'int',
-        verb: p.verb, obj: p.obj, objCls: 'step-obj' + (p.path ? ' is-path' : ''), hasMeta: !!meta && !diff, meta: meta, isDiff: diff, add: diff ? meta.split(' ')[0] : '', del: diff ? meta.split(' ')[1] : '',
+        verb: p.verb, hasVerb: true, obj: p.obj, objCls: 'step-obj' + (p.path ? ' is-path' : ''), hasMeta: !!meta && !diff, meta: meta, isDiff: diff, add: diff ? meta.split(' ')[0] : '', del: diff ? meta.split(' ')[1] : '',
+        hasStop: hasStop, stopCls: 'btn btn-sm btn-line', stopGo: hasStop ? () => stopAt(p.stop, failKey) : () => {},
+        hasStopFail: hasStop && !!fails[failKey], stopFail: hasStop ? fails[failKey] || '' : '',
         hasDetail: !!full && !!p.detail, detail: p.detail || '', detCls: 'step-detail' + (p.prose ? ' is-prose' : '') };
     });
+  }
+  /* A Query stop's failed word stays under that step's 停止, keyed by the Run
+     and callId, until the next click retries it; a page reread never clears it. */
+  stopQueryRunOf(stop, failKey, set) {
+    const clear = () => {
+      const next = Object.assign({}, (this.state || {}).stopFail || {});
+      delete next[failKey];
+      set({ stopFail: next });
+    };
+    clear();
+    const actions = this.props.actions || {};
+    if (typeof actions.stopQueryRun !== 'function') return;
+    Promise.resolve(actions.stopQueryRun(stop.queryRunRef)).then(clear)
+      .catch((error) => set({ stopFail: Object.assign({}, (this.state || {}).stopFail || {},
+        { [failKey]: String(error && error.message ? error.message : error) }) }));
   }
   /* the hover / focus cards of the controls and of the two ways of sending: what each really does (Member's approved cards;
      问一问's answer lands in this conversation instead of the right panel) */
@@ -3361,9 +3442,18 @@ class Component extends DCLogic {
     const pre = (e) => (!isExec && e.taskName ? e.taskName + '：' : '');
     const runItem = (k, o2) => {
       const open = openOf(k, o2.live || !!o.autoOpen);
+      const actions = this.props.actions || {};
+      const view = o2.view || null;
+      /* A6: the line view reports its own open state (including the density
+         default), so the 5 s chain stops when it collapses. */
+      if (view !== null && view.key && typeof actions.runOpen === 'function') actions.runOpen(view.key, open);
       return Object.assign({}, B, { isRun: true, open: open, toggle: toggle(k, open), cls: 'run lv-run' + (open ? ' is-open' : '') + (o2.live ? ' is-live' : ''),
         head: o2.head, headCls: 'lv-rt' + (o2.live ? ' live-tx' : ''), hasWord: !!o2.word, word: o2.word || '', wordCls: 'lv-w ' + (o2.tx || 'tx-plain'), time: o2.time,
-        steps: this.lvSteps(o2.steps, o2.live, showThink, full), hasNote: !!o2.note, note: o2.note || '' });
+        steps: this.lvSteps(o2.steps, o2.live, showThink, full), hasNote: !!o2.note, note: o2.note || '',
+        /* A6/A7: another line's run block, same next page and raw record. */
+        more: view !== null && view.next !== null,
+        moreGo: () => { if (view !== null && typeof actions.readRunSteps === 'function') actions.readRunSteps(view.key); },
+        raw: view !== null && !!view.rawHref, rawHref: view !== null && view.rawHref ? view.rawHref : '' });
     };
     const flat = (e, kind, head, word, tx) => Object.assign({}, B, { isRow: true, icCheck: kind === 'check', icAsk: kind === 'query', icTalk: kind === 'talk',
       head: head, hasWord: !!word, word: word || '', wordCls: 'lv-w ' + (tx || 'tx-plain'), time: e.time });

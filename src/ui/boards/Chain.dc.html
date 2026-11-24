@@ -159,6 +159,11 @@ body { margin: 0; background: #1F1F1F; }
     </div>
 
     <div class="rail-foot">
+      <a class="btn btn-sm" href="{{settingsHref}}" title="设置：工作区权限、自动化与规则、运行上限">
+        <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.75 4.5h6.25M12 4.5h1.25M2.75 11.5h1.25M7 11.5h6.25"></path><circle cx="10.5" cy="4.5" r="1.5"></circle><circle cx="5.5" cy="11.5" r="1.5"></circle></svg>
+        设置
+      </a>
+      <span class="sp"></span>
       <button class="btn btn-icon btn-sm" type="button" onClick="{{toggleTheme}}" aria-label="{{themeLabel}}" title="{{themeLabel}}">
         <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5.25"></circle><path class="fill" d="M8 2.75a5.25 5.25 0 0 1 0 10.5Z"></path></svg>
       </button>
@@ -2355,6 +2360,7 @@ class Component extends DCLogic {
 
     return {
       rootMod: (theme === 'light' ? 't-light' : '') + (insp.show ? '' : ' no-panel'),
+      settingsHref: this.props.settingsHref || 'Settings.dc.html',
       themeLabel: theme === 'light' ? '切换到深色' : '切换到浅色',
       toggleTheme: () => set({ theme: theme === 'light' ? 'dark' : 'light' }),
       isChat: pane === 'chat', isTrace: pane === 'trace',
@@ -2650,6 +2656,7 @@ class Component extends DCLogic {
 
     return {
       rootMod: (theme === 'light' ? 't-light' : '') + (insp.show ? '' : ' no-panel'),
+      settingsHref: this.props.settingsHref || 'Settings.dc.html',
       themeLabel: theme === 'light' ? '切换到深色' : '切换到浅色',
       toggleTheme: () => set({ theme: theme === 'light' ? 'dark' : 'light' }),
       isChat: pane === 'chat', isTrace: pane === 'trace',

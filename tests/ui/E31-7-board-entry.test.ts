@@ -16,7 +16,7 @@ describe('E31-7 board entry links', () => {
       execFileSync(process.execPath, ['scripts/build-ui.mjs', out], { cwd: root, stdio: 'pipe' });
       const html = readFileSync(join(out, 'index.html'), 'utf8');
       const hrefs = [...html.matchAll(/<a href="([^"]+)"/g)].map((match) => match[1]);
-      expect(hrefs).toHaveLength(10);
+      expect(hrefs).toHaveLength(11);
       for (const href of hrefs) expect(href!.startsWith('/workbench/')).toBe(true);
     } finally {
       rmSync(out, { recursive: true, force: true });

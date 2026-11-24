@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
@@ -49,6 +50,11 @@ const SHA = {
   [EDIT_TWO]: '748dc00fb0fc34f54b08fd65a6c368134d5b87a4c8dfc56e3944d33236ef8b25',
   [OUTSIDE]: 'dc025a86cace8a8ea23ce252874126e8b14601fafe492e71025f09ac98621e5b',
 } as const;
+
+/* B4: the working copy with a counter in the board's own `axLineDiff`; data mode must ask the shared hunk port instead. */
+const axLineSpy = readFileSync(new URL('../../src/ui/boards/Main.dc.html', import.meta.url), 'utf8')
+  .replace('  axLineDiff(a, b, from) {', '  axLineDiff(a, b, from) { globalThis.__axLineCalls = (globalThis.__axLineCalls || 0) + 1;');
+const axLineCalls = (): number => (globalThis as { __axLineCalls?: number }).__axLineCalls ?? 0;
 
 /** The buttons inside the first `.holder` (a tab's list, a page's bar or note). */
 const buttonsIn = (root: FakeElement, holder: string): FakeElement[] => elementsOf(findClass(root, holder), 'button');
@@ -296,10 +302,15 @@ describe('E3U Main right panel: 文件 and Diff', () => {
       expect(conflictButtons(page.root)).toEqual(['重新载入', '比较', '仍然保存', '先不保存']);
       await quietPage(log);
       const before = log.calls.length;
+      (globalThis as { __axLineCalls?: number }).__axLineCalls = 0;
       click(buttonText(findClass(page.root, 'fp-note'), choice)!);
       if (choice === '比较') {
         await waitFor(() => findAllClass(page.root, 'dl-row').some((row) => hasClass(row, 'is-add') || hasClass(row, 'is-del')));
         await quietPage(log);
+        /* B4: 比较 in data mode asks the shared hunk port; the board's n×m `axLineDiff` is not called. */
+        expect(axLineCalls()).toBe(0);
+        /* B4: both sides end in a newline, so the last line is not marked as missing one. */
+        expect(findAllClass(page.root, 'dl-row').map((row) => textOf(row)).join('\n')).not.toContain('文件末尾没有换行');
         expect(callsOf(log, 'files/compare', before)).toHaveLength(0);
         /* READS-6/SPEC-11 (S37): 比较 left the read on the file page; 回到 Git ↔ 工作区 reads files/uncommitted again.
            具名改坏: `Main.dc.html` 的 `ax.backToGit` 只清 `axCmp`；这一句红。 */
@@ -317,8 +328,26 @@ describe('E3U Main right panel: 文件 and Diff', () => {
         await quietPage(log);
         expect(log.calls.length).toBe(before);
       }
-    });
+    }, { source: axLineSpy });
   }, 120_000);
+
+  /* B4：两段改动各一行头（手算第 2、27 行起）；超上限与和磁盘一样写 Diff 页现成的两句。
+     具名改坏: 数据模式头行改回 `F.from`（两段格红）；删 `hs === null` 或 `hs.length === 0` 那一支（后两格红）。 */
+  it.each([
+    { name: '两段', disk: Array.from({ length: 40 }, (_, n) => (n === 29 ? '磁盘 30\n' : `第 ${n + 1} 行\n`)).join(''), draft: Array.from({ length: 40 }, (_, n) => (n === 4 || n === 29 ? `改 ${n + 1}\n` : `第 ${n + 1} 行\n`)).join(''), heads: ['@@ 第 2 行起 · 磁盘 ↔ 草稿', '@@ 第 27 行起 · 磁盘 ↔ 草稿'], note: '' },
+    { name: '超上限', disk: Array.from({ length: 501 }, (_, n) => `d${n}\n`).join(''), draft: Array.from({ length: 501 }, (_, n) => `x${n}\n`).join(''), heads: [], note: '这个文件没有逐行内容：二进制或不是 UTF-8 文本、超过 1 MiB，或改动超过 1000 行' },
+    { name: '没差别', disk: 'n\n', draft: 'n\n', heads: [], note: '逐行看没有差别（可能只差文件开头的 BOM，或文件刚又改回去了）' }, ])('T-B16b 比较：$name', async ({ disk, draft, heads, note }) => {
+    const opened = await own();
+    await onMain(opened.world, async (page, log) => {
+      await openModule(page, log);
+      await writeFile(join(opened.world.root, MODULE), disk);
+      editAndSave(page.root, draft);
+      await waitFor(() => conflictButtons(page.root).length > 0);
+      click(buttonText(findClass(page.root, 'fp-note'), '比较')!);
+      expect(findAllClass(page.root, 'dl-hunk').map(textOf)).toEqual(heads);
+      expect(noteOf(page.root, 'Diff')).toBe(note);
+    });
+  });
 
   /*
    * B-09, READS-3/SPEC-16: a tab whose read failed writes the page text in its

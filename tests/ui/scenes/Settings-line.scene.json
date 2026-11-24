@@ -1,0 +1,69 @@
+{
+  "now": "2026-11-24T09:00:00+08:00",
+  "routes": {
+    "bootstrap": {"workspaces":[{"scope":{"projectId":"scene-settings","workspaceId":"scene-main"},"name":"设置场景项目"},{"scope":{"projectId":"scene-settings","workspaceId":"scene-other"},"name":"设置场景项目 · 另一个工作区"}],"changesHead":"c0000000010"},
+    "goals/read": {"status":"ready","value":{}},
+    "settings/snapshot": {
+      "status": "ready",
+      "value": {
+        "workspaces": [
+          {
+            "scope": {"projectId": "scene-settings", "workspaceId": "scene-main"},
+            "name": "主工作区",
+            "root": "/work/scene-settings",
+            "writeAllowed": true,
+            "commandsAllowed": true,
+            "accessFixed": "startup_binding",
+            "checks": [
+              {
+                "checkId": "scene-typecheck",
+                "command": "npm run typecheck",
+                "taskIds": "all"
+              },
+              {
+                "checkId": "scene-tests",
+                "command": "npm test",
+                "taskIds": [
+                  "scene-work",
+                  "scene-gate"
+                ]
+              }
+            ],
+            "checkApprovals": [
+              {
+                "checkId": "scene-typecheck"
+              }
+            ],
+            "withdrawnChecks": [
+              {
+                "checkId": "scene-lint",
+                "withdrawnAt": "2026-11-19T10:20:00+08:00"
+              }
+            ]
+          },
+          {
+            "scope": {"projectId": "scene-settings", "workspaceId": "scene-other"},
+            "name": "另一个工作区",
+            "root": "/work/scene-settings-other",
+            "writeAllowed": true,
+            "commandsAllowed": false,
+            "accessFixed": null,
+            "checks": []
+          }
+        ],
+        "structuralApproval": {
+          "saved": {},
+          "defaults": {
+            "proposals": "auto",
+            "repairs": "auto"
+          }
+        },
+        "commandReviewLine": {
+          "saved": 30,
+          "effective": 30,
+          "default": 60
+        }
+      }
+    }
+  }
+}

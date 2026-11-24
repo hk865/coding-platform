@@ -30,6 +30,7 @@ export type BootstrapReply = {
 };
 
 const CORE_API_PREFIX = '/api/real/core/';
+const SETTINGS_API_PREFIX = '/api/real/settings/';
 const PLATFORM_TOKEN_HEADER = 'x-platform-token';
 const CHANGES_SUFFIX = 'changes';
 const LAST_EVENT_ID_HEADER = 'last-event-id';
@@ -118,6 +119,8 @@ export function committedRouteValue<T>(reply: RouteReply, route: string): T {
 export function createHostClient(token: string, base = ''): {
   post(route: string, scope: CoreScope, input: unknown): Promise<RouteReply>;
   write(route: string, scope: CoreScope, request: GraphWriteRequest): Promise<RouteReply>;
+  /** Host settings routes: `POST /api/real/settings/<route>`, the body is the input itself. */
+  settings(route: string, input: unknown): Promise<RouteReply>;
   bootstrap(): Promise<BootstrapReply>;
 } {
   return {
@@ -133,6 +136,13 @@ export function createHostClient(token: string, base = ''): {
         method: 'POST',
         headers: { 'content-type': 'application/json', [PLATFORM_TOKEN_HEADER]: token },
         body: JSON.stringify({ scope, request: writeRequest }),
+      }, route);
+    },
+    settings(route: string, input: unknown): Promise<RouteReply> {
+      return request<RouteReply>(`${base}${SETTINGS_API_PREFIX}${route}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', [PLATFORM_TOKEN_HEADER]: token },
+        body: JSON.stringify(input),
       }, route);
     },
     bootstrap(): Promise<BootstrapReply> {

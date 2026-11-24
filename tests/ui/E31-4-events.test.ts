@@ -20,6 +20,7 @@ const SET_STATE_HANDLER = {
   Member: { path: 'toggleTheme', state: { theme: 'light' }, marker: '切换到深色' },
   Phone: { path: 'toggleGoals', state: { menu: 'goals' }, marker: 'coding-platform 的目标，按顺序' },
   Plan: { path: 'toggleTheme', state: { theme: 'light' }, marker: '切换到深色' },
+  Settings: { path: 'toggleTheme', state: { theme: 'light' }, marker: '切换到深色' },
   TaskMap: { path: 'toggleTheme', state: { theme: 'light' }, marker: '切换到深色' },
 } as const;
 

@@ -58,6 +58,10 @@ export class FakeElement {
   focus(): void {
     if (typeof document !== 'undefined') (document as unknown as FakeDocument).activeElement = this;
   }
+  blur(): void {
+    const document = (globalThis as unknown as { document?: FakeDocument }).document;
+    if (document !== undefined && document.activeElement === this) document.activeElement = null;
+  }
 }
 
 export type FakeDocument = {

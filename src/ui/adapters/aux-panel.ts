@@ -305,14 +305,19 @@ export function auxDiffHunksOf(before: string | null, after: string | null): Aux
   return hunks;
 }
 
+/** B2：哪一侧不是 UTF-8 文本；那一侧不画，能读的一侧整段画成加或删。 */
+export type AuxDiffRead = {
+  before: string | null; after: string | null; notText?: 'before' | 'after';
+};
+
 /**
- * R3：选中那一行的逐行区。`unknown` 是 N1；没读或不是文本的一侧是 N2；脚本超限是 N2、
+ * R3：选中那一行的逐行区。`unknown` 是 N1；没读、两侧都不是文本是 N2；脚本超限是 N2、
  * 空脚本是 N3（两者都让 `hunks` 为 null，画板走 `hunks === null` 那一支画原因）；
- * 其余给 hunks、note 为空。
+ * 恰好一侧不是文本（B2）时，可读的那一侧整段画而说明行写那一句；其余给 hunks、note 为空。
  */
 export function auxDiffViewOf(
   row: AuxChangedRow,
-  read: { before: string | null; after: string | null } | 'not_text' | null,
+  read: AuxDiffRead | 'not_text' | null,
 ): AuxDiffView {
   const path = row.path;
   if (row.state === 'unknown') {
@@ -321,6 +326,9 @@ export function auxDiffViewOf(
   const noLineDiff = '这个文件没有逐行内容：二进制或不是 UTF-8 文本、超过 1 MiB，或改动超过 1000 行';
   if (read === null || read === 'not_text') return { path, hunks: null, note: noLineDiff };
   const hunks = auxDiffHunksOf(read.before, read.after);
+  if (read.notText !== undefined) {
+    return { path, hunks, note: '另一侧不是 UTF-8 文本，只画能读的一侧' };
+  }
   if (hunks === null) return { path, hunks: null, note: noLineDiff };
   if (hunks.length === 0) {
     return { path, hunks: null, note: '逐行看没有差别（可能只差文件开头的 BOM，或文件刚又改回去了）' };

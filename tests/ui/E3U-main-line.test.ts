@@ -224,18 +224,20 @@ describe('E3U Main line view', () => {
   }, 180_000);
 
   it.each([
-    { entry: 'an ended Run', open: lineWorld, head: /^用时 —：运行步骤还没接通/ },
-    { entry: 'the running Run', open: heldWorld, head: /^正在执行：运行步骤还没接通$/ },
-  ])('SPEC-7 ruling 11 $entry is drawn unconnected and opens no steps', async ({ open, head }) => {
+    { entry: 'an ended Run', open: lineWorld, head: /^用时 \d+ 分，已读取 0 个文件、编辑 0 个文件、运行命令 0 次/ },
+    { entry: 'the running Run', open: heldWorld, head: /^正在执行：用时 \d+ 分，已读取 0 个文件、编辑 0 个文件、运行命令 0 次/ },
+  ])('SPEC-7 ruling 11 $entry draws its own run block from executions/steps', async ({ open, head }) => {
     await onModule(await open(), async (page) => {
       await waitFor(() => runRows(page.root).length > 0);
       const run = runRows(page.root)[0]!;
-      /* 具名改坏: `main.ts` 的 `lvRecordOf` 给运行行 `label: ''`；这一句红（“用时 ，步骤 0 · 编辑 0” / “正在执行：第 1 次尝试”）。 */
+      /* The head is the projection's, not the old unconnected placeholder.
+         具名改坏: `main.ts` 的 `lvRecordOf` 又给运行行 `label: '运行步骤还没接通'`；这一句红。 */
       expect(textOf(findClass(run, 'lv-rt'))).toMatch(head);
-      /* 具名改坏: `Main.dc.html` 的运行行覆盖不给 `runOff`/`runTip`；这一句红。 */
-      expect([run.getAttribute('aria-disabled'), run.getAttribute('title')]).toEqual(['true', '还没接通']);
-      click(run);
-      expect(findClass(lineThread(page.root)!, 'steps')).toBeUndefined();
+      /* 具名改坏: `Main.dc.html` 的运行行覆盖又给 `runOff`/`runTip`；这一句红。 */
+      expect([run.getAttribute('aria-disabled'), run.getAttribute('title')]).toEqual(['false', '']);
+      if (run.getAttribute('aria-expanded') !== 'true') click(run);
+      /* 具名改坏: 运行行覆盖把 `open` 恒写 false；这一句红（没有 .steps）。 */
+      expect(findClass(lineThread(page.root)!, 'steps')).toBeDefined();
     });
   }, 180_000);
 

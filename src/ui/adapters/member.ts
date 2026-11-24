@@ -14,8 +14,7 @@ import type { TaskExecutionRecord } from '../../contracts/execution-read.js';
 import type { TaskGraph, TaskRow } from '../../contracts/task-graph.js';
 import type { ControlIntentSnapshotV1 } from '../../contracts/control-intent.js';
 import type { ContinuationBriefV1 } from '../../contracts/continuation-brief.js';
-import type { QueryJobAnswerSnapshot } from '../../contracts/query-job.js';
-import type { QueryExecutionRecord } from '../../contracts/query-job.js';
+import type { QueryExecutionRecord, QueryJobAnswerSnapshot, QueryRunRef } from '../../contracts/query-job.js';
 import type { SessionMessageReadV1, MessageBody } from '../../contracts/mailbox.js';
 import type { SessionMessageRef } from '../../contracts/core/session-message.js';
 import type { RunOutcome, RunRef, TaskTriple } from '../../contracts/dispatch.js';
@@ -25,6 +24,7 @@ import { asRecord, asText } from '../values.js';
 import { localShortAt, taskState, taskWhyOf, PHASE_WORD } from './task-map.js';
 import { lineStatusView, dutyWordOf, lineHref, type LineKey, type NavData, type NavGoal, type NavInbox, type NavLine } from './nav.js';
 import { requeueVisible } from './line-shared.js';
+import type { MainRunStep, MainRunSteps } from './main.js';
 import { auxChangedRowsOf } from './aux-panel.js';
 
 /** One copies-section item, its deterministic Query and that Query's last answer. */
@@ -89,6 +89,10 @@ export type MemberSource = {
   startup: MemberStartupReport | null;
   /** A failed `host/reconcile-report`: the message 启动核对 shows; never the page's error. */
   startupError: string | null;
+  /** A5 (121-147): every Run the record draws, keyed by its own run id, from
+   * that Run's `executions/steps` projection. A Run whose snapshot could not be
+   * read is absent, never given a guessed scope. */
+  runStepsByRun: ReadonlyMap<string, MainRunSteps>;
 };
 
 export type MemberRailRow = NavLine & { current: boolean };
@@ -122,7 +126,8 @@ export type MemberLine = {
 
 export type MemberItem =
   | { kind: 'sys'; code: 'start' | 'pause' | 'resume' | 'cancel' | 'requeue' | 'check'; text: string; at: string }
-  | { kind: 'run'; runRef: RunRef; head: string; word: string; at: string; checks: MemberCheck[] }
+  | { kind: 'run'; runRef: RunRef; head: string; word: string; at: string; time: string; checks: MemberCheck[];
+      runSteps: MainRunSteps | null }
   | { kind: 'message'; messageRef: SessionMessageRef; text: string; at: string; track: MemberTrack; reply: string | null;
       replyWord: string; wakeWord: string }
   | { kind: 'ask'; messageRef: SessionMessageRef; question: string; answer: string | null; phase: string | null; at: string }
@@ -256,18 +261,24 @@ export function runWordOf(item: Extract<LineExecutionItemV1, { kind: 'execution'
 
 /** §2.7: one execution row. The status and the outcome stay two facts; the
  * adapter never invents the word "完成". */
-function runItemOf(item: Extract<LineExecutionItemV1, { kind: 'execution' }>, title: string): MemberItem {
+function runItemOf(item: Extract<LineExecutionItemV1, { kind: 'execution' }>, title: string,
+  projected: MainRunSteps | null): MemberItem {
+  const at = item.startedAt === null ? '' : localShortAt(item.startedAt);
+  /* A5: the summary head and the `HH:MM–HH:MM` time are the projection's; a Run
+   * whose workspace was not in the snapshot keeps the event stamp and title. */
   return {
     kind: 'run',
     runRef: item.runRef,
-    head: title,
+    head: projected === null ? title : projected.head,
     word: runWordOf(item),
-    at: item.startedAt === null ? '' : localShortAt(item.startedAt),
+    at,
+    time: projected === null ? at : projected.time,
     checks: item.checks.map((check) => ({
       at: check.at === null ? '' : localShortAt(check.at),
       status: check.status,
       label: '检查',
     })),
+    runSteps: projected,
   };
 }
 
@@ -523,7 +534,7 @@ function recordsOf(source: MemberSource, detail: WorkLineDetailV1): { items: Mem
       continue;
     }
     const group = groupFor(entry.task);
-    const item = runItemOf(entry, group.name);
+    const item = runItemOf(entry, group.name, source.runStepsByRun.get(entry.runRef.runId) ?? null);
     timed.push({ at: entry.startedAt === null ? '' : localShortAt(entry.startedAt), item, task: entry.task });
     group.rows.push(item);
   }

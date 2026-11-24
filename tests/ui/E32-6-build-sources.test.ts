@@ -18,7 +18,7 @@ const built = mkdtempSync(join(tmpdir(), 'e32-6-workbench-'));
 const FROZEN_ONLY = [
   'Phone',
 ] as const;
-const WORKING = ['ArchOverview', 'Chain', 'Decide', 'Done', 'Goals', 'Main', 'Member', 'Plan', 'TaskMap'] as const;
+const WORKING = ['ArchOverview', 'Chain', 'Decide', 'Done', 'Goals', 'Main', 'Member', 'Plan', 'Settings', 'TaskMap'] as const;
 
 beforeAll(() => {
   execFileSync(process.execPath, ['scripts/build-ui.mjs', built], { cwd: root, stdio: 'pipe' });

@@ -3,7 +3,7 @@ import { findAllClass, findButton, findClass, findElement } from './helpers/boot
 import {
   answerTexts, bootE3N, callsTo, countRoute, descendants, hasClass, quietPage, textOf, thread, userTexts, waitFor,
 } from './helpers/E3N-page.js';
-import { click, notConnected } from './helpers/E3N-interact.js';
+import { click } from './helpers/E3N-interact.js';
 import { labelled, typeInto } from './helpers/E3D-page.js';
 import { answerOf, openPAW1, openPAW2, planReady, type PAWorld } from './helpers/E3P-world.js';
 import { pauseS7AGoal } from '../helpers/S7A-fixture.js';
@@ -58,7 +58,7 @@ describe('E3P Plan thread', () => {
     }
   }, 60_000);
 
-  it('PA-06 the question is the user bubble, the answer the agent row, the run block between is not connected', async () => {
+  it('PA-06 the question is the user bubble, the answer the agent row, the run block between shows the projected head and its steps', async () => {
     const { page, log } = await bootE3N(shared.world, 'Plan', { search: GOAL });
     try {
       await planReady(log);
@@ -67,16 +67,22 @@ describe('E3P Plan thread', () => {
       expect(userTexts(page.root)).toEqual(['PA question']);
       expect(answerTexts(page.root)).toEqual(['PA body']);
       const run = findElement(holder, (element) => element.tagName.toLowerCase() === 'button' && hasClass(element, 'run'));
-      expect(textOf(run)).toBe('运行步骤还没接通');
+      /* The text-only round ran no tool: the head is the projection's zero counts. */
+      expect(textOf(run)).toMatch(/用时 \d+ 分，已读取 0 个文件、编辑 0 个文件、运行命令 0 次/);
+      /* 具名改坏: 运行块换回 `is-off`/`还没接通`；下面三句红。 */
+      expect(hasClass(run!, 'is-off')).toBe(false);
+      expect(run!.getAttribute('title')).toBeNull();
+      expect(run!.getAttribute('aria-disabled')).not.toBe('true');
       const order = descendants(holder);
       expect(order.indexOf(findAllClass(holder, 'msg-user')[0]!)).toBeLessThan(order.indexOf(run!));
       expect(order.indexOf(run!)).toBeLessThan(order.indexOf(findAllClass(holder, 'msg-agent')[0]!));
       const calls = log.calls.length;
-      /* 具名改坏: 运行块换回可展开的样例；`is-off`/`.steps` 两句红。 */
-      notConnected(run!);
+      /* 具名改坏: 运行块不展开 `.steps`；这一句红。 */
+      click(run!);
+      await waitFor(() => findAllClass(holder, 'steps').length === 1);
+      expect(run!.getAttribute('aria-expanded')).toBe('true');
       await quietPage(log);
       expect(log.calls.length).toBe(calls);
-      expect(findAllClass(holder, 'steps')).toEqual([]);
     } finally {
       await page.restore();
     }

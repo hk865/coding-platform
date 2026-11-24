@@ -23,8 +23,16 @@ const boardsDir = join(root, 'docs/ui-reference/workbench-2026-10');
 const workBoardsDir = join(root, 'src/ui/boards');
 const outDir = process.argv[2] === undefined ? join(root, 'dist/app/public/workbench') : resolve(process.argv[2]);
 
-const boards = (await readdir(boardsDir)).filter((name) => name.endsWith('.dc.html')).sort();
-if (boards.length !== 10) throw new Error(`expected 10 .dc.html boards, found ${boards.length}`);
+const frozenBoards = (await readdir(boardsDir)).filter((name) => name.endsWith('.dc.html')).sort();
+// The reference directory holds exactly the ten frozen boards; a working copy
+// under `src/ui/boards/` only overlays one of them or adds a page after the
+// freeze (Settings).
+if (frozenBoards.length !== 10) {
+  throw new Error(`expected 10 frozen .dc.html boards in ${boardsDir}, found ${frozenBoards.length}`);
+}
+const workingOnly = (await readdir(workBoardsDir))
+  .filter((name) => name.endsWith('.dc.html') && !frozenBoards.includes(name)).sort();
+const boards = [...frozenBoards, ...workingOnly].sort();
 
 // A board with a working copy under `src/ui/boards/` is built from that copy;
 // the remaining boards still come from the frozen reference directory.
@@ -72,7 +80,7 @@ await writeFile(join(outDir, 'index.html'), `<!doctype html>
 </head>
 <body>
 <h1>工作台画板</h1>
-<p>2026-10-07 冻结的十块画板。任务图、主画面和目标页读真实数据，其余七块仍按画板自己的示例数据运行。</p>
+<p>2026-10-07 冻结的十块画板，加上设置页。任务图、主画面、目标页和设置页读真实数据，其余画板仍按自己的示例数据运行。</p>
 <ul>
 ${items.join('\n')}
 </ul>

@@ -9,7 +9,7 @@ import { qualifyProjectPath, splitWorkspacePath } from '../contracts/workspace-p
 import type { ChecksConfirmationV1 } from '../contracts/initialization-adoption.js';
 import { createAutoRefresh, type RefreshRead, type RefreshSnapshot, type RefreshSources } from './refresh.js';
 import {
-  adaptNav, completionRevisionOf, goalHref,
+  adaptNav, completionRevisionOf, goalHref, lineHref,
   type LineKey, type NavData, type NavLineDetail,
 } from './adapters/nav.js';
 import {
@@ -17,13 +17,17 @@ import {
   type MemberData, type MemberLine, type MemberSource, type MemberWriteBasis,
 } from './adapters/member.js';
 import { adaptChain, type ChainData, type ChainSource } from './adapters/chain.js';
+import {
+  readSettings, saveSettings, SettingsNotEffectiveError, type SettingsData,
+} from './adapters/settings.js';
 import { adaptDone, type DoneData, type DonePolicyRead, type DoneRoundRead, type DoneRunActivity, type DoneSource } from './adapters/done.js';
 import {
   readLine, readSessionTrace, requeueVisible, submitRunControl, type LineReadValue,
 } from './adapters/line-shared.js';
 import {
-  adaptMain, lvRecordOf, mainRequestFeedbackOf, requestRootKey,
-  type MainData, type MainLineRecord, type MainPageCursorV1, type MainPageV1, type MainRequestFeedback, type MainTrackRow,
+  adaptMain, failedRunStepsOf, lvRecordOf, mainRequestFeedbackOf, mainRunStepsOf, requestRootKey,
+  type MainData, type MainLineRecord, type MainPageCursorV1, type MainPageV1, type MainRequestFeedback, type MainRunStepStop,
+  type MainRunSteps, type MainTrackRow,
 } from './adapters/main.js';
 import {
   adaptPlan, adoptedPlanDoc, candidateReadOf, ideasRoundOf, versionRowsOf,
@@ -31,10 +35,10 @@ import {
   type PlanProposalShape, type PlanVersionRow,
 } from './adapters/plan.js';
 import {
-  auxChangedRowsOf, auxCommandViewOf, auxDiffViewOf, auxFileListOf, auxFilePageOf, auxLeafCountsOf, auxTaskDetailOf,
+  auxChangedRowsOf, auxCommandViewOf, auxDiffHunksOf, auxDiffViewOf, auxFileListOf, auxFilePageOf, auxLeafCountsOf, auxTaskDetailOf,
   catalogArchTree, goalTaskTree, goalTreeNodeOf,
   type AuxCommandHandle, type AuxCommandRow, type AuxCommandView,
-  type AuxDemand, type AuxDiffView, type AuxFilePage, type AuxPanelData, type AuxTab, type AuxTaskData, type AuxWorkspaceFile,
+  type AuxDemand, type AuxDiffHunk, type AuxDiffView, type AuxFilePage, type AuxPanelData, type AuxTab, type AuxTaskData, type AuxWorkspaceFile,
   type GoalsTaskNode,
 } from './adapters/aux-panel.js';
 import { adaptGoals, conflictSelectionOf, goalOrderOf, type GoalsData } from './adapters/goals.js';
@@ -52,6 +56,10 @@ import type { GraphHoverReadV1, LineExecutionItemV1, LineMessageStateV1, WorkLin
 import type { SessionMessageRef } from '../contracts/core/session-message.js';
 import type { QueryJobAnswerSnapshot } from '../contracts/query-job.js';
 import type { QueryExecutionRecord } from '../contracts/query-job.js';
+import type { QueryRunRef } from '../contracts/query-job.js';
+import {
+  RUN_STEPS_PAGE_LIMIT, type RunStepsReadV1, type RunStepV1,
+} from '../contracts/run-steps.js';
 import type { GoalCopyDraftResultV1 } from '../contracts/goal-card.js';
 import type { MessageBody, SessionMessageReadV1 } from '../contracts/mailbox.js';
 import type { TaskExecutionRecord } from '../contracts/execution-read.js';
@@ -178,11 +186,260 @@ export type BoardReadDemand = TaskMapReadDemand & {
 /** 本页命令表的键前缀，一个范围一个；`runCommand`、`stopCommand`、`readMain` 共用。 */
 const commandRunPrefix = (scope: CoreScope): string => scope.projectId + '/' + scope.workspaceId + '|';
 
+/** A6: one Run's steps as this page has read them. The raw steps are kept
+ * merged by position so a live continuation and 再看 50 步 append without
+ * drawing a duplicate; an ended Run is never read again on a page refresh. */
+type RunStepsScope = { projectId: string; workspaceId: string };
+type RunStepsCacheEntry = {
+  key: string;
+  ref: RunRef | import('../contracts/query-job.js').QueryRunRef;
+  scope: RunStepsScope;
+  steps: RunStepV1[];
+  next: number | null;
+  runningFrom: number | null;
+  live: boolean;
+  /** The whole block answer the board projects from (summary + merged steps). */
+  view: RunStepsReadV1;
+};
+/** One page's cache, reset at `bootBoardPage`; tests boot one page at a time. */
+let pageRunSteps = new Map<string, RunStepsCacheEntry>();
+/** A6/A3: each drawn Run's workspace, from its own `executions/read`, once per
+ * page. `null` is a Run whose snapshot could not be read; it stays without a
+ * block and is never retried under a guessed scope. */
+let pageRunWorkspaces = new Map<string, string | null>();
+/** 5 s is the one live-block timer (A6); `setTimeout` chains it, never a polling loop. */
+const LIVE_RUN_REREAD_MS = 5_000;
+
+function runStepsKeyOf(scope: RunStepsScope, runId: string): string {
+  return scope.projectId + '/' + scope.workspaceId + '/' + runId;
+}
+
+/** The per-page key of a Run's own `executions/read`: its workspace is unknown
+ * before that read, so the Run's own identity is the key. */
+function runWorkspaceKeyOf(ref: RunRef): string {
+  return ref.projectId + '/' + ref.goalId + '/' + ref.runId;
+}
+
+/** A6: append by Kernel position; the fresh answer wins for a position it reports. */
+function mergeRunStepPages(oldSteps: readonly RunStepV1[], fresh: readonly RunStepV1[]): RunStepV1[] {
+  const byPosition = new Map<number, RunStepV1>();
+  for (const step of oldSteps) byPosition.set(step.position, step);
+  for (const step of fresh) byPosition.set(step.position, step);
+  return [...byPosition.values()].sort((a, b) => a.position - b.position);
+}
+
+/**
+ * A6: the one `executions/steps` read of a Run block. A first read is
+ * `after:null`; a live Run is reread from `runningFrom-1` and merged by
+ * position on every page refresh; an ended Run is answered from the cache with
+ * no request. `after` is the explicit paging cursor of 再看 50 步.
+ */
+async function readRunStepsPage(
+  client: ReturnType<typeof createHostClient>, scope: RunStepsScope,
+  ref: RunRef | import('../contracts/query-job.js').QueryRunRef, after?: number,
+): Promise<{ key: string; read: RunStepsReadV1 }> {
+  const key = runStepsKeyOf(scope, ref.runId);
+  const cached = pageRunSteps.get(key);
+  const explicit = after !== undefined;
+  /* A6: an ended Run's steps never change, so a page refresh does not re-read
+     it. The one exception is the user's own 再看 50 步. */
+  if (cached !== undefined && !cached.live && !explicit) return { key, read: cached.view };
+  const cursor = explicit ? after : cached !== undefined && cached.live
+    ? (cached.runningFrom === null ? null : cached.runningFrom - 1)
+    : null;
+  const read = readyRouteValue<RunStepsReadV1>(await client.post('executions/steps', scope, {
+    ref, after: cursor, limit: RUN_STEPS_PAGE_LIMIT,
+  }), 'executions/steps');
+  if (read.kind !== 'steps') {
+    pageRunSteps.delete(key);
+    return { key, read };
+  }
+  const steps = cached !== undefined && cursor !== null
+    ? mergeRunStepPages(cached.steps, read.steps)
+    : read.steps.slice();
+  const view: RunStepsReadV1 = { kind: 'steps', summary: read.summary, steps, next: read.next, runningFrom: read.runningFrom };
+  pageRunSteps.set(key, {
+    key, ref, scope, steps, next: read.next, runningFrom: read.runningFrom,
+    live: read.summary.live, view,
+  });
+  return { key, read: view };
+}
+
+/**
+ * A3/A5: one drawn Run's workspace. The current Run's `executions/read` is
+ * already held by `readLineFacts`; every other drawn Run is read once per page.
+ * A failed read is logged and leaves that Run without a block (no guessed
+ * workspace, no second steps reader).
+ */
+async function drawnRunWorkspace(
+  client: ReturnType<typeof createHostClient>, scope: CoreScope, ref: RunRef,
+  current: TaskExecutionRecord | null,
+): Promise<string | null> {
+  if (current !== null && current.run.ref.runId === ref.runId) {
+    return current.run.workspaceSnapshot.workspaceId;
+  }
+  const key = runWorkspaceKeyOf(ref);
+  if (pageRunWorkspaces.has(key)) return pageRunWorkspaces.get(key) ?? null;
+  let workspaceId: string | null = null;
+  try {
+    const record = readyRouteValue<TaskExecutionRecord>(
+      await client.post('executions/read', scope, ref), 'executions/read');
+    workspaceId = record.run.workspaceSnapshot.workspaceId;
+  } catch (error) {
+    logReadError(error);
+  }
+  pageRunWorkspaces.set(key, workspaceId);
+  return workspaceId;
+}
+
+/**
+ * A3/A5: every Run the line draws reads its own `executions/steps`, through the
+ * one `readRunStepsPage`. `executions` is the line's page order; the current
+ * Run's `executions/read` is `current`, the others' workspaces come from their
+ * own snapshot. A Run whose workspace is unavailable is left out.
+ */
+async function readDrawnRunSteps(
+  client: ReturnType<typeof createHostClient>, scope: CoreScope, nav: NavData, key: LineKey,
+  executions: readonly LineExecutionItemV1[], current: TaskExecutionRecord | null,
+): Promise<Map<string, MainRunSteps>> {
+  const views = new Map<string, MainRunSteps>();
+  for (const item of executions) {
+    if (item.kind !== 'execution' || views.has(item.runRef.runId)) continue;
+    const workspaceId = await drawnRunWorkspace(client, scope, item.runRef, current);
+    if (workspaceId === null) continue;
+    const runScope: RunStepsScope = { projectId: item.runRef.projectId, workspaceId };
+    let view: MainRunSteps;
+    try {
+      const { key: runKey, read } = await readRunStepsPage(client, runScope, item.runRef);
+      view = mainRunStepsOf(read);
+      view.key = runKey;
+      /* A7: a line Run's raw record is this line on Chain. */
+      if (view.thinkTruncated) view.rawHref = lineHref('Chain.dc.html', nav.selectedGoalId, key);
+    } catch (error) {
+      /* Note 5a: this block still draws, with the page's one failure sentence;
+         the raw failure is the log's, never the page's. */
+      logReadError(error);
+      view = failedRunStepsOf(pageTextOf(error));
+    }
+    /* Note 5a: an unreadable answer (failed or `unknown`) is this block's one
+       sentence; the board keeps a Run row's terminal word in that row's head. */
+    view.ref = item.runRef;
+    views.set(item.runRef.runId, view);
+  }
+  return views;
+}
+
+/** A8: one `executions/running-commands` item, narrowed to what the step match
+ * reads. The Host computes `elapsedMs` and `overLine`; the page never does. */
+type RunningCommandItemV1 = {
+  run: { kind: 'run'; runRef: RunRef } | { kind: 'query'; queryRunRef: QueryRunRef };
+  callId: string;
+  elapsedMs: number;
+  overLine: boolean;
+};
+
+/**
+ * A8: one `executions/running-commands` read for every live Run block this
+ * refresh draws, then the one command step each item names (same run, same
+ * callId). The step's meta is the Host's own minute count; its 停止 is the
+ * Work line's existing cancel card or the Query round's own cancel. A failed
+ * read keeps the block and every finished command's own meta; only the live
+ * command step loses its long-command meta and 停止, so A1's “进行中” stays.
+ */
+async function readRunningCommandSteps(
+  client: ReturnType<typeof createHostClient>, scope: CoreScope, views: MainRunSteps[],
+): Promise<void> {
+  const live = views.filter((view) => view.live);
+  if (live.length === 0) return;
+  let read: { items: RunningCommandItemV1[] };
+  try {
+    read = readyRouteValue<{ items: RunningCommandItemV1[] }>(
+      await client.post('executions/running-commands', scope, {}), 'executions/running-commands');
+  } catch (error) {
+    /* Note 5b: a failed read leaves the long-command row out. The board's A1
+       “进行中” is the live step's own fallback meta, so only a still-running
+       command drops its earlier meta and 停止; a finished command keeps its own
+       `通过，n 秒` / `退出码 n，n 秒` untouched. */
+    logReadError(error);
+    for (const view of live) {
+      for (const step of view.steps) {
+        if (step.ic !== 'cmd' || !step.live) continue;
+        step.meta = '';
+        delete step.stop;
+      }
+    }
+    return;
+  }
+  const items = read.items;
+  for (const view of live) {
+    const ref = view.ref;
+    if (ref === null) continue;
+    const kind = 'goalId' in ref ? 'run' : 'query';
+    for (const item of items) {
+      if (item.run.kind !== kind) continue;
+      const sameRun = kind === 'run'
+        ? item.run.kind === 'run' && item.run.runRef.projectId === ref.projectId
+          && item.run.runRef.runId === ref.runId
+        : item.run.kind === 'query' && item.run.queryRunRef.projectId === ref.projectId
+          && item.run.queryRunRef.runId === ref.runId;
+      if (!sameRun) continue;
+      const index = view.callIds.indexOf(item.callId);
+      if (index < 0) continue;
+      const step = view.steps[index];
+      if (step === undefined || step.ic !== 'cmd' || !step.live) continue;
+      const minutes = Math.max(0, Math.floor(item.elapsedMs / 60_000));
+      step.meta = '正在跑，已 ' + String(minutes) + ' 分钟' + (item.overLine ? '，超过预计' : '');
+      const stop: MainRunStepStop = item.run.kind === 'query'
+        ? { kind: 'query', queryRunRef: item.run.queryRunRef } : { kind: 'run' };
+      step.stop = stop;
+    }
+  }
+}
+
+/** A6: the keys of the live Run blocks this page data draws. Only those may
+ * keep the 5 s chain running; a closed block's key is withdrawn by its board. */
+function liveRunKeysOf(data: unknown): Set<string> {
+  const keys = new Set<string>();
+  const addDrawnRunSteps = (view: unknown): void => {
+    const row = asRecord(view);
+    if (row.live !== true || typeof row.key !== 'string' || row.key === '') return;
+    keys.add(row.key);
+  };
+  const d = asRecord(data);
+  if (Array.isArray(d.conversation)) {
+    for (const row of d.conversation) addDrawnRunSteps(asRecord(row).run);
+  }
+  const line = asRecord(d.line);
+  const entries = asRecord(asRecord(line.rec).entries);
+  if (Array.isArray(entries)) {
+    for (const entry of entries) addDrawnRunSteps(asRecord(entry).runSteps);
+  }
+  for (const key of ['items', 'groups'] as const) {
+    const rows = Array.isArray(line[key]) ? line[key] as unknown[] : [];
+    for (const row of rows) {
+      const items = key === 'groups' ? asRecord(row).rows : [row];
+      if (!Array.isArray(items)) continue;
+      for (const item of items) addDrawnRunSteps(asRecord(item).runSteps);
+    }
+  }
+  return keys;
+}
+
 /** The one action surface `pageProps` gives every board. TaskMap uses
  * `readMore`/`pinLine`; Main also uses `pickGoal`, `openLine` and the shared
  * not-connected guard. */
 export type BoardActions = {
   readMore(demand: BoardReadDemand): void;
+  /** A6: 再看 50 步 reads one page after the block's own `next` and appends it
+   * by position, then the same refresh loop republishes the block. */
+  readRunSteps?: (key: string) => Promise<void>;
+  /** A6: the board's own open/close state of one drawn Run block, by the
+   * block's page key. Boot starts the 5 s chain only while an open block is
+   * live; a block auto-opened by 详细/完全展开 reports itself open too. */
+  runOpen: (key: string, open: boolean) => void;
+  /** A8: a Query command's 停止 cancels its own round through `queries/cancel`;
+   * there is no confirm card (the Work stop uses the line's cancel control). */
+  stopQueryRun?: (ref: QueryRunRef) => Promise<void>;
   pinLine?: (key: TaskMapSessionRef, pinned: boolean) => Promise<void>;
   pickGoal: (goalId: string) => void;
   openLine: (key: TaskMapSessionRef | null) => void;
@@ -249,12 +506,20 @@ export type BoardActions = {
   askLine: (question: string) => Promise<void>;
   /** E3 Member §2.8: one `messages/send` to the line in the centre. */
   interveneLine: (text: string) => Promise<void>;
+  /** B4：数据模式的冲突“比较”经这个口要共享的 hunk（`auxDiffHunksOf`），画板不建 n×m 表。 */
+  diffHunks: (before: string, after: string) => AuxDiffHunk[] | null;
   /** E3 Main B §2.5: one `files/save` CAS write; the page passes the digest it read. */
   saveFile: (path: string, content: string, expectedRevision: string | null) => Promise<void>;
   /** 121-147：给一行命令发一次 `commands/start`；句柄按行键记下。 */
   runCommand: (rowKey: string, row: { command: string; cwd: string; timeoutMs: number }) => Promise<void>;
   /** 121-147：给这一行自己最近的那个句柄发一次 `commands/stop`。 */
   stopCommand: (rowKey: string) => Promise<void>;
+  /** Settings page: one `settings/<route>` write; its answer's snapshot becomes
+   * the page data. A not-effective answer rereads the snapshot once before the
+   * page draws the stored value. `notEffective` is the Host's “saved but not
+   * confirmed” answer, a page-facing data flag (the page never inspects the
+   * error). */
+  saveSettings: (route: string, input: unknown) => Promise<{ notEffective: boolean }>;
 };
 
 /**
@@ -274,6 +539,9 @@ export async function bootBoardPage(): Promise<void> {
   const root = document.querySelector('x-dc');
   if (!root) return;
   pageAdoptedPlans = { pending: new Map(), cards: new Map() };
+  pageRunSteps = new Map();
+  pageRunWorkspaces = new Map();
+  const pageDocument = document;
   const search = new URLSearchParams(location.search);
   const goalParam = search.get('goal');
   let goalId = goalParam === null || goalParam === '' ? null : goalParam;
@@ -304,9 +572,18 @@ export async function bootBoardPage(): Promise<void> {
     archHref: goalHref('ArchOverview.dc.html', goalId),
     mainHref: goalHref('Main.dc.html', goalId),
     taskMapHref: goalHref('TaskMap.dc.html', goalId),
+    settingsHref: settingsHrefOf(boardName, location.search),
+    backHref: settingsBackHrefOf(location.search),
   };
   const view = new BoardView(board, { ...defaults, readState: { status: 'loading' } });
   view.mount(root);
+  /* Esc leaves the settings page the same way 返回工作台 does. The fake DOM
+     used by page tests has no document listener, so this only runs in a browser. */
+  if (boardName === 'Settings' && typeof document.addEventListener === 'function') {
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') location.assign(settingsBackHrefOf(location.search));
+    });
+  }
   let token = documentToken;
   let client = createHostClient(token);
   let firstConnection = true;
@@ -331,6 +608,9 @@ export async function bootBoardPage(): Promise<void> {
   /* 121-147 Q6：本页自己的命令句柄。只有 `runCommand` 写句柄号，
    * `tokenOf` 把它们标成“没了”；刷新页面这张表就没了。 */
   const commandRuns = new Map<string, { scope: CoreScope; commandId: string } | 'gone'>();
+  /* B5：正在发 `commands/start` 的行键。画板还没重画时的第二下拿到同一个
+     在途动作，不再发请求。 */
+  const commandStarts = new Map<string, Promise<void>>();
   /* Ruling 3 "默认页": opening the board reads the DAG's today track and today
    * hour calendar, not only the six base reads. */
   const demand: BoardReadDemand = { track: true, win: 'today', commandRuns };
@@ -355,6 +635,10 @@ export async function bootBoardPage(): Promise<void> {
   /** §2.7: the one line the four line actions read, set by both readers. */
   /** Chain's last successful read; the write seams live beside the reader. */
   let latestChain: ChainData | null = null;
+  /** Settings' last published data and read version; a settings write updates
+   * both in place from its own answer. */
+  let latestSettings: SettingsData | null = null;
+  let settingsDataVersion = 0;
   const decideRowOf = (key: string): DecideRow | null => {
     const data = latestDecide;
     if (data === null) return null;
@@ -465,6 +749,22 @@ export async function bootBoardPage(): Promise<void> {
       Object.assign(demand, next);
       if (Object.keys(next).length === 1 && next.noteAnchor === null) return;
       void refresh.reread();
+    },
+    async readRunSteps(key: string): Promise<void> {
+      const cached = pageRunSteps.get(key);
+      if (cached === undefined || cached.next === null) return;
+      try {
+        await readRunStepsPage(client, cached.scope, cached.ref, cached.next);
+      } catch (error) {
+        logReadError(error);
+        return;
+      }
+      await refresh.reread();
+    },
+    runOpen(key: string, open: boolean): void {
+      if (open) openLiveRunKeys.add(key);
+      else openLiveRunKeys.delete(key);
+      scheduleLiveRunTimer();
     },
     async pinLine(key: TaskMapSessionRef, pinned: boolean): Promise<void> {
       try {
@@ -964,6 +1264,20 @@ export async function bootBoardPage(): Promise<void> {
       }
       await refresh.reread();
     },
+    async stopQueryRun(ref: QueryRunRef): Promise<void> {
+      /* A8: the Query run's own scope, as its `executions/steps` read uses; the
+         QueryRunRef carries it, so the page scope is never guessed. */
+      try {
+        readyRouteValue(await client.post('queries/cancel',
+          { projectId: ref.projectId, workspaceId: ref.workspaceId }, { queryRunRef: ref }), 'queries/cancel');
+      } catch (error) {
+        /* Note 4: the board keeps this failure under that step's 停止 (keyed by
+           the Run and callId), so a page reread never clears it; boot only
+           hands over the one Chinese sentence. */
+        throw new Error(writeTextOf(error));
+      }
+      await refresh.reread();
+    },
     async requeueLine(): Promise<void> {
       const data = latestLine;
       const write = data?.write ?? null;
@@ -1093,6 +1407,9 @@ export async function bootBoardPage(): Promise<void> {
       }
       await refresh.reread();
     },
+    diffHunks(before: string, after: string): AuxDiffHunk[] | null {
+      return auxDiffHunksOf(before, after);
+    },
     async saveFile(path: string, content: string, expectedRevision: string | null): Promise<void> {
       const scope = latestNavScope;
       if (scope === null) throw new Error(writeTextOf(new Error('no navigation scope')));
@@ -1118,16 +1435,27 @@ export async function bootBoardPage(): Promise<void> {
     async runCommand(rowKey: string, row: { command: string; cwd: string; timeoutMs: number }): Promise<void> {
       const scope = latestNavScope;
       if (scope === null) throw new Error(writeTextOf(new Error('no navigation scope')));
+      const key = commandRunPrefix(scope) + rowKey;
+      const inFlight = commandStarts.get(key);
+      if (inFlight !== undefined) return inFlight;
+      const pendingStart = (async (): Promise<void> => {
+        try {
+          const reply = await client.post('commands/start', scope, {
+            requestId: crypto.randomUUID(), command: row.command, cwd: row.cwd, timeoutMs: row.timeoutMs,
+          });
+          const commandId = readyRouteValue<{ commandId: string }>(reply, 'commands/start').commandId;
+          commandRuns.set(key, { scope, commandId });
+        } catch (error) {
+          throw new Error(commandWriteTextOf(error));
+        }
+        await refresh.reread();
+      })();
+      commandStarts.set(key, pendingStart);
       try {
-        const reply = await client.post('commands/start', scope, {
-          requestId: crypto.randomUUID(), command: row.command, cwd: row.cwd, timeoutMs: row.timeoutMs,
-        });
-        const commandId = readyRouteValue<{ commandId: string }>(reply, 'commands/start').commandId;
-        commandRuns.set(commandRunPrefix(scope) + rowKey, { scope, commandId });
-      } catch (error) {
-        throw new Error(commandWriteTextOf(error));
+        await pendingStart;
+      } finally {
+        commandStarts.delete(key);
       }
-      await refresh.reread();
     },
     async stopCommand(rowKey: string): Promise<void> {
       const scope = latestNavScope;
@@ -1141,7 +1469,70 @@ export async function bootBoardPage(): Promise<void> {
       }
       await refresh.reread();
     },
+    async saveSettings(route: string, input: unknown): Promise<{ notEffective: boolean }> {
+      let saved: SettingsData;
+      const projectId = latestSettings?.projectId ?? '';
+      try {
+        saved = await saveSettings(client, route, input, projectId);
+      } catch (error) {
+        /* “已保存，尚未生效” shares the rejected/unavailable code with a failed
+           write. The adapter's error carries `pending`; this is the only place it
+           crosses to the page, as the explicit `notEffective` data flag. The Host
+           already stored the value, so reread once and draw the new value (表一 2). */
+        if (error instanceof SettingsNotEffectiveError && error.pending) {
+          await refresh.reread();
+          return { notEffective: true };
+        }
+        const text = settingsWriteTextOf(route, error);
+        /* 表一 6: an unknown Host reason is not shown; its original goes to the log. */
+        if (text === null) logReadError(error);
+        throw new Error(text ?? '没有保存成功，可以重试');
+      }
+      const data = { ...saved, projectName: latestSettings?.projectName ?? '', projectId };
+      latestSettings = data;
+      settingsDataVersion += 1;
+      view.updateProps({
+        ...defaults, actions, data, dataVersion: settingsDataVersion, readState: { status: 'ready' },
+      });
+      return { notEffective: false };
+    },
   };
+  /**
+   * A6: the 5 s chain belongs to the live Run blocks that are open on the
+   * board. Each board reports every drawn block's open state (`runOpen`),
+   * including a block 详细/完全展开 opens by itself and the first render; boot
+   * keeps their keys and starts/stops the one `setTimeout` chain from that set.
+   * It joins the one refresh loop, so the live reread goes through
+   * `readRunStepsPage`'s `runningFrom-1` and merge. A key stops counting as soon
+   * as its cache entry is no longer live.
+   */
+  const openLiveRunKeys = new Set<string>();
+  let liveRunTimer: ReturnType<typeof setTimeout> | null = null;
+  const stopLiveRunTimer = (): void => {
+    if (liveRunTimer === null) return;
+    clearTimeout(liveRunTimer);
+    liveRunTimer = null;
+  };
+  const hasOpenLiveRun = (): boolean => [...openLiveRunKeys]
+    .some((key) => pageRunSteps.get(key)?.live === true);
+  const scheduleLiveRunTimer = (data?: unknown): void => {
+    if (data !== undefined) {
+      const drawn = liveRunKeysOf(data);
+      for (const key of [...openLiveRunKeys]) if (!drawn.has(key)) openLiveRunKeys.delete(key);
+    }
+    if (!hasOpenLiveRun()) { stopLiveRunTimer(); return; }
+    if (liveRunTimer !== null) return;
+    liveRunTimer = setTimeout(() => {
+      liveRunTimer = null;
+      /* A fake page or a navigation drops this document; its timer must not
+         outlive it (the preserved test harness has no `pagehide`). */
+      if (typeof document === 'undefined' || document !== pageDocument) return;
+      void refresh.reread();
+    }, LIVE_RUN_REREAD_MS);
+  };
+  if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+    window.addEventListener('pagehide', stopLiveRunTimer, { once: true });
+  }
   const sources: RefreshSources<unknown> = {
     read: async () => await reader(client, goalId, demand),
     publish: (snapshot) => {
@@ -1154,7 +1545,7 @@ export async function bootBoardPage(): Promise<void> {
            sections beside the chrome, so its navigation is unwrapped first. */
         const nav = boardName === 'Done'
           ? (snapshot.data as DoneData | null)?.nav ?? null
-          : snapshot.data as NavData | null;
+          : boardName === 'Settings' ? null : snapshot.data as NavData | null;
         latest = nav;
         latestNavScope = nav?.scope ?? null;
         latestSelectedGoalId = nav?.selectedGoalId ?? null;
@@ -1174,6 +1565,7 @@ export async function bootBoardPage(): Promise<void> {
           latestDecideScope = main.scope;
         }
         if (boardName === 'Chain') latestChain = snapshot.data as ChainData | null;
+        if (boardName === 'Settings') latestSettings = snapshot.data as SettingsData | null;
         if (boardName === 'Member') {
           const member = snapshot.data as MemberData | null;
           latestLine = member?.line ? { scope: member.scope, line: member.line, write: member.write } : null;
@@ -1214,6 +1606,7 @@ export async function bootBoardPage(): Promise<void> {
         }
       }
       view.updateProps(props);
+      scheduleLiveRunTimer(snapshot.data);
     },
     subscribe: (handlers, cursor) => subscribeChanges(tokenOf, handlers, cursor),
   };
@@ -1481,6 +1874,22 @@ type BoardReader<T> = (
   client: ReturnType<typeof createHostClient>, goalId: string | null, demand?: BoardReadDemand,
 ) => Promise<RefreshRead<T>>;
 
+/** The Settings page reads the snapshot once and takes the project name from
+ * the same first bootstrap the page's link came with. */
+async function readSettingsBoard(
+  client: ReturnType<typeof createHostClient>, goalId: string | null,
+): Promise<RefreshRead<SettingsData>> {
+  const boot = await client.bootstrap();
+  /* The bootstrap lists projects, not a project name; the Goal's project (or the
+   * first project when the page has no Goal) supplies the header's name and the
+   * row the structural switches read (`saved[current] ?? defaults`). */
+  const found = goalId === null ? null : await taskMapScope(client, boot.workspaces, goalId);
+  const projectId = found?.scope.projectId ?? boot.workspaces[0]?.scope.projectId ?? '';
+  const data = await readSettings(client, goalId, projectId);
+  const name = boot.workspaces.find((workspace) => workspace.scope.projectId === projectId)?.name ?? '';
+  return { data: { ...data, projectName: name, projectId }, cursor: boot.changesHead ?? null };
+}
+
 /** §2.11: one table, keyed by the served file name. TaskMap keeps its reader's
  * signature and return type; Main joins with the chrome read. Every other
  * board keeps the E3-1 sample mount and issues no route request. */
@@ -1494,12 +1903,37 @@ const BOARD_READERS: Record<string, BoardReader<unknown>> = {
   Member: readMember as BoardReader<unknown>,
   Chain: readChain as BoardReader<unknown>,
   Done: readDone as BoardReader<unknown>,
+  Settings: readSettingsBoard as BoardReader<unknown>,
 };
 
 /** The board name a served page is for: `/workbench/TaskMap.dc.html` -> `TaskMap`. */
 function boardNameOf(href: string): string {
   const file = new URL(href).pathname.split('/').pop() ?? '';
   return file.endsWith('.dc.html') ? file.slice(0, -'.dc.html'.length) : '';
+}
+
+/** The six boards with the left rail, the only pages the settings link returns
+ * to; anything else (or opening Settings directly) returns to Main. */
+const SETTINGS_BACK_BOARDS = new Set(['Main', 'Plan', 'Decide', 'Done', 'Member', 'Chain']);
+
+/** The rail-foot link: the page it returns to, plus every query parameter of the
+ * page it was opened from (Goal, Member/Chain `lineProject` / `lineSession`, …). */
+function settingsHrefOf(boardName: string, search: string): string {
+  const query = new URLSearchParams(search);
+  query.delete('from');
+  query.set('from', boardName);
+  return 'Settings.dc.html?' + query.toString();
+}
+
+/** The settings page's 返回工作台 target: the page it was opened from, with all of
+ * that page's query parameters; direct opening returns to Main. */
+function settingsBackHrefOf(search: string): string {
+  const query = new URLSearchParams(search);
+  const from = query.get('from');
+  query.delete('from');
+  const board = from !== null && SETTINGS_BACK_BOARDS.has(from) ? from : 'Main';
+  const rest = query.toString();
+  return board + '.dc.html' + (rest === '' ? '' : '?' + rest);
 }
 
 /**
@@ -1917,10 +2351,12 @@ export async function readLineFacts(
   }
   /* The line's own Goal graph rides as `nav.tasks` too, as `readMember` gave
      its adapter before the extraction (the selected Goal's when they match). */
+  const runStepsByRun = await readDrawnRunSteps(client, scope, nav, key, executions, execution);
   return {
     scope, nav: { ...nav, tasks: taskGraph }, line: detail, ownKey: key,
     executions, messages, messageViews, messageBodies, copies, controls, brief,
     history: null, files: null, hover: null, execution, taskGraph, write: null, startup: null, startupError: null,
+    runStepsByRun,
   };
 }
 
@@ -2018,7 +2454,7 @@ export async function readMember(
       scope, nav, line, ownKey: demand.ownKey ?? key,
       executions: [], messages: [], messageViews: [], messageBodies: {}, copies: [],
       controls: null, brief: null, history: null, files: null, hover: null,
-      execution: null, taskGraph: nav.tasks, write: null, startup, startupError,
+      execution: null, taskGraph: nav.tasks, write: null, startup, startupError, runStepsByRun: new Map(),
     };
   }
   if (demand.traceOpen === true && key !== null) {
@@ -2041,6 +2477,9 @@ export async function readMember(
       source.hover = null;
     }
   }
+  /* A5/A8: every Run block this record draws was read by `readLineFacts`; the
+     one running-commands read matches all of their live steps. */
+  await readRunningCommandSteps(client, scope, [...source.runStepsByRun.values()]);
   if (source.line !== null && source.line.kind === 'line') {
     source.write = writeBasisOf(nav, adaptMemberLine(source, source.line), source.execution, source.taskGraph);
   }
@@ -2277,7 +2716,8 @@ async function readAuxFile(
 
 /**
  * P3 Diff 页一侧的正文，读法同 readAuxFile。`not_found` 是这一侧没有，`content` 为 null（新文件没有 HEAD 一侧，
- * 删掉的文件没有工作区一侧）；`unsupported` 是不是文本（N2）；其余失败照旧往外抛，归页签自己的读失败。
+ * 删掉的文件没有工作区一侧）；`unsupported` 是不是文本（B2，这一侧不画）；其余失败往外抛，Diff 页按文件
+ * 接下（改动清单照常、逐行区写页面文字，下次刷新再读）。
  * 正文包一层再回，不和 `'not_text'` 并成一个字符串：正文恰好是 not_text 的文件不会被当成不是文本。
  */
 async function readDiffSide(
@@ -2338,6 +2778,19 @@ export async function readAuxPanel(
     const tree = goal === null ? null : goalTaskTree({ id: goal.goalId, name: goal.objective }, nav.tasks);
     return { tree, counts: tree === null ? {} : auxLeafCountsOf(tree, 'task') };
   };
+  /* B1: one file's read failing writes its own page text; the tab and the list stay. */
+  const readOneFile = async (path: string): Promise<{
+    file: AuxFilePage | null; error: { code: string; text: string } | null;
+  }> => {
+    try {
+      return { file: await readAuxFile(client, scope, path), error: null };
+    } catch (error) {
+      if (!(error instanceof RouteReadError)) throw error;
+      if (error.code === 'not_found') return { file: null, error: null };
+      logReadError(error);
+      return { file: null, error: { code: error.code, text: pageTextOf(error) } };
+    }
+  };
   try {
     if (tab === 'task') {
       const { tree, counts } = taskTreeOf();
@@ -2396,29 +2849,16 @@ export async function readAuxPanel(
     }
     if (tab === 'files') {
       const page = await readUncommittedPage(client, scope);
-      let file: AuxFilePage | null = null;
-      if (demand.auxPath !== null) {
-        try {
-          file = await readAuxFile(client, scope, demand.auxPath);
-        } catch (error) {
-          /* The path is gone: an empty file page, not a tab error. */
-          if (!(error instanceof RouteReadError) || error.code !== 'not_found') throw error;
-        }
-      }
+      const one = demand.auxPath === null ? { file: null, error: null } : await readOneFile(demand.auxPath);
       return {
-        ...empty, files: auxFileListOf(page.paths), file,
+        ...empty, files: auxFileListOf(page.paths), file: one.file, error: one.error,
         diff: { files: page.files, checkedFirst: page.checkedFirst, rows: auxChangedRowsOf(page.files), view: null },
       };
     }
     if (tab === 'file') {
       if (demand.auxPath === null) return empty;
-      let file: AuxFilePage | null = null;
-      try {
-        file = await readAuxFile(client, scope, demand.auxPath);
-      } catch (error) {
-        if (!(error instanceof RouteReadError) || error.code !== 'not_found') throw error;
-      }
-      return { ...empty, file };
+      const one = await readOneFile(demand.auxPath);
+      return { ...empty, file: one.file, error: one.error };
     }
     if (tab === 'diff') {
       const page = await readUncommittedPage(client, scope);
@@ -2430,12 +2870,24 @@ export async function readAuxPanel(
         if (row.added === null) {
           view = auxDiffViewOf(row, null);
         } else {
-          /* 先读 HEAD、再读工作区（readDiffSide）；HEAD 一侧不是文本就停读，不再读工作区（N2）。 */
-          const before = await readDiffSide(client, scope, row.path, { kind: 'git', commit: page.files.head });
-          const after = before === 'not_text' ? 'not_text'
-            : await readDiffSide(client, scope, row.path, { kind: 'working_tree' });
-          view = auxDiffViewOf(row, before === 'not_text' || after === 'not_text' ? 'not_text'
-            : { before: before.content, after: after.content });
+          try {
+            /* 先读 HEAD、再读工作区（readDiffSide）；两侧都读（B2）。 */
+            const before = await readDiffSide(client, scope, row.path, { kind: 'git', commit: page.files.head });
+            const after = await readDiffSide(client, scope, row.path, { kind: 'working_tree' });
+            if (before === 'not_text') {
+              view = after === 'not_text' ? auxDiffViewOf(row, 'not_text')
+                : auxDiffViewOf(row, { before: null, after: after.content, notText: 'before' });
+            } else if (after === 'not_text') {
+              view = auxDiffViewOf(row, { before: before.content, after: null, notText: 'after' });
+            } else {
+              view = auxDiffViewOf(row, { before: before.content, after: after.content });
+            }
+          } catch (error) {
+            /* B1：这一行读失败只写这一行的逐行区；清单和页签照常画，原始失败进日志。 */
+            if (!(error instanceof RouteReadError)) throw error;
+            logReadError(error);
+            view = { path: row.path, hunks: null, note: pageTextOf(error) };
+          }
         }
       }
       return { ...empty, diff: { files: page.files, checkedFirst: page.checkedFirst, rows, view } };
@@ -2544,6 +2996,37 @@ export async function readMainThread(
     }
     if (cursor === null) break;
   }
+  /* A2 (121-147): every drawn run row reads its own `executions/steps`; the
+     QueryRun's own project/workspace is its scope, never the page's. Pages can
+     repeat a request root, so one round is read once. */
+  const readRounds = new Set<string>();
+  for (const page of pages) {
+    for (const request of page.requests) {
+      for (const round of request.rounds) {
+        if (round.runRef === null || readRounds.has(round.runRef.runId)) continue;
+        readRounds.add(round.runRef.runId);
+        const scope: RunStepsScope = { projectId: round.runRef.projectId, workspaceId: round.runRef.workspaceId };
+        let view: MainRunSteps;
+        try {
+          const { key, read } = await readRunStepsPage(client, scope, round.runRef);
+          view = mainRunStepsOf(read);
+          view.key = key;
+          /* A7: a secretary Query round's raw record opens its Member page, whose
+             `sessions/history` read is the one that carries it. */
+          if (view.thinkTruncated && round.session !== null) {
+            view.rawHref = lineHref('Member.dc.html', nav.selectedGoalId, round.session);
+          }
+        } catch (error) {
+          /* Note 5a: the round's block still draws with the page's failure
+             sentence; one unreadable Run never fails the conversation. */
+          logReadError(error);
+          view = failedRunStepsOf(pageTextOf(error));
+        }
+        view.ref = round.runRef;
+        round.runSteps = view;
+      }
+    }
+  }
   /* §2.3 step 3: the cards are the queue's; a failed queue read hides them and
      is not an error of the page. */
   let decisions: DecideData | null = null;
@@ -2616,6 +3099,14 @@ export async function readMain(
   if (scope === null) return { data: null, cursor: navRead.cursor };
   const thread = await readMainThread(client, nav, demand);
   const { pages, decisions, older: cursor, track } = thread;
+  /* A8: every live Run block this refresh draws is matched against the one
+     running-commands read, after the line view's own block is built. */
+  const runStepViews: MainRunSteps[] = [];
+  for (const page of pages) {
+    for (const request of page.requests) {
+      for (const round of request.rounds) if (round.runSteps) runStepViews.push(round.runSteps);
+    }
+  }
   /* §2.4 step 1: the selected line's record, through the same read and the
      same projection Member uses. `branched` has no single record. */
   let line: MainLineRecord | null = null;
@@ -2624,9 +3115,14 @@ export async function readMain(
     const source = await readLineFacts(client, scope, demand.lineKey, nav.detail, nav);
     const memberLine = adaptMemberLine(source, nav.detail);
     const write = writeBasisOf(nav, memberLine, source.execution, source.taskGraph);
+    /* A3 (121-147): every Run entry carries its own steps, in the workspace the
+       Run's own saved snapshot names. `readLineFacts` read them all (and cached
+       each once), so this line view adds no second read and no guessed scope. */
+    runStepViews.push(...source.runStepsByRun.values());
     const rec = lvRecordOf({
       executions: source.executions, messages: source.messages, messageViews: source.messageViews,
       bodies: source.messageBodies, copies: source.copies, line: memberLine,
+      runStepsByRun: source.runStepsByRun,
     });
     line = {
       line: memberLine,
@@ -2635,6 +3131,7 @@ export async function readMain(
       write,
     };
   }
+  await readRunningCommandSteps(client, scope, runStepViews);
   /* §2.4 step 7: only the open tab is read; `null` means the panel is closed. */
   const allowed = boot.workspaces.some((workspace) =>
     workspace.scope.projectId === scope.projectId && workspace.scope.workspaceId === scope.workspaceId
@@ -2694,6 +3191,15 @@ export async function readPlan(
   if (scope === null) return { data: null, cursor: navRead.cursor };
   /* Ruling 2: Plan A reads the first page only; no "更早" entry is drawn. */
   const thread = await readMainThread(client, nav, { ...demand, mainPages: 1 }, { noticeTokens: false });
+  /* A8: Plan draws the same conversation Run blocks, so the same one read (and
+     the same step match) fills the long-command line here too. */
+  const planStepViews: MainRunSteps[] = [];
+  for (const page of thread.pages) {
+    for (const request of page.requests) {
+      for (const round of request.rounds) if (round.runSteps) planStepViews.push(round.runSteps);
+    }
+  }
+  await readRunningCommandSteps(client, scope, planStepViews);
   /* §2.2 step 3: the newest round with ideas names the request whose candidate
      the page reads; no request, no candidate, or an empty `candidate` means
      "not read" (`cand: null`). */
@@ -3271,6 +3777,26 @@ function writeTextOf(error: unknown): string {
   return WRITE_ERROR_TEXT[code + ':' + reason] ?? WRITE_ERROR_TEXT[code] ?? '写入失败。';
 }
 
+/** 表一 6: the Host publishes these reasons on a settings write; the page shows one
+ *  fixed Chinese sentence each, never the Host's own words. */
+const SETTINGS_WRITE_REASON_TEXT: Record<string, string> = {
+  'commandsAllowed requires writeAllowed': '跑命令要先允许改文件',
+  'the Host does not publish the workspace access switch': '这个工作区的权限由启动配置决定，这里改不了',
+  'the settings file could not be written': '设置文件写不进去，可以重试',
+};
+
+/** 设置页的失败文字：已知原因换成中文句子；`checks/withdraw` 的 Host 原句本来就是
+ *  中文，照用；其余（含原文）返回 null，由调用方写日志后给一句通用话。 */
+function settingsWriteTextOf(route: string, error: unknown): string | null {
+  const code = error instanceof RouteReadError ? error.code : '';
+  const reason = error instanceof RouteReadError ? error.reason : '';
+  if (route === 'checks/withdraw' && /[\u4e00-\u9fff]/.test(reason)) return reason;
+  const known = SETTINGS_WRITE_REASON_TEXT[reason];
+  if (known !== undefined) return known;
+  if (route === 'command-review/save' && code === 'invalid') return '要填正整数分钟，或者留空用默认';
+  return null;
+}
+
 /** 命令页两个写口（`runCommand`、`stopCommand`）的失败文字：`unsupported` 是“这台 Host 跑不了命令”，
  * 只给命令页用、不进 `WRITE_ERROR_TEXT`（K7）；其余照 `writeTextOf`。 */
 function commandWriteTextOf(error: unknown): string {
@@ -3297,6 +3823,7 @@ function requeuedOrThrow(value: unknown): void {
 const READ_ERROR_TEXT: Record<string, string> = {
   not_found: '找不到这个目标。',
   unavailable: '暂时读不到，可以重试。',
+  source_stale: '文件正在被改，下次刷新再读。',
 };
 
 function pageTextOf(error: unknown): string {

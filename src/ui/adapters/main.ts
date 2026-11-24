@@ -10,11 +10,16 @@
  */
 import type { SessionRef } from '../../contracts/core/identity.js';
 import type { DecisionSubjectV1 } from '../../contracts/goal-decisions.js';
-import type { QueryJobRef, RequestReferenceV1 } from '../../contracts/query-job.js';
+import type { QueryJobRef, QueryRunRef, RequestReferenceV1 } from '../../contracts/query-job.js';
+import type { RunRef } from '../../contracts/dispatch.js';
+import type { RunStepsReadV1 } from '../../contracts/run-steps.js';
 import type { LineExecutionItemV1, LineMessageStateV1 } from '../../contracts/work-line.js';
 import type { SessionMessageReadV1, MessageBody } from '../../contracts/mailbox.js';
 import { asRecord, asText } from '../values.js';
 import { holdKindWordOf, localShortAt, planRefText, planVersionText, stopRunText } from './task-map.js';
+import {
+  runStepsHeadOf, runStepsOf, runStepsSentenceOf, runStepsTimeOf, type RunStepView,
+} from './run-steps.js';
 import { subjectGoalId, type DecideData } from './decide.js';
 import { taskProgressOf } from './goals.js';
 import {
@@ -25,6 +30,76 @@ import type { AuxPanelData } from './aux-panel.js';
 
 /** One file quote of a user bubble (`RequestReferenceV1`'s four fields). */
 export type MainQuote = { path: string; a: number | null; b: number | null; snap: boolean; text: string };
+
+/** A8: what a running command's 停止 button does: the Work one opens the line
+ * view's existing cancel card (no second stop path), the Query one cancels its
+ * own round. */
+export type MainRunStepStop =
+  | { kind: 'run' }
+  | { kind: 'query'; queryRunRef: QueryRunRef };
+
+/** A1: a step plus A8's stop facts; the board never parses a route. */
+export type MainRunStep = RunStepView & { stop?: MainRunStepStop };
+
+/**
+ * A1: one Run's `executions/steps` answer as the Run block draws it. The whole
+ * page answer is kept (not only the visible strings) so the later paging,
+ * live reread and raw-record entry can reuse it without a new route.
+ */
+export type MainRunSteps = {
+  /** A8: the Run this block is (the running-commands match), set by `boot`. */
+  ref: RunRef | QueryRunRef | null;
+  /** A8: the callId of each drawn step, parallel to `steps` (think steps keep
+   * ''); the running-commands match needs it, the page never draws it. */
+  callIds: string[];
+  head: string;
+  time: string;
+  live: boolean;
+  steps: MainRunStep[];
+  /** The last shown step's position while more remain; `null` at the end. */
+  next: number | null;
+  /** The earliest running step's position; the live reread starts one before it. */
+  runningFrom: number | null;
+  /** The one sentence for `not_started`/`not_entered`/`unknown`; `''` for `steps`. */
+  sentence: string;
+  /** Whether any think step's text was cut at 16 KB. */
+  thinkTruncated: boolean;
+  /** The per-page cache key (`boot` sets it): what 再看 50 步 reads. Empty
+   * when the block has no page to continue. */
+  key: string;
+  /** A7: the raw-record link, only when a think step was cut; `null` otherwise. */
+  rawHref: string | null;
+};
+
+/** Note 5a: a failed `executions/steps` still draws its block, with the page's
+ * one failure sentence and no steps (so the block stays one sentence). */
+export function failedRunStepsOf(sentence: string): MainRunSteps {
+  return {
+    ref: null, callIds: [], head: sentence, time: '', live: false, steps: [],
+    next: null, runningFrom: null, sentence, thinkTruncated: false, key: '', rawHref: null,
+  };
+}
+
+/** A1: `executions/steps` → the Run block's fields; the board never parses a route. */
+export function mainRunStepsOf(read: RunStepsReadV1): MainRunSteps {
+  const summary = read.kind === 'steps' ? read.summary : null;
+  return {
+    ref: null,
+    callIds: read.kind === 'steps'
+      ? read.steps.map((step) => step.kind === 'think' ? '' : step.callId) : [],
+    head: summary === null ? runStepsSentenceOf(read) : runStepsHeadOf(summary),
+    time: summary === null ? '' : runStepsTimeOf(summary),
+    live: summary !== null && summary.live,
+    steps: runStepsOf(read),
+    next: read.kind === 'steps' ? read.next : null,
+    runningFrom: read.kind === 'steps' ? read.runningFrom : null,
+    sentence: runStepsSentenceOf(read),
+    thinkTruncated: read.kind === 'steps'
+      && read.steps.some((step) => step.kind === 'think' && step.text.truncated),
+    key: '',
+    rawHref: null,
+  };
+}
 
 export type MainLogRow = {
   /** The request root, only for the page to drop a local pending bubble it has
@@ -45,6 +120,8 @@ export type MainLogRow = {
   quotes: MainQuote[]; hasQuotes: boolean;
   ideas: { title: string; detail: string }[];
   hasIdeas: boolean;
+  /** A1: this run row's `executions/steps` projection; null on every other row. */
+  run: MainRunSteps | null;
 };
 
 export type MainTrackRow = { at: string; type: string; id: string; summary: string };
@@ -60,6 +137,8 @@ export type LvEntry = {
   res: string; word: string; tx: string; label: string; gap: string;
   asker: string | null; steps: number; edits: number; checks: number;
   live: boolean;
+  /** A1: the current Run's whole steps projection; null on every other entry. */
+  runSteps: MainRunSteps | null;
   /** §2.8: the stored message's wake word; only a line message has it. */
   wakeWord?: string;
 };
@@ -127,6 +206,10 @@ export type MainRequestFeedback = {
  * extends this shape beside it; `ref` is the round's own identity. */
 export type MainRoundRead = {
   ref: QueryJobRef;
+  /** P1：这一轮的 QueryRun；路由轮是 null，那一轮不画 Run 块。 */
+  runRef: QueryRunRef | null;
+  /** A1: this round's `executions/steps` answer; filled by `readMainThread`. */
+  runSteps: MainRunSteps | null;
   input: string;
   references: RequestReferenceV1[];
   answer: string | null;
@@ -274,7 +357,7 @@ export function lastAnsweredRoundOf(
 function logRowOf(
   root: string,
   fields: Pick<MainLogRow, 'text'>
-  & Partial<Pick<MainLogRow, 'isUser' | 'isAgent' | 'isRun' | 'quotes' | 'ideas' | 'round' | 'selectable'>>,
+  & Partial<Pick<MainLogRow, 'isUser' | 'isAgent' | 'isRun' | 'quotes' | 'ideas' | 'round' | 'selectable' | 'run'>>,
 ): MainLogRow {
   const quotes = fields.quotes ?? [];
   const ideas = fields.ideas ?? [];
@@ -294,6 +377,7 @@ function logRowOf(
     hasQuotes: quotes.length > 0,
     ideas,
     hasIdeas: ideas.length > 0,
+    run: fields.run ?? null,
   };
 }
 
@@ -320,7 +404,11 @@ function conversationOf(pages: readonly MainPageV1[]): MainLogRow[] {
       rows.push(logRowOf(root, {
         text: round.input, isUser: true, round: round.ref, selectable, quotes: round.references.map(quoteOf),
       }));
-      if (round.session !== null) rows.push(logRowOf(root, { text: '', isRun: true, round: round.ref, selectable }));
+      if (round.runRef !== null) {
+        rows.push(logRowOf(root, {
+          text: '', isRun: true, round: round.ref, selectable, run: round.runSteps,
+        }));
+      }
       if (round.answer !== null) {
         rows.push(logRowOf(root, {
           text: round.answer,
@@ -369,6 +457,9 @@ export function lvRecordOf(f: {
   bodies: Record<string, MessageBody>;
   copies: MemberCopySource[];
   line: MemberLine;
+  /** A1/A3: every Run the record draws, keyed by its own run id, from that
+   * Run's `executions/steps` projection. */
+  runStepsByRun: ReadonlyMap<string, MainRunSteps>;
 }): LvRecord {
   const line = f.line;
   const entries: LvEntry[] = [];
@@ -386,22 +477,26 @@ export function lvRecordOf(f: {
         end: '', day: stamp.day, time: stamp.time, dur: '',
         res: item.outcome ?? item.phase, word: item.phase, tx: 'tx-plain',
         label: '只读咨询 · ' + item.phase + (item.outcome === null ? '' : ' · ' + item.outcome),
-        gap: '', asker: null, steps: 0, edits: 0, checks: 0, live: false,
+        gap: '', asker: null, steps: 0, edits: 0, checks: 0, live: false, runSteps: null,
       });
       continue;
     }
     const stamp = dayTimeOf(item.startedAt ?? '');
     const live = item.status !== 'ended';
-    /* SPEC-7 (B-6): a run's steps, edits and duration are not connected (A13),
-       so its row says so instead of 0 steps, 0 edits and an empty duration. */
+    /* A3: every drawn Run's steps come from its own `executions/steps`; a line
+       whose workspace could not be read draws its row without a block, never
+       the old not-connected text. */
+    const runSteps = f.runStepsByRun.get(item.runRef.runId) ?? null;
     entries.push({
       id: item.runRef.runId, kind: 'run', task: item.task.taskId, taskName: line.title,
       att: line.attempt.ordinal, seg: 1, round: 0, start: item.startedAt === null ? '' : localShortAt(item.startedAt),
-      end: '', day: stamp.day, time: stamp.time, dur: '—',
+      end: '', day: stamp.day, time: stamp.time, dur: runSteps === null ? '—' : '',
       res: item.outcome ?? item.status,
       word: runWordOf(item),
-      tx: runTx(item.status, item.outcome), label: '运行步骤还没接通', gap: '', asker: null,
-      steps: 0, edits: 0, checks: item.checks.length, live,
+      tx: runTx(item.status, item.outcome), label: runSteps === null ? '' : runSteps.head,
+      gap: '', asker: null,
+      steps: runSteps === null ? 0 : runSteps.steps.length, edits: 0, checks: item.checks.length, live,
+      runSteps,
     });
   }
   for (const state of f.messageViews) {
@@ -441,7 +536,7 @@ export function lvRecordOf(f: {
       att: 1, seg: 1, round: 0, start: localShortAt(at), end: '', day: stamp.day, time: stamp.time, dur: '',
       res: '', word: flags === null ? '' : flags.replyWord, tx: 'tx-plain', label: text, gap: '', asker: null,
       ...(flags === null ? {} : { wakeWord: flags.wakeWord }),
-      steps: 0, edits: 0, checks: 0, live: false,
+      steps: 0, edits: 0, checks: 0, live: false, runSteps: null,
     });
   }
   for (const copy of f.copies) {
@@ -454,7 +549,7 @@ export function lvRecordOf(f: {
       att: 1, seg: 1, round: 0, start: startedAt === null ? '' : localShortAt(startedAt), end: '',
       day: stamp.day, time: stamp.time, dur: '', res: answer === '' ? 'pending' : 'answered',
       word: answer === '' ? '等待回答' : '已回答', tx: 'tx-plain', label: question || '咨询（只读副本）',
-      gap: '', asker: null, steps: 0, edits: 0, checks: 0, live: false,
+      gap: '', asker: null, steps: 0, edits: 0, checks: 0, live: false, runSteps: null,
     });
   }
   entries.sort((a, b) => a.start < b.start ? -1 : a.start > b.start ? 1 : 0);
