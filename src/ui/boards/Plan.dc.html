@@ -5570,6 +5570,11 @@ class Component extends DCLogic {
         })
       }));
     }
+    /* An uncovered required requirement is a current-state note, not an event:
+       it sits at the conversation's tail with no time slot and no icon. */
+    for (const gap of data.gaps || []) {
+      blocks.push(Object.assign({}, blank, { isSys: true, text: gap.text }));
+    }
     const dc = this.planDecisionVals(data, base.dc);
     const armed = !!s.iterating && (s.iterKey === 'G'
       || (doc !== null && doc.ideas.some((idea, i) => String.fromCharCode(65 + i) === s.iterKey)));

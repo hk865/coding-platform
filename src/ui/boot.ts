@@ -27,6 +27,9 @@ import {
   readLine, readSessionTrace, requeueVisible, submitRunControl, type LineReadValue,
 } from './adapters/line-shared.js';
 import {
+  runningMinutesText, type RunningCommandItemV1,
+} from './adapters/run-steps.js';
+import {
   adaptMain, failedRunStepsOf, lvRecordOf, mainRequestFeedbackOf, mainRunStepsOf, requestRootKey,
   type MainData, type MainLineRecord, type MainPageCursorV1, type MainPageV1, type MainRequestFeedback, type MainRunStepStop,
   type MainRunSteps, type MainTrackRow,
@@ -82,7 +85,7 @@ import type { RequestReferenceInputV1 } from '../contracts/query-job.js';
 import type { QueryJobRef } from '../contracts/query-job.js';
 import {
   NO_PLAN_TEXT, adaptTaskMap, adaptTaskMapCalendar, adaptTaskMapDecisionCards, adaptTaskMapDetail, adaptTaskMapTime,
-  decisionCardCountPartial,
+  decisionCardCountPartial, runningCommandsByTask,
   isFinishedGoalDisplayPhase, localShortAt, moduleNamesOf, type GoalDisplayPhaseCode, type TaskMapQueueRead,
   type TaskMapData, type TaskMapDetailTaskRead, type TaskMapDisplayRead, type TaskMapGoalRead,
   type TaskMapGraphRead, type TaskMapHoverRead, type TaskMapLineRead, type TaskMapNodeDetailData,
@@ -338,14 +341,22 @@ async function readDrawnRunSteps(
   return views;
 }
 
-/** A8: one `executions/running-commands` item, narrowed to what the step match
- * reads. The Host computes `elapsedMs` and `overLine`; the page never does. */
-type RunningCommandItemV1 = {
-  run: { kind: 'run'; runRef: RunRef } | { kind: 'query'; queryRunRef: QueryRunRef };
-  callId: string;
-  elapsedMs: number;
-  overLine: boolean;
-};
+/**
+ * A8: one `executions/running-commands` read, shared by the Run blocks and the
+ * TaskMap. A failed read is logged and answers `null`; each caller hides only
+ * the long-command item it would have drawn, never its whole page.
+ */
+export async function readRunningCommands(
+  client: ReturnType<typeof createHostClient>, scope: CoreScope,
+): Promise<{ items: RunningCommandItemV1[] } | null> {
+  try {
+    return readyRouteValue<{ items: RunningCommandItemV1[] }>(
+      await client.post('executions/running-commands', scope, {}), 'executions/running-commands');
+  } catch (error) {
+    logReadError(error);
+    return null;
+  }
+}
 
 /**
  * A8: one `executions/running-commands` read for every live Run block this
@@ -360,16 +371,12 @@ async function readRunningCommandSteps(
 ): Promise<void> {
   const live = views.filter((view) => view.live);
   if (live.length === 0) return;
-  let read: { items: RunningCommandItemV1[] };
-  try {
-    read = readyRouteValue<{ items: RunningCommandItemV1[] }>(
-      await client.post('executions/running-commands', scope, {}), 'executions/running-commands');
-  } catch (error) {
+  const read = await readRunningCommands(client, scope);
+  if (read === null) {
     /* Note 5b: a failed read leaves the long-command row out. The board's A1
        “进行中” is the live step's own fallback meta, so only a still-running
        command drops its earlier meta and 停止; a finished command keeps its own
        `通过，n 秒` / `退出码 n，n 秒` untouched. */
-    logReadError(error);
     for (const view of live) {
       for (const step of view.steps) {
         if (step.ic !== 'cmd' || !step.live) continue;
@@ -396,8 +403,7 @@ async function readRunningCommandSteps(
       if (index < 0) continue;
       const step = view.steps[index];
       if (step === undefined || step.ic !== 'cmd' || !step.live) continue;
-      const minutes = Math.max(0, Math.floor(item.elapsedMs / 60_000));
-      step.meta = '正在跑，已 ' + String(minutes) + ' 分钟' + (item.overLine ? '，超过预计' : '');
+      step.meta = '正在跑，' + runningMinutesText(item);
       const stop: MainRunStepStop = item.run.kind === 'query'
         ? { kind: 'query', queryRunRef: item.run.queryRunRef } : { kind: 'run' };
       step.stop = stop;
@@ -513,6 +519,9 @@ export type BoardActions = {
   /** §2.5/§2.8: one `tasks/hold/release` (the task card's 撤销暂缓), releasing
    * every hold reason of that Task in one commit. */
   releaseHolds: (taskRef: TaskTriple) => Promise<void>;
+  /** A8: the TaskMap's 停止 — the line's own cancel control, from the running
+   * command's `{ runRef, sessionRef, workspaceId }`. */
+  stopTaskRun: (item: { runRef: RunRef; sessionRef: TaskMapSessionRef; workspaceId: string }) => Promise<void>;
   /** E3 Plan A §2.3: one `goals/confirm-draft` for the shown draft round. */
   confirmGoalDraft: (round: QueryJobRef, index: number) => Promise<void>;
   /** E3 Plan A §2.3: one `requests/select-idea` for the shown ideas round. */
@@ -1553,6 +1562,31 @@ export async function bootBoardPage(): Promise<void> {
       if (reply.status !== 'committed' && reply.status !== 'unchanged') {
         throw new Error(writeTextOf(new RouteReadError('tasks/hold/release',
           reply.code || reply.status || 'no status', reply.reason ?? '')));
+      }
+      await refresh.reread();
+    },
+    async stopTaskRun(item: { runRef: RunRef; sessionRef: TaskMapSessionRef; workspaceId: string }): Promise<void> {
+      const scope = { projectId: item.runRef.projectId, workspaceId: item.workspaceId };
+      let read: LineReadValue;
+      try {
+        read = await readLine(client, scope, item.sessionRef);
+      } catch (error) {
+        if (error instanceof RouteReadError && error.code === 'not_found') {
+          throw new Error('这次执行已经结束，或现在停不了。');
+        }
+        throw new Error(writeTextOf(error));
+      }
+      /* `branched` has no single line and so no control: the same answer as a
+         line whose cancel control is gone. */
+      if (read.kind === 'branched') throw new Error('这次执行已经结束，或现在停不了。');
+      const control = read.row.controls.find((entry) => entry.kind === 'cancel'
+        && entry.availability === 'available'
+        && entry.target.runRef?.runId === item.runRef.runId) ?? null;
+      if (control === null) throw new Error('这次执行已经结束，或现在停不了。');
+      try {
+        await submitRunControl(client, scope, control, 'cancel');
+      } catch (error) {
+        throw new Error(stopWriteTextOf(error));
       }
       await refresh.reread();
     },
@@ -3894,6 +3928,27 @@ async function loadTaskMapForGoal(
      never a second navigation read. */
   data.scope = scope;
   data.decisionCards = decisionCards;
+  /* A8: only a Goal with a running Task asks for this Host's running commands;
+     the read's own failure hides the long-command item, never the page. */
+  if (data.tasks.some((task) => task.st === 'running')) {
+    const read = await readRunningCommands(client, scope);
+    if (read !== null) {
+      const running = runningCommandsByTask(read.items, ref.goalId);
+      for (const item of Object.values(running)) {
+        try {
+          const record = readyRouteValue<TaskExecutionRecord>(
+            await client.post('executions/read',
+              { projectId: item.runRef.projectId, workspaceId: item.workspaceId }, item.runRef), 'executions/read');
+          item.stopping = record.run.controlState?.desiredState === 'cancelled';
+        } catch (error) {
+          /* This read only adds “停止请求中”; its failure is not the page's. */
+          logReadError(error);
+          item.stopping = false;
+        }
+      }
+      data.running = running;
+    }
+  }
   /* Ruling 4: disposition dates are read only while the dropped list is open. */
   if (demand.dropped === true) await resolveDroppedDates(client, scope, ref, data);
   if (demand.track === true) {
@@ -4129,6 +4184,13 @@ function deliveryWriteTextOf(error: unknown): string {
     return '这次交付已经确认过。';
   }
   return writeTextOf(error);
+}
+
+/** 任务图的停止写口：撞版本有自己的一句，页面本来也会重读（N2）；其余照 `writeTextOf`。 */
+function stopWriteTextOf(error: unknown): string {
+  return error instanceof RouteReadError && error.code === 'revision_conflict'
+    ? '刚有变化，等页面刷新后再点一次。'
+    : writeTextOf(error);
 }
 
 /** A35 (§2.6, §2.7; lead ruling 4): the outer `committed` of `tasks/requeue`

@@ -295,7 +295,7 @@ describe('E34-7 the long 全部 calendar reduces the granularity it really has',
         const cls = element.getAttribute('class') ?? '';
         const label = element.getAttribute('aria-label') ?? '';
         return element.tagName.toLowerCase() === 'button' && cls.includes('cal-c')
-          && label.startsWith('2026-10-02|');
+          && label.startsWith('10-02 ') && label.includes(':00–');
       }) !== undefined);
       expect(page.root.textContent).not.toContain('NaN');
       expect(page.root.textContent).not.toContain('undefined');
@@ -542,6 +542,10 @@ describe('E34-7 the long 全部 calendar reduces the granularity it really has',
     let page: Awaited<ReturnType<typeof bootPage>> | undefined;
     const cellWith = (label: string) => findAllClass(page!.root, 'cal-c')
       .find((element) => (element.getAttribute('aria-label') ?? '').startsWith(label));
+    const hourCellWith = (hour: number) => findAllClass(page!.root, 'cal-c').find((element) => {
+      const label = element.getAttribute('aria-label') ?? '';
+      return label.startsWith('10-02 ') && label.includes(' ' + String(hour).padStart(2, '0') + ':00–');
+    });
     try {
       page = await bootPage({
         name: 'TaskMap', search: '?goal=g1', token: 'e34-7-origin',
@@ -574,9 +578,9 @@ describe('E34-7 the long 全部 calendar reduces the granularity it really has',
       await poll(() => calendarInputs.some((input) => input.granularity === 'day'));
       await poll(() => cellWith('10-02 ') !== undefined);
       cellWith('10-02 ')!.dispatch('click');
-      await poll(() => cellWith('2026-10-02|') !== undefined);
-      cellWith('2026-10-02|09|')!.dispatch('click');
-      await poll(() => (cellWith('2026-10-02|09|')?.getAttribute('class') ?? '').includes('is-on'));
+      await poll(() => hourCellWith(9) !== undefined);
+      hourCellWith(9)!.dispatch('click');
+      await poll(() => (hourCellWith(9)?.getAttribute('class') ?? '').includes('is-on'));
       const earlier = cellWith('09-04 ');
       expect(earlier).toBeDefined();
       earlier!.dispatch('click');

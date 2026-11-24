@@ -17,9 +17,11 @@ import { catalogForWorkspace } from '../../contracts/workspace-catalog.js';
 import { displayProjectPath, qualifyProjectPath } from '../../contracts/workspace-path.js';
 import type { AdoptedArchitecture } from '../../contracts/architecture-catalog.js';
 import type { TaskRow } from '../../contracts/task-graph.js';
-import type { TaskTriple } from '../../contracts/dispatch.js';
+import type { RunRef, TaskTriple } from '../../contracts/dispatch.js';
+import type { SessionRef } from '../../contracts/core/identity.js';
 import { revisionAssignments } from '../../contracts/plan.js';
 import { asRecord, asText, type JsonRecord } from '../values.js';
+import { firstLine, runningMinutesText, type RunningCommandItemV1 } from './run-steps.js';
 
 /** Ruling item 1: a Goal with no adopted Plan shows this empty text. */
 export const NO_PLAN_TEXT = '这个目标还没有采用的计划。';
@@ -48,7 +50,7 @@ export type TaskMapExtraReads = { hover?: TaskMapHoverRead | null; lines?: TaskM
 
 export type TaskMapTask = {
   id: string; stageId: string | null; name: string; st: string; why: string;
-  deps: string[]; gate: boolean; scopeKind: string; owner: string;
+  deps: string[]; gate: boolean; optional: boolean; scopeKind: string; owner: string;
   /** The adopted assignment's instruction: the Task's 语义 (DESIGN `:492-507`); empty hides the row. */
   instruction: string;
   rework: string[];
@@ -56,6 +58,8 @@ export type TaskMapTask = {
   reworkCap: number | null;
   /** The row's `attemptOrdinal` (its selected Run's attempt); null when the row has none. */
   attempt: number | null;
+  /** `failure.round.gapCodes` in the page's words; empty when the row has no failure round. */
+  gaps: string;
 };
 
 export type TaskMapDagEdge = {
@@ -65,6 +69,13 @@ export type TaskMapDagEdge = {
 export type TaskMapDropped = { id: string; name: string; word: string; why: string;
   /** The adopted revision that made this disposition change; boot reads its acceptedAt. */
   setIn?: unknown; at?: string };
+
+/** One running command of a Task, as the boards draw it: the command's first
+ * line, the Host's minute count, and the line and Run that can stop it. */
+type TaskMapRunning = {
+  cmd: string; minutes: string; runRef: RunRef; sessionRef: SessionRef;
+  workspaceId: string; stopping: boolean;
+};
 
 /** The real DAG facts: nodes (non-band), band, edges, real gates, the critical
  * path and the current owners. Nothing is invented for a missing Goal gate. */
@@ -91,6 +102,9 @@ export type TaskMapData = {
   scope?: { projectId: string; workspaceId: string };
   stages: Array<{ id: string; name: string; description: string }>;
   tasks: TaskMapTask[];
+  /** The TaskMap's one running command per Task (first by the Host's order);
+   * empty when none matched this Goal or the read failed. */
+  running: Record<string, TaskMapRunning>;
   dag: TaskMapDag;
   /** Ruling item 1: `tasks/query` answered `not_found` because no Plan is adopted. */
   planMissing?: boolean;
@@ -104,6 +118,32 @@ export type TaskMapData = {
   /** `graph/hover` `modules[]`: moduleId → name, the 模块 group names (no id reaches the page). */
   moduleNames?: Record<string, string>;
 };
+
+/**
+ * This Goal's running Work commands, one per Task. The Host returns every
+ * command of this Host and orders them by `startedAt`, so a Task with several
+ * keeps the first. Query rounds carry no Task and are not part of this map.
+ */
+export function runningCommandsByTask(
+  items: readonly RunningCommandItemV1[], goalId: string,
+): Record<string, TaskMapRunning> {
+  const byTask: Record<string, TaskMapRunning> = {};
+  for (const item of items) {
+    if (item.run.kind !== 'run' || item.run.runRef.goalId !== goalId) continue;
+    const taskId = item.run.taskId;
+    if (byTask[taskId] !== undefined) continue;
+    const preview = firstLine(item.commandPreview);
+    byTask[taskId] = {
+      cmd: preview === '' ? '命令' : preview,
+      minutes: runningMinutesText(item),
+      runRef: item.run.runRef,
+      sessionRef: item.sessionRef,
+      workspaceId: item.workspaceId,
+      stopping: false,
+    };
+  }
+  return byTask;
+}
 
 /** The `decisions/queue` value the attention item reads: the waiting total
  * before paging and which sources could be read. */
@@ -427,6 +467,27 @@ export const FAILURE_CLASS_WORD: Record<string, string> = {
   interrupted: '平台中断', cancelled: '已取消',
 };
 
+/* The gap-code words; a code outside this table is 其他缺项. The page reads the
+   words, never the codes. */
+const GAP_WORD: Record<string, string> = {
+  uncovered_requirement: '没有检查覆盖的必需要求',
+  missing_check: '少了必需的检查',
+  pending_check: '必需的检查没有跑',
+  interrupted_check: '检查被中断',
+  reviewer_missing: '缺审阅',
+};
+
+/** `failure.round.gapCodes` as the page reads them: distinct words, joined by
+ * 、; a repeated code or a second code with the same word adds nothing. */
+export function gapTextOf(codes: string[]): string {
+  const words: string[] = [];
+  for (const code of codes) {
+    const word = GAP_WORD[code] ?? '其他缺项';
+    if (words.indexOf(word) < 0) words.push(word);
+  }
+  return words.join('、');
+}
+
 /** An automatic rework's reason is the code `auto-rework:<class>#<n>`
  * (`workflow.ts`); its class and count are shown from their own fields. */
 const isAutoReworkCode = (reason: string): boolean => reason.startsWith('auto-rework:');
@@ -460,7 +521,7 @@ export function adaptTaskMap(
   const owners = ownersOf(extra);
   const anchors = anchorWhyOf(extra);
   const emptyDag: TaskMapDag = { edges: [], nodes: [], band: [], dropped: [], gateIds: [], crit: [], owners: {}, goalOwner: '' };
-  if (graph === null) return { goal: goalData, stages: [], tasks: [], dag: emptyDag, planMissing: true };
+  if (graph === null) return { goal: goalData, stages: [], tasks: [], running: {}, dag: emptyDag, planMissing: true };
 
   const plan = graph.plan;
   const stages = plan.stages.map((entry) => {
@@ -489,6 +550,9 @@ export function adaptTaskMap(
     }
     const stage = stageOf(definition);
     const attempt = typeof row.attemptOrdinal === 'number' ? row.attemptOrdinal : null;
+    const gapCodes = asRecord(asRecord(row.failure).round).gapCodes;
+    const gaps = Array.isArray(gapCodes)
+      ? gapTextOf(gapCodes.map((code) => asText(code)).filter((code) => code !== '')) : '';
     /* 负责 names the attempt after a line from the second on (prototype:2276); 未分配 has none */
     if (owners.byTask[id] !== undefined && attemptText(attempt) !== '') owners.byTask[id] += '，' + attemptText(attempt);
     /* the cards read `dag.owners`, so 未分配 goes there too */
@@ -502,12 +566,14 @@ export function adaptTaskMap(
       why: anchors[id] ?? taskWhyOf(row, st),
       deps: [],
       gate: definition.taskKind === 'gate',
+      optional: definition.requirementLevel === 'optional',
       scopeKind: asText(asRecord(definition.scope).kind),
       owner: owners.byTask[id] ?? '',
       instruction: instructions.get(id) ?? '',
       rework: reworkLines(row.rework),
       reworkCap: typeof asRecord(row.rework).cap === 'number' ? asRecord(row.rework).cap as number : null,
       attempt,
+      gaps,
     });
   }
   const keptById = new Map(kept.map((task) => [task.id, task]));
@@ -557,7 +623,7 @@ export function adaptTaskMap(
     owners: owners.byTask,
     goalOwner: owners.goal,
   };
-  return { goal: goalData, stages, tasks: kept, dag, moduleNames: moduleNamesOf(extra?.hover) };
+  return { goal: goalData, stages, tasks: kept, running: {}, dag, moduleNames: moduleNamesOf(extra?.hover) };
 }
 
 /** Module id → name from one `graph/hover` read; TaskMap and Main's right panel name a Task's module by it. */

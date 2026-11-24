@@ -299,6 +299,8 @@ export async function openDoneDeliveryWorld(input: DoneWorldInput = {}): Promise
     if (failedB === null) throw new Error('E3DN: done-b did not stop before its automatic requeue');
     if (input.humanRework !== true) await failFlag(world, false);
     const fromRework = receipts.length;
+    /* the rework Run does not share the failed Run's start minute */
+    world.clock.advance(1);
     const reworked = await proceed(world, failedB, 'requeue_task', receipts);
     const rework = claimedRunOf(receipts.slice(fromRework), 'the automatic rework of done-b').run;
     const base = { world, goal, gate: triple(goal, DONE_GOAL_GATE), close: async () => { await workflow.close(); } };

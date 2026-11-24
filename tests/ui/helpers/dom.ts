@@ -16,17 +16,19 @@ export class FakeElement {
   readonly listeners = new Map<string, FakeListener[]>();
   valueWrites = 0;
   checked = false;
+  parent: FakeElement | null = null;
   private _value = '';
   constructor(readonly tagName: string) {}
   get value(): string { return this._value; }
   set value(next: string) { this._value = next; this.valueWrites += 1; }
   get firstChild(): FakeElement | FakeText | null { return this.childNodes[0] ?? null; }
   get textContent(): string { return this.childNodes.map((child) => child.textContent).join(''); }
-  appendChild<T extends FakeElement | FakeText>(child: T): T { this.childNodes.push(child); return child; }
-  append(...children: Array<FakeElement | FakeText>): void { for (const child of children) this.childNodes.push(child); }
+  appendChild<T extends FakeElement | FakeText>(child: T): T { if (child instanceof FakeElement) child.parent = this; this.childNodes.push(child); return child; }
+  append(...children: Array<FakeElement | FakeText>): void { for (const child of children) this.appendChild(child); }
   insertBefore<T extends FakeElement | FakeText>(next: T, before: FakeElement | FakeText | null): T {
     const index = before === null ? this.childNodes.length : this.childNodes.indexOf(before);
     this.childNodes.splice(index < 0 ? this.childNodes.length : index, 0, next);
+    if (next instanceof FakeElement) next.parent = this;
     return next;
   }
   replaceChild(next: FakeElement | FakeText, old: FakeElement | FakeText): void {
@@ -35,8 +37,9 @@ export class FakeElement {
   }
   removeChild(child: FakeElement | FakeText): void {
     const index = this.childNodes.indexOf(child);
-    if (index >= 0) this.childNodes.splice(index, 1);
+    if (index >= 0) { this.childNodes.splice(index, 1); if (child instanceof FakeElement) child.parent = null; }
   }
+  get isConnected(): boolean { let node: FakeElement = this; while (node.parent !== null) node = node.parent; return node.tagName.toLowerCase() === 'x-dc'; }
   setAttribute(name: string, value: string): void { this.attributes.set(name, value); }
   removeAttribute(name: string): void { this.attributes.delete(name); }
   getAttribute(name: string): string | null { return this.attributes.get(name) ?? null; }
@@ -55,7 +58,9 @@ export class FakeElement {
       listener({ type: name, target: this, preventDefault() {}, stopPropagation() {}, ...init });
     }
   }
+  get disabled(): boolean { return this.attributes.has('disabled'); }
   focus(): void {
+    if (this.disabled) return;
     if (typeof document !== 'undefined') (document as unknown as FakeDocument).activeElement = this;
   }
   blur(): void {

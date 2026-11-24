@@ -85,6 +85,11 @@ describe('E3A-10 the commit bar and confirmation box', () => {
         typeInto(page.root, 'ov-commit-msg', '整理 WorkGraph 的注记');
         click(exactButton(page.root, '提交')!);
         await waitFor(() => heldNow);
+        expect(exactButton(page.root, '不提交')!.getAttribute('disabled')).not.toBeNull();
+        /* 具名改坏: 去掉 keep 的 commitBusy 守卫；本行的框被关掉、下面的输入框取不到而红。 */
+        click(exactButton(page.root, '不提交')!);
+        expect(findElement(page.root, (element) => element.getAttribute('id') === 'ov-commit-msg')!.value)
+          .toBe('整理 WorkGraph 的注记');
         /* 具名改坏: 在途时提示条按钮把 busy 改回 false 并换回预填；本行的第二下和预填红。 */
         click(findButton(page.root, '提交架构图和注记')!);
         expect(findElement(page.root, (element) => element.getAttribute('id') === 'ov-commit-msg')!.value)
@@ -118,6 +123,9 @@ describe('E3A-10 the commit bar and confirmation box', () => {
         click(findButton(page.root, '提交架构图和注记')!);
         const draft = () => findElement(page.root, (element) => element.getAttribute('id') === 'ov-commit-msg')!;
         expect(draft().value).toBe('更新架构图和注记（2 个文件）');
+        /* 具名改坏: onDraft 不比预填、总把输入存成 commitDraft；本行重读后仍是 2 个文件而红。 */
+        typeInto(page.root, 'ov-commit-msg', '更新架构图和注记（2 个文件）x');
+        typeInto(page.root, 'ov-commit-msg', '更新架构图和注记（2 个文件）');
         world.edit('.workbench/extra.txt', 'x\n');
         await waitFor(() => log.openings.length > 0);
         log.openings.at(-1)!.enqueue(new TextEncoder().encode('event: change\nid: c0000000002\ndata: {}\n\n'));

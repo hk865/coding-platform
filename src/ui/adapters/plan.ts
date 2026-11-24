@@ -16,6 +16,7 @@ import type { GoalAutonomyV1 } from '../../contracts/goal-decisions.js';
 import { asRecord, asText } from '../values.js';
 import { AUTONOMY_TEXT, taskStageOf } from './goals.js';
 import { decideTextOf, goalControlsOf, type NavInbox } from './nav.js';
+import { gapTextOf } from './task-map.js';
 import {
   lastAnsweredRoundOf, requestRootKey, type MainData, type MainPageCursorV1, type MainPageV1, type MainRequestRead, type MainRoundRead,
 } from './main.js';
@@ -113,9 +114,32 @@ export type PlanData = MainData & {
   goalCard: PlanGoalCard;
   plan: PlanDoc | null;
   versions: PlanVersionRow[];
+  gaps: { taskId: string; text: string }[];
   inbox: NavInbox & { local: boolean; remote: boolean };
   gb: { canPause: boolean; canResume: boolean; canCancel: boolean; canRequeue: boolean };
 };
+
+/** The one gap word the Plan page draws; the phrase stays in `gapTextOf`'s table. */
+const UNCOVERED_TEXT = gapTextOf(['uncovered_requirement']);
+
+/** 121-147: an active Task whose failure round has no check covering a
+ * required requirement is a current-state note on the conversation's tail. No
+ * other gap code belongs here. */
+function gapsOf(tasks: MainData['tasks']): PlanData['gaps'] {
+  if (tasks === null) return [];
+  const gaps: PlanData['gaps'] = [];
+  for (const task of tasks.tasks) {
+    if (task.disposition !== 'active') continue;
+    const codes = task.failure?.round?.gapCodes;
+    if (!Array.isArray(codes) || !codes.includes('uncovered_requirement')) continue;
+    gaps.push({
+      taskId: task.definition.taskId,
+      text: '缺项：' + task.definition.title + '：' + UNCOVERED_TEXT
+        + '。要补检查，在主对话里说，参谋会起草带新检查的计划。',
+    });
+  }
+  return gaps;
+}
 
 /** §2.7: the newest round carrying goal-card drafts, and its request root. */
 function goalCardOf(pages: readonly MainPageRead[]): PlanGoalCard {
@@ -251,6 +275,7 @@ export function adaptPlan(input: {
     goalCard: goalCardOf(input.pages),
     plan: planOf(input.pages, input.cand),
     versions: input.versions,
+    gaps: gapsOf(main.tasks),
     inbox: inboxOf(main),
     gb: goalControlsOf(main.selectedDisplay),
   };

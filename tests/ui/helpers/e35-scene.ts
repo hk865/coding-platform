@@ -10,7 +10,7 @@ export type Pick = { id: string; key: string; name: string; text: string; tip: s
   pick(): void; pin(): void; go(): void; toggle(): void; hover(): void };
 export type Vals = { dag: { nodes: Pick[] }; det: (Pick & { rel: Pick[]; lines: Pick[]; close(): void }) | null; now: { items: Pick[] };
   wl: { rows: Pick[]; selClear(): void; selSub: string; cur: { key(e: { key: string }): void }; cal: { rows: Array<{ cells: Array<Pick & { tip: string; hover(): void }> }> };
-    ccard: Pick & { hint: string; word: string }; cellLabel: string; sum: string;
+    ccard: Pick & { hint: string; word: string }; cellLabel: string; sum: string; crumbs: Array<{ label: string }>;
     yr: { weeks: Array<{ days: Array<Pick & { cls: string; tip: string; hover(): void }> }>; card: Pick & { hint: string; word: string } } } } & Row;
 export const value = <T,>(route: string, input: Row = {}): T => (scene.reply(route, input) as unknown as { value: T }).value;
 

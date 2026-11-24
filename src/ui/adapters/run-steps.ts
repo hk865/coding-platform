@@ -7,7 +7,22 @@
  */
 import type { RunStepsReadV1, RunStepsSummaryV1, RunStepV1 } from '../../contracts/run-steps.js';
 import type { RunActivityUnknownReason } from '../../contracts/run-activity.js';
+import type { RunRef } from '../../contracts/dispatch.js';
+import type { QueryRunRef } from '../../contracts/query-job.js';
+import type { SessionRef } from '../../contracts/core/identity.js';
 import { localShortAt } from './task-map.js';
+
+/** A8: one `executions/running-commands` item, narrowed to what this page reads.
+ * The Host computes `elapsedMs` and `overLine`; the page never does. */
+export type RunningCommandItemV1 = {
+  run: { kind: 'run'; runRef: RunRef; taskId: string } | { kind: 'query'; queryRunRef: QueryRunRef };
+  workspaceId: string;
+  sessionRef: SessionRef;
+  callId: string;
+  commandPreview: string;
+  elapsedMs: number;
+  overLine: boolean;
+};
 
 /** 线视图一步：字段全部显式，没有值的字符串写空。 */
 export type RunStepView = {
@@ -33,9 +48,15 @@ const UNKNOWN_REASON_WORD: Record<RunActivityUnknownReason, string> = {
 };
 
 /** 首行；`text` 为空时是空串。 */
-function firstLine(text: string): string {
+export function firstLine(text: string): string {
   const end = text.search(/\r|\n/);
   return end < 0 ? text : text.slice(0, end);
+}
+
+/** The Host's own minute count for a running command; the page never reads a clock. */
+export function runningMinutesText(item: RunningCommandItemV1): string {
+  const minutes = Math.max(0, Math.floor(item.elapsedMs / 60_000));
+  return '已 ' + String(minutes) + ' 分钟' + (item.overLine ? '，超过预计' : '');
 }
 
 function isRunning(status: string): boolean {

@@ -650,6 +650,7 @@ function reply(route: string, input: unknown): SceneReply {
     case 'activity/calendar': return { status: 'ready', value: calendar(body) } satisfies Ready<ActivityCalendarV1>;
     case 'tasks/timeline': return { status: 'ready', value: timeline() } satisfies Ready<TaskStateTimelinePageV1>;
     case 'executions/list': return { status: 'ready', value: executions() } satisfies Ready<TaskExecutionPage>;
+    case 'executions/running-commands': return { status: 'ready', value: { items: [] } };
     case 'workspaces/registration':
       return ({
         status: 'ready', value: registration(),

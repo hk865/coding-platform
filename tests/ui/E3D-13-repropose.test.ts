@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { commitBarrier } from '../helpers/S6A-commit-barrier.js';
+import { byIdentityPrefix, commitBarrier } from '../helpers/S6A-commit-barrier.js';
 import { S6A_SCOPE } from '../helpers/S6A-request-fixture.js';
 import { findClass } from './helpers/boot-page.js';
 import type { FakeElement } from './helpers/dom.js';
@@ -139,8 +139,18 @@ describe('E3D-13 the structural card asks for another proposal', () => {
       const confirm = stepConfirm(page.root)!;
       /* 同一拍里点两下：第二下走重画后的 handler，`off` 和 `go` 里的 busy 两处都挡住。 */
       const listener = confirm.listeners.get('click')![0]!;
+      const held = commitBarrier.hold(byIdentityPrefix('session-message-decision-'), 'E3D-13 answer in flight');
       click(confirm);
       listener({ type: 'click', target: confirm, preventDefault() {}, stopPropagation() {} });
+      await held.reached;
+      /* 写口在途时“返回”不清步骤；再点确认不会发第二次。 */
+      click(cardButton(page.root, '返回')!);
+      expect(findClass(card(page.root)!, 'dc-step')).toBeDefined();
+      expect(cardButton(page.root, '返回')!.getAttribute('disabled')).not.toBeNull();
+      expect(isOff(stepConfirm(page.root))).toBe(true);
+      click(stepConfirm(page.root)!);
+      expect(count(log, 'decisions/answer')).toBe(1);
+      held.release();
       await settle(() => callsOf(log, 'decisions/answer').some((call) => call.reply !== undefined), 5_000);
       await quiet(log);
       expect(count(log, 'decisions/answer')).toBe(1);

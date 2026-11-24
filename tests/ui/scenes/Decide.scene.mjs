@@ -42,7 +42,7 @@ export const scene = {
   now: HAVE.now,
   routes: HAVE.routes,
   reply(route, input, body) {
-    const winput = body && body.request ? body.request.input : null;
+    const winput = body && body.request ? body.request.input : (input ?? null);
     if (route === 'decisions/queue') {
       const queue = structuredClone(HAVE.routes['decisions/queue']);
       if (S.answered.size > 0) {

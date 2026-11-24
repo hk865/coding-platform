@@ -420,7 +420,7 @@ textarea.dc-input { min-height: 52px; }
                 </sc-if>
               </sc-if>
               <sc-if value="{{dc.inStep}}" hint-placeholder-val="{{ false }}">
-                <button class="btn btn-sm" type="button" onClick="{{st.back}}">{{st.backLabel}}</button>
+                <button class="btn btn-sm" type="button" onClick="{{st.back}}" disabled="{{st.backOff}}">{{st.backLabel}}</button>
                 <button class="btn btn-sm btn-primary{{st.offCls}}" type="button" aria-disabled="{{st.off}}" disabled="{{st.off}}" onClick="{{st.go}}">{{st.confirm}}</button>
               </sc-if>
             </div>
@@ -3615,7 +3615,8 @@ class Component extends DCLogic {
           const val = (e) => (e && e.target ? e.target.value : '');
           const setForm = (patch) => set({ form: Object.assign({}, (this.state || {}).form || {}, patch) });
           st = Object.assign(st, {
-            back: () => set({ step: null, form: {} }), confirm: stepAct.label, off: false, backLabel: '返回',
+            back: () => { if (((this.state || {}).form || {}).busy) return; set({ step: null, form: {} }); },
+            backOff: !!form.busy, confirm: stepAct.label, off: false, backLabel: '返回',
             go: async () => {
               if (st.off) return;
               if (stepKey === 'repropose') {
@@ -4066,7 +4067,7 @@ class Component extends DCLogic {
       acts: [], hasPrimary: false, primaryLabel: '', primaryGo: noop, primaryCls: 'btn btn-sm btn-primary', primaryOff: false };
     let stv = { title: '', text: '', hasEvidence: false, evidence: [], text2: '', hasName: false, name: '', onName: noop, hasChecks: false, checks: [], report: '', openReport: noop, after: '',
       hasNote: false, note: '', notePh: '', onNote: noop, hasReason: false, reason: '', reasonLabel: '', reasonPh: '', onReason: noop,
-      hasBudget: false, budget: '', onBudget: noop, budgetHint: '', budgetCls: 't3', back: noop, go: noop, confirm: '', off: true, offCls: ' is-off' };
+      hasBudget: false, budget: '', onBudget: noop, budgetHint: '', budgetCls: 't3', back: noop, backOff: false, go: noop, confirm: '', off: true, offCls: ' is-off' };
     if (cur) {
       const r = resolved[cur.id];
       /* position within the item's own level (已处理: within the list) */
