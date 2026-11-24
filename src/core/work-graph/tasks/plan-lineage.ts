@@ -195,7 +195,7 @@ async function carriedTaskOfRound(
       projectId: request.projectId, goalId: request.goalId, taskId: request.taskId,
     } };
   }
-  if (round.kind === 'command_review') {
+  if (round.kind === 'command_review' || round.kind === 'command_stop') {
     // A Query command's round writes no Task; only a Work Run's does.
     return { status: 'ready', value: round.subject.run.kind === 'run'
       ? { projectId: round.subject.projectId, goalId: round.subject.goalId, taskId: round.subject.run.taskId }
@@ -313,6 +313,14 @@ export async function trustedSystemRoundOf(
         return { status: 'ready', value: null };
       }
       round = { kind: 'command_review', goalRef, subject };
+      break;
+    }
+    case 'command_stop': {
+      const subject = commandReviewSubjectOfText(text, 'command_stop');
+      if (subject === null || subject.projectId !== goalRef.projectId || subject.goalId !== goalRef.goalId) {
+        return { status: 'ready', value: null };
+      }
+      round = { kind: 'command_stop', goalRef, subject };
       break;
     }
     case 'command_rerun': {

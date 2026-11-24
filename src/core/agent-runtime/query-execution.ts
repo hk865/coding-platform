@@ -47,6 +47,7 @@ import {
 import { ARCHITECTURE_TOOL_NAMES, createArchitectureTools, type ArchitectureToolsHandle } from './architecture-tools.js';
 import { createMemberTools, CREATE_MEMBER_TOOL_NAME, type CreateMemberToolsHandle } from './member-tools.js';
 import { createReadRequestTools, READ_REQUESTS_TOOL_NAMES, type ReadRequestToolsHandle } from './request-read-tools.js';
+import { createReworkTools, REWORK_TOOL_NAMES, type ReworkToolsHandle } from './rework-tools.js';
 import { adviserMemberRound, projectQueryConfiguration } from './query-preparation.js';
 import { createQueryObservation } from './query-observation.js';
 import { createQuerySourceCaptureFactory } from './source-capture-access.js';
@@ -423,6 +424,8 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
           architectureProposals: deps.architectureProposals !== undefined,
           actionRequests: deps.actionRequests !== undefined && deps.claimHolds !== undefined,
           claimHolds: deps.actionRequests !== undefined && deps.claimHolds !== undefined,
+          reworkRequests: deps.claims.requeueTask !== undefined,
+          recheckRequests: deps.evidence?.reverifyRound !== undefined,
         },
         // The read-only command is a Host-gated capability: the start reads the
         // real whole-workspace read policy again (the same fact preparation
@@ -527,6 +530,10 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
       // in the round the projection kept it for, never by note class alone.
       const memberNames = memberRound
         ? roundWanted([CREATE_MEMBER_TOOL_NAME], frozenWanted, roundAllowed) : [];
+      // The two rework names follow the same round ceiling; one factory requires both owners.
+      const reworkNames: readonly string[] = roundWanted(REWORK_TOOL_NAMES, frozenWanted, roundAllowed);
+      const reworkClaims = deps.claims.requeueTask;
+      const reworkEvidence = deps.evidence?.reverifyRound;
       const readRequestNames: readonly string[] = roundWanted(READ_REQUESTS_TOOL_NAMES, frozenWanted, roundAllowed);
       // Only a role_exploration round may carry the structural proposal tool, bound to the same owner as Work's.
       const architectureNames: readonly string[] = explorationRound
@@ -547,6 +554,7 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
         || queryDecisionNames.length > 0
         || actionNames.length > 0
         || memberNames.length > 0 || readRequestNames.length > 0
+        || reworkNames.length > 0
         || architectureNames.length > 0 || whiteboardNames.length > 0) {
         // The original query_run tool context (spec §4.1: tool inputs never
         // obtain the Host context/reader). The narrow history proxy separately
@@ -710,6 +718,18 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
             texts: toolTexts,
           });
         }
+        let reworkTools: ReworkToolsHandle | null = null;
+        if (reworkNames.length > 0 && reworkClaims !== undefined && reworkEvidence !== undefined) {
+          // The Run's own tool context is the caller; the factory supplies only
+          // the owner-bound command identity per call.
+          reworkTools = createReworkTools({
+            claims: { requeueTask: reworkClaims },
+            evidence: { reverifyRound: reworkEvidence },
+            context: toolContext,
+            requestIdForCall: (call: Readonly<ToolCall>): string => queryToolRequestIdForCall(queryRunRef, call),
+            texts: toolTexts,
+          });
+        }
         let readRequestTools: ReadRequestToolsHandle | null = null;
         if (readRequestNames.length > 0) {
           if (deps.mainSurface === undefined) {
@@ -756,7 +776,7 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
           ...grantedGraphNames, ...historyNames, ...grantedLinkCheckNames, ...grantedWebNames, ...whiteboardNames,
           ...noteNames, ...architectureNames,
           ...mailboxNames, ...personNames, ...askCopyNames, ...queryDecisionNames, ...actionNames,
-          ...memberNames, ...readRequestNames, ...submitNames,
+          ...memberNames, ...reworkNames, ...readRequestNames, ...submitNames,
         ];
         if (names.length > 0) {
           coordinationTools = {
@@ -774,6 +794,7 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
               ...(askCopyTools?.create(workspace) ?? []).filter(definition => askCopyNames.includes(definition.name)),
               ...(actionTools?.create(workspace) ?? []).filter(definition => actionNames.includes(definition.name)),
               ...(memberTools?.create(workspace) ?? []).filter(definition => memberNames.includes(definition.name)),
+              ...(reworkTools?.create(workspace) ?? []).filter(definition => reworkNames.includes(definition.name)),
               ...(readRequestTools?.create(workspace) ?? []).filter(definition => readRequestNames.includes(definition.name)),
               ...(answerTools?.create(workspace) ?? []),
             ],

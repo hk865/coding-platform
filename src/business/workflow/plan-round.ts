@@ -96,7 +96,8 @@ export function systemRoundSendInput(input: {
         needsReply: true,
         goalRef: input.round.goalRef,
         ...((input.round.kind === 'deviation' || input.round.kind === 'unknown_call'
-          || input.round.kind === 'command_review' || input.round.kind === 'command_rerun')
+          || input.round.kind === 'command_review' || input.round.kind === 'command_rerun'
+          || input.round.kind === 'command_stop')
           && input.taskRef !== undefined ? { taskRef: input.taskRef } : {}),
         ...(input.round.kind === 'planresume' && input.followupOf !== undefined
           ? { followupOf: input.followupOf } : {}),
@@ -114,7 +115,9 @@ export function systemRoundSendInput(input: {
  * it (`SystemRoundV1 | null`). A gate's saved overlap-note is classified first
  * and is always the text shape, for both the secretary and the adviser. Only an
  * ordinary agent/platform message then splits by duty: the secretary and the
- * adviser plan, the executor, scribe and reviewer settle text. The Host human's
+ * adviser plan, the executor, scribe and reviewer settle text — except a
+ * `planresume` system round to an executor, which plans too (A17: the resumed
+ * round only writes a candidate for the Goal loop). The Host human's
  * B20 shape is selected only by the caller's already-classified `person` fact
  * (`entry:'person_intervention'` plus the Host human sender), never by the
  * sender alone. `null` is the ordinary platform-message split, never a
@@ -142,6 +145,8 @@ export function planningAnswerShapeOf(
     if (duty === 'adviser' && round.kind === 'unknown_call') return 'unknown_call_advice';
     if (duty === 'scribe' && round.kind === 'command_review') return 'scribe_review';
     if (duty === 'adviser' && round.kind === 'command_rerun') return 'command_rerun_advice';
+    // A17：执行者线的规划续轮只写这一版候选，交目标循环审阅和采用；其他系统轮对执行者仍是 text。
+    if (duty === 'executor' && round.kind === 'planresume') return 'plan_round';
     return duty === 'adviser' || duty === 'secretary' ? 'plan_round' : 'text';
   }
   const sender = message.sender;

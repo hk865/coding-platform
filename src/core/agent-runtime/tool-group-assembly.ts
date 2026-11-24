@@ -135,7 +135,7 @@ export function queryRoundKindOf(input: {
     return shape === 'plan_round' ? 'secretary_planning' : 'secretary_text';
   }
   if (input.duty === 'adviser') {
-    if (shape === 'plan_round' || shape === 'initial') return 'adviser_planning';
+    if (shape === 'plan_round') return 'adviser_planning';
     return 'adviser_text';
   }
   if (input.duty === 'scribe') return 'scribe_text';
@@ -168,6 +168,10 @@ export function queryRoundCoordinationNames(kind: QueryRoundKindV1): ReadonlySet
       box(); addSendName(); respond(); addWithdrawName(); askCopy(); addNotifyName(); askPerson(); decisionRead(); actions(); notes();
       break;
     case 'adviser_planning':
+      box(); addSendName(); respond(); addWithdrawName(); askCopy(); addNotifyName(); askPerson(); decisionRead(); actions(); notes();
+      addRoundNames(CREATE_MEMBER_TOOL_NAME);
+      addRoundNames(...REWORK_TOOL_NAMES);
+      break;
     case 'adviser_text':
       box(); addSendName(); respond(); addWithdrawName(); askCopy(); addNotifyName(); askPerson(); decisionRead(); actions(); notes();
       addRoundNames(CREATE_MEMBER_TOOL_NAME);
@@ -970,8 +974,10 @@ export function finalToolNamesOf(input: FinalToolListInputV1): ToolGroupResult<s
   // Only the Work Runtime builds the split tool; a Query's projection never reaches its factory.
   const roleSplitNames = !query && wanted.has(PROPOSE_ROLE_SPLIT_TOOL_NAME)
     ? [PROPOSE_ROLE_SPLIT_TOOL_NAME] : [];
-  // Only the Work Runtime builds the rework tools; a Query's projection never reaches its factory.
-  const reworkNames = query ? [] : REWORK_TOOL_NAMES.filter(name => wanted.has(name));
+  // Only the Work Runtime and the adviser's planning Query build the rework tools; no other Query reaches their factory.
+  const reworkNames = query
+    ? roundWanted(REWORK_TOOL_NAMES, wanted, roundAllowed)
+    : REWORK_TOOL_NAMES.filter(name => wanted.has(name));
   const requestNames = query ? roundWanted([READ_REQUESTS_TOOL_NAME], wanted, roundAllowed) : [];
   // Every Query mailbox/person name is built by its own Query branch, which
   // re-checks the real owner; the Work branch keeps the owner rejection.

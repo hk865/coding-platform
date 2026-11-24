@@ -40,7 +40,7 @@ import { s6aCardsWorkspace, type S6ACardsWorkspace } from '../helpers/S6A-cards-
 import { S6A_SCOPE, S6A_SECRETARY_ROLE, S6A_WORK_ROLE } from '../helpers/S6A-request-fixture.js';
 import type { S6AHostWorld } from '../helpers/S6A-host-fixture.js';
 import { createS6BLine } from '../helpers/S6B1-fixture.js';
-import { claimedRunOf, committed, ready, sessionOf } from '../helpers/S7A-fixture.js';
+import { claimedRunOf, committed, ready, sessionOf, setS7AAutonomy } from '../helpers/S7A-fixture.js';
 import { openS7BL46World } from '../helpers/S7B-L46-fixture.js';
 import { dutyOf } from '../helpers/S7C-duty-fixture.js';
 
@@ -169,6 +169,12 @@ type NOwnerOptions = {
   secretary?: boolean;
   /** An N-records row's explicit schema bundle: only the service's store is swapped, every other dependency is real. */
   store?: { records: OverlapGateServiceDependencies['records']; close(): Promise<void> };
+  /**
+   * The rows that claim a second module Task while the first Run holds: the L46 world is `every_step`, where a named
+   * advance waits for the one live node too (`gl-frozen.md:7`, GL-2; design `:346`), so they set the Goal to the
+   * default `after_plan_confirmation`, the level where two Runs of one module meet the gate.
+   */
+  autonomy?: 'after_plan_confirmation';
 };
 
 /**
@@ -199,6 +205,7 @@ async function openNOwner(options: NOwnerOptions = {}): Promise<NOwnerBase & {
     }
   };
   try {
+    if (options.autonomy !== undefined) await setS7AAutonomy(world, goal, options.autonomy);
     const plan = await adoptModulePlan(ws, goal, 'one');
     const runTask = triple(goal, 's7c-run');
     const waitTask = triple(goal, 's7c-wait');
@@ -312,8 +319,8 @@ describe('N-owner', () => {
     '%s: replays the same conflict set in a different order instead of an idempotency conflict',
     async (kind: 'memory' | 'sqlite') => {
       const store = await open(kind, { schemas: MODULE_OVERLAP_GATE_SCHEMAS });
-      const base = await openNOwner({ adviser: true, store: { records: store.backend.records,
-        close: () => store.backend.close() } });
+      const base = await openNOwner({ adviser: true, autonomy: 'after_plan_confirmation',
+        store: { records: store.backend.records, close: () => store.backend.close() } });
       const releases: Array<() => Promise<void>> = [];
       try {
         // The second running Run is a second real module Task on the same Plan. Both starts are prepared under the
@@ -620,7 +627,7 @@ describe('N-owner', () => {
   });
 
   it('opens a new pending revision after the waiting Task is reworked (DR-03)', async () => {
-    const base = await openNOwner();
+    const base = await openNOwner({ autonomy: 'after_plan_confirmation' });
     try {
       const running = await base.startRun();
       const initial = basisInput(base, running, base.plan.planRevision, await waitingAttemptOf(base.world, base.goal, base.waitTask.taskId));

@@ -5,12 +5,18 @@
  * what the conclusion asks of the platform:
  *
  * - `normal`: the Host looks again after `nextReviewInMs`; nobody is disturbed.
- * - `adviser`: the platform stops the command's Run (the stop is reversible,
- *   the command can be run again, and the scribe has read the facts), then
- *   tells the responsible adviser. With no adviser line nobody would handle
- *   what comes after a stop, so the command is not stopped: the person is told
- *   there is no responsible adviser and stops it if they want to (121-111:
- *   record the reversible risk rather than act).
+ * - `adviser`: the platform acts on the command's real object. A Work Run first
+ *   places the scribe's `scribe_stop` hold (the Task is not automatically
+ *   reworked until the adviser has looked), then stops the Run, then opens one
+ *   `command_stop` round for the responsible adviser. A Query round only stops
+ *   that Query, with no hold. A command that already ended is not stopped and
+ *   keeps no hold (the one this close-out placed is released once the fixed
+ *   `:hold`/`:cancel`/`:round` receipts show that it did not submit the stop and
+ *   the Run carries no cancel of anyone else's).
+ *   With no adviser line nobody would handle what comes after a stop, so the
+ *   command is not stopped: the person is told there is no responsible adviser
+ *   and stops it if they want to (121-111: record the reversible risk rather
+ *   than act).
  * - `human`: the person gets one notice; the command keeps running (the person
  *   stops it if they want to).
  * - no conclusion (the round ended without a parsable answer, or was stopped):
@@ -23,16 +29,23 @@ import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { SessionRef } from '../../contracts/core/identity.js';
 import { rejected } from '../../contracts/core/rejections.js';
 import type { CoreRejection, WriteResult } from '../../contracts/core/results.js';
+import type { SessionMessageRef } from '../../contracts/core/session-message.js';
+import type { TaskTriple } from '../../contracts/dispatch.js';
+import { canonicalJson, type JsonValue } from '../../contracts/fingerprint.js';
 import type { GoalRef } from '../../contracts/ledger.js';
 import type { RuntimeTask } from '../../contracts/plan.js';
+import { systemRoundContext, systemRoundRequestId, type SystemRoundV1 } from '../../contracts/plan-round.js';
 import type { NotifyProjectInputV1, ProjectNoticeV1 } from '../../contracts/role-lines.js';
-import type { SessionMessageSendInputV1 } from '../../core/work-graph/model/communication-contracts.js';
+import { WORKFLOW_AUTOMATION_ACTOR } from '../../contracts/task-requeue.js';
 import { SESSION_MESSAGE_MAX_TEXT_BYTES } from '../../core/work-graph/sessions/message-record-codecs.js';
+import { controlIntentRefFor } from '../../core/work-graph/tasks/control-service.js';
+import { sentSystemRoundRef } from '../../core/work-graph/tasks/plan-lineage.js';
 import type {
   CommandReviewAnswerV1, CommandReviewConclusionV1, CommandReviewSubjectV1,
 } from '../../contracts/scribe-review.js';
 import { truncateUtf8 } from '../../contracts/utf8.js';
 import { asRejection } from './consultation.js';
+import { systemRoundSendInput } from './plan-round.js';
 import type { WorkflowDependencies } from './ports.js';
 
 /** The platform facts and effects the Workflow ports do not carry. */
@@ -49,7 +62,8 @@ export type CommandReviewDeps = {
 };
 
 export type CommandReviewPorts =
-  Pick<WorkflowDependencies, 'controls' | 'executions' | 'messages' | 'plans' | 'recipients' | 'runtime' | 'commandReview'>;
+  Pick<WorkflowDependencies,
+    'claimHolds' | 'controls' | 'executions' | 'messages' | 'plans' | 'recipients' | 'runtime' | 'commandReview'>;
 
 /** A project notice summary is at most 512 UTF-8 bytes (`ProjectNotice@1`); the command is cut to 80 code points. */
 const NOTICE_MAX_BYTES = 512;
@@ -66,6 +80,8 @@ export async function applyCommandReview(
     /** The scribe line the round was sent to, and the Session that entered the answered Query. */
     recipient: SessionRef;
     answeredBy: SessionRef | null;
+    /** The `scr:` review message this close-out serves; the scribe hold records it as its basis. */
+    sourceMessage: SessionMessageRef;
   },
 ): Promise<{ status: 'ready'; value: { applied: CommandReviewConclusionV1 | 'no_answer' } } | CoreRejection> {
   const deps = ports.commandReview;
@@ -98,6 +114,16 @@ export async function applyCommandReview(
     const refused = await tellHuman(`书记审查：${answer.reason}。命令：${previewOf(subject)}，平台没有停它，需要时可以停掉。`);
     return refused ?? reviewApplied('human');
   }
+  if (ports.messages === undefined) return rejected('unsupported', 'the mailbox is not wired');
+  const scope = { projectId: subject.projectId, workspaceId: subject.workspaceId };
+  const round: SystemRoundV1 = { kind: 'command_stop', goalRef, subject };
+  const roundId = systemRoundRequestId(round);
+  if (roundId.status !== 'ready') return roundId;
+  // 0. The `cmdstop:` receipt is the "already sent" fact; a repeated close-out replays it and sends nothing again.
+  // It comes before the adviser read: an adviser who left after the round went out must not turn into "not stopped".
+  const sentBefore = await sentSystemRoundRef(ports.messages, scope, roundId.value, ctx.signal);
+  if (sentBefore.status === 'ready') return reviewApplied('adviser');
+  if (sentBefore.status !== 'not_found') return asRejection(sentBefore, 'the sent command stop round');
   const adviser = await commandAdviserOf(ctx, ports, subject, goalRef);
   if (adviser !== null && 'status' in adviser) return adviser;
   if (adviser === null) {
@@ -105,31 +131,131 @@ export async function applyCommandReview(
       + `${previewOf(subject)}，需要时可以停掉。`);
     return refused ?? reviewApplied('adviser');
   }
-  if (ports.messages === undefined) return rejected('unsupported', 'the mailbox is not wired');
-  // The reviewed command already ended: nothing of it is left to stop (`not_running`), the adviser is still told.
-  const stopped = deps.isCommandRunning(subject.commandKey)
-    ? await stopCommandRun(ctx, ports, subject, `${operationId}:cancel`) : 'not_running';
-  if (typeof stopped !== 'string') return stopped;
-  // D-18: the adviser's notice is a `notify`; no round is opened for it.
-  const where = subject.run.kind === 'run' ? `任务 ${subject.run.taskId}` : `问答轮 ${subject.run.queryRunRef.runId}`;
-  // The reason has no bound of its own (121-111); the message keeps its existing 16 KiB bound by truncation.
-  const notice: SessionMessageSendInputV1['input'] = { recipient: adviser, goalRef, wake: false,
-    text: truncateUtf8(`请知悉（不需要回复）：书记审查认为${where}的命令异常，命令已经停下。`
-      + `命令：${previewOf(subject)}，已跑 ${minutesOf(subject)} 分钟。原因：${answer.reason}`,
-    SESSION_MESSAGE_MAX_TEXT_BYTES) };
-  const sent = await ports.messages.sendMessage(ctx, { input: notice, meta: { requestId: `${operationId}:adviser`, expected: [] } });
+  // 1. Only the reviewed command's own state decides whether the platform may stop the Run (`runningCommandKey`).
+  const running = deps.isCommandRunning(subject.commandKey);
+  const work = subject.run.kind === 'run';
+  let actuality: 'stopped' | 'ended';
+  if (subject.run.kind === 'query') {
+    // Query: only that round is stopped; a Task hold and its later release do not apply.
+    const stopped = running ? await stopCommandRun(ctx, ports, deps, subject, `${operationId}:cancel`) : 'not_running';
+    if (typeof stopped !== 'string') return stopped;
+    actuality = stopped === 'stopping' ? 'stopped' : 'ended';
+  } else {
+    const taskRef: TaskTriple = { projectId: subject.projectId, goalId: subject.goalId, taskId: subject.run.taskId };
+    const claimHolds = ports.claimHolds;
+    if (claimHolds === undefined) {
+      return rejected('unsupported', 'the claim holds are not wired; the command was not stopped');
+    }
+    // 2. The hold this operation placed, read back by its fixed `:hold` identity when the command already stopped.
+    // `not_found` is "no hold", not a failed read; any other non-ready read is returned as-is. A reason this operation
+    // already withdrew counts as none: an earlier pass settled on `ended`, and a later cancel does not change that.
+    let holdReasonId: string | null = null;
+    if (running) {
+      const placed = await claimHolds.placeScribeStop(ctx, {
+        input: { taskRef, reason: '书记判命令异常，等参谋看', sourceMessage: input.sourceMessage,
+          run: subject.run.runRef, operationId: `${operationId}:hold` },
+        meta: { requestId: `${operationId}:hold`, expected: [] },
+      });
+      if (placed.status !== 'committed' && placed.status !== 'unchanged') return placed;
+      holdReasonId = placed.value.reasonId;
+    } else {
+      const hold = await claimHolds.readHold(ctx, { taskRef });
+      if (hold.status === 'ready') {
+        holdReasonId = hold.value.reasons.find(reason => reason.kind === 'scribe_stop' && reason.state === 'held'
+          && reason.placedBy.kind === 'platform' && reason.placedBy.operationId === `${operationId}:hold`)?.id ?? null;
+      } else if (hold.status !== 'not_found') {
+        return asRejection(hold, 'the claim hold');
+      }
+    }
+    // 3. The deterministic cancel intent is the "this operation stopped it" fact. The cancel reason string and the
+    // Run's control pointer are never parsed for it: a newer intent may have replaced the pointer.
+    const controls = ports.controls;
+    if (controls === undefined) return rejected('unsupported', 'the Run control is not wired; the command was not stopped');
+    const ours = await controls.readControl(ctx,
+      controlIntentRefFor(WORKFLOW_AUTOMATION_ACTOR, scope, `${operationId}:cancel`));
+    // 4. A committed intent is not submitted again; a still-queued one is delivered once. Without it, a close-out that
+    // placed its hold asks `stopCommandRun`, which judges the command again just before the cancel: an ended command
+    // leaves the Run's other commands alone (G1), and a cancel already on the Run is the stop (the hold stays).
+    if (ours.status === 'ready') {
+      if (ours.value.status === 'queued') {
+        const deliver = ports.runtime.deliverControl;
+        if (deliver === undefined) {
+          return rejected('unsupported', 'the Run control is not wired; the command was not stopped');
+        }
+        const delivered = await deliver.call(ports.runtime, ctx, { intentRef: ours.value.ref });
+        if (delivered.status !== 'ready') return asRejection(delivered, 'the cancel delivery');
+      }
+      actuality = 'stopped';
+    } else if (ours.status !== 'not_found') {
+      return asRejection(ours, 'the cancel intent');
+    } else if (holdReasonId !== null) {
+      const stopped = await stopCommandRun(ctx, ports, deps, subject, `${operationId}:cancel`);
+      if (typeof stopped !== 'string') return stopped;
+      actuality = stopped === 'stopping' ? 'stopped' : 'ended';
+    } else {
+      actuality = 'ended';
+    }
+    // 5. This operation placed no effective stop, so it takes back its own hold; the round says so plainly.
+    if (actuality === 'ended' && holdReasonId !== null) {
+      const released = await claimHolds.release(ctx, {
+        input: { taskRef, reasonId: holdReasonId, note: '命令先结束了，没有硬停' },
+        meta: { requestId: `${operationId}:hold-release`, expected: [] },
+      });
+      if (released.status !== 'committed' && released.status !== 'unchanged') return released;
+    }
+  }
+  // 6. One `command_stop` planning round for the responsible adviser (Work carries its Task, Query does not).
+  const text = commandStopText({ roundId: roundId.value, subject, answer, actuality, work });
+  const request = systemRoundSendInput({ round, recipient: adviser, text,
+    ...(subject.run.kind === 'run'
+      ? { taskRef: { projectId: subject.projectId, goalId: subject.goalId, taskId: subject.run.taskId } } : {}) });
+  if (request.status !== 'ready') return request;
+  const sent = await ports.messages.sendMessage(systemRoundContext(scope, ctx.signal), request.value);
   if (sent.status !== 'committed') return sent;
   return reviewApplied('adviser');
 }
 
 /**
- * Stop the command's round the way any platform stop does. A Query round: `runtime.cancelQuery` (QSTOP's stop).
- * A Work Run: one durable `cancel` pinned to the Run revision just read, then delivered to the live handle; a Run
- * already being cancelled is only delivered again, and a moved revision is returned so the next close-out retries.
- * An ended round is `not_running`, not a refusal.
+ * The body of a `command_stop` round: the request id, the frozen subject, the stop actuality, the command and how
+ * long it ran, and the scribe's reason last (it may hold newlines). The actuality is one of the two stable facts this
+ * close-out proved, never "is it still running now"; the reason has no bound of its own, so the whole body keeps the
+ * mailbox's existing text bound by truncation.
  */
-async function stopCommandRun(ctx: CoreCallContext, ports: CommandReviewPorts, subject: CommandReviewSubjectV1,
-  requestId: string): Promise<'stopping' | 'not_running' | CoreRejection> {
+function commandStopText(input: {
+  roundId: string; subject: CommandReviewSubjectV1; answer: CommandReviewAnswerV1;
+  actuality: 'stopped' | 'ended'; work: boolean;
+}): string {
+  let actuality: string;
+  if (input.work) {
+    actuality = input.actuality === 'stopped'
+      ? '停止实况：平台已取消这条命令所在的运行，任务上留了书记原因的暂缓，自动返工等你看过再走。'
+      : '停止实况：命令已经自己结束了，平台没有硬停，任务上没有留书记原因。';
+  } else {
+    actuality = input.actuality === 'stopped'
+      ? '停止实况：平台已停掉这条命令所在的问答轮。'
+      : '停止实况：命令已经自己结束了，平台没有硬停。';
+  }
+  return truncateUtf8([
+    input.roundId,
+    `subject: ${canonicalJson(input.subject as unknown as JsonValue)}`,
+    actuality,
+    `命令：${previewOf(input.subject)}；已跑 ${minutesOf(input.subject)} 分钟。`,
+    `书记的理由：${input.answer.reason}`,
+  ].join('\n'), SESSION_MESSAGE_MAX_TEXT_BYTES);
+}
+
+/**
+ * Stop the command's round the way any platform stop does. A Query round: `runtime.cancelQuery` (QSTOP's stop).
+ * A Work Run: read the Run, then judge the reviewed command again, then one durable `cancel` pinned to the revision
+ * just read, delivered to the live handle; a moved revision is returned so the next close-out retries. A cancel
+ * already on the Run (anyone's, ended or not) is the stop: delivered again while the Run runs, never released
+ * (c3rv ruling P4-3: the scribe judged it abnormal, so the adviser looks before the automatic rework). An ended Run
+ * or an ended command is `not_running`, not a refusal. Known limit (lead 11-24, c3qc): the command registry lives in
+ * the Host's memory, while the cancel is a durable write on the Run. Only the synchronous record store keeps the
+ * judgement and that commit from interleaving, and what stops is the whole Run (design :589).
+ */
+async function stopCommandRun(ctx: CoreCallContext, ports: CommandReviewPorts, deps: CommandReviewDeps,
+  subject: CommandReviewSubjectV1, requestId: string): Promise<'stopping' | 'not_running' | CoreRejection> {
   if (subject.run.kind === 'query') {
     if (ports.runtime.cancelQuery === undefined) {
       return rejected('unsupported', 'the Query stop is not wired; the command was not stopped');
@@ -144,9 +270,11 @@ async function stopCommandRun(ctx: CoreCallContext, ports: CommandReviewPorts, s
   const read = await ports.executions.readExecution(ctx, subject.run.runRef);
   if (read.status !== 'ready') return asRejection(read, 'the command Run');
   const run = read.value.run;
-  if (run.status === 'ended') return 'not_running';
   let intentRef = run.controlState?.desiredState === 'cancelled' ? run.controlState.intentRef : null;
+  if (intentRef !== null && run.status === 'ended') return 'stopping';
   if (intentRef === null) {
+    // The command may have ended, and the Run started another, since the close-out began: only this command is stopped.
+    if (run.status === 'ended' || !deps.isCommandRunning(subject.commandKey)) return 'not_running';
     const submitted = await ports.controls.submitControl(ctx, {
       input: { runRef: run.ref, kind: 'cancel', reason: 'the scribe review judged this command abnormal' },
       meta: { requestId, expected: [{ ref: run.ref, revision: run.revision }] },

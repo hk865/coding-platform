@@ -1028,7 +1028,7 @@ function untracedFacts(taskId: string): TracedTaskFactsV1 {
  * catalog governance selected, which the first adoption reads. Acceptance is judged as a person adopts (the request's
  * candidate is the person's), so the guard a system adopter alone meets (guard 9) is the adoption's. The adoption
  * judges everything again. 决定 121-149（lead 裁定 E08 C）：交表时守卫 1、2、2b 和 4 的后半（执行还没停稳）留给采用时判，
- * 守卫 3（挂着没收的让出等待）交表时照判。
+ * 守卫 3（挂着没收的让出等待）对未被人的停取消、且不是本候选要取消或替代的任务照判；本候选要取消或替代的任务延后到采用时判。
  */
 export function planRoundAnswerIssues(input: {
   plan: InitialPlanningResponsePlanV2;

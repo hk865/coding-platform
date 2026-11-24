@@ -481,4 +481,38 @@ describe('nr: every_step runs one node at a time and resumes on the commit (NR-0
     expect(kindsOf(after.receipts)).toEqual(expect.arrayContaining(['claim_task', 'start']));
     expect(await runsOf(world, goal, 'nrt22n-next')).toHaveLength(1);
   }, SLOW);
+
+  // Basis: `gl-frozen.md:7`, `:132`; design `:944` (GL-2: a named-task advancement reads the same `claimHold` as
+  // the Goal loop). World: `every_step`; A ran to `satisfied` and awaits the person's node review; the public
+  // `workflow/driver-start` with A's sibling B's `taskId` starts only B's watch. Expected literal: B has no Run;
+  // the watch's wait basis names `node_review_pending:<A>`; after `nodes/commit` of A the TaskNodeCommit wake
+  // reopens B's watch, which claims B by itself — exactly one Run. Named mutations: (1) keep workflow.ts:3311's
+  // `base.taskId === null` read (old behaviour): B is claimed while A is pending; (2) a named Task still returns
+  // `skip` without `waiting`/basis: after A's commit B does not reopen and has no Run.
+  it('GL-2 a named Task watch waits on A\'s node review and starts B after the commit', async () => {
+    const { w, a, b } = await twoLines('gl2');
+    await runDNRNode(w, a, 'gl2-a', [createFile('gl2-edit', 'src/gl2.ts', note('gl2'))]);
+    expect(await dnrRow(w, 'gl2-a')).toMatchObject({ pending: true, review: null });
+    await w.world.scripted.script(b, [{ kind: 'text', text: 'GL-2 B done' }]);
+    ready(await w.world.post('workflow/driver-start', plain(S6A_SCOPE, { advance: {
+      schemaVersion: 1, goalRef: w.goal, flowId: 'gl2-named', sessionHint: null, kind: 'select_work', taskId: 'gl2-b',
+    }, queryProfileIds: [] })), 'GL-2: the B watch starts');
+    // The watch parks after its first pass; without the task-level occupancy read that pass claims B and finishes
+    // the Run (`completed`), so either settled state is awaited before the literal.
+    const settled = await waitDriver(w.world, w.goal, 'gl2-b',
+      snapshot => snapshot.last?.status === 'ready'
+        && (snapshot.last.value.state === 'waiting' || snapshot.last.value.state === 'completed'),
+      'GL-2: B\'s watch settles');
+    expect(await runsOf(w.world, w.goal, 'gl2-b')).toHaveLength(0);
+    expect(driverReasons(settled)).toContain('node_review_pending:gl2-a');
+    const holdB = await w.world.gates.modelRequest(b);
+    closers.unshift(async () => {
+      holdB.release();
+      await w.world.post('workflow/driver-stop', plain(S6A_SCOPE, { goalRef: w.goal, taskId: 'gl2-b' }));
+    });
+    expect(await dnrCommit(w, { taskId: 'gl2-a', requestId: 'gl2-commit' })).toMatchObject({ status: 'committed' });
+    const runs = await waitFor(() => runsOf(w.world, w.goal, 'gl2-b'),
+      items => items.some(item => item.run.status === 'running'), 'GL-2: B starts by itself after the commit');
+    expect(runs.map(item => item.run.status)).toEqual(['running']);
+  }, SLOW);
 });

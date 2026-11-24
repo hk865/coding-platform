@@ -396,6 +396,7 @@ export type NodeTaskHoldV1 = {
     | { kind: 'agent'; session: SessionRef }
     | { kind: 'person'; actor: { kind: 'human' | 'system'; id: string } }
     | { kind: 'intervention'; messageRef: SessionMessageRef }
+    | { kind: 'platform'; operationId: string }
     | null;
   releaseNote: string | null;
   reason: string;

@@ -108,7 +108,7 @@ import {
   SESSION_MESSAGE_MAX_TEXT_BYTES, SESSION_MESSAGE_RECORD_SCHEMAS,
 } from '../core/work-graph/sessions/message-record-codecs.js';
 import { createSourceAuthorityReader } from '../core/work-graph/source-authority-reader.js';
-import { createWorkflow, responsibleAdviserInputOf } from '../business/workflow/workflow.js';
+import { cancelledOrSupersededOf, createWorkflow, responsibleAdviserInputOf, sameChainYieldedWaitOf } from '../business/workflow/workflow.js';
 import type { CommandReviewDeps } from '../business/workflow/command-review.js';
 import type { NoteAnchorV1 } from '../contracts/note.js';
 import { servingBinding, servedRoleIds } from '../business/workflow/role-bindings.js';
@@ -212,6 +212,7 @@ import type { PlanServiceDependencies } from '../core/work-graph/tasks/plan-serv
 import type { CandidateSourceLineDeps } from '../core/work-graph/tasks/plan-lineage.js';
 import { overlapNoteOf, planSourceLineageOf, trustedSystemRoundOfMessage } from '../core/work-graph/tasks/plan-lineage.js';
 import { createPlanAdoptionStop } from './plan-adoption-stop.js';
+import { asWriteRejection } from '../core/work-graph/tasks/plan-result-helpers.js';
 import { PLAN_RECORD_SCHEMAS } from '../core/work-graph/persistence/plan-record-codecs.js';
 import { DECISION_RECORD_SCHEMAS } from '../core/work-graph/persistence/decision-record-codecs.js';
 import { PLAN_STATE_RECORD_SCHEMAS, PLAN_GOVERNANCE_RECORD_SCHEMAS, GOAL_BY_WORKSPACE_INDEX, createPlanReaders, createSessionResponsibilityBasisReader, createNoteRunTaskResolver, readCanonicalTaskFacts, readEffectiveRegionAdviser, readGoal, readGoalPhase, readGoalPlanWindow, readGoalsByProject, readGoalRunsForCount, readOpenResponsibilityLines, readTaskClosure, taskClosureOf, type PlanCheckResolver, type PlanReaders, type TaskClosureV1 } from '../core/work-graph/tasks/plan-readers.js';
@@ -3095,15 +3096,42 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       readArchitectureRevision: (...args) => trackedCall(() => catalog.readArchitectureRevision(...args), unavailable),
     };
     // The human adoption wrapper is built here, while `runtime.port` and the RAW control owner are
-    // already final: the whole adopt call (raw apply, target read, controls and delivery) is one
-    // drained unit. The Workflow keeps the raw `planService` binding, so automatic adoption never
-    // enters this wrapper. The new public target read is drained separately.
+    // already final: the whole adopt call (raw apply, the same-chain yielded-wait finish, target
+    // read, controls and delivery) is one drained unit. The Workflow keeps the raw `planService`
+    // binding, so automatic adoption never enters this wrapper. The new public target read is
+    // drained separately.
+    //
+    // PL §7.3.1 (C22): the person's adoption shares `sameChainYieldedWaitOf`; the wrapper submits the fixed cancel
+    // itself (automation actor, never delivered). A clicked version no longer `candidate` is `stale`; no source, or no
+    // cancelled/superseded Task against the active-Plan window, is `none` before any Task or control read.
+    const finishYieldedWait = async (ctx: CoreCallContext, proposalRef: PlanProposalRef, expectedRevision: number) => {
+      const proposalRead = await planService.readPlanProposal(ctx, proposalRef);
+      if (proposalRead.status !== 'ready') return asWriteRejection(proposalRead, 'the plan candidate could not be read');
+      const proposal = proposalRead.value;
+      if (proposal.status !== 'candidate' || proposal.revision !== expectedRevision) return { kind: 'stale' as const };
+      if (proposal.sourceMessageRef === null) return { kind: 'none' as const };
+      const window = await readGoalPlanWindow(backend.records, proposal.goalRef);
+      if (window.status !== 'ready') return window;
+      const targets = window.plan === null ? [] : cancelledOrSupersededOf(window.plan, proposal.draft);
+      if (targets.length === 0) return { kind: 'none' as const };
+      const graphRead = await planService.queryTaskGraph(ctx, { goalRef: proposal.goalRef });
+      if (graphRead.status !== 'ready') return asWriteRejection(graphRead, 'the adopted Plan graph could not be read');
+      return await sameChainYieldedWaitOf(ctx, {
+        plans: planService,
+        executions: executionReader,
+        messages: mailbox,
+        controls: rawControls,
+        queries: queryJobs,
+        readReview: unknownCallReviews.readReview,
+      }, proposal, graphRead.value);
+    };
     const adoptAfterStop = createPlanAdoptionStop({
       apply: planService.applyPlanChange,
       readTargets: planService.readAdoptionStopTargets,
       controls: rawControls,
       runtime: runtime.port,
       readRun: executionReader.readExecution,
+      finishYieldedWait,
     });
     // Drain these Plan calls before closing the stores (initial planning also reads
     // the answer body), preserving the service's synchronous input snapshot.
@@ -5104,6 +5132,9 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
     // owner，不拿公开面的 `trackedCall` 包装：关停排空时在跑的门不能被“platform is closing”拒成读不出（同上面邮箱、放行的规矩）。
     workflowDependencies.claimHolds = {
       readHold: (...args) => claimHoldOwner.readHold(...args),
+      // 书记判命令异常后的关闭：Work Run 先放书记原因的暂缓、命令先结束时由同一操作收回；都走同一个原始 owner。
+      placeScribeStop: (...args) => claimHoldOwner.placeScribeStop(...args),
+      release: (...args) => claimHoldOwner.release(...args),
       // Q4b/§2.8：目标循环的只读卡位判断是 claim-service 的正本（读记录 + 领取 owner 的失效判断 + 卡位），
       // 组合根只把同一个来源链根接进去；任务卡和任务的详情读仍用同一份暂缓记录。
       readEffectiveClaimBlocker: (ctx, input) =>

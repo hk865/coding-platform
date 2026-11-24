@@ -321,7 +321,7 @@ it('PS-03: two HTTP apply calls inside one live model step reuse the one plan-ch
   }
 }, 120_000);
 
-it('PS-04: a candidate that changes a yielded Task and a running Task stops only the running Run, returns 409 stopping_affected_work and leaves the yielded wait and the plan untouched', async () => {
+it('PS-04: a candidate that changes a yielded Task and a running Task stops only the running Run, returns 409 stopping_affected_work and, because there is no source chain, leaves the yielded wait and the plan untouched', async () => {
   const Y = 'ps-yield';
   const B = 'ps-zbusy';
   let recipient: { projectId: string; sessionId: string } | undefined;
@@ -363,7 +363,7 @@ it('PS-04: a candidate that changes a yielded Task and a running Task stops only
     expect(response.status).toBe(409);
     expect(await response.json()).toMatchObject({ status: 'rejected', code: 'busy', reason: 'stopping_affected_work' });
 
-    // Only B was fenced with a new cancel; the yielded Run has no pointer and keeps its wait.
+    // Only B was fenced with a new cancel; the yielded Run has no source chain, so its wait is not touched.
     const busy = (await readExecution(h.host, bRun)).run;
     expect(busy.controlState).toEqual({ desiredState: 'cancelled', intentRef: expect.anything() });
     expect(await readControl(h.host, busy.controlState!.intentRef)).toMatchObject({ kind: 'cancel',

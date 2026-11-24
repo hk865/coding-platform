@@ -1,6 +1,6 @@
 /**
  * P1's named RULES F3 exception (lead ruling T1, `p1-frozen.md`): the few P1 owner calls that only the platform or
- * the Host makes, until P2/P4 wire the real callers; then these calls move to the real entries or are deleted. The
+ * the Host makes. Deadline: 已接真实调用方；冻结稿列出的既有 owner 用例继续用这个入口；P7 复核. The
  * lead registers this file in `tests/RULES.md` A7 item 5 at merge, with that deadline.
  *
  * Scope, and nothing else:
@@ -53,7 +53,10 @@ function operator(world: S6AHostWorld, scope: { projectId: string; workspaceId: 
   return createHostCoreCallContext({ scope, actor: { ...principal.actor }, signal: new AbortController().signal });
 }
 
-/** P4's caller: the scribe's conclusion places its stop reason (2.4 `placeScribeStop`). */
+/**
+ * P4's caller: the scribe's conclusion places its stop reason (2.4 `placeScribeStop`). P4 已接真实调用方
+ * （command-review.ts）；P7 复核。
+ */
 export async function placeScribeStop(world: S6AHostWorld, input: {
   taskRef: TaskTriple; reason: string; sourceMessage: SessionMessageRef; run: RunRef; operationId: string;
 }, requestId: string) {

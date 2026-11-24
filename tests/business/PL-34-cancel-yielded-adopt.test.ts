@@ -14,7 +14,8 @@ import { afterEach, expect, it, vi } from 'vitest';
 import type { PlanProposal } from '../../src/core/work-graph/model/plan-contracts.js';
 import type { GoalRef } from '../../src/contracts/ledger.js';
 import type { PlanRevisionDraft, PlanRevisionSnapshot } from '../../src/contracts/plan.js';
-import { advanceUntil, post, readExecution } from '../helpers/A2-restart-fixture.js';
+import { WORKFLOW_AUTOMATION_ACTOR } from '../../src/contracts/task-requeue.js';
+import { advanceUntil, post, readControl, readExecution } from '../helpers/A2-restart-fixture.js';
 import { startGoalDriver } from '../helpers/DRV-fixture.js';
 import { plain } from '../helpers/AG2b-collaboration-fixture.js';
 import { createS6BLine } from '../helpers/S6B1-fixture.js';
@@ -50,27 +51,38 @@ afterEach(async () => {
   opened = null;
 });
 
-it('PL-34: the platform cancels A\'s yielded Run before adopting the replacement candidate', async () => {
-  const workflow = opened = await openPLWorkflowWorld({ backend: 'sqlite', label: 'pl-34',
+/**
+ * The one PL-34 world through the adviser's held planning Query: the same skeleton, the same lines, the same real
+ * reviewer and A's real yielded wait. The cancelled row below scripts a different draft into this same world; it is
+ * local to this file and never exported (no shared-fixture change).
+ */
+async function openPL34World(input: { label: string; sendLabel: string; text: string }) {
+  const workflow = opened = await openPLWorkflowWorld({ backend: 'sqlite', label: input.label,
     extraBindings: [SEND_TOOLS],
     extraHostOptions: { checks: checkConfiguration({ kind: 'human', id: OPERATOR.id }) } });
   const { world, main, goal } = workflow;
   await settleHost(world);
-  const skeleton = await adoptPLTwoStageSkeleton(main, goal, { label: 'pl-34',
+  const skeleton = await adoptPLTwoStageSkeleton(main, goal, { label: input.label,
     stageOneTaskIds: ['pl-a', 'pl-b'] });
   await setS7AAutonomy(world, goal, 'after_plan_confirmation');
-  const line = await sessionOf(world, await createS6BLine(main, { label: 'pl-34-line',
+  const line = await sessionOf(world, await createS6BLine(main, { label: `${input.label}-line`,
     role: S6A_WORK_ROLE, tasks: skeleton.tasks.filter(task => ['pl-a', 'pl-b'].includes(task.taskId)) }));
-  const adviser = await createPLAdviserLine(world, 'pl-34-adviser');
-  const reviewer = await createPLReviewerLine(world, main, 'pl-34-reviewer');
-  await world.scripted.script(reviewer, [{ kind: 'calls', calls: [{ callId: 'pl34-review',
+  const adviser = await createPLAdviserLine(world, `${input.label}-adviser`);
+  const reviewer = await createPLReviewerLine(world, main, `${input.label}-reviewer`);
+  await world.scripted.script(reviewer, [{ kind: 'calls', calls: [{ callId: `${input.sendLabel}-review`,
     name: 'submit_plan_review', args: { verdict: 'pass', findings: [] } }] }]);
 
   // A yields on M to the adviser; the Host builds the planning Query and holds it.
   const gate = await world.gates.modelRequest(adviser);
   const sent = await sendPLActionWait(world, { goal, session: line, sessionTaskId: 'pl-a',
-    recipient: adviser.ref, text: 'PL34: A cannot continue on this premise', label: 'pl34' });
+    recipient: adviser.ref, text: input.text, label: input.sendLabel });
   const held = await heartbeatUntilModel(world, gate);
+  return { workflow, world, main, goal, skeleton, line, adviser, reviewer, gate, sent, held };
+}
+
+it('PL-34: the platform cancels A\'s yielded Run before adopting the replacement candidate', async () => {
+  const { workflow, world, main, goal, skeleton, adviser, reviewer, sent, gate, held } = await openPL34World({
+    label: 'pl-34', sendLabel: 'pl34', text: 'PL34: A cannot continue on this premise' });
 
   // The adviser's real submit_plan_round form, from the active Plan's replacement draft.
   const draft = plSupersedeDraft(skeleton.plan, goal, 'pl-34');
@@ -158,6 +170,83 @@ it('PL-34: the platform cancels A\'s yielded Run before adopting the replacement
   }))).body as { status?: string; value?: { items?: unknown[] } };
   expect(aRuns.status).toBe('ready');
   expect(aRuns.value?.items ?? []).toHaveLength(1);
+}, 240_000);
+
+/**
+ * 依据：p5-frozen:487（T1）、design-frozen:419-421、:829。
+ * 世界：照上面第一行的同一世界——执行者 A 真让出在等 M，参谋真 `submit_plan_round` 交候选，真 `submit_plan_review` pass，
+ *   目标循环推进；只把候选草稿换成把 A 的 disposition 设为 `cancelled`（不带 `replacedByTaskId`）。
+ * 期望值：先出现 `cancel_yielded_wait` 的控制写；A 的 Run `controlState.desiredState === 'cancelled'`，取消意图的
+ *   `requestedBy` 是平台固定自动化身份（不是操作者）；随后 `adopt_plan` 提交，活动计划里 A 为 `cancelled`，候选 `accepted`。
+ * 具名变异：(b) `cancelBeforeAdoption` 只找 superseded（采用前永远 busy）；
+ *   (c) 把 `cancelled` 当 `superseded` 并要求 `replacedByTaskId`（取消根本不发生）。
+ */
+it('PL-34: a candidate cancelling A\'s yielded Run is adopted after the platform cancel', async () => {
+  const { workflow, world, main, goal, skeleton, adviser, reviewer, sent, gate, held } = await openPL34World({
+    label: 'pl-34-cancel', sendLabel: 'pl34c', text: 'PL34c: A cannot continue on this premise' });
+
+  // The cancelled draft is inline: only A's disposition moves; there is no replacement Task and no `replacedByTaskId`.
+  const draft = plPlanChangeDraft(skeleton.plan, goal, {
+    planId: 'pl-plan-pl-34-cancel-v2',
+    tasks: skeleton.plan.tasks.map(task => task.taskId === 'pl-a'
+      ? { ...task, disposition: 'cancelled' as const } : task),
+    assignments: [...(skeleton.plan.assignments ?? [])],
+    obligations: skeleton.plan.obligations,
+  });
+  await world.scripted.script(adviser, [{ kind: 'calls', calls: [{ callId: 'pl34c-plan',
+    name: 'submit_plan_round', args: {
+      answerKind: 'plan', summary: 'PL-34 cancel A',
+      plan: plToolPlanOf(draft),
+      reason: { text: 'PL-34 A is cancelled', affectedTaskIds: ['pl-a'] },
+    } }] }]);
+  gate.release();
+  await held.settled;
+
+  const proposalRef = proposalRefOf(sent.message.ref, goal);
+  const candidate = ready<PlanProposal>(await awaitProposal(world, proposalRef, 16), 'the cancelled candidate');
+  const cancelledTask = candidate.draft.tasks.find(task => task.taskId === 'pl-a');
+  expect(cancelledTask).toMatchObject({ disposition: 'cancelled' });
+  expect(cancelledTask?.replacedByTaskId ?? null, 'a cancelled Task names no replacement').toBeNull();
+  expect(candidate.reason.affectedTaskIds).toEqual(['pl-a']);
+  expect(candidate.sourceMessageRef).toEqual(sent.message.ref);
+
+  // The Goal loop sends the review and the reviewer's real tool passes it.
+  const reviewSend = await advanceUntil(world.ag2b,
+    { schemaVersion: 1, goalRef: goal, flowId: 'pl-34-cancel-review', sessionHint: null, kind: 'select_work' },
+    'send_system_round');
+  ready(await post(world.ag2b, 'workflow/advance', plain(S6A_SCOPE, reviewSend)), 'the planreview send');
+  const reviewRef = await plSystemRoundRef(workflow, reviewer, `planreview:${candidate.ref.proposalId}:`);
+  await awaitPlanningAnswer(world, reviewRef);
+
+  // The loop's adopt pass selects the platform cancel first.
+  const cancelStep = await advanceUntil(world.ag2b,
+    { schemaVersion: 1, goalRef: goal, flowId: 'pl-34-cancel-cancel', sessionHint: null, kind: 'select_work' },
+    'cancel_yielded_wait');
+  ready(await post(world.ag2b, 'workflow/advance', plain(S6A_SCOPE, cancelStep)), 'the yielded cancel');
+  const cancelledRun = (await readExecution(world.ag2b, sent.run)).run;
+  expect(cancelledRun.controlState?.desiredState, 'the queued cancel fences A\'s continuation').toBe('cancelled');
+  const intentRef = cancelledRun.controlState?.intentRef;
+  if (intentRef === undefined) throw new Error('PL-34: the cancel intent ref is missing');
+  expect(await readControl(world.ag2b, intentRef), 'the platform\'s fixed identity, not the operator\'s').toMatchObject({
+    kind: 'cancel', desiredState: 'cancelled', runRef: sent.run,
+    reason: `task pl-a is cancelled by plan candidate ${candidate.ref.proposalId}@${candidate.revision}`,
+    requestedBy: { ...WORKFLOW_AUTOMATION_ACTOR },
+  });
+  expect((await readProposal(world, proposalRef)).status, 'the cancel never adopts by itself').toBe('candidate');
+
+  const adoptStep = await advanceUntil(world.ag2b,
+    { schemaVersion: 1, goalRef: goal, flowId: 'pl-34-cancel-adopt', sessionHint: null, kind: 'select_work' },
+    'adopt_plan');
+  const adoption = await post<{ status: string; code?: string }>(
+    world.ag2b, 'workflow/advance', plain(S6A_SCOPE, adoptStep));
+  expect(adoption.status, JSON.stringify(adoption)).toBe('ready');
+  expect((await readProposal(world, proposalRef)).status, 'the cancelled candidate is accepted').toBe('accepted');
+  const v2 = await main.activePlan(goal);
+  if (v2 === null) throw new Error('PL-34: v2 is not active');
+  expect(v2.planRevision).toBe(skeleton.plan.planRevision + 1);
+  const a = v2.tasks.find(task => task.taskId === 'pl-a');
+  expect(a).toMatchObject({ disposition: 'cancelled' });
+  expect(a?.replacedByTaskId ?? null, 'the active Plan keeps the cancelled Task replacement-free').toBeNull();
 }, 240_000);
 
 /** The same candidate replaces B (first, never run) and A (second, the yielded Run's Task). */

@@ -208,6 +208,9 @@ describe('planningAnswerShapeOf: sender identity, trusted round, overlap note an
   const otherSystem = { kind: 'host' as const, actor: { kind: 'system' as const, id: 'workflow:auto-rework' } };
   const person = { kind: 'host' as const, actor: { kind: 'human' as const, id: 'person-1' } };
   const planReview: SystemRoundV1 = { kind: 'planreview', goalRef, proposalId: 'p-1', proposalRevision: 1 };
+  const planResume: SystemRoundV1 = {
+    kind: 'planresume', goalRef, queryJobId: 'query-1', originalMessageRef,
+  };
 
   const rows: readonly {
     name: string;
@@ -222,6 +225,13 @@ describe('planningAnswerShapeOf: sender identity, trusted round, overlap note an
     { name: 'system round to the adviser', sender: systemRound, duty: 'adviser', round: planReview, overlapNote: false, person: false, expected: 'plan_round' },
     { name: 'system round to the secretary', sender: systemRound, duty: 'secretary', round: planReview, overlapNote: false, person: false, expected: 'plan_round' },
     { name: 'system round to an executor', sender: systemRound, duty: 'executor', round: planReview, overlapNote: false, person: false, expected: 'text' },
+    // 依据：p5-frozen:492（T6 纯表）、lead ruling :19（只加两行）、design-frozen:433（A17 执行者线 planresume 给规划形状）。
+    // 世界：纯 planningAnswerShapeOf 输入——可信 planresume 系统轮，收件线分别是执行者、书记。
+    // 期望值：planresume 只对执行者线开规划形状；书记仍是文字形状，说明放开是窄的。
+    // 具名变异：「所有系统轮都给执行者 plan_round」会让本表 planreview + executor 行变红（原有行保持不动）；
+    // 「只改 workflow 发送门、不改形状函数」时 Query 仍是 text，本块执行者行变红。
+    { name: 'planresume system round to an executor', sender: systemRound, duty: 'executor', round: planResume, overlapNote: false, person: false, expected: 'plan_round' },
+    { name: 'planresume system round to the scribe', sender: systemRound, duty: 'scribe', round: planResume, overlapNote: false, person: false, expected: 'text' },
     { name: 'overlap-note host system sender with another id', sender: otherSystem, duty: 'adviser', round: null, overlapNote: true, person: false, expected: 'text' },
     { name: 'person to the adviser', sender: person, duty: 'adviser', round: null, overlapNote: false, person: true, expected: 'plan_round' },
     { name: 'person to an executor', sender: person, duty: 'executor', round: null, overlapNote: false, person: true, expected: 'plan_round' },

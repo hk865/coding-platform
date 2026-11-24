@@ -26,7 +26,7 @@ import {
   createPLAdviserLine, createPLLine, installPLFailingCheck, openPLConsumptionWorld,
 } from './PL-consumption-fixture.js';
 import { s6aCardsWorkspace } from './S6A-cards-fixture.js';
-import type { S6AGate, S6AHostWorld } from './S6A-host-fixture.js';
+import type { S6AGate, S6AHostWorld, S6AReply } from './S6A-host-fixture.js';
 import { S6A_SCOPE, S6A_WORK_ROLE, type S6ASession } from './S6A-request-fixture.js';
 import { adoptS6BPlan, openS6BRoleLine } from './S6B1-fixture.js';
 import { committed, sessionOf, setS7AAutonomy } from './S7A-fixture.js';
@@ -42,7 +42,7 @@ export type P1World = {
   runB: RunRef | null; endB(): Promise<void>;
   /** tC's ended Run, and the Workflow's own next step on it: the automatic `requeue_task`, not performed. */
   runC: RunRef; autoRework: WorkflowAdvanceInput;
-  hold(line: S6ASession, label: string): Promise<P1HeldRound>;
+  hold(line: S6ASession, label: string, replies?: readonly S6AReply[]): Promise<P1HeldRound>;
   holdRounds<const L extends readonly S6ASession[]>(lines: L, label: string): Promise<{ [K in keyof L]: P1HeldRound }>;
   /** The Workflow's own `claim_task` step of `task`, unperformed (the Task's responsible line claims it). */
   claimStep(line: S6ASession, task: TaskTriple, label: string): Promise<WorkflowAdvanceInput>; close(): Promise<void>;
@@ -103,13 +103,15 @@ export async function openP1World(options: {
     // Only now: under every step, tC's stopped rework would have become a confirmation card.
     if (options.autonomy !== undefined) await setS7AAutonomy(world, goal, options.autonomy);
     await settleHost(world);
-    const holdRounds = async (lines: readonly S6ASession[], label: string): Promise<P1HeldRound[]> => {
+    const holdRounds = async (lines: readonly S6ASession[], label: string,
+      replies?: readonly S6AReply[]): Promise<P1HeldRound[]> => {
       const capture = captureAnswerContexts();
       try {
         const opened: Array<{ line: S6ASession; model: S6AGate<unknown>; claim: S6AGate<unknown> | null;
           source: SessionMessageRef }> = [];
         for (const [index, line] of lines.entries()) {
-          await world.scripted.script(line, [{ kind: 'text', text: `P1 ${label} round ${String(index)} answer` }]);
+          await world.scripted.script(line, replies
+            ?? [{ kind: 'text', text: `P1 ${label} round ${String(index)} answer` }]);
           const model = await world.gates.modelRequest(line);
           const claim = index === 0 ? null : world.gates.beforeClaim(line);
           const sent = committed<SessionMessage>(await world.post('messages/send', graphWrite(S6A_SCOPE, {
@@ -140,7 +142,7 @@ export async function openP1World(options: {
       world, goal, task: { tA, tB, tC, tD }, lines: { E, E2, A, S, B }, runB, endB,
       runC, autoRework, claimStep, failWork: async (line, task, label) => (await failRun(line, task, label)).run,
       holdRounds: async (lines, label) => await holdRounds(lines, label) as never,
-      hold: async (line, label) => (await holdRounds([line], label))[0]!,
+      hold: async (line, label, replies) => (await holdRounds([line], label, replies))[0]!,
       async close() { await releaseAll(); await world.close(); },
     };
   } catch (error) {

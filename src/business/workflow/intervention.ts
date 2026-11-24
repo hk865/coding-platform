@@ -419,7 +419,8 @@ export function createInterventionHandler(deps: InterventionDependencies): Inter
         }
         const runOwned = ownedInWorkspace(owned, subject.workspaceId);
         const applied = await applyCommandReview(automationContext(runOwned), deps.workflow, {
-          subject, answer, recipient: line, answeredBy: record.run.run.executionState?.sessionRef ?? null });
+          subject, answer, recipient: line, answeredBy: record.run.run.executionState?.sessionRef ?? null,
+          sourceMessage: message.ref });
         if (applied.status !== 'ready') return applied;
         return answer === null || answerRef === undefined ? { status: 'no_answer', branch: 'no_task' }
           : { status: 'answer_ready', branch: 'no_task', answerRef: { ...answerRef }, reason: 'answered' };

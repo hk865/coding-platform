@@ -46,21 +46,6 @@ describe('L1-rework-wiring: the rework tool names and their receipts', () => {
           'request_rework', 'request_recheck']));
         expect(rework.call.name).toBe('request_rework');
 
-        // The same two names selected on a Query are not in the final list: the
-        // declared list agrees with the Query factory that never builds them.
-        const queryFinal = finalToolNamesOf({
-          callKind: 'query', noteAdmission: { class: 'none' }, selected: ['request_rework', 'request_recheck'],
-          reviewPhase: null, hasBlockedCommands: false,
-          reviewSource: false, frozenSource: false, materialTools: false,
-          owners: { mailbox: true, decisionMessages: true, applicationReceipt: true,
-            plans: true, graph: true, notes: true, unknownCallReviews: true, commandRerunRequests: true,
-            memberCreation: true, reworkRequests: true, recheckRequests: true },
-          readonlyCommand: { requested: false, access: undefined, allowsReadWholeWorkspace: false },
-        } satisfies FinalToolListInputV1);
-        expect(queryFinal.ok).toBe(true);
-        if (!queryFinal.ok) return;
-        expect(queryFinal.value).not.toEqual(expect.arrayContaining(['request_rework', 'request_recheck']));
-
         // The adapter resolved: the real tool wrote R's pending request, read back through the public queue.
         const queue = ready<DecisionQueueReadV1>(await opened.world.post('decisions/queue', plain(S6A_SCOPE, {
           workspace: S6A_SCOPE, goalRef: opened.goalRef, sections: ['waiting_answer'], page: { limit: 100 },
@@ -106,4 +91,58 @@ describe('L1-rework-wiring: the rework tool names and their receipts', () => {
         spy.mockRestore();
       }
     });
+
+  // 四格共用的 Query 世界：callKind 'query'、selected 两名、noteAdmission 'none'、
+  // reviewPhase null、hasBlockedCommands/reviewSource/frozenSource/materialTools 均 false、
+  // owners 全在位（含 reworkRequests/recheckRequests）、readonlyCommand 未请求。
+  const queryFinalBase = {
+    callKind: 'query', noteAdmission: { class: 'none' }, selected: ['request_rework', 'request_recheck'],
+    reviewPhase: null, hasBlockedCommands: false,
+    reviewSource: false, frozenSource: false, materialTools: false,
+    owners: { mailbox: true, decisionMessages: true, applicationReceipt: true,
+      plans: true, graph: true, notes: true, unknownCallReviews: true, commandRerunRequests: true,
+      memberCreation: true, reworkRequests: true, recheckRequests: true },
+    readonlyCommand: { requested: false, access: undefined, allowsReadWholeWorkspace: false },
+  } satisfies FinalToolListInputV1;
+
+  // p3-frozen:401、:135：S7C-L1 改成小表，只有 adviser + plan_round 的最终名单含返工两名。
+  const queryFinalCases: ReadonlyArray<{
+    name: string;
+    round: Pick<FinalToolListInputV1, 'duty' | 'answerTools'>;
+    includesRework: boolean;
+  }> = [
+    // 依据 p3-frozen:401、:135。世界：上面的四输入，再加 duty 'adviser'、answerTools 'plan_round'
+    // （adviser_planning）。期望：含 request_rework、request_recheck。具名变异：把
+    // `...REWORK_TOOL_NAMES` 从 adviser_planning 分支删掉，本格红（只具名，不改 src、不实跑）。
+    { name: 'adviser + plan_round 的 Query 最终名单含返工两名',
+      round: { duty: 'adviser', answerTools: 'plan_round' }, includesRework: true },
+    // 依据 p3-frozen:401、:135。世界：上面的四输入，再加 duty 'adviser'、answerTools null
+    // （adviser_text）。期望：不含两名。具名变异：把 `...REWORK_TOOL_NAMES` 加到 adviser_text
+    // 分支，本格红（只具名，不改 src、不实跑）。
+    { name: 'adviser + 文字轮的 Query 最终名单不含返工两名',
+      round: { duty: 'adviser', answerTools: null }, includesRework: false },
+    // 依据 p3-frozen:401、:135。世界：上面的四输入，再加 duty 'secretary'、answerTools
+    // 'plan_round'（secretary_planning）。期望：不含两名。具名变异：把 `...REWORK_TOOL_NAMES`
+    // 加到 secretary_planning 分支，本格红（只具名，不改 src、不实跑）。
+    { name: '秘书规划轮的 Query 最终名单不含返工两名',
+      round: { duty: 'secretary', answerTools: 'plan_round' }, includesRework: false },
+    // 依据 p3-frozen:401、:135。世界：上面的四输入，duty/answerTools 都缺省（unknown 轮）。
+    // 期望：不含两名。具名变异：把 `...REWORK_TOOL_NAMES` 加到 unknown 分支，本格红
+    // （只具名，不改 src、不实跑）。
+    { name: 'unknown 轮的 Query 最终名单不含返工两名', round: {}, includesRework: false },
+  ];
+
+  it.each(queryFinalCases)('$name', ({ round, includesRework }) => {
+    const result = finalToolNamesOf({ ...queryFinalBase, ...round });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const names = result.value;
+    if (includesRework) {
+      expect(names).toContain('request_rework');
+      expect(names).toContain('request_recheck');
+    } else {
+      expect(names).not.toContain('request_rework');
+      expect(names).not.toContain('request_recheck');
+    }
+  });
 });

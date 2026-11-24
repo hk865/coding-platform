@@ -12,14 +12,18 @@
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { interventionPlanningQueryRefs } from '../../src/contracts/query-job.js';
+import { canonicalRefKey } from '../../src/core/work-graph/persistence/record-codecs.js';
+import { WORKFLOW_AUTOMATION_ACTOR } from '../../src/contracts/task-requeue.js';
 import { AG2B_PROJECT_REF, AG2B_QUERY_BUDGET, AG2B_RUNTIME_BUDGET, AG2B_WORKSPACE_REF,
   graphWrite, plain } from '../helpers/AG2b-collaboration-fixture.js';
-import { driveWorkflow, readExecution } from '../helpers/A2-restart-fixture.js';
+import { driveWorkflow, readControl, readExecution } from '../helpers/A2-restart-fixture.js';
 import { s6aCardsWorkspace } from '../helpers/S6A-cards-fixture.js';
 import type { S6AHostWorld } from '../helpers/S6A-host-fixture.js';
 import { S6A_SCOPE, S6A_WORK_ROLE, S6A_WORK_ROLE_BINDING } from '../helpers/S6A-request-fixture.js';
-import { adoptS6BPlan, governS6B } from '../helpers/S6B1-fixture.js';
-import { committed, pauseS7AGoal, ready, resumeS7AGoal, setS7AAutonomy } from '../helpers/S7A-fixture.js';
+import { adoptS6BPlan, createS6BLine, governS6B } from '../helpers/S6B1-fixture.js';
+import { committed, pauseS7AGoal, ready, resumeS7AGoal, sessionOf, setS7AAutonomy } from '../helpers/S7A-fixture.js';
+import { sendPLActionWait } from '../helpers/PL-consumption-fixture.js';
+import { plPlanChangeDraft, plToolPlanOf } from '../helpers/PL-workflow-fixture.js';
 import { sendS7A2PersonMessage } from '../helpers/S7A2-fixture.js';
 import { firstPlan, refinementPlan } from '../helpers/S7B-V-fixture.js';
 import { listed, readS7BMessage } from '../helpers/S7B-fixture.js';
@@ -33,12 +37,15 @@ import {
   sessionQueries, settleHost, systemWithdraw, waitForResponse, waitForWithdrawn,
 } from '../helpers/IV-host-fixture.js';
 import { byIdentityPrefix, commitBarrier } from '../helpers/S6A-commit-barrier.js';
+import { roleReadGate } from '../helpers/S8C-role-read-gate.js';
 
 // The commit barrier is the S6A fixture's (tests/RULES.md A3): the IV-END-3 row holds one prepared Query commit
 // across a real crash and one notice send across the system-withdraw guard arm. G7 W2: one consume pass now takes the
-// planning Query's stages in a row, so IV-4 and IV-5 (memory) hold that pass on one Query commit the same way.
+// planning Query's stages in a row, so IV-4 and IV-5 (memory) hold that pass on one Query commit the same way. The P5
+// row also holds one `readMany` with the S8C read gate, layered over the barrier's in-memory backend.
 vi.mock('../../src/core/record-store/in-memory-record-store.js', async (importOriginal) =>
-  (await import('../helpers/S6A-commit-barrier.js')).inMemoryBarrierModule(importOriginal));
+  (await import('../helpers/S8C-role-read-gate.js')).inMemoryRoleGateModule(async () =>
+    (await import('../helpers/S6A-commit-barrier.js')).inMemoryBarrierModule(importOriginal)));
 vi.mock('../../src/core/record-store/sqlite-record-store.js', async (importOriginal) =>
   (await import('../helpers/S6A-commit-barrier.js')).sqliteBarrierModule(importOriginal));
 
@@ -53,6 +60,7 @@ afterEach(async () => {
   // Release every held commit first: a held commit keeps a tracked call open, and one of them belongs to a Host
   // that the crash row abandoned.
   commitBarrier.reset();
+  roleReadGate.reset();
   for (const world of worlds.splice(0)) await world.close().catch(() => undefined);
 });
 
@@ -248,10 +256,10 @@ function replacementDraft(world: S6AHostWorld, label: string): Record<string, un
 }
 
 /**
- * IV-END-1's line: a secretary, so the goal loop's P2 `planresume` branch applies at all. That branch serves only the
- * adviser/secretary planning lines (`p2-frozen` §2.3's `planresume` row); the executor's planning shape is P5
- * (`design-frozen.md:118`, A17). Everything else is `openIdleLine`'s shape: the governance, one real line, one person
- * message and the scripted first plan.
+ * IV-END-1's line: a secretary. The goal loop's `planresume` branch serves the adviser/secretary planning lines and,
+ * since P5, the executor line too (`design-frozen.md:118`, A17; `p5-frozen.md:470`). This helper keeps IV-END-1's
+ * secretary world; IV-END-1b builds the same steps on an executor line. Everything else is `openIdleLine`'s shape:
+ * the governance, one real line, one person message and the scripted first plan.
  */
 async function openIdleSecretaryLine(world: S6AHostWorld, text: string, label: string) {
   await governS6B(world, s6aCardsWorkspace(world, S6A_SCOPE), world.goals);
@@ -265,6 +273,186 @@ async function openIdleSecretaryLine(world: S6AHostWorld, text: string, label: s
   await world.scripted.script(line, [{ kind: 'text', text }]);
   return { line, messageRef: message.ref };
 }
+
+/**
+ * 依据：p5-frozen:489（T3）、:490（T4）；lead 裁定 P5-1（`p5-frozen:3-21`，`:5` 压过 T4 表行）；design-frozen:422。
+ * 世界：执行者线负责 A；A 的 Work Run 真调 `send_session_message` 把 M 发给空闲秘书并让出（needsReply/waitAfterSend）；
+ *   秘书线经真实 Host 消费 M 开规划轮，脚本模型用真 `submit_plan_round` 交一版把 A 的 disposition 设为 `cancelled`
+ *   （不带 `replacedByTaskId`）的候选；目标循环推进到 A13 候选卡；此时不调 `plans/apply`。
+ * 期望值 T3：候选卡存在（candidateStatus `candidate`、source.kind `candidate`、actions 含 `adopt`）；A 的 Run
+ *   {status:'ended', outcome:'yielded'} 且 `controlState` 为 undefined；活动计划 planRevision 不变。
+ * 期望值 T4（同一世界，一次公开 `plans/apply`）：该次调用直接 committed（raw apply 先 busy，平台自动化身份
+ *   `hostSystemContext(ctx, WORKFLOW_AUTOMATION_ACTOR)` 收尾同来源链的让出等待、同一固定号且不投递，再 raw apply）；
+ *   A 的 Run `controlState.desiredState === 'cancelled'`；固定取消意图 requestedBy 是 WORKFLOW_AUTOMATION_ACTOR、
+ *   status `queued`、无 observation（没有投递）；活动计划里 A 为 `cancelled`；planRevision 是 before+1。
+ * 具名变异 T3：「目标循环一看到卡就提前取消」；「A13 包装顺手写控制」——两条都会让 controlState 断言变红。
+ * 具名变异 T4：「PS 先停活着的 Run、不跑 yielded 收尾（第一次没有任何控制写）」；「yielded 收尾后仍要求活句柄投递
+ *   （第一次不是 committed）」；「用操作者身份而不是平台自动化身份提交」。
+ */
+describe('T3/T4 yielded-task close-out: the A13 card keeps the wait, one person click finishes it and adopts', () => {
+  it('T3/T4 让出任务收尾: the A13 card writes no control, then one plans/apply commits the cancel and the plan',
+    async () => {
+      const world = await openConsumeWorld({ label: 't3-t4', tools: ['send_session_message'] });
+      worlds.push(world);
+      await settleHost(world);
+      const goal = world.goals.second;
+      const main = s6aCardsWorkspace(world, S6A_SCOPE);
+      await governS6B(world, main, world.goals);
+      const adopted = await adoptS6BPlan(main, goal, { label: 't3-t4', taskIds: ['t3-a'],
+        role: S6A_WORK_ROLE.templateId });
+      await setS7AAutonomy(world, goal, 'every_step');
+      const secretary = await world.createSecretary('t3-t4-secretary');
+      const line = await sessionOf(world, await createS6BLine(main, { label: 't3-t4-line', role: S6A_WORK_ROLE,
+        tasks: adopted.tasks }));
+
+      // A's real Work Run sends M to the idle secretary and yields on the reply.
+      const sent = await sendPLActionWait(world, { goal, session: line, sessionTaskId: 't3-a',
+        recipient: secretary.ref, text: 'T3/T4: A cannot continue on this premise', label: 't3-t4' });
+      // The cancelled draft is inline (no shared-fixture helper): only A's disposition moves, no replacement.
+      const draft = plPlanChangeDraft(adopted.plan, goal, {
+        planId: 't3-t4-plan-v2',
+        tasks: adopted.plan.tasks.map(task => task.taskId === 't3-a'
+          ? { ...task, disposition: 'cancelled' as const } : task),
+        assignments: [...(adopted.plan.assignments ?? [])],
+        obligations: adopted.plan.obligations,
+      });
+      await world.scripted.script(secretary, [{ kind: 'calls', calls: [{ callId: 't3-t4-plan',
+        name: 'submit_plan_round', args: { answerKind: 'plan', summary: 'T3/T4 cancel A',
+          plan: plToolPlanOf(draft),
+          reason: { text: 'T3/T4 cancel A', affectedTaskIds: ['t3-a'] } } }] }]);
+      const candidateRead = await awaitProposal(world, proposalRefOf(sent.message.ref, goal));
+      expect(candidateRead.status, 'the secretary planning round writes the cancelled candidate').toBe('ready');
+      if (candidateRead.status !== 'ready') return;
+      const candidate = candidateRead.value;
+      expect(candidate).toMatchObject({ status: 'candidate', sourceMessageRef: sent.message.ref });
+      expect(candidate.draft.tasks.find(task => task.taskId === 't3-a'), 'the candidate cancels A without a replacement')
+        .toMatchObject({ disposition: 'cancelled' });
+
+      // T3: the goal loop reaches the A13 card and writes nothing on A.
+      const before = (await main.activePlan(goal))!.planRevision;
+      await driveWorkflow(world.ag2b, { schemaVersion: 1, goalRef: goal, flowId: 't3-t4-card', sessionHint: null,
+        kind: 'select_work' }, { stopBefore: operation => operation.kind === 'claim_task'
+          || operation.kind === 'create_session' });
+      const cards = await heartbeatUntil(world, () => candidateCards(world, goal),
+        items => items.some(card => card.candidateStatus === 'candidate' && card.source.kind === 'candidate'));
+      const card = cards.find(item => item.candidateStatus === 'candidate' && item.source.kind === 'candidate');
+      expect(card, 'the secretary candidate waits on the A13 card').toBeDefined();
+      expect(card?.candidateStatus, 'the card waits for the person').toBe('candidate');
+      expect(card?.source.kind, 'the card source is the candidate').toBe('candidate');
+      expect(card?.actions, 'the card offers the person\'s adoption').toContain('adopt');
+      const yielded = (await readExecution(world.ag2b, sent.run)).run;
+      expect(yielded).toMatchObject({ status: 'ended', outcome: 'yielded' });
+      expect(yielded.controlState, 'the card itself writes no control').toBeUndefined();
+      expect((await main.activePlan(goal))!.planRevision, 'the card changes no Plan').toBe(before);
+
+      // T4: one public click; the single call must finish the yielded wait as automation and then commit.
+      const applied = await world.post('plans/apply', graphWrite(S6A_SCOPE, {
+        proposalRef: candidate.ref, expectedProposalRevision: candidate.revision, decisionRefs: [],
+      }, 't3-t4-apply'));
+      const adoption = committed<{ planRevision: number }>(applied.body, 'the single-click adoption');
+      const cancelled = (await readExecution(world.ag2b, sent.run)).run;
+      expect(cancelled.controlState, 'the single click writes the fixed cancel intent').toBeDefined();
+      expect(cancelled.controlState?.desiredState, 'the automation cancel fences the yielded wait').toBe('cancelled');
+      const intentRef = cancelled.controlState?.intentRef;
+      if (intentRef === undefined) throw new Error('T4: the cancel intent ref is missing');
+      const intent = await readControl(world.ag2b, intentRef);
+      expect(intent).toMatchObject({ kind: 'cancel', status: 'queued',
+        requestedBy: { ...WORKFLOW_AUTOMATION_ACTOR } });
+      expect(intent.observation, 'the automation finish submits, never delivers to a live handle').toBeUndefined();
+      // The reason lives on the intent (`cancelYieldedWaitStep`'s `input.reason`); `p5-frozen:12` fixes the sentence.
+      expect(intent.reason, 'the fixed cancel reason names the Task, its disposition and the candidate')
+        .toBe(`task t3-a is cancelled by plan candidate ${candidate.ref.proposalId}@${candidate.revision}`);
+      const now = await main.activePlan(goal);
+      expect(now, 'the single click adopted the Plan').not.toBeNull();
+      expect(now?.tasks.find(task => task.taskId === 't3-a')).toMatchObject({ disposition: 'cancelled' });
+      expect(now?.planRevision, 'the adoption is one revision on').toBe(before + 1);
+      expect(adoption.planRevision, 'the apply receipt names the same revision').toBe(before + 1);
+    }, 120_000);
+});
+
+/**
+ * 依据：c3rv-rulings.md P5 行（表一 P5-1、P5-2、P5-3）；design-frozen:421–423；p5-frozen:5、:9、:118、:153。
+ * 世界：T3/T4 的世界换成任务 A、B 各一条执行者线。A 的 Work Run 把 M_A 发给空闲秘书并让出，秘书的规划轮交候选 C1
+ *   （取消 A、B，来源 M_A）；之后 B 的 Work Run 把 M_B 发给秘书并让出（不再心跳，M_B 一直没人答）。
+ * P5-1：人点 C1@1，raw apply 读 A 的 Run 时按住；同一来源的替代 C2 把 C1 变成 not_adopted@2，再放开。期望：返回采用方
+ *   的最新裁定（invalid），A 的 Run 没有控制写。具名变异：去掉收尾的版本核对（照 C1@2 生成取消号并提交，A 被取消）。
+ * P5-2：人点 C2。守卫 3 先报 A；平台收尾 A 的等待后，第二次采用报 B；A、B 都已让出，没有可停的 Run。期望：返回 B 的
+ *   原因句。具名变异：最后的退路返回第一次的拒绝（A 的原因句）。
+ * P5-3：人提一版无来源、只取消 B 的候选 C3；A 的指针意图（A 不在 C3 的差异里）设读故障后点 C3。期望：照旧是 B 的
+ *   原因句，A 的指针意图零读。具名变异：收尾入口先读任务图、再判来源（任务图会读 A 的指针意图）。
+ */
+describe('P5 review rework: the person\'s adoption finish keeps the clicked version, the latest refusal and its early exits',
+  () => {
+    it('P5-1/P5-2/P5-3: stale click ends with the adopter\'s ruling; the second busy is returned; no source reads no pointer',
+      async () => {
+        const world = await openConsumeWorld({ label: 'p5r', tools: ['send_session_message'] });
+        worlds.push(world);
+        await settleHost(world);
+        const goal = world.goals.second;
+        const main = s6aCardsWorkspace(world, S6A_SCOPE);
+        await governS6B(world, main, world.goals);
+        const [A, B] = ['p5r-a', 'p5r-b'];
+        const adopted = await adoptS6BPlan(main, goal, { label: 'p5r', taskIds: [A, B], role: S6A_WORK_ROLE.templateId });
+        await setS7AAutonomy(world, goal, 'every_step');
+        const secretary = await world.createSecretary('p5r-secretary');
+        const executorLine = async (label: string) => await sessionOf(world, await createS6BLine(main,
+          { label, role: S6A_WORK_ROLE, tasks: adopted.tasks }));
+        const cancelOf = (ids: readonly string[], planId: string) => plPlanChangeDraft(adopted.plan, goal, { planId,
+          tasks: adopted.plan.tasks.map(task => ids.includes(task.taskId) ? { ...task, disposition: 'cancelled' as const }
+            : task),
+          assignments: [...(adopted.plan.assignments ?? [])], obligations: adopted.plan.obligations });
+        const apply = async (ref: unknown, revision: number, requestId: string) => (await world.post('plans/apply',
+          graphWrite(S6A_SCOPE, { proposalRef: ref, expectedProposalRevision: revision, decisionRefs: [] }, requestId))).body;
+        type Proposed = { ref: unknown; revision: number };
+        const proposeOnPlan = async (input: Record<string, unknown>, requestId: string, pins: unknown[] = []) =>
+          committed<Proposed>((await world.post('plans/propose', graphWrite(S6A_SCOPE,
+            { goalRef: goal, basedOn: adopted.plan.ref, ...input }, requestId, pins))).body, requestId);
+
+        const sentA = await sendPLActionWait(world, { goal, session: await executorLine('p5r-line-a'), sessionTaskId: A,
+          recipient: secretary.ref, text: 'P5: A cannot continue on this premise', label: 'p5r-a' });
+        await world.scripted.script(secretary, [{ kind: 'calls', calls: [{ callId: 'p5r-plan', name: 'submit_plan_round',
+          args: { answerKind: 'plan', summary: 'P5 cancel A and B', plan: plToolPlanOf(cancelOf([A, B], 'p5r-c1')),
+            reason: { text: 'P5 cancel A and B', affectedTaskIds: [A, B] } } }] }]);
+        const c1Read = await awaitProposal(world, proposalRefOf(sentA.message.ref, goal));
+        if (c1Read.status !== 'ready') throw new Error('P5: the secretary candidate C1 is not readable');
+        const c1 = c1Read.value;
+        const sentB = await sendPLActionWait(world, { goal, session: await executorLine('p5r-line-b'), sessionTaskId: B,
+          recipient: secretary.ref, text: 'P5: B waits on its own question', label: 'p5r-b' });
+        const bBusy = { status: 'rejected', code: 'busy',
+          reason: `task ${B}: cancel or resume the yielded wait of run ${sentB.run.runId} first` };
+
+        // P5-1: C1 is replaced while the click's raw apply is inside its TASK-19 reads.
+        const held = roleReadGate.holdRead(keys => keys.includes(canonicalRefKey(sentA.run)));
+        const clicked = apply(c1.ref, c1.revision, 'p5r-apply-1');
+        await held.reached;
+        const goalNow = ready<{ goal: { ref: unknown; revision: number } }>(
+          (await world.post('goals/read', plain(S6A_SCOPE, goal))).body, 'the Goal').goal;
+        const c2 = await proposeOnPlan({ draft: cancelOf([A, B], 'p5r-c2'), requestRef: c1.requestRef,
+          sourceMessageRef: sentA.message.ref, replaces: { proposalRef: c1.ref, revision: c1.revision },
+          reason: { text: 'P5 replacement', sources: [], affectedTaskIds: [A, B] } }, 'p5r-replace',
+        [{ ref: goalNow.ref, revision: goalNow.revision }]);
+        held.release();
+        expect(await clicked, 'the stale click returns the adopter\'s latest ruling').toMatchObject(
+          { status: 'rejected', code: 'invalid' });
+        expect((await readExecution(world.ag2b, sentA.run)).run.controlState,
+          'no cancel is written under the withdrawn version').toBeUndefined();
+
+        // P5-2: the platform finishes A's wait, the second adoption names B, and that refusal is returned.
+        expect(await apply(c2.ref, c2.revision, 'p5r-apply-2'), 'the second busy (B) is returned').toMatchObject(bBusy);
+        const aIntent = (await readExecution(world.ag2b, sentA.run)).run.controlState?.intentRef;
+        if (aIntent === undefined) throw new Error('P5-2: the finish did not cancel A\'s wait');
+
+        // P5-3: a candidate with no source exits before the Task graph reads A's pointer intent.
+        const c3 = await proposeOnPlan({ draft: cancelOf([B], 'p5r-c3'),
+          reason: { text: 'P5-3 cancel B', sources: [], affectedTaskIds: [B] } }, 'p5r-c3-propose');
+        const pointer = commitBarrier.failReads(canonicalRefKey(aIntent), 'throw-always');
+        const third = await apply(c3.ref, c3.revision, 'p5r-apply-3');
+        const pointerReads = pointer.calls();
+        pointer.release();
+        expect(third, 'the sourceless click keeps B\'s refusal').toMatchObject(bBusy);
+        expect(pointerReads, 'no Task graph read before the source exit').toBe(0);
+      }, 120_000);
+  });
 
 describe('IV-END-1 questions: the answer\'s summary replies and the question card opens no planning round', () => {
   it('IV-END-1: the formal query_run reply, the Goal card, and the card answer waking one planresume round', async () => {
@@ -322,26 +510,77 @@ describe('IV-END-1 questions: the answer\'s summary replies and the question car
       .toEqual(expect.arrayContaining([expect.stringMatching(/^planresume:/)]));
   }, 120_000);
 
-  // R7 补充裁定（B20）：执行者线反问出的卡全答完，目标循环不给这条线发 `planresume:`，答案只保存。目标要有计划，目标循环才走到这一支。
-  it('IV-END-1b: every card answered on an executor line: no planresume: to the line, the answers stay saved', async () => {
-    const world = await openConsumeWorld({ label: 'iv-end-1b' });
-    worlds.push(world);
-    await settleHost(world);
-    const { line } = await openLine(world, 'iv-end-1b-line');
-    const ws = s6aCardsWorkspace(world, S6A_SCOPE);
-    await adoptS6BPlan(ws, world.goals.second, { label: 'iv-end-1b', taskIds: ['iv-end-1b-task'], role: S6A_WORK_ROLE.templateId });
-    await world.scripted.script(line, [{ kind: 'text', text: questionsAnswer('IV b', ['First?', 'Second?']) }]);
-    await sendS7A2PersonMessage(world, { label: 'iv-end-1b', recipient: line.ref, goal: world.goals.second });
-    const cards = await heartbeatUntil(world, () => questionCards(world, world.goals.second), items => items.length === 2);
-    for (const [index, card] of cards.entries()) await answerCard(world, card, `iv-end-1b-${index}`, `answer ${index}`);
-    await driveWorkflow(world.ag2b, { schemaVersion: 1, goalRef: world.goals.second, flowId: 'iv-end-1b', sessionHint: null,
-      kind: 'select_work' }, { stopBefore: op => op.kind === 'claim_task' || op.kind === 'create_session' });
-    const bodies = await Promise.all((await listed(world, 'inbox', line)).map(message => readBody(world, message.ref, 'message')));
-    expect(bodies.filter(body => body.startsWith('planresume:')), 'no planresume: to the executor line').toEqual([]);
-    const saved = (await ws.readCards(world.goals.second)).filter(card => card.source.kind === 'planning_question');
-    expect(await Promise.all(saved.map(card => readBody(world, card.answerMessageRef!, 'response'))), 'the answers stay saved')
-      .toEqual(['answer 0', 'answer 1']);
-  }, 120_000);
+  // 依据：A17（p5-frozen:470、:491；design-frozen:433、:118、:653）。世界：执行者线的卡全答完后只发一条 `planresume:`，
+  // 期望值：续轮 Query 冻结 plan_round，`submit_plan_round` 只写候选，线不 claim_task、不开新 Run，卡片答案仍在。
+  // 具名变异：(a) 发送门仍只给参谋/秘书（零 planresume）；(b) 形状仍回 text（Query 是 text、没有 submit_plan_round）；(c) 续轮自己采用/领取（候选直接 accepted 或线被 claim）。
+  it('IV-END-1b: every card answered on an executor line: one planresume: and one plan_round Query write only a candidate',
+    async () => {
+      const world = await openConsumeWorld({ label: 'iv-end-1b' });
+      worlds.push(world);
+      await settleHost(world);
+      const goal = world.goals.second;
+      const { line } = await openLine(world, 'iv-end-1b-line');
+      const ws = s6aCardsWorkspace(world, S6A_SCOPE);
+      const adopted = await adoptS6BPlan(ws, goal, { label: 'iv-end-1b', taskIds: ['iv-end-1b-task'],
+        role: S6A_WORK_ROLE.templateId });
+      await setS7AAutonomy(world, goal, 'every_step');
+      await world.scripted.script(line, [{ kind: 'text', text: questionsAnswer('IV b', ['First?', 'Second?']) }]);
+      await sendS7A2PersonMessage(world, { label: 'iv-end-1b', recipient: line.ref, goal });
+      const cards = await heartbeatUntil(world, () => questionCards(world, goal), items => items.length === 2);
+      const queriesBefore = (await sessionQueries(world, line)).length;
+
+      // The continuation round's answer: add one optional future Task, so the model writes a plan candidate and nothing
+      // adopts or claims it (the every_step Goal keeps it for the person). Script it before the cards are answered.
+      const futureTaskId = 'iv-end-1b-future';
+      const draft = plPlanChangeDraft(adopted.plan, goal, {
+        planId: 'iv-end-1b-plan-v2',
+        tasks: [...adopted.plan.tasks, { taskId: futureTaskId, title: 'IV END 1b optional future work',
+          requirementLevel: 'optional', taskKind: 'work', disposition: 'active', phase: 'pending',
+          scope: { kind: 'goal' }, executionIntent: 'request_execution' }],
+        assignments: [...(adopted.plan.assignments ?? []), { taskId: futureTaskId, role: S6A_WORK_ROLE.templateId,
+          instruction: 'IV END 1b optional future work' }],
+        obligations: adopted.plan.obligations,
+      });
+      await world.scripted.script(line, [{ kind: 'calls', calls: [{ callId: 'iv-end-1b-plan',
+        name: 'submit_plan_round', args: { answerKind: 'plan', summary: 'IV END 1b continuation',
+          plan: plToolPlanOf(draft),
+          reason: { text: 'IV END 1b continuation candidate', affectedTaskIds: [futureTaskId] } } }] }]);
+      for (const [index, card] of cards.entries()) await answerCard(world, card, `iv-end-1b-${index}`, `answer ${index}`);
+      await driveWorkflow(world.ag2b, { schemaVersion: 1, goalRef: goal, flowId: 'iv-end-1b', sessionHint: null,
+        kind: 'select_work' }, { stopBefore: operation => operation.kind === 'claim_task'
+          || operation.kind === 'create_session' });
+
+      const inbox = await listed(world, 'inbox', line);
+      const bodies = await Promise.all(inbox.map(message => readBody(world, message.ref, 'message')));
+      const resumes = inbox.filter((_message, index) => bodies[index]!.startsWith('planresume:'));
+      expect(resumes, 'exactly one planresume: to the executor line').toHaveLength(1);
+      const resumeRef = resumes[0]!.ref;
+      const resumeQuery = await heartbeatUntil(world, () => readPlanningQuery(world, resumeRef),
+        record => record !== null);
+      expect(resumeQuery, 'the planresume opens its planning Query').not.toBeNull();
+      if (resumeQuery === null) return;
+      const execution = resumeQuery.job.job.intent.execution;
+      expect(execution.kind, 'the continuation stays an intervention planning Query').toBe('intervention_planning');
+      if (execution.kind !== 'intervention_planning') {
+        throw new Error('IV-END-1b: the continuation is not an intervention planning Query');
+      }
+      expect(execution.answerShape, 'the continuation Query freezes answerShape plan_round').toBe('plan_round');
+      expect((await sessionQueries(world, line)).length - queriesBefore,
+        'the answers open exactly one new Query').toBe(1);
+      const proposalRead = await awaitProposal(world, proposalRefOf(resumeRef, goal), 16);
+      expect(proposalRead.status, 'the continuation writes a candidate').toBe('ready');
+      if (proposalRead.status !== 'ready') return;
+      expect(proposalRead.value.status, 'the candidate waits for the person').toBe('candidate');
+      expect(proposalRead.value.draft.tasks.find(task => task.taskId === futureTaskId),
+        'the submitted change only adds optional future work')
+        .toMatchObject({ requirementLevel: 'optional', taskKind: 'work', disposition: 'active' });
+      expect(await sessionExecutions(world, line), 'the continuation claims no Task').toEqual([]);
+      expect((await lineFacts(world, line)).latestWork, 'the continuation starts no Run').toBeNull();
+
+      const saved = (await ws.readCards(goal)).filter(card => card.source.kind === 'planning_question');
+      expect(await Promise.all(saved.map(card => readBody(world, card.answerMessageRef!, 'response'))),
+        'the answers stay saved').toEqual(['answer 0', 'answer 1']);
+    }, 120_000);
 });
 
 describe('IV-END-2 invalid answers: the fixed notice and the verbatim answer, with no proposal', () => {

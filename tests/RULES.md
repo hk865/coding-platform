@@ -134,7 +134,7 @@ lead 让 Codex 在同一步按新读法列出每一处实例，新版本从下�
      以 Host 身份调 `claims.claimTask`，只在带 `servedRequest` 或干预标记时，普通领取走公开的 `workflow/advance`。
      入参只用前面公开步骤回过的值。“不是平台自动化、不是操作者”的拒绝行，直接用调用方自己的上下文（人或那一轮）调 owner，不经这个文件。
      理由：P1 只建 owner、还没有生产调用方（决定 121-152），这些调用今天只有平台或 Host 自己做（P1 lead 裁定 T1）。
-     期限：P2/P4 接上真实调用方后，挪到真实入口或删掉。
+     期限：已接真实调用方；冻结稿列出的既有 owner 用例继续用这个入口；P7 复核。
 - **A8 Host 输入。** Host 自己从其配置提供给平台的输入：
   workspace 根（测试创建的真实目录）及其 revision、该根内路径的授权决定、
   带脚本化模型 provider 的 runtime 配置（步骤从不调用的 model client 可以是占位符）、

@@ -1,5 +1,5 @@
 /**
- * The system-round contract: the nine round shapes, their one request-id
+ * The system-round contract: the eleven round shapes, their one request-id
  * format, the fixed Host sender and its message identity, and the pure reply /
  * read helpers (§5.2.2, §5.2.5–§5.2.6, §5.3.5, §5.6).
  *
@@ -55,7 +55,9 @@ export type SystemRoundV1 =
   /** 121-110: the adviser's round on one `awaiting_advice` command rerun request. */
   | { kind: 'command_rerun'; goalRef: GoalRef; subject: CommandRerunAdviceSubjectV1 }
   /** G8B B1d：不是作者的 agent 批一份候选带来的新检查。 */
-  | { kind: 'check_review'; goalRef: GoalRef; subject: CheckReviewSubjectV1 };
+  | { kind: 'check_review'; goalRef: GoalRef; subject: CheckReviewSubjectV1 }
+  /** 121-153 A14：书记判命令异常之后，平台停掉它并给负责参谋的一轮（`cmdstop:`）。 */
+  | { kind: 'command_stop'; goalRef: GoalRef; subject: CommandReviewSubjectV1 };
 
 /** The read-side head of a round: only the first line's segments, never a guess. */
 export type SystemRoundHeadV1 =
@@ -72,7 +74,9 @@ export type SystemRoundHeadV1 =
   | { kind: 'command_review'; projectId: string; reviewSeq: number; commandKeyDigest: string }
   | { kind: 'command_rerun'; taskId: string; requestId: string; revision: number; goalBasisDigest: string }
   /** 同 `planreview` 的先例：目标来自 `subject.goalRef`。 */
-  | { kind: 'check_review'; proposalId: string; proposalRevision: number };
+  | { kind: 'check_review'; proposalId: string; proposalRevision: number }
+  /** 同 `command_review` 的 `scr:` 头：命令号是 `subject.commandKey` 的 sha256。 */
+  | { kind: 'command_stop'; projectId: string; reviewSeq: number; commandKeyDigest: string };
 
 /** The one system-round sender; a fixed id is what makes one request id one message. */
 export const SYSTEM_ROUND_ACTOR = Object.freeze({ kind: 'system' as const, id: 'host:plan-round' });
@@ -142,13 +146,15 @@ export function systemRoundRequestId(
     if (goalBasisDigest.length === 0) return rejected('invalid', 'goalBasisDigest is empty');
     return { status: 'ready', value: `ucr:${reviewRef.runId}:${String(revision)}:${phase}:${goalBasisDigest}` };
   }
-  if (round.kind === 'command_review') {
+  if (round.kind === 'command_review' || round.kind === 'command_stop') {
     // No time in the id: a resend of the same review is the same message; the next review is the next `reviewSeq`.
+    // The stop round is that same review under its own prefix, so both kinds share one id shape and one set of checks.
+    const prefix = round.kind === 'command_review' ? 'scr' : 'cmdstop';
     const { projectId, reviewSeq, commandKey } = round.subject;
     if (projectId.length === 0) return rejected('invalid', 'projectId is empty');
     if (!isPos(reviewSeq)) return rejected('invalid', 'reviewSeq must be a positive safe integer');
     if (commandKey.length === 0) return rejected('invalid', 'commandKey is empty');
-    return { status: 'ready', value: `scr:${projectId}:${String(reviewSeq)}:${sha256Hex(commandKey)}` };
+    return { status: 'ready', value: `${prefix}:${projectId}:${String(reviewSeq)}:${sha256Hex(commandKey)}` };
   }
   if (round.kind === 'command_rerun') {
     // A request is one per (Goal, Task, requestId); the requestId may itself hold `:` (a tool call's `c2-tool:`
@@ -250,12 +256,15 @@ export function systemRoundOfText(text: string): SystemRoundHeadV1 | null {
       || !inList(phase, phases)) return null;
     return { kind: 'unknown_call', runId, revision, phase, goalBasisDigest: digest };
   }
-  if (prefix === 'scr') {
+  if (prefix === 'scr' || prefix === 'cmdstop') {
     if (segments.length !== 4) return null;
     const [, projectId, seq, digest] = segments;
     const reviewSeq = positivePlanRevisionOf(seq);
     if (!nonEmpty(projectId) || reviewSeq === null || !isSha256Hex(digest)) return null;
-    return { kind: 'command_review', projectId, reviewSeq, commandKeyDigest: digest };
+    return {
+      kind: prefix === 'scr' ? 'command_review' : 'command_stop',
+      projectId, reviewSeq, commandKeyDigest: digest,
+    };
   }
   if (prefix === 'crr') {
     if (segments.length < 5) return null;
@@ -314,18 +323,25 @@ export function unknownCallAdviceSubjectOfText(text: string): UnknownCallAdviceS
 }
 
 /**
- * The second line of a `scr:` text: `subject: <canonicalJson>`, the ONLY source
+ * The second line of a `scr:` or `cmdstop:` text: `subject: <canonicalJson>`, the ONLY source
  * of the scribe review's command facts (and of the Run its history tool reads);
  * absent, malformed or disagreeing with the first line's request id -> `null`.
+ * `kind` only selects which request id the first line is compared with; it does not
+ * change how the subject is parsed (the stop round carries the same subject).
  */
-export function commandReviewSubjectOfText(text: string): CommandReviewSubjectV1 | null {
+export function commandReviewSubjectOfText(
+  text: string,
+  kind: 'command_review' | 'command_stop' = 'command_review',
+): CommandReviewSubjectV1 | null {
   const [first, second] = text.split('\n');
   if (second === undefined || !second.startsWith('subject: ')) return null;
   const parsed = parseObject(second.slice('subject: '.length));
   if (parsed === null || commandReviewSubjectProblem(parsed) !== null) return null;
   const subject = parsed as unknown as CommandReviewSubjectV1;
-  const head = systemRoundRequestId({ kind: 'command_review', subject,
-    goalRef: { aggregateType: 'Goal', projectId: subject.projectId, goalId: subject.goalId } });
+  const goalRef = { aggregateType: 'Goal', projectId: subject.projectId, goalId: subject.goalId } as const;
+  const head = kind === 'command_stop'
+    ? systemRoundRequestId({ kind: 'command_stop', subject, goalRef })
+    : systemRoundRequestId({ kind: 'command_review', subject, goalRef });
   return head.status === 'ready' && head.value === first ? subject : null;
 }
 

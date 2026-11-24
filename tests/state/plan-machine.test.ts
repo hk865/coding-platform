@@ -40,6 +40,7 @@ import {
   type CandidatePlanProposal,
   type FutureAdoptionFacts,
   type FutureChangeTaskFactsV1,
+  type FutureDispositionChangeV1,
   type FuturePlanDeltaVerdict,
   type InitialAdoptionFacts,
   type PlanCarrierViewV1,
@@ -1072,19 +1073,46 @@ describe('tracedDispositionChangeProblem (TASK-19 guards 8, 1, 2, 2b, 3–7; C7)
     expect(codeOf(check([{ ...fenced }]))).toBe('forbidden');
   });
 
-  it('a submitted plan round defers only the four unfinished-execution busy guards', () => {
-    // 决定 121-149（冻结稿三·R4、R5）：交表时跳过守卫 1、2、2b、4 的后半，接着判 5–7；守卫 3 照判。第一格落到守卫 5；
-    // 第二格选中的 Run 是 yielded 等待，守卫 3 照判。今天两格都红在守卫 1 的 busy 原文。
-    const quarantined = runOf('r-q', 't-a', { reconciliation: { status: 'quarantined', observation: { kind: 'unresolved', reason: 'x',
-      observedThroughPosition: null, unresolvedToolCallIds: [] }, basis: { kind: 'live_clean' }, recordedAt: T1 } });
-    const unknown = runOf('r-u', 't-a', { outcome: 'outcome_unknown' });
-    const running = runOf('r9', 't-a', { status: 'running', outcome: null, endedAt: null });
-    const all = { ...yielded(), taskId: 't-a', lease: leaseOf('t-a', false), reduction: reductionOf('t-a') };
-    expect(check([{ ...all, runs: [running, quarantined, unknown], selectedRun: running }], { affectedTaskIds: [], deferBusy: true }))
-      .toEqual({ code: 'invalid', detail: 'task t-a is satisfied; the disposition of a satisfied task is final', reason: 'illegal' });
-    expect(check([{ ...all, runs: [quarantined, unknown, running, ...all.runs] }], { affectedTaskIds: [], deferBusy: true }))
-      .toEqual({ code: 'busy', detail: 'task t-a: cancel or resume the yielded wait of run run-y first' });
-  });
+  // 依据 p5-frozen.md:471（b 组行）、:488（T2）；design-frozen.md:419-420（交表时，守卫 3 对本候选要取消或替代的任务
+  // 延后到采用时判）；lead 裁定 :16 / P5-2（superseded 不带替代者也是合法处置，不看 replacedByTaskId）。
+  // 世界：同一目标两条 traced 任务 t-a、t-b，选中 Run 都是 yielded 等待（run-y）；deferBusy: true，只改 t-a。
+  // 期望：无 changes 时两条都仍报守卫 3（t-a 先；t-b 单独也报原文）；t-a 改成 cancelled 或 superseded（无替代者）后
+  // t-a 的守卫 3 延后（其余守卫都过，problem 为 null），t-b 仍报 `task t-b: cancel or resume the yielded wait of run run-y first`。
+  // 具名变异：“所有 yielded 等待都延后（t-b 也过）”让 changed 行的 t-b 断言红；“只延后 superseded、不延后 cancelled”
+  // 让 cancelled 行红在 t-a 仍是守卫 3。
+  type Problem = NonNullable<ReturnType<typeof check>>;
+  const quarantined = runOf('r-q', 't-a', { reconciliation: { status: 'quarantined', observation: { kind: 'unresolved', reason: 'x',
+    observedThroughPosition: null, unresolvedToolCallIds: [] }, basis: { kind: 'live_clean' }, recordedAt: T1 } });
+  const unknown = runOf('r-u', 't-a', { outcome: 'outcome_unknown' });
+  const running = runOf('r9', 't-a', { status: 'running', outcome: null, endedAt: null });
+  // Old cell 1: the four unfinished-execution problems are deferred, so guard 5 is next.
+  const all = { ...yielded(), taskId: 't-a', lease: leaseOf('t-a', false), reduction: reductionOf('t-a') };
+  // Old cell 2: a yielded wait still reports guard 3 even when guards 1, 2, 2b are deferred.
+  const waited = { ...all, runs: [quarantined, unknown, running, ...all.runs] };
+  // New rows: only the yielded wait is left, so a deferred guard 3 leaves no problem.
+  const plain = { ...yielded(), taskId: 't-a' };
+  const other = { ...yielded(), taskId: 't-b' };
+  const otherWait = { code: 'busy' as const, detail: 'task t-b: cancel or resume the yielded wait of run run-y first' };
+  it.each<[string, TracedTaskFactsV1[], readonly FutureDispositionChangeV1[], Problem | null, Problem]>([
+    ['the four unfinished-execution busy guards wait for adoption (guard 5 next)',
+      [{ ...all, runs: [running, quarantined, unknown], selectedRun: running }], [],
+      { code: 'invalid', detail: 'task t-a is satisfied; the disposition of a satisfied task is final', reason: 'illegal' },
+      { code: 'invalid', detail: 'task t-a is satisfied; the disposition of a satisfied task is final', reason: 'illegal' }],
+    ['no changes: t-a and t-b both still report guard 3',
+      [waited, other], [],
+      { code: 'busy', detail: 'task t-a: cancel or resume the yielded wait of run run-y first' },
+      { code: 'busy', detail: 'task t-a: cancel or resume the yielded wait of run run-y first' }],
+    ['only t-a cancelled without a replacer: its yielded wait is deferred',
+      [plain, other], [{ taskId: 't-a', from: 'active', to: 'cancelled', replacedByTaskId: null }], null, otherWait],
+    ['only t-a superseded without a replacer (lead ruling :16 / P5-2): its yielded wait is deferred',
+      [plain, other], [{ taskId: 't-a', from: 'active', to: 'superseded', replacedByTaskId: null }], null, otherWait],
+  ])('a submitted plan round defers the four unfinished-execution guards and a cancelled/superseded Task\'s yielded wait: %s',
+    (_name, tasks, changes, expectedA, expectedBoth) => {
+      const base = { affectedTaskIds: ['t-a', 't-b'], deferBusy: true, changes };
+      expect(check([tasks[0]!], base)).toEqual(expectedA);
+      expect(check(tasks, base)).toEqual(expectedBoth);
+      expect(check([other], base)).toEqual(otherWait);
+    });
 
   it('planRoundAnswerIssues skips unfinished execution but still lists the traced Task', () => {
     // 决定 121-149（冻结稿三·R4）：交表处传 deferBusy: true；W1 在跑、占着租约，段只把 W1 的处置改成 cancelled。

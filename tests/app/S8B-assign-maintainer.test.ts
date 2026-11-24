@@ -34,7 +34,7 @@ import { responsibleLinkRef } from '../../src/core/work-graph/sessions/session-r
 import type { WorkbenchRuntimeConfiguration } from '../../src/app/runtime-configuration.js';
 import { driveWorkflow, readExecution } from '../helpers/A2-restart-fixture.js';
 import { createS6BLine } from '../helpers/S6B1-fixture.js';
-import { claimOf, openS7C1World, type S7C1World } from '../helpers/S7C-member-fixture.js';
+import { claimOf, endS7C1Node, openS7C1World, type S7C1World } from '../helpers/S7C-member-fixture.js';
 import type { S6ASession } from '../helpers/S6A-request-fixture.js';
 import type { S6AReply } from '../helpers/S6A-host-fixture.js';
 import { sessionOf, setS7AAutonomy } from '../helpers/S7A-fixture.js';
@@ -383,8 +383,8 @@ describe('R-route (W0, person HTTP)', () => {
 
 const TOOL_WORLD_BACKEND = 'memory';
 
-function createS7C1ToolWorld(configure: (configuration: WorkbenchRuntimeConfiguration) => void) {
-  return openS7C1World({ backend: TOOL_WORLD_BACKEND, configure });
+function createS7C1ToolWorld(configure: (configuration: WorkbenchRuntimeConfiguration) => void, checks = false) {
+  return openS7C1World({ backend: TOOL_WORLD_BACKEND, configure, checks });
 }
 
 const ADVISER_ROLE = platformRoleProfile('adviser').template;
@@ -511,10 +511,13 @@ describe('B02-tool-every-step (W0, adviser A1, every-step)', () => {
       const adviser = configuration.bindings.find((binding) => binding.id === 's7c-adviser-binding');
       if (adviser === undefined) throw new Error('S8B tool row: no adviser binding');
       adviser.grant = { ...adviser.grant, tools: [...(adviser.grant.tools ?? []), 'assign_module_maintainer'] };
-    });
+    }, true);
     try {
       await addAssignModules(target);
       await setS7AAutonomy(target.world, target.goal, 'every_step');
+      // Under every_step a named advance waits while another node is still in its checks (GL-2, `gl-frozen.md:7`):
+      // the world's first node s7c-m1, and below the first tool Run's, end through their checks first.
+      await endS7C1Node(target.world, target.goal, 's7c-m1');
       const L1 = await sessionOf(target.world, await createS6BLine(target.main,
         { label: 's8b-assign-L1', role: EXECUTOR_ROLE }));
       const L2 = await sessionOf(target.world, await createS6BLine(target.main,
@@ -542,6 +545,7 @@ describe('B02-tool-every-step (W0, adviser A1, every-step)', () => {
       expect(byKey.source).toEqual(firstCard.source);
 
       // The R1 collection coverage: two pending operations in requestedAt order.
+      await endS7C1Node(target.world, target.goal, 's8b-assign-one');
       target.world.clock.advance(1000);
       const second = await startAssignToolRun(target, { label: 'two', moduleId: 'M2', line: L2,
         callId: 's8b-tool-two', reason: 'the second maintainer reason' });

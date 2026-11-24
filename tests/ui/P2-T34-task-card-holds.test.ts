@@ -133,15 +133,22 @@ describe('P2-T34 the Task card holds, dispatch request and waiting stop', () => 
     const { p1 } = await openT34();
     try {
       /* tA is claimable; the pending dispatch request does not block the plain claim
-         (P1 D10, `tests/work-graph/P1-dispatch.test.ts:210-219`). */
+         (P1 D10, `tests/work-graph/P1-dispatch.test.ts:210-219`).
+         gl-frozen.md:14 / :172 (b group): a named advance reads the same claimHold, so end tB's Run
+         first (M-04, `P2-T14-action-rounds.test.ts:131-132`); the claimed line is re-read from the
+         receipt, not hardcoded. Mutation guarded: GL-2 reverted (a named task skips the hold) — the
+         claim would come back `claim_task` while tB's Run is live. */
+      await p1.endB();
       const claimed = await performClaim(p1.world, await p1.claimStep(p1.lines.E, p1.task.tA, 'p2-t34-claim'));
       expect(claimed).toMatchObject({ status: 'committed' });
       const graph = await graphOf(p1);
       const detail = asRecord(await taskDetail(p1, 'p1-ta'));
       const dispatchView = asRecord(detail['dispatch']);
-      /* 已由线 Y 领取: E is running tB, so the loop serves tA on E2; the literal is the line's own id. */
+      /* 已由线 Y 领取: the line that claimed is the receipt's own SessionRef. */
+      const claimedSessionId = asRecord(asRecord(asRecord(claimed)['value'])['sessionRef'])['sessionId'];
+      expect(claimedSessionId, 'the claim receipt names its line').toEqual(expect.any(String));
       expect(dispatchView['request'], 'graph/detail task 的派活领取').toMatchObject({
-        state: 'applied', outcome: { kind: 'applied', session: { sessionId: p1.lines.E2.ref.sessionId } },
+        state: 'applied', outcome: { kind: 'applied', session: { sessionId: claimedSessionId } },
       });
       expect(asRecord(dispatchView['claimedPlanRef'])['planId'], 'the claim-time Plan')
         .toBe(graph.plan.ref.planId);
@@ -239,13 +246,19 @@ describe('P2-T34 the Task card holds, dispatch request and waiting stop', () => 
     const { p1 } = await openT34();
     try {
       expect(await waitingActionCard(p1, 'p1-ta'), 'the dispatch card waits').toBeDefined();
+      /* gl-frozen.md:14 / :172 (b group): the named claim reads claimHold, so end tB's Run first (M-04,
+         `P2-T14-action-rounds.test.ts:131-132`); the claimed line comes from the receipt. Mutation
+         guarded: GL-2 reverted (a named task skips the hold) — the claim would skip the live node. */
+      await p1.endB();
       const claimed = await performClaim(p1.world, await p1.claimStep(p1.lines.E, p1.task.tA, 'p2-t34-card-claim'));
       expect(claimed).toMatchObject({ status: 'committed' });
       expect(await waitingActionCard(p1, 'p1-ta'), 'the claim closes the waiting card').toBeUndefined();
       const detail = asRecord(await taskDetail(p1, 'p1-ta'));
+      const claimedSessionId = asRecord(asRecord(asRecord(claimed)['value'])['sessionRef'])['sessionId'];
+      expect(claimedSessionId, 'the claim receipt names its line').toEqual(expect.any(String));
       expect(asRecord(asRecord(detail['dispatch'])['request']), '已由线').toMatchObject({
         state: 'applied', outcome: { kind: 'applied',
-          session: { sessionId: p1.lines.E2.ref.sessionId } },
+          session: { sessionId: claimedSessionId } },
       });
     } finally {
       await p1.close();

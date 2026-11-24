@@ -23,6 +23,7 @@ import type { ArchitectureProposalRef } from '../../src/contracts/architecture-p
 import { decisionSourceKey } from '../../src/contracts/goal-decisions.js';
 import type { DecisionCardV1 } from '../../src/core/work-graph/model/decision-contracts.js';
 import type { RoleLineOperationReadV1 } from '../../src/core/work-graph/views/role-line-operations-read.js';
+import { driveWorkflow } from '../helpers/A2-restart-fixture.js';
 import { graphWrite, plain } from '../helpers/AG2b-collaboration-fixture.js';
 import { PL_ADVISER_ROLE } from '../helpers/PL-consumption-fixture.js';
 import { byIdentityPrefix, commitBarrier, type CommitMatch } from '../helpers/S6A-commit-barrier.js';
@@ -484,6 +485,19 @@ describe('RL-24: the frozen proposal batch, the late proposal and the changed pi
       // Let that Work Run end before the break: the crash must leave the pending proposal, not a half-open turn.
       await cold.waitFor('the Ls line free before the crash', async () =>
         (await cold.host.readSession(ls.ref)).record.occupancy === null);
+      // Under `every_step` late1's node is still in its checks, and the crash abandons the Host with its drivers
+      // (S6A crash: only while nothing of the old Host runs on): an old Goal drive that runs those checks after the
+      // break goes on to claim late2, whose model call the world refuses ("the abandoned Host 1 started a model call
+      // after its crash"). So the same public `workflow/advance` names late1 before the break (GL-2,
+      // `gl-frozen.md:7`), and the row waits, as step 7 does, until late1's node no longer blocks a claim (the old
+      // Host's own drive may be the one running the checks: the named step then returns at the executing check).
+      await driveWorkflow(cold.host.ag2b, { schemaVersion: 1, goalRef: goal, flowId: 'rl24-3-late1-checks',
+        sessionHint: null, kind: 'select_work', taskId: 'rl24-3-late1-work' });
+      await cold.waitFor('the rl24-3 late1 node reduction', async () => {
+        const read = await cold.host.platform.nodeCommits.readNodeRows(cold.host.humanContext(), { goalRef: goal });
+        const late1Node = readReady(read, 'the node rows').rows.find(row => row.task.taskId === 'rl24-3-late1-work');
+        return late1Node !== undefined && late1Node.reduction !== null && !late1Node.pending;
+      });
       await cold.host.crash();
       // Second late, compatible proposal: it lands while the reopened run recovers, so both late proposals are
       // pending together if the restore is still below the pending read (the bug).
@@ -492,8 +506,8 @@ describe('RL-24: the frozen proposal batch, the late proposal and the changed pi
       const late2Task = await cold.adoptWorkPlan({ goal, label: 'rl24-3-late2', taskId: 'rl24-3-late2-work',
         line: ls, replies: proposalReplies('rl24-3-late2', pin2,
           [{ op: 'set_module_name', moduleId: S7D2_MODULE_IDS.region, name: 'source-late2' }], 'rl24-3 late 2') });
-      // The first late task interrupted by the crash is still pending, so the Goal's own start may pick it; drive
-      // the new task directly through the same public `workflow/advance` step (`runWork`), consuming the queued script.
+      // late1's node ended before the break, so nothing occupies the Goal; drive the new task directly through the
+      // same public `workflow/advance` step (`runWork`), consuming the queued script.
       await cold.runWork({ line: ls, task: late2Task, label: 'rl24-3-late2-run', replies: [] });
       await cold.waitFor('the rl24-3 late2 call', async () =>
         (await cold.host.scripted.requests(ls)).some(request =>

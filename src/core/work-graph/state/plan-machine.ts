@@ -651,8 +651,8 @@ export function futureChangeTraceProblem(
  * order runs guards 1..7; the first hit is returned (zero writes). Untraced
  * Tasks keep today's Lease ∅ / Reduction ∅ commit guards and are skipped here.
  * A Goal that is `paused` is not a reason: its unfinished Runs fail guard 1.
- * 决定 121-149：交表时传 `deferBusy`，守卫 1、2、2b 和守卫 4 的后半不判、留给采用，其余照判；规则和理由只写在下面
- * `deferBusy` 的说明里。
+ * 决定 121-149：交表时传 `deferBusy`，守卫 1、2、2b、4 的后半，以及守卫 3 对本候选要取消或替代的任务不判、留给采用，
+ * 其余照判；规则和理由只写在下面 `deferBusy` 的说明里。
  */
 export function tracedDispositionChangeProblem(input: {
   goalDesiredState: GoalDesiredState;
@@ -667,7 +667,8 @@ export function tracedDispositionChangeProblem(input: {
   taskKinds: ReadonlyMap<string, TaskKind>;
   /** 决定 121-149（lead 裁定 E08 C）：交表时为 true。守卫 1、2、2b 和 4 的“还占着租约”判的是执行还没停稳，它会自己停稳，
    *  或由人采用时 PS 先停（composition/plan-adoption-stop.ts）；模型在这一轮里改不了，留给采用时判。守卫 3（挂着没收的
-   *  让出等待）不会自己了结，照判，让秘书在回答里转告。其余守卫照判、顺序不变。采用时不传。 */
+   *  让出等待）对未被人的停取消、且不是本候选要取消或替代的任务的 yielded 等待照判，让秘书在回答里转告；本候选要
+   *  取消或替代的任务的守卫 3 延后到采用时判（自动采用前和人点采用时先收尾同来源链的等待）。其余守卫照判、顺序不变。采用时不传。 */
   deferBusy?: boolean;
 }): PlanGuardProblem | null {
   // Guard 8 (the same D-9 check as PLAN-05, checked once).
@@ -719,9 +720,12 @@ function tracedTaskProblem(
       if (blocker !== null) return { code: 'busy', detail: `task ${id}: reconcile run ${run.ref.runId} first: ${blocker}` };
     }
   }
-  // Guard 3: no unconsumed yielded wait; a cancelled wait (P17) passes.
+  // Guard 3: no unconsumed yielded wait; a cancelled wait (P17) passes. 交表时，本候选要取消或替代的任务延后到采用时判
+  // （见 deferBusy 的说明）。
   const selected = task.selectedRun;
-  if (selected !== null && selected.outcome === 'yielded' && selected.continuation !== undefined
+  const deferredTarget = deferBusy && changes.some((change) => change.taskId === id
+    && (change.to === 'cancelled' || change.to === 'superseded'));
+  if (!deferredTarget && selected !== null && selected.outcome === 'yielded' && selected.continuation !== undefined
     && selected.controlState?.desiredState !== 'cancelled') {
     return { code: 'busy', detail: `task ${id}: cancel or resume the yielded wait of run ${selected.ref.runId} first` };
   }

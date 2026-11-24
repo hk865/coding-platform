@@ -20,19 +20,19 @@ const PACK: ResolvedPromptPackV1 = PLATFORM_PROMPT_PACK_V1;
 // The five Skills after the P2 rewrite; every digest below is the merged template file's own sha256.
 const V2_TEMPLATES = {
     'base': 'cee15946501a2db933e00e1ea9954e8332542ab130268cd32c6962c91061958c',
-    'skill-platform-work': '77cab7d447ce03b66cd83f63a680303991ab6148b4ce38fb9eff106cd86c9093',
+    'skill-platform-work': 'efc4b4271039125cc2e87c6bff36d86e033d2ca32697e83116e696db7a721e12',
     'skill-platform-secretary': 'eb6dc54774b250b7bb022245f3783b91b42cb812d74d11595edaf6b217cc08cd',
-    'skill-platform-adviser': 'ca1623d443071551cf7c32c2ef1c164f5f7a2e625d58461c2042739254b8c015',
-    'skill-platform-scribe': '0f564aed3d684fa56026ad0d17b820f5c41e5ced948036ee2db61bce9a445190',
+    'skill-platform-adviser': '4cc218521264b9c96960ac5b3ffdfe6815a838be16ccd123da49ae7a841a1d6a',
+    'skill-platform-scribe': '9050ace0cf231d3caa36c5d8016e03e637b36a844281d9fc9a6ffff539b9d657',
     'skill-platform-reviewer': 'ff28c4a70368a6c321019d758180a7c7c71ab194fc5e62a6c847572c8655f10d',
 } as const;
 
 /** The five rewritten Skill texts with every block present, hand-written as one whole digest each. */
 const V1_SKILL_DIGESTS = {
-    'skill-platform-work': '1585a95cee6e904f90c3accb52c3d71e825c8bfe6e586b87c84a11fff32328fc',
+    'skill-platform-work': '19e676317516b2d20fe9b28df43dd0b106eff0f6dfb6aeb3ab205992c803c1e8',
     'skill-platform-secretary': 'ee2329dccae857e77d8dcbd614d6091144041ba7209950df6a8d715bd9a6b656',
-    'skill-platform-adviser': '278d4c8ee951df693cff45e4f294457c1eefa12ad47cfa0144d5def419f70dfb',
-    'skill-platform-scribe': 'fc615e5a55cffe47d370e6fe541632922aaa6e1d2a6bb2c20371bc9d75668673',
+    'skill-platform-adviser': '3e3886856373fd91bb95f14004e4fe6f28ffbb9e4bf94381e2e063a054032291',
+    'skill-platform-scribe': '5322ad792ec968e91fdacef87caa585fbe0b94c31e33740941692a680e6097f5',
     'skill-platform-reviewer': '72fec1ba0f0677467a7a6f76ae1f70fcf5e4525d8fe32179e01b614e3294397f',
 } as const;
 

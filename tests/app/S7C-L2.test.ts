@@ -18,6 +18,7 @@ import type { GoalRef } from '../../src/contracts/ledger.js';
 import type { DecisionCardV1, DecisionQueueReadV1 } from '../../src/core/work-graph/model/decision-contracts.js';
 import type { ToolCommitLookup, ToolCommitLookupInput } from '../../src/contracts/unknown-call-review.js';
 import * as lookupModule from '../../src/composition/tool-commit-lookup.js';
+import { driveWorkflow } from '../helpers/A2-restart-fixture.js';
 import { graphWrite, plain } from '../helpers/AG2b-collaboration-fixture.js';
 import { byIdentityPrefix, commitBarrier, type CommitHold } from '../helpers/S6A-commit-barrier.js';
 import { canonicalRefKey } from '../../src/core/work-graph/persistence/record-codecs.js';
@@ -378,12 +379,15 @@ describe('L2-gate-handoff', () => {
       // `decisionCause`; the card's own kind is the same identity the cause names.
       expect(blocked.source?.kind).toBe('handoff_approval');
 
-      // The formal dependent C waits through the same block; the unrelated work Task B is not blocked.
+      // The formal dependent C waits through the same block; the unrelated work Task B is not blocked by it. Under
+      // `every_step` a named advance waits for the one node in flight too (GL-2, `gl-frozen.md:7`), so B's only wait
+      // is A's node, still in its checks; B advances once that node ends (below).
       const dependent = await selectWorkAdvance(opened.world, opened.goal, c.taskId, 's7c-l2-gate-dependent');
       expect(dependent).toMatchObject({ state: 'waiting', next: null,
         reason: `l46_dependency_blocked: the Task ${c.taskId} waits on ${a.taskId}` });
       const unrelated = await selectWorkAdvance(opened.world, opened.goal, b.taskId, 's7c-l2-gate-unrelated');
-      expect(unrelated.state).toBe('advance');
+      expect(unrelated).toMatchObject({ state: 'waiting', next: null,
+        reason: `live_work: the Task ${a.taskId} is still in its checks; no new work is claimed until it ends` });
 
       // The answer commits, but its handoff decision commit is held: the card is answered and not applied.
       const hold = commitBarrier.hold(byIdentityPrefix('handoff.decide:'), 'the handoff decision commit');
@@ -404,5 +408,10 @@ describe('L2-gate-handoff', () => {
       // The applied card releases the source: the same named selection now advances.
       const released = await selectWorkAdvance(opened.world, opened.goal, a.taskId, 's7c-l2-gate-released');
       expect(released.state).toBe('advance');
+      // A's node ends through its own checks on the same public step; then the unrelated B advances.
+      await driveWorkflow(opened.world.ag2b, { schemaVersion: 1, goalRef: opened.goal, flowId: 's7c-l2-gate-source-end',
+        sessionHint: null, kind: 'select_work', taskId: a.taskId });
+      const unrelatedAfter = await selectWorkAdvance(opened.world, opened.goal, b.taskId, 's7c-l2-gate-unrelated-after');
+      expect(unrelatedAfter.state).toBe('advance');
     });
 });

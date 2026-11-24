@@ -107,10 +107,12 @@ import {
   type DeliveryFactsV1, type DeliveryResponseWaitV1,
 } from '../../core/work-graph/state/message-machine.js';
 import { interventionPlanningQueryRefs } from '../../contracts/query-job.js';
-import { candidateReplyTargetOf, candidateSourceLineOf, planSourceLineageOf, sentSystemRoundRef,
-  trustedSystemRoundOf, type CandidateSourceIncompleteV1, type CandidateSourceLineDeps }
+import { candidateReplyTargetOf, candidateSourceLineOf, hostContextIn, planSourceLineageOf, sentSystemRoundRef,
+  trustedSystemRoundOf, type CandidateSourceIncompleteV1, type CandidateSourceLineDeps,
+  type PlanSourceLineageDeps }
   from '../../core/work-graph/tasks/plan-lineage.js';
 import { deriveFuturePlanDelta } from '../../core/work-graph/tasks/plan-validation.js';
+import type { FutureDispositionChangeV1 } from '../../core/work-graph/state/plan-machine.js';
 import { sameRef } from '../../core/work-graph/state/ref-equality.js';
 import type { DeliveryEligibilityFactsV1 } from '../../core/work-graph/model/session-facts-contracts.js';
 import { createInterventionHandler, type InterventionClosingReasonV1 } from './intervention.js';
@@ -364,18 +366,19 @@ export function cancelReviewRoundStep(base: Base, run: RunSnapshot): WorkflowOpe
 }
 /**
  * PL §7.3.1: the one automation cancel before adopting a candidate that
- * replaces the Task of a yielded Run. The fixed identity names the candidate
- * (`proposalId`, `proposalRevision`) and the Run, and deliberately not the Run
- * revision: the same intent is read back even after the Run moved, so a
- * recovery never creates a second identity. The Run pin still carries the
- * exact revision this judgment read.
+ * cancels or supersedes the Task of a yielded Run. The fixed identity names the
+ * candidate (`proposalId`, `proposalRevision`) and the Run, and deliberately
+ * not the Run revision: the same intent is read back even after the Run moved,
+ * so a recovery never creates a second identity. The Run pin still carries the
+ * exact revision this judgment read. Only the Goal and the Run decide the
+ * identity, so the caller needs no other `Base` field.
  */
 export function cancelYieldedWaitStep(
-  base: Base,
+  base: Pick<Base, 'goalRef'>,
   proposal: Pick<PlanProposal, 'ref' | 'revision'>,
   run: RunSnapshot,
   reason: string,
-): WorkflowOperation {
+): SameChainYieldedWaitCancelOperation {
   const requestId = 'wf-auto:cancel-yielded:' + sha256Hex(canonicalJson({
     schemaVersion: 1, goalRef: base.goalRef,
     proposalId: proposal.ref.proposalId, proposalRevision: proposal.revision, runRef: run.ref,
@@ -1058,6 +1061,124 @@ export async function autoAdoptCandidate(owned: Owned, deps: AutoAdoptDependenci
     return { status: 'card', reason, source: await candidateCardSourceOf(owned, deps, candidate) };
   }
   return autoAdoptionOutcome(await deps.plans.applyPlanChange(automationContext(owned), request));
+}
+
+/**
+ * PL §7.3.1 (C22, r2 #18): the one judgment that finishes the yielded wait of a
+ * candidate's own source chain before that candidate is adopted. The affected
+ * Tasks come from the platform's plan delta: every `dispositionChanges` entry
+ * whose `to` is `cancelled` or `superseded`, never the model's
+ * `reason.affectedTaskIds` and never requiring a replacement Task. Only the
+ * yielded Run whose continuation waits on the candidate source chain's root is
+ * finished; another yielded Run, a wait already answered, a person's stop and an
+ * already queued/applied intent each keep their own exit.
+ *
+ * No source message, no cancelled/superseded Task in the delta or an underivable delta answers `none` before any
+ * control read (zero writes). The automatic adoption (`cancelBeforeAdoption`) and the person's adoption wrapper
+ * (`composition/plan-adoption-stop.ts`) share this judgment and its one delta filter (`cancelledOrSupersededOf`).
+ */
+export type SameChainYieldedWaitDependencies =
+  Pick<WorkflowDependencies, 'plans' | 'executions'> & {
+    messages?: WorkflowDependencies['messages'];
+    controls?: WorkflowDependencies['controls'];
+    queries?: PlanSourceLineageDeps['queries'];
+    readReview?: PlanSourceLineageDeps['readReview'];
+  };
+
+/** The one fixed cancel step the shared judgment may submit (`cancel_yielded_wait`). */
+export type SameChainYieldedWaitCancelOperation =
+  Extract<WorkflowOperation, { kind: 'cancel_yielded_wait' }>;
+
+export type SameChainYieldedWaitV1 =
+  | { kind: 'none' }
+  | { kind: 'cancel'; operation: SameChainYieldedWaitCancelOperation }
+  | { kind: 'wait'; reason: string }
+  | CoreRejection;
+
+/** The one delta filter of the judgment and of the person's adoption entry: cancelled/superseded, none if underivable. */
+export function cancelledOrSupersededOf(plan: PlanRevisionSnapshot, draft: PlanRevisionDraft): FutureDispositionChangeV1[] {
+  const delta = deriveFuturePlanDelta(plan, draft);
+  return delta.status !== 'supported' ? []
+    : delta.delta.dispositionChanges.filter(change => change.to === 'cancelled' || change.to === 'superseded');
+}
+
+export async function sameChainYieldedWaitOf(
+  ctx: CoreCallContext,
+  deps: SameChainYieldedWaitDependencies,
+  proposal: PlanProposal,
+  graph: TaskGraph,
+): Promise<SameChainYieldedWaitV1> {
+  const source = proposal.sourceMessageRef;
+  if (source === null) return { kind: 'none' };
+  const targets = cancelledOrSupersededOf(graph.plan, proposal.draft);
+  if (targets.length === 0) return { kind: 'none' };
+  // The Goal facts, the Run and the fixed control live in the candidate's
+  // workspace; a Host caller of another workspace is re-scoped to it.
+  const goalCtx = hostContextIn(ctx, proposal.ref.workspaceId);
+  // Only a Run whose continuation waits on this source chain's root is the one
+  // to cancel; another target (for example one that never ran) must not end the
+  // search.
+  const yielded: { change: FutureDispositionChangeV1; run: RunSnapshot }[] = [];
+  for (const change of targets) {
+    const row = graph.tasks.find(task => task.ref.taskId === change.taskId);
+    if (row === undefined || row.execution === null) continue;
+    const execution = await deps.executions.readExecution(goalCtx, row.execution);
+    if (execution.status !== 'ready') return readRejection(execution);
+    const run = execution.value.run;
+    if (run.outcome !== 'yielded' || run.continuation === undefined
+      || run.continuation.kind !== 'wait_reply'
+      || run.continuation.task.taskId !== change.taskId) continue;
+    yielded.push({ change, run });
+  }
+  if (yielded.length === 0) return { kind: 'none' };
+  const mailbox = deps.messages;
+  const queries = deps.queries;
+  if (mailbox === undefined || queries === undefined) {
+    return rejection('unsupported', 'the yielded-run cancel needs the mailbox and the planning Query read');
+  }
+  const lineage = await planSourceLineageOf(goalCtx,
+    { messages: mailbox, queries, plans: deps.plans,
+      ...(deps.readReview === undefined ? {} : { readReview: deps.readReview }) }, source);
+  if (lineage.status !== 'ready') return readRejection(lineage);
+  const waiting = yielded.find(entry =>
+    sameRef(entry.run.continuation!.messageRef, lineage.value.rootMessage));
+  if (waiting === undefined) return { kind: 'none' };
+  const run = waiting.run;
+  const waitRef = run.continuation!.messageRef;
+  const wait = await mailbox.readMessage(hostContextIn(goalCtx, waitRef.workspaceId), waitRef);
+  if (wait.status !== 'ready') return readRejection(wait);
+  if (wait.value.response !== null
+    || waitStateOf(wait.value, waitFactsOfRecord(wait.value)).state !== 'open') return { kind: 'none' };
+  const controls = deps.controls;
+  if (controls === undefined) return rejection('unsupported', 'the control owner is not installed');
+  // §7.3.1 step 2: a person's pause/cancel is never overwritten. A pointer read
+  // failure keeps its real exit and submits nothing.
+  const pointerRef = run.controlState?.intentRef;
+  let pointer: ControlIntentSnapshotV1 | null = null;
+  if (pointerRef !== undefined) {
+    const pointerRead = await controls.readControl(goalCtx, pointerRef);
+    if (pointerRead.status === 'ready') pointer = pointerRead.value;
+    else if (pointerRead.status !== 'not_found') return readRejection(pointerRead);
+  }
+  if (run.controlState?.desiredState === 'cancelled') return { kind: 'none' };
+  if (reworkFenceOf(run, pointer) === 'human_only') {
+    return { kind: 'wait',
+      reason: 'plan_candidate_waiting: a person stopped this Run; the platform does not cancel it' };
+  }
+  // §7.3.1 step 3: read the one fixed intent before submitting; `not_found` alone submits.
+  const step = cancelYieldedWaitStep({ goalRef: proposal.goalRef }, proposal, run,
+    `task ${waiting.change.taskId} is ${waiting.change.to} by plan candidate `
+      + `${proposal.ref.proposalId}@${proposal.revision}`);
+  const intent = await controls.readControl(goalCtx,
+    controlIntentRefFor(WORKFLOW_AUTOMATION_ACTOR,
+      { projectId: proposal.ref.projectId, workspaceId: proposal.ref.workspaceId },
+      step.request.meta.requestId));
+  if (intent.status === 'ready') {
+    if (intent.value.status === 'queued' || intent.value.status === 'applied') return { kind: 'none' };
+    return { kind: 'wait', reason: `plan_candidate_waiting: the cancel intent is ${intent.value.status}` };
+  }
+  if (intent.status !== 'not_found') return readRejection(intent);
+  return { kind: 'cancel', operation: step };
 }
 
 function failedCardRefsFromInternal(
@@ -1771,6 +1892,7 @@ export function createWorkflow(deps: WorkflowDependencies & {
     owned: Owned, base: Base, goal: GoalSnapshot, planRef: PlanRevisionRef, task: RuntimeTask, row: TaskRow,
     binding: Binding, afterRunRef: RunRef,
     continuation: { requeue?: WorkflowSessionRequeue; review?: WorkflowSessionReview },
+    servedRequest?: { ref: ActionRequestRef; revision: number },
   ): Promise<WorkflowAdvanceResult | { kind: 'line_busy'; reason: string }> {
     const requeue = continuation.requeue;
     const review = continuation.review;
@@ -1847,7 +1969,7 @@ export function createWorkflow(deps: WorkflowDependencies & {
     if (recovered !== null) return advancing(null, makePerform(base, recovered));
     const sessionRef: SessionRef = { projectId: owned.projectId, sessionId: chosen.card.record.ref.sessionId };
     const built = await buildClaimOperation(owned, base, goal, planRef, task, binding,
-      sessionRef.sessionId, chosen.card.record.revision, true, undefined, requeue, review);
+      sessionRef.sessionId, chosen.card.record.revision, true, undefined, requeue, review, servedRequest);
     if ('rejection' in built) return built.rejection;
     return advancing(null, makePerform({ ...base, sessionHint: sessionRef }, built.operation));
   }
@@ -2184,8 +2306,8 @@ export function createWorkflow(deps: WorkflowDependencies & {
   /**
    * N1/§2.8: an `every_step` Goal takes one work node at a time. Its Goal loop selects nothing new while a completed
    * node awaits the person's commit, or while a Run of its active Plan is live / under review / not yet settled. The
-   * card source's `TaskClaimabilityPort` reads the SAME judgment, including for an explicit Task selection (which
-   * skips it as a work handle): the occupancy is a Goal fact, never a Task one.
+   * card source's `TaskClaimabilityPort` reads the SAME judgment, including for an explicit Task selection:
+   * the occupancy is a Goal fact, never a Task one.
    */
   async function readGoalNodeOccupancy(owned: Owned, goal: GoalSnapshot):
   Promise<ReadResult<{ reason: string; basis: GoalWaitBasisV1 } | null>> {
@@ -2416,16 +2538,51 @@ export function createWorkflow(deps: WorkflowDependencies & {
     /**
      * The shared `claimHoldOf` read, named right before an actual claim. A Goal-level pass remembers the wait and
      * goes on with the next Task; the read-only projection reports the claim not yet possible. A named Task that the
-     * caller is about to claim builds the claim instead: the claim owner's own guard decides at its commit.
+     * caller is about to claim builds the claim instead: the claim owner's own guard decides at its commit. A named
+     * Task's step that is not that claim (`stepIsClaim: false`, the rework arm's gate step) reads the hold first.
      */
-    const claimHoldBlocked = async (): Promise<TaskClaimDecision | null> => {
-      if (claimAttempt && base.taskId !== null) return null;
+    const claimHoldBlocked = async (stepIsClaim = true): Promise<TaskClaimDecision | null> => {
+      if (stepIsClaim && claimAttempt && base.taskId !== null) return null;
       const hold = await claimHoldOf(owned, base, goal, task.taskId);
       if (hold === null) return null;
       if ('status' in hold) return { kind: 'rejection', rejection: hold };
       return base.taskId === null
         ? { kind: 'skip', remembered: hold }
         : { kind: 'waiting', reason: hold.reason, basis: hold.basis, pick: null, atGoal: 'return' };
+    };
+    /**
+     * N1: the Goal's node occupancy applies to both claim arms. A Goal-level pass remembers the wait and goes on with
+     * the next Task; a named Task waits with the basis, so the watch that named it wakes on the same records.
+     */
+    const nodeOccupancyBlocked = (): TaskClaimDecision | null => {
+      if (claimHold === null) return null;
+      return base.taskId === null
+        ? { kind: 'skip', remembered: claimHold }
+        : { kind: 'waiting', reason: claimHold.reason, basis: claimHold.basis, pick: null, atGoal: 'return' };
+    };
+    const taskRef: TaskTriple = { projectId: owned.projectId, goalId: base.goalRef.goalId, taskId: task.taskId };
+    /**
+     * §3.3 items 2, 5 and 6 (`book-7c.md`): an overlapping Task is dispatched only through its module gate.
+     * The non-overlapping segment was already tried; the gate is read at this Task's current basis before any
+     * Session is chosen, for the ordinary and the requeue claim alike. A conflicting Run without a real start
+     * cursor leaves the advance waiting/incomplete. The gate owner is an optional seam like the other narrow
+     * owner ports: without it an old world keeps the pre-gate selection, and the real composition installs N's port.
+     */
+    const overlapGateBlocked = async (): Promise<TaskClaimDecision | null> => {
+      const gateDecision = await readOverlapGateDecision(owned, goal, graph, task, row, overlap, taskRef);
+      if (gateDecision.status !== 'ready') return { kind: 'rejection', rejection: readRejection(gateDecision) };
+      if (gateDecision.value.kind === 'step') {
+        return { kind: 'step', step: gateDecision.value.step, pick: null,
+          blocker: { kind: 'module_gate', reason: gateDecision.value.reason } };
+      }
+      if (gateDecision.value.kind === 'incomplete' || gateDecision.value.kind === 'waiting') {
+        // §3.3 item 7: the gate's wait names its own release plus the conflicting Run's end and the note reads.
+        const basis = goalWaitBasisOf(goal, ['overlap_gate_pending'],
+          ['Run', 'TaskLease', 'NoteHead', 'NoteVersion', 'CurrentPointer', 'ModuleOverlapGate']);
+        return { kind: 'waiting', reason: gateDecision.value.reason, basis, pick: null,
+          atGoal: 'remember', blocker: { kind: 'module_gate', reason: gateDecision.value.reason } };
+      }
+      return null;
     };
     // C8 (§4.3 "Workflow", §15.2 5.8, 5.9): the Task's automation verdict first. A `requeue`
     // (or a `stopped/budget_exhausted` the binding's larger budget lifts) performs the
@@ -2482,9 +2639,8 @@ export function createWorkflow(deps: WorkflowDependencies & {
     if (row.requeueRef !== undefined && row.execution !== null) {
       if (row.failure?.automation.verdict.kind !== 'claim_requeued') return { kind: 'skip' };
       if (!row.eligibility.eligible) return { kind: 'skip' };
-      if (claimHold !== null) {
-        return { kind: 'skip', remembered: { reason: claimHold.reason, basis: claimHold.basis } };
-      }
+      const occupancyHold = nodeOccupancyBlocked();
+      if (occupancyHold !== null) return occupancyHold;
       const requeueHold = await claimHoldBlocked();
       if (requeueHold !== null) return requeueHold;
       const assignment = revisionAssignments(graph.plan).find((candidate) => candidate.taskId === task.taskId);
@@ -2494,11 +2650,18 @@ export function createWorkflow(deps: WorkflowDependencies & {
         return { kind: 'rejection', rejection: rejection('unsupported',
           `no trusted Workflow binding matches workspace ${goal.workspaceRef.workspaceId} and role ${assignment.role}`) };
       }
+      const requeueGate = await overlapGateBlocked();
+      // c3rv GL: a named Task's gate step is not its claim, so the hold `requeueHold` left to the claim owner decides.
+      if (requeueGate?.kind === 'step' && claimAttempt && base.taskId !== null) {
+        return await claimHoldBlocked(false) ?? requeueGate;
+      }
+      if (requeueGate !== null) return requeueGate;
       // K3 L12: the continuation Session and the close start from the record's
       // most recent holder (the original Run when it has no rounds).
       const holder = await continuationHolder(owned, row.execution);
       const claimed = await claimContinuation(owned, base, goal, graph.plan.ref, task, row, binding, holder,
-        { requeue: { requeueRef: row.requeueRef, budget: row.requeueBudget ?? null } });
+        { requeue: { requeueRef: row.requeueRef, budget: row.requeueBudget ?? null } },
+        priorityRequest === null ? undefined : { ref: priorityRequest.ref, revision: priorityRequest.revision });
       if ('kind' in claimed) return lineBusyWait(claimed.reason, null);
       const claimedNext = claimed.status === 'ready' ? claimed.value.next : null;
       return { kind: 'result', result: claimed, waitFallback: 'the selected Task waits',
@@ -2546,9 +2709,8 @@ export function createWorkflow(deps: WorkflowDependencies & {
     if (row.execution !== null && row.effectivePhase !== 'ready') return { kind: 'skip' };
     if (row.effectivePhase === 'satisfied' || row.effectivePhase === 'failed') return { kind: 'skip' };
     if (!row.eligibility.eligible) return { kind: 'skip' };
-    if (claimHold !== null) {
-      return { kind: 'skip', remembered: { reason: claimHold.reason, basis: claimHold.basis } };
-    }
+    const occupancyHold = nodeOccupancyBlocked();
+    if (occupancyHold !== null) return occupancyHold;
     const assignment = revisionAssignments(graph.plan).find((candidate) => candidate.taskId === task.taskId);
     if (assignment === undefined) return { kind: 'skip' };
     const binding = bindingForRole(config, owned.projectId, goal.workspaceRef.workspaceId, assignment.role);
@@ -2556,25 +2718,8 @@ export function createWorkflow(deps: WorkflowDependencies & {
       return { kind: 'rejection', rejection: rejection('unsupported',
         `no trusted Workflow binding matches workspace ${goal.workspaceRef.workspaceId} and role ${assignment.role}`) };
     }
-    const taskRef: TaskTriple = { projectId: owned.projectId, goalId: base.goalRef.goalId, taskId: task.taskId };
-    // §3.3 items 2, 5 and 6 (`book-7c.md`): an overlapping Task is dispatched only through its module gate.
-    // The non-overlapping segment was already tried; the gate is read at this Task's current basis before any
-    // Session is chosen. A conflicting Run without a real start cursor leaves the advance waiting/incomplete.
-    // The gate owner is an optional seam like the other narrow owner ports: without it an old world keeps the
-    // pre-gate selection, and the real composition installs N's port.
-    const gateDecision = await readOverlapGateDecision(owned, goal, graph, task, row, overlap, taskRef);
-    if (gateDecision.status !== 'ready') return { kind: 'rejection', rejection: readRejection(gateDecision) };
-    // §3.3 item 7: the gate's wait names its own release plus the conflicting Run's end and the note reads.
-    const gateWait = (): GoalWaitBasisV1 => goalWaitBasisOf(goal, ['overlap_gate_pending'],
-      ['Run', 'TaskLease', 'NoteHead', 'NoteVersion', 'CurrentPointer', 'ModuleOverlapGate']);
-    if (gateDecision.value.kind === 'step') {
-      return { kind: 'step', step: gateDecision.value.step, pick: null,
-        blocker: { kind: 'module_gate', reason: gateDecision.value.reason } };
-    }
-    if (gateDecision.value.kind === 'incomplete' || gateDecision.value.kind === 'waiting') {
-      return { kind: 'waiting', reason: gateDecision.value.reason, basis: gateWait(), pick: null,
-        atGoal: 'remember', blocker: { kind: 'module_gate', reason: gateDecision.value.reason } };
-    }
+    const gateHold = await overlapGateBlocked();
+    if (gateHold !== null) return gateHold;
     const ordinaryHold = await claimHoldBlocked();
     if (ordinaryHold !== null) return ordinaryHold;
     // A persisted yield fixes the originating Session before any default
@@ -3167,90 +3312,29 @@ export function createWorkflow(deps: WorkflowDependencies & {
   }
 
   /**
-   * PL §7.3.1: before the adopt step of a candidate that replaces the Task of a
-   * yielded Run still waiting on the candidate's source chain, read the pointer
-   * and the existing cancel intent first. A person's stop comes first; a queued
-   * or applied intent already fences the continuation; only a completed
-   * `not_found` submits the one fixed identity. The Run pin is the revision this
-   * judgment read.
+   * PL §7.3.1: before the adopt step of a candidate that cancels or supersedes a
+   * Task whose Run yielded, the shared `sameChainYieldedWaitOf` judgment answers
+   * `none` (adopt as before), the one fixed cancel step, a candidate wait, or the
+   * read refusal. Only the wait on this candidate's own source chain is finished;
+   * another wait, a person's stop and an existing queued intent keep their exits.
    */
   async function cancelBeforeAdoption(
     owned: Owned, base: Base, goal: GoalSnapshot, graph: TaskGraph, proposal: PlanProposal,
   ): Promise<WorkflowAdvanceResult | null> {
-    const source = proposal.sourceMessageRef;
-    if (source === null) return null;
-    const affected = proposal.reason.affectedTaskIds ?? [];
-    const replacedTasks = proposal.draft.tasks.filter(task => task.disposition === 'superseded'
-      && task.replacedByTaskId !== undefined && task.replacedByTaskId !== null
-      && affected.includes(task.taskId));
-    if (replacedTasks.length === 0) return null;
-    // Only a Run whose continuation waits on this source chain's root is the
-    // one to cancel; another replaced Task (for example one that never ran)
-    // must not end the search.
-    const yielded: { task: RuntimeTask; run: RunSnapshot }[] = [];
-    for (const candidate of replacedTasks) {
-      const row = graph.tasks.find(task => task.ref.taskId === candidate.taskId);
-      if (row === undefined || row.execution === null) continue;
-      const execution = await deps.executions.readExecution(owned.ctx, row.execution);
-      if (execution.status !== 'ready') return readRejection(execution);
-      const candidateRun = execution.value.run;
-      if (candidateRun.outcome !== 'yielded' || candidateRun.continuation === undefined
-        || candidateRun.continuation.kind !== 'wait_reply'
-        || candidateRun.continuation.task.taskId !== candidate.taskId) continue;
-      yielded.push({ task: candidate, run: candidateRun });
+    const judged = await sameChainYieldedWaitOf(owned.ctx, {
+      plans: deps.plans,
+      executions: deps.executions,
+      ...(deps.messages === undefined ? {} : { messages: deps.messages }),
+      ...(deps.controls === undefined ? {} : { controls: deps.controls }),
+      ...(deps.consultations === undefined ? {} : { queries: deps.consultations.queries }),
+      ...(deps.unknownCallReviews === undefined ? {} : { readReview: deps.unknownCallReviews.readReview }),
+    }, proposal, graph);
+    if (!('kind' in judged)) return readRejection(judged);
+    if (judged.kind === 'none') return null;
+    if (judged.kind === 'wait') {
+      return await candidateWaitAfterCancel(owned, base, goal, proposal, judged.reason);
     }
-    if (yielded.length === 0) return null;
-    const mailbox = deps.messages;
-    const queries = deps.consultations?.queries;
-    if (mailbox === undefined || queries === undefined) {
-      return rejection('unsupported', 'the yielded-run cancel needs the mailbox and the planning Query read');
-    }
-    const lineage = await planSourceLineageOf(owned.ctx,
-      { messages: mailbox, queries, plans: deps.plans,
-        ...(deps.unknownCallReviews === undefined
-          ? {} : { readReview: deps.unknownCallReviews.readReview }) }, source);
-    if (lineage.status !== 'ready') return readRejection(lineage);
-    const waiting = yielded.find(entry =>
-      sameRef(entry.run.continuation!.messageRef, lineage.value.rootMessage));
-    if (waiting === undefined) return null;
-    const replaced = waiting.task;
-    const run = waiting.run;
-    if (run.continuation === undefined) return null;
-    const waitRef = run.continuation.messageRef;
-    const wait = await mailbox.readMessage(ownedInWorkspace(owned, waitRef.workspaceId).ctx, waitRef);
-    if (wait.status !== 'ready') return readRejection(wait);
-    if (wait.value.response !== null
-      || waitStateOf(wait.value, waitFactsOfRecord(wait.value)).state !== 'open') return null;
-    const controls = deps.controls;
-    if (controls === undefined) return rejection('unsupported', 'the control owner is not installed');
-    // §7.3.1 step 2: a person's pause/cancel is never overwritten. A pointer read
-    // failure keeps its real exit and submits nothing.
-    const pointerRef = run.controlState?.intentRef;
-    let pointer: ControlIntentSnapshotV1 | null = null;
-    if (pointerRef !== undefined) {
-      const pointerRead = await controls.readControl(owned.ctx, pointerRef);
-      if (pointerRead.status === 'ready') pointer = pointerRead.value;
-      else if (pointerRead.status !== 'not_found') return readRejection(pointerRead);
-    }
-    if (run.controlState?.desiredState === 'cancelled') return null;
-    if (reworkFenceOf(run, pointer) === 'human_only') {
-      return await candidateWaitAfterCancel(owned, base, goal, proposal,
-        'plan_candidate_waiting: a person stopped this Run; the platform does not cancel it');
-    }
-    // §7.3.1 step 3: read the one fixed intent before submitting; `not_found` alone submits.
-    const step = cancelYieldedWaitStep(base, proposal, run,
-      `task ${replaced.taskId} is superseded by plan candidate ${proposal.ref.proposalId}@${proposal.revision}`);
-    if (step.kind !== 'cancel_yielded_wait') return rejection('invalid', 'the cancel step kind changed');
-    const intent = await controls.readControl(owned.ctx,
-      controlIntentRefFor(WORKFLOW_AUTOMATION_ACTOR,
-        { projectId: owned.projectId, workspaceId: owned.workspaceId }, step.request.meta.requestId));
-    if (intent.status === 'ready') {
-      if (intent.value.status === 'queued' || intent.value.status === 'applied') return null;
-      return await candidateWaitAfterCancel(owned, base, goal, proposal,
-        `plan_candidate_waiting: the cancel intent is ${intent.value.status}`);
-    }
-    if (intent.status !== 'not_found') return readRejection(intent);
-    return advancing(null, makePerform(base, step));
+    return advancing(null, makePerform(base, judged.operation));
   }
 
   /** Read-only deterministic first-step selection shared by `select_work`. */
@@ -3306,13 +3390,9 @@ export function createWorkflow(deps: WorkflowDependencies & {
     // nothing while a completed node waits for the person's commit. While a Run of its active Plan is live, a node is
     // still under review (NR-24) or a node whose Run ended has not settled its checks, the loop only claims nothing
     // new: that node's own review, checks and settlement still advance here (after a restart no watch drives them).
-    // A Task-scoped handle is not held: it ends once its own Task is satisfied.
-    let claimHold: { reason: string; basis: GoalWaitBasisV1 } | null = null;
-    if (base.taskId === null) {
-      const occupancy = await readGoalNodeOccupancy(owned, goal);
-      if (occupancy.status !== 'ready') return readRejection(occupancy);
-      claimHold = occupancy.value;
-    }
+    const occupancy = await readGoalNodeOccupancy(owned, goal);
+    if (occupancy.status !== 'ready') return readRejection(occupancy);
+    const claimHold = occupancy.value;
 
     // An explicit Task selection ends THIS work handle once that Task is
     // satisfied; it never silently switches to another Task of the same Goal.
@@ -3371,16 +3451,16 @@ export function createWorkflow(deps: WorkflowDependencies & {
           const recipient: SessionRef = cardAnswer && isMessageAgentSender(original.value.sender)
             ? original.value.sender.sessionRef
             : original.value.recipient as SessionRef;
-          // 决定 121-149（MVP-BEHAVIOR B20“人答卡只保存答案，不续开模型轮”，PL 规格 :332 续轮发给原规划线）：
-          // 只有参谋、秘书线收到这条 `planresume` 系统轮才发续轮；执行者线收到的是 text 形状，没有规划说明和提交工具，
-          // 只会落到 invalid_plan；它反问出的卡，人答完只保存答案，要继续就再发消息。这里只判收件职责的资格，
+          // 决定 121-149（PL 规格 :332 续轮发给原规划线）：全部答完后发一次 `planresume` 系统轮，收件线是参谋、
+          // 秘书或执行者时都发。执行者线收到的是规划形状（`planningAnswerShapeOf` 只管 `planresume` 这一种系统轮），
+          // 这一轮只写候选、不领取不采用，交目标循环审阅和采用；其他职责不续轮。这里只判收件职责的资格，
           // 不再把尚未发送的 round 交给要求已核结果的形状函数。职责的读法同干预入口（读不出或 unknown 当没有职责）。
           const line = await deps.sessions.readSession(owned.ctx, recipient, 'project');
           if (line.status !== 'ready') return readRejection(line);
           const dutyRead = deps.sessionDuty === undefined ? null : await deps.sessionDuty(line.value.record.role, owned.ctx);
           if (dutyRead !== null && dutyRead.status !== 'ready') return readRejection(dutyRead);
           const duty = dutyRead === null || dutyRead.value === 'unknown' ? null : dutyRead.value;
-          if (duty !== 'adviser' && duty !== 'secretary') continue;
+          if (duty !== 'adviser' && duty !== 'secretary' && duty !== 'executor') continue;
           return advancing(null, makePerform(base, { kind: 'send_system_round', request: {
             round, recipient, text: requestId.value,
             // A card-answer round's source is the person-addressed card: it locates the original round but

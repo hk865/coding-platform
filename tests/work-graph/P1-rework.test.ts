@@ -11,7 +11,8 @@
  * admitted again and the ended round refused).
  *
  * Mutations (lead): R1 the rework refuses a `query_run` caller; R2 each of the refusals deleted in turn, the duty
- * check (only an adviser) among them (T-4); R3 the reply handler's read right is not honoured; R4 the approved
+ * check (only an adviser) among them (T-4; since P3 also the rework owner's grant check, `request_rework` dropped);
+ * R3 the reply handler's read right is not honoured; R4 the approved
  * application reads the requester's Run; R5 the `system` rework no longer refuses on a held scribe reason; T-5 the
  * rework admission guards stay out of the commit; C7 the review fix removed (the receipt lookup before the
  * admission), for the rework and for the recheck. The M rows follow the named mutations (`cp1-mut-rulings.md`): M4-11
@@ -173,6 +174,9 @@ describe('rejects: R2, T-4, a basis or a round that may not ask; no rework is wr
     const refused = await reworkTC(p1, s, null, 'r2-duty-s-rework');
     expect(refused).toMatchObject({ status: 'rejected', code: 'forbidden' });
     if (refused.status === 'rejected') expect(refused.reason).toContain('adviser planning round');
+    // P3-3 (`p3-frozen.md:3`, review ruling `c3rv-rulings.md` P3): S's round is not granted `request_rework`; the
+    // grant check refuses before the duty check, inside the same sentence.
+    if (refused.status === 'rejected') expect(refused.reason).toContain('这一轮没有授予这个动作');
     expect(await reworkEntries(p1, p1.task.tC)).toEqual([]);
   }, LONG);
 

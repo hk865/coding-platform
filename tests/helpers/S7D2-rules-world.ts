@@ -10,7 +10,8 @@
  *   precise-input dependency), G set `every_step` (`goals/settings/set`), and an adviser line opened on G
  *   (`role-lines/open`; `later-rows-merged.md:217`: a secretary's member needs a responsible adviser);
  * - the four autonomy-rule routes (`autonomy-rules`, `autonomy-rules/create|revoke|update`, v4 `:6421–:6424`) and
- *   the limits write (`projects/role-limits/set`).
+ *   the limits write (`projects/role-limits/set`);
+ * - the S7C world's `checks: true`, so a node of G can end through its own checks (`endS7C1Node`).
  * Work Runs call the real tool through `askS7D2Member` (tests/helpers/S7D2-role-line-world.ts). No record, context
  * or store is touched; a route the tree does not publish answers its HTTP error, which a write step throws naming
  * the status and body, never reading it as a business answer. Callers close their own instance.
@@ -51,7 +52,7 @@ export type S7D2RulesWorld = S7C1World & {
 
 export async function openS7D2RulesWorld(options: { backend?: S6ABackend; tasks: readonly S7D2RulesTask[];
   dependsOn?: PlanRevisionDraft['executionDag']['dependsOn'] }): Promise<S7D2RulesWorld> {
-  const s7c = await openS7C1World({ backend: options.backend ?? 'memory',
+  const s7c = await openS7C1World({ backend: options.backend ?? 'memory', checks: true,
     extraBindings: [{ binding: { id: 's6a-secretary-binding' } as WorkbenchRuntimeBinding, mergeTools: ['create_member'] }],
     configure: configuration => {
       const executor = configuration.bindings.find(binding => binding.id === 's7c-executor-binding');

@@ -261,7 +261,7 @@ async function linkExecutor(platform: Platform, ctx: CoreCallContext, sessionRef
 type WindowPort = { isOpen: (ctx: never, input: { projectRef: { projectId: string } }) =>
   Promise<{ status: 'ready'; value: { open: boolean; operationRef: null; revision: null } }> };
 export async function openProposalWorld(options: { backend?: 'memory' | 'sqlite';
-  batchWindow?: boolean | WindowPort; roleSpecLine?: boolean } = {}): Promise<ProposalWorld> {
+  batchWindow?: boolean | WindowPort; roleSpecLine?: boolean; checks?: boolean } = {}): Promise<ProposalWorld> {
   let staff: S7C1World | undefined;
   const captured: { service: ArchitectureProposalService | null } = { service: null };
   const commits = { count: 0 };
@@ -308,6 +308,7 @@ export async function openProposalWorld(options: { backend?: 'memory' | 'sqlite'
     staff = await openS7C1World({
       ...(options.backend === undefined ? {} : { backend: options.backend }),
       ...(options.roleSpecLine === true ? { extraBindings: [roleSpecAdviserExtra()] } : {}),
+      ...(options.checks === true ? { checks: true } : {}),
       configure: (configuration) => {
         const binding = configuration.bindings.find(candidate => candidate.id === 's7c-adviser-binding');
         if (binding === undefined) throw new Error('S8C proposal world: the adviser binding is missing');

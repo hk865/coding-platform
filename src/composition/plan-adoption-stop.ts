@@ -18,6 +18,17 @@
  * raw refusal is returned unchanged. The caller calls `plans/apply` again after
  * the Runs end, and that call's real apply commits (PS §3.5-§3.7).
  *
+ * Before stopping live Runs, the wrapper finishes the yielded wait on the
+ * candidate's own source chain through the same judgment the automatic adoption
+ * uses (`sameChainYieldedWaitOf`, injected as `finishYieldedWait`). The judgment
+ * names the one fixed `cancel_yielded_wait` step; this wrapper submits it under
+ * the platform automation identity and never delivers it (a yielded Run has no
+ * live handle). A submit that committed makes the same request judge the adoption
+ * again in this one call; a non-`busy` answer is returned as-is (normally
+ * `committed`). Only a still-`busy` answer continues into the live-Run stop
+ * below. No cancel step (`none`, a person's stop, an already queued/applied
+ * intent) and a read refusal keep the existing path.
+ *
  * A refused control write is classified against the deterministic intent of the
  * same identity (PS §3.4.1): an existing queued intent is delivered, an ended
  * Run or a non-queued intent is left to the next call, and a `busy` refusal of
@@ -27,19 +38,27 @@
  * most three submissions including the first. Every other refusal is returned
  * as-is; a delivery refusal is returned as-is and the already-written control
  * stays for the next idempotent replay.
+ *
+ * Known limit (lead 11-24, c3qc): the clicked version is checked only where the judgment reads the candidate, and
+ * the yielded-wait cancel guards only the Run revision, the synchronous record store keeping that read and the commit
+ * from interleaving; a candidate replaced after the read still leaves the cancel, and adopting again returns the
+ * adopter's own ruling, the same "control written, adoption not" state as PS-SPEC §8 item 3.
  */
 import { rejected } from '../contracts/core/rejections.js';
+import type { CoreCallContext } from '../contracts/core/call-context.js';
 import type { ControlIntentRef } from '../contracts/control-intent.js';
 import type { RunSnapshot } from '../contracts/dispatch.js';
 import type { CoreRejection, WriteResult } from '../contracts/core/results.js';
-import { reworkActorClassOf } from '../contracts/task-requeue.js';
+import { reworkActorClassOf, WORKFLOW_AUTOMATION_ACTOR } from '../contracts/task-requeue.js';
 import type { SubmittedControl } from '../contracts/control-intent.js';
 import type { RuntimeExecutionPort } from '../core/agent-runtime/ports.js';
+import { hostSystemContext } from '../core/work-graph/model/platform-check-context.js';
 import type { ExecutionReadPort } from '../core/work-graph/model/execution-read-contracts.js';
-import type { PlanServicePort, PlanTaskPort } from '../core/work-graph/model/plan-contracts.js';
+import type { PlanServicePort, PlanProposalRef, PlanTaskPort } from '../core/work-graph/model/plan-contracts.js';
 import { controlIntentRefFor } from '../core/work-graph/tasks/control-service.js';
 import type { RunControlPort } from '../core/work-graph/tasks/control-contracts.js';
 import { asWriteRejection } from '../core/work-graph/tasks/plan-result-helpers.js';
+import type { SameChainYieldedWaitV1 } from '../business/workflow/workflow.js';
 
 /** PS §3.4: the fixed control reason of a stop caused by an adoption. */
 const STOPPING_AFFECTED_WORK = 'stopping_affected_work';
@@ -58,6 +77,16 @@ export type PlanAdoptionStopDependencies = {
   runtime: Pick<RuntimeExecutionPort, 'deliverControl'>;
   /** The exact Run read the expected control pin comes from. */
   readRun: ExecutionReadPort['readExecution'];
+  /**
+   * The shared same-chain yielded-wait judgment, wired by the composition root
+   * with `sameChainYieldedWaitOf` (`business/workflow/workflow.ts`): it reads the
+   * candidate and the adopted Plan and answers `none`, the one fixed cancel step,
+   * a candidate wait, or a read refusal. This wrapper submits that step under the
+   * platform automation identity and never delivers it. `stale`: the candidate is
+   * no longer `candidate` at the clicked revision.
+   */
+  finishYieldedWait: (ctx: CoreCallContext, proposalRef: PlanProposalRef, expectedProposalRevision: number) =>
+    Promise<SameChainYieldedWaitV1 | { kind: 'stale' }>;
 };
 
 type StopOutcome =
@@ -80,8 +109,31 @@ export function createPlanAdoptionStop(deps: PlanAdoptionStopDependencies): Plan
     const actor = principal.actor;
 
     const proposalRef = request.input.proposalRef;
+    // PL §7.3.1 (C22): finish the yielded wait of this candidate's own source
+    // chain before stopping live Runs. The shared judgment names the one fixed
+    // `cancel_yielded_wait` step; this wrapper submits it as the platform
+    // automation actor in the candidate's workspace and never delivers it (a
+    // yielded Run has no live handle). A committed cancel lets the same request
+    // judge the adoption again in this one call; only a still-busy answer falls
+    // through to the existing live-Run path. No cancel step (`none`, a person's
+    // stop, an already queued/applied intent) and a read refusal keep that path
+    // too; the control owner's own refusal is returned as-is. The click names one
+    // candidate version: once it is gone, the adopter's own latest ruling ends this
+    // call. The latest `busy` is the one returned when nothing is stopped.
+    let busy = applied;
+    const finished = await deps.finishYieldedWait(ctx, proposalRef, request.input.expectedProposalRevision);
+    if ('kind' in finished && finished.kind === 'stale') return await deps.apply(ctx, request);
+    if ('kind' in finished && finished.kind === 'cancel') {
+      const submitted = await deps.controls.submitControl(
+        hostSystemContext({ ...ctx, workspaceId: proposalRef.workspaceId }, WORKFLOW_AUTOMATION_ACTOR),
+        finished.operation.request);
+      if (submitted.status !== 'committed') return submitted;
+      const retried = await deps.apply(ctx, request);
+      if (retried.status !== 'rejected' || retried.code !== 'busy') return retried;
+      busy = retried;
+    }
     const targets = await deps.readTargets(ctx, proposalRef);
-    if (targets.status !== 'ready') return applied;
+    if (targets.status !== 'ready') return busy;
 
     // `runtime.port` always supplies control delivery; the port type keeps it
     // optional for older Runtime implementations, so this required dependency is
@@ -153,8 +205,8 @@ export function createPlanAdoptionStop(deps: PlanAdoptionStopDependencies): Plan
         if (outcome.kind === 'stopped') stopped = true;
       }
     }
-    // A read failure or a candidate with no in-flight Run keeps the raw refusal:
-    // this call stopped nothing, so the caller sees the exact TASK-19 reason.
-    return stopped ? rejected('busy', STOPPING_AFFECTED_WORK) : applied;
+    // A read failure or a candidate with no in-flight Run keeps the latest raw
+    // refusal: this call stopped nothing, so the caller sees the exact TASK-19 reason.
+    return stopped ? rejected('busy', STOPPING_AFFECTED_WORK) : busy;
   };
 }

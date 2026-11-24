@@ -64,7 +64,8 @@ export const PL_ADVISER_PROFILE_ID = 'pl-adviser-profile';
 const ADVISER_GUIDANCE = 'PL trusted adviser guidance';
 
 const ADVISER_BINDING: S6AExtraBinding = {
-  binding: bindingOf('pl-adviser-binding', PL_ADVISER_ROLE, ADVISER_GUIDANCE, [...P2_COORDINATION_TOOL_NAMES]),
+  binding: bindingOf('pl-adviser-binding', PL_ADVISER_ROLE, ADVISER_GUIDANCE, [
+    ...P2_COORDINATION_TOOL_NAMES, 'request_rework', 'request_recheck']),
   workflow: { workspace: S6A_SCOPE, sessionRole: PL_ADVISER_ROLE, roleBinding: PL_ADVISER_ROLE_BINDING,
     budget: { tokenBudget: 1_000_000, deadline: null } },
   queryProfile: {

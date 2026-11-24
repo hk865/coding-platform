@@ -1609,43 +1609,46 @@ export function createTaskClaimService(deps: TaskClaimGoalSettingsDependencies):
       // 7A §3.5 rule 3: the effect event carries the key only when present.
       ...(input.acknowledgement === undefined ? {} : { acknowledgement: input.acknowledgement }) };
 
-    // 7. One guard per distinct key; a later non-null version wins.
-    const guardMap = new Map<string, number | null>();
-    const addGuard = (refKey: string, expectedRevision: number | null): void => {
-      const existing = guardMap.get(refKey);
-      if (existing === undefined || (existing === null && expectedRevision !== null)) guardMap.set(refKey, expectedRevision);
-    };
-    addGuard(refKeyOf(input.goalRef), goal.revision);
-    for (const guard of waitingGuards) addGuard(guard.refKey, guard.expectedRevision);
-    addGuard(workspaceKey, workspaceRecord.revision);
-    addGuard(refKeyOf(input.planRef), plan.revision);
-    addGuard(sessionKey, session.revision);
-    // S1-DISPATCH-01 / §3.4 S:630: the trusted legacy derivation's guards are
-    // part of the claim commit, not dropped after the read.
-    for (const guard of dispatchGuards) addGuard(guard.refKey, guard.expectedRevision);
-    for (const guard of facts.guards) addGuard(guard.refKey, guard.expectedRevision);
-    // TASK-03: the requeue claim guards the TaskRequeue@1 it consumes (and the rework records it read).
-    if (requeueRef !== undefined) for (const guard of facts.reworkGuards) addGuard(guard.refKey, guard.expectedRevision);
-    for (const guard of roleFacts.guards) addGuard(guard.refKey, guard.expectedRevision);
-    if (continuationMessageGuard !== null) addGuard(continuationMessageGuard.refKey, continuationMessageGuard.expectedRevision);
-    for (const record of [written.lease, written.attempt, written.run, written.outbox]) addGuard(record.refKey, null);
-    // K3 UCR-03/L11 (D3): the selected Run's review record's own CAS — the
-    // revision read in this window, or "still absent" for a K3-before Run.
-    if (selectedReviewGuard !== null) addGuard(selectedReviewGuard.refKey, selectedReviewGuard.expectedRevision);
-    // 2C item 10: the link row's own CAS (null when the Session never held one).
-    if (nextResponsibleLink !== null) addGuard(responsibleLinkKey, currentResponsibleLink?.revision ?? null);
-    // 暂缓守读到的版本（不存在守“仍不存在”），了结的派活请求守读到的版本。
-    addGuard(holdRead.guard.refKey, holdRead.guard.expectedRevision);
-    if (servedRecord !== null) addGuard(refKeyOf(servedRecord.ref), servedRecord.revision);
-    let guards: RecordGuard[] = [...guardMap].map(([refKey, expectedRevision]) => ({ refKey, expectedRevision }));
-    // 按请求领取（2.5）：上面的守卫加三值读交出的守卫（不是领取自己读窗的）和计数器，一起过 `mergeGuards`，同键不同
-    // 版本是 `revision_conflict`。不按请求的领取照旧只用 `addGuard`（归 GL）。
-    if (basisFacts !== null && counted !== null) {
-      const merged = mergeGuards([...guards, ...basisFacts.guards,
-        { refKey: basisFacts.counter.refKey, expectedRevision: counted.expectedRevision }]);
-      if (!merged.ok) return merged.rejection;
-      guards = merged.guards;
-    }
+    // 7. Every guard this window read, in the order it was read, through the ONE
+    //    merger: a repeated key with a different revision is a real
+    //    `revision_conflict` and the whole window is rebuilt, never folded
+    //    first-wins/last-wins locally.
+    const merged = mergeGuards([
+      { refKey: refKeyOf(input.goalRef), expectedRevision: goal.revision },
+      ...waitingGuards,
+      { refKey: workspaceKey, expectedRevision: workspaceRecord.revision },
+      { refKey: refKeyOf(input.planRef), expectedRevision: plan.revision },
+      { refKey: sessionKey, expectedRevision: session.revision },
+      // S1-DISPATCH-01 / §3.4 S:630: the trusted legacy derivation's guards are
+      // part of the claim commit, not dropped after the read.
+      ...dispatchGuards,
+      ...facts.guards,
+      // TASK-03: the requeue claim guards the TaskRequeue@1 it consumes (and the rework records it read).
+      ...(requeueRef === undefined ? [] : facts.reworkGuards),
+      ...roleFacts.guards,
+      ...(continuationMessageGuard === null ? [] : [continuationMessageGuard]),
+      // The TaskLease key is already a directed read in `facts.guards`
+      // (plan-readers.ts:1785, :1846-1851): null when absent, the read revision
+      // when present — exactly the version ATT-14/ATT-15 has to guard.
+      { refKey: written.attempt.refKey, expectedRevision: null },
+      { refKey: written.run.refKey, expectedRevision: null },
+      { refKey: written.outbox.refKey, expectedRevision: null },
+      // K3 UCR-03/L11 (D3): the selected Run's review record's own CAS — the
+      // revision read in this window, or "still absent" for a K3-before Run.
+      ...(selectedReviewGuard === null ? [] : [selectedReviewGuard]),
+      // 2C item 10: the link row's own CAS (null when the Session never held one).
+      ...(nextResponsibleLink === null
+        ? [] : [{ refKey: responsibleLinkKey, expectedRevision: currentResponsibleLink?.revision ?? null }]),
+      // 暂缓守读到的版本（不存在守“仍不存在”），了结的派活请求守读到的版本。
+      holdRead.guard,
+      ...(servedRecord === null ? [] : [{ refKey: refKeyOf(servedRecord.ref), expectedRevision: servedRecord.revision }]),
+      // 按请求领取（2.5）：三值读交出的守卫（不是领取自己读窗的）和计数器也进同一个列表。
+      ...(basisFacts === null || counted === null
+        ? [] : [...basisFacts.guards,
+          { refKey: basisFacts.counter.refKey, expectedRevision: counted.expectedRevision }]),
+    ]);
+    if (!merged.ok) return merged.rejection;
+    const guards = merged.guards;
 
     const linkRecords: EncodedRecord[] = nextResponsibleLink === null ? [] : [encodePendingSessionWorkLink(nextResponsibleLink)];
     const linkBindings: CommitCursorBinding[] = nextResponsibleLink === null ? [] : [{ refKey: responsibleLinkKey, field: 'since' }];

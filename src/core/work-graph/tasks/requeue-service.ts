@@ -728,7 +728,9 @@ export function createTaskRequeueService(
     if (!isRecord(args)) return { status: 'undetermined', reason: 'invalid_arguments' };
     const expected = args['expected'];
     const acknowledgement = args['acknowledgement'];
-    if (!Array.isArray(expected) || (acknowledgement !== undefined && !isRecord(acknowledgement))) {
+    const basisMessage = args['basisMessage'];
+    if (!Array.isArray(expected) || (acknowledgement !== undefined && !isRecord(acknowledgement))
+        || (basisMessage !== undefined && !isRecord(basisMessage))) {
       return { status: 'undetermined', reason: 'invalid_arguments' };
     }
     const candidate: RequeueTaskInput = {
@@ -736,6 +738,9 @@ export function createTaskRequeueService(
       afterRunRef: args['afterRunRef'] as RunRef,
       reason: args['reason'] as string,
       ...(acknowledgement === undefined ? {} : { acknowledgement: acknowledgement as SessionMessageRef }),
+      ...(basisMessage === undefined ? {} : {
+        newInputRefs: [{ kind: 'session_message', ref: basisMessage as SessionMessageRef }],
+      }),
     };
     const scope = { projectId: input.origin.runRef.projectId, workspaceId: input.origin.workspaceId };
     if (inputProblem(candidate, scope) !== null) return { status: 'undetermined', reason: 'invalid_arguments' };
@@ -1067,7 +1072,7 @@ export function createTaskRequeueService(
         return reject('forbidden', 'adviser planning round requeues are not admitted by this Host');
       }
       const planningRounds = deps.planningRounds;
-      admitPlanning = () => admitPlanningRework(owned.ctx, { records, ...planningRounds }, goalRef, 'request a rework');
+      admitPlanning = () => admitPlanningRework(owned.ctx, { records, ...planningRounds }, goalRef, 'request a rework', 'request_rework');
       const frozen = await planningRoundActorOf(records, owned.principal.queryRunRef);
       if (frozen.status !== 'ready') return frozen;
       if (frozen.value === null) {

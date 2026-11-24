@@ -1358,18 +1358,6 @@
       "note": "communication split P1 internal owner, no production caller yet; its callers (the dispatch_task, request_stop, hold_claim and release_hold tools, the action_release card adapter, the goal loop settle step, startup reconcile delivering the stop) come with decision 121-153 P2"
     },
     {
-      "file": "src/core/work-graph/model/action-request-contracts.ts",
-      "name": "ScribeStopInputV1",
-      "reason": "kept-for",
-      "note": "communication split P1 internal owner, no production caller yet; its callers (the dispatch_task, request_stop, hold_claim and release_hold tools, the action_release card adapter, the goal loop settle step, startup reconcile delivering the stop) come with decision 121-153 P2"
-    },
-    {
-      "file": "src/core/work-graph/model/action-request-contracts.ts",
-      "name": "ClaimHoldPort.placeScribeStop",
-      "reason": "kept-for",
-      "note": "communication split P1 internal owner, no production caller yet; its callers (the dispatch_task, request_stop, hold_claim and release_hold tools, the action_release card adapter, the goal loop settle step, startup reconcile delivering the stop) come with decision 121-153 P2"
-    },
-    {
       "file": "src/core/work-graph/state/action-request.ts",
       "name": "withdrawActionRequest",
       "reason": "kept-for",

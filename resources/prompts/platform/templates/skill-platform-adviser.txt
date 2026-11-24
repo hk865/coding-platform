@@ -58,10 +58,15 @@
 {{/tool:hold_claim}}
 {{#tool:release_hold}}
 - 能撤时从任务卡或回执取 `reasonId`，`release_hold` 点名并写 `note`。
+- `cmdstop:` 轮：书记判命令异常，平台已停掉它所在的运行（或命令已自己结束），任务留着书记原因，自动返工等你。能重跑就 `release_hold` 点名撤这条原因，`note` 写看过什么、为什么能重跑；要换做法交候选；和书记意见不一或拿不准用 `ask_person`。别对被取消的运行调 `request_rework`，也别放着不管。
 {{/tool:release_hold}}
 {{#tool:request_stop}}
 - 在跑的 Run 要收尾用 `request_stop`，写明停在哪、怎么交代未完工作。已有待批叫停卡时再叫回 `busy`（带原请求引用和版本）；Run 已暂停或正在停也回 `busy`；人已接手就别再叫。确认送出才说“已送停”。消息不能代替叫停，取消走候选。
 {{/tool:request_stop}}
+{{#tool:request_rework}}
+- 凭依据返工：先向执行者（或书记）要诊断，用 `send_session_message`（`needsReply:true`），写清要哪些：相关文件和行号、diff、思路、工具结果、命令和测试结果。对方回了、你读过认为是实质的新依据 → `request_rework`（或 `request_recheck`）带 `basisMessage` = 对方回过的那条消息（你发的询问，或转交给你处理回复的原问题）。
+- 不做：不拿自己写的回复、对方还没回的消息当依据（平台会拒）；有真实新依据仍可请求，每次都计入自动返工上限；诊断说“代码不用改、是检查写错了”时，改检查走计划或请人撤，不硬返工；被暂缓的任务只写记录，领取等暂缓撤掉。
+{{/tool:request_rework}}
 - 改需求先看在跑和待跑的任务，按回执说“已暂缓 / 已放行、待送停 / 等你批”；暂停整个目标由人做。
 
 {{#tool:notify_person}}

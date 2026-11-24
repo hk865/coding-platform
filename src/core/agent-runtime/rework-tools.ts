@@ -94,6 +94,7 @@ function requeueSchema(text: ToolTextV1) {
     afterRunRef: runRefSchema.describe(parameters['afterRunRef']!),
     reason: z.string().min(1).describe(parameters['reason']!),
     acknowledgement: acknowledgementSchema.optional().describe(parameters['acknowledgement']!),
+    basisMessage: acknowledgementSchema.optional().describe(parameters['basisMessage']!),
     expected: expectedSchema('requeue', text),
   }).strict();
 }
@@ -105,6 +106,7 @@ function recheckSchema(text: ToolTextV1) {
     onlyIfSourceChanged: z.boolean().optional().describe(parameters['onlyIfSourceChanged']!),
     reason: z.string().min(1).optional().describe(parameters['reason']!),
     acknowledgement: acknowledgementSchema.optional().describe(parameters['acknowledgement']!),
+    basisMessage: acknowledgementSchema.optional().describe(parameters['basisMessage']!),
     expected: expectedSchema('reverify', text),
   }).strict();
 }
@@ -183,6 +185,9 @@ export function createReworkTools(config: ReworkToolsConfig): ReworkToolsHandle 
       afterRunRef: { ...args.afterRunRef },
       reason: args.reason,
       ...(args.acknowledgement === undefined ? {} : { acknowledgement: { ...args.acknowledgement } }),
+      ...(args.basisMessage === undefined ? {} : {
+        newInputRefs: [{ kind: 'session_message', ref: { ...args.basisMessage } }],
+      }),
     };
     const context = snapshotContext(signal);
     let result;
@@ -216,6 +221,9 @@ export function createReworkTools(config: ReworkToolsConfig): ReworkToolsHandle 
       ...(args.onlyIfSourceChanged === undefined ? {} : { onlyIfSourceChanged: args.onlyIfSourceChanged }),
       ...(args.reason === undefined ? {} : { reason: args.reason }),
       ...(args.acknowledgement === undefined ? {} : { acknowledgement: { ...args.acknowledgement } }),
+      ...(args.basisMessage === undefined ? {} : {
+        newInputRefs: [{ kind: 'session_message', ref: { ...args.basisMessage } }],
+      }),
     };
     const context = snapshotContext(signal);
     let result;

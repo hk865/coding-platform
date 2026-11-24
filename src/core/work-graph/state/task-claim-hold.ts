@@ -37,11 +37,12 @@ const BASIS_FIELD = f.union('kind', {
   scribe: { kind: f.literal('scribe'), sourceMessage: f.ref(SessionMessageRefShape), run: f.ref(RunRefShape) },
 });
 
-/** 谁撤的：一条线点名撤、你撤全部（任务卡上的“撤销暂缓”）、你的直接干预领取撤全部。 */
+/** 谁撤的：一条线点名撤、你撤全部（任务卡上的“撤销暂缓”）、你的直接干预领取撤全部、平台收回自己放的书记原因。 */
 const RELEASED_BY_FIELD = f.union('kind', {
   agent: { kind: f.literal('agent'), session: f.ref(SessionRefShape) },
   person: { kind: f.literal('person'), actor: f.object({ kind: f.enumOf(['human', 'system'] as const), id }) },
   intervention: { kind: f.literal('intervention'), messageRef: f.ref(SessionMessageRefShape) },
+  platform: { kind: f.literal('platform'), operationId: id },
 });
 
 const TASK_CLAIM_HOLD_REASON_FIELDS = {

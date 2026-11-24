@@ -11,15 +11,16 @@ import { commitBarrier } from '../helpers/S6A-commit-barrier.js';
 import { s6aCardsWorkspace } from '../helpers/S6A-cards-fixture.js';
 import { S6A_SCOPE } from '../helpers/S6A-request-fixture.js';
 import { toolResultOf } from '../helpers/P2-tool-result.js';
-import { driveWorkflow, goalControlPins } from '../helpers/A2-restart-fixture.js';
+import { advanceUntil, driveWorkflow, goalControlPins } from '../helpers/A2-restart-fixture.js';
 import { pauseS7AGoal, resumeS7AGoal, setS7AAutonomy } from '../helpers/S7A-fixture.js';
 import { dexcAnswer } from '../helpers/S7D2-coldstart-world.js';
 import { settleHost } from '../helpers/IV-host-fixture.js';
 import { hostClaim } from '../helpers/P1-platform-entry.js';
 import {
-  actionRefOf, dispatchSequence, holdOf, p1Worlds, pointerRef, requestOf, write,
+  actionRefOf, dispatchSequence, holdOf, p1Worlds, performClaim, pointerRef, requestOf, write,
 } from '../helpers/P1-reads.js';
 import type { P1World } from '../helpers/P1-round-fixture.js';
+import { advance } from '../scenarios/support/common.js';
 
 vi.mock('../../src/core/record-store/in-memory-record-store.js', async (importOriginal) =>
   (await import('../helpers/S6A-commit-barrier.js')).inMemoryBarrierModule(importOriginal));
@@ -341,5 +342,32 @@ describe('T14 action rounds', () => {
     // record, so the one failed read is the review's own and its back-off retry is what claims.
     await expect.poll(() => dispatchSequence(p1), { timeout: 20_000, interval: 50 }).toBe(1);
     expect(await requestOf(p1, ref), 'the request is applied once').toMatchObject({ state: 'applied' });
+  }, LONG);
+
+  // Basis: `gl-frozen.md:6` (GL-1b) and `:156` (check GL-4); design `:341`/`:342` as quoted there require a Goal
+  // selection of a Task with an `open` dispatch request to claim with `servedRequest`, and exempt only the watch's
+  // rework, direct intervention and L7 continuation, not the rework arm. World: the P1 world's tC is stopped before
+  // its automatic rework (`P1-round-fixture.ts:86`); performing that step through the public `workflow/advance`
+  // (`c3rv-rulings.md:13`) makes it `claim_requeued`; the staff (A)
+  // dispatches tC; the Goal loop claims it. Expected literal: the dispatch sequence 0 -> 1, the request `applied`
+  // with `byRequest:true`, exactly one claim. Named mutation: the rework arm does not pass `servedRequest`, so the
+  // sequence stays 0 and `byRequest` is false.
+  it('GL-1b a Goal claim of a requeued Task serves the staff dispatch request once', async () => {
+    const p1 = await worlds.open();
+    expect(await dispatchSequence(p1)).toBe(0);
+    expect((await advance(p1.world.ag2b, p1.autoRework)).receipt, 'the Workflow performs its automatic rework')
+      .toMatchObject({ kind: 'requeue_task', result: { status: 'committed', value: { kind: 'requeued' } } });
+    const { card } = await requestDispatch(p1, 'gl1b', p1.task.tC);
+    const ref = actionRefOf(card);
+    expect(await requestOf(p1, ref), 'the dispatch request is open for the Goal').toMatchObject({ state: 'open' });
+    const step = await advanceUntil(p1.world.ag2b, { schemaVersion: 1, goalRef: p1.goal,
+      flowId: 'gl1b-goal-claim', sessionHint: null, kind: 'select_work' }, 'claim_task');
+    const claimed = await performClaim(p1.world, step);
+    expect(claimed, 'the Goal claims the requeued Task').toMatchObject({ status: 'committed' });
+    if (claimed.status !== 'committed') return;
+    await claimedOnce(p1, ref);
+    expect(await requestOf(p1, ref), 'the request is applied by the claim, not settled by it').toMatchObject({
+      state: 'applied', outcome: { session: claimed.value?.sessionRef, run: claimed.value?.runRef, byRequest: true },
+    });
   }, LONG);
 });

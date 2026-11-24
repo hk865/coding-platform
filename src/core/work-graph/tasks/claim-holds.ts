@@ -241,15 +241,15 @@ export function queryRoundRequesterOf(actor: QueryRoundActorV1, session: Session
 /**
  * 返工、重验的问答轮口（2.8，Q7a 照参谋那条）：只收负责这个目标的参谋的规划轮。前几条同派活的准入（问答轮、非副本、非
  * 秘书请求轮、负责这个目标——参谋只认目标链接），再要职责是参谋、形状是 `plan_round`。各条 forbidden 都改写成同一句
- * （含 `adviser planning round`，后面带原因），读不出的照原样。授予在挂工具时核（Q1a）。
+ * （含 `adviser planning round`，后面带原因），读不出的照原样。授予在这里核（Q1a）。
  */
 export async function admitPlanningRework(
   ctx: CoreCallContext, deps: Pick<ClaimHoldDependencies, 'records' | 'queryRounds' | 'duty'>, goalRef: GoalRef,
-  action: string,
+  action: string, grantTool?: string,
 ): Promise<{ status: 'ready'; value: ActionRoundAdmissionV1 } | CoreRejection> {
   const planningRefusal = (detail: string) =>
     rejected('forbidden', `only an adviser planning round responsible for this Goal may ${action} (${detail})`);
-  const admitted = await admitActionRound(ctx, deps, goalRef, action);
+  const admitted = await admitActionRound(ctx, deps, goalRef, action, grantTool);
   if (admitted.status !== 'ready') return admitted.code === 'forbidden' ? planningRefusal(admitted.reason) : admitted;
   if (admitted.value.duty !== 'adviser') return planningRefusal(`this is a ${admitted.value.duty} line`);
   if (admitted.value.round.shape !== 'plan_round') return planningRefusal('this round is not a planning round');
@@ -479,10 +479,18 @@ export function createClaimHoldService(deps: ClaimHoldDependencies): ClaimHoldPo
   /**
    * 点名撤的权利（重裁 5）：`agent`、`stop` 是放的线（叫停原因看请求方那条线），或这个目标任一秘书、参谋；`scribe_stop`
    * 只认负责这块的参谋（Q7b：和书记审查同一读法，只读不守）。守这一轮的版本，按目标准入的另守收下它的链接。
+   * 平台自动化（Host）只撤自己放的书记原因（设计 5.4 的 `${operationId}:hold-release`）：这一支不解析问答轮，也不加
+   * 别的守卫，写入照旧守暂缓记录的版本；撤销者记平台，后续自动返工沿用既有权限。
    */
   async function releaseRight(
     ctx: CoreCallContext, task: TaskTriple, reason: TaskClaimHoldV1['reasons'][number],
-  ): Promise<{ status: 'ready'; session: SessionRef; guards: RecordGuard[] } | CoreRejection> {
+  ): Promise<{ status: 'ready'; releasedBy: HoldReleasedByV1; guards: RecordGuard[] } | CoreRejection> {
+    if (ctx.principal.kind === 'host' && isAutomationActor(ctx.principal.actor)) {
+      if (reason.kind !== 'scribe_stop' || reason.placedBy.kind !== 'platform') {
+        return rejected('forbidden', '平台只撤自己放的书记原因');
+      }
+      return { status: 'ready', releasedBy: { kind: 'platform', operationId: reason.placedBy.operationId }, guards: [] };
+    }
     const goalRef: GoalRef = goalRefFor(task.projectId, task.goalId);
     const resolved = await resolveActionRound(ctx, deps, 'release a claim hold', 'release_hold');
     if (resolved.status !== 'ready') return resolved;
@@ -506,7 +514,7 @@ export function createClaimHoldService(deps: ClaimHoldDependencies): ClaimHoldPo
             + 'this Goal\'s secretary or adviser may')
           : admitted;
       }
-      return { status: 'ready', session: round.session, guards: [...admitted.value.guards] };
+      return { status: 'ready', releasedBy: { kind: 'agent', session: round.session }, guards: [...admitted.value.guards] };
     }
     if (reason.kind === 'scribe_stop') {
       // 负责这块的参谋：任务的模块范围先找最窄的区域参谋，否则目标的参谋（`command-review.ts` 的同一读法）。
@@ -524,10 +532,12 @@ export function createClaimHoldService(deps: ClaimHoldDependencies): ClaimHoldPo
       // 创建者臂因 asker:null 不会出现），所以这里不需要再判一次 null。
       const link = adviser.value.link!;
       // 点名撤的提交守选中那条负责链接的版本：读和提交之间它关闭或换手，这条撤就不成立。
-      return { status: 'ready', session: round.session, guards: [...round.guards,
+      return { status: 'ready', releasedBy: { kind: 'agent', session: round.session }, guards: [...round.guards,
         { refKey: canonicalKey(link.ref), expectedRevision: link.revision }] };
     }
-    if (placer !== null && isCaller(placer)) return { status: 'ready', session: round.session, guards: [...round.guards] };
+    if (placer !== null && isCaller(placer)) {
+      return { status: 'ready', releasedBy: { kind: 'agent', session: round.session }, guards: [...round.guards] };
+    }
     const admission = await admitResolvedRound(ctx, deps, goalRef, round, 'release a claim hold');
     if (admission.status !== 'ready') {
       return admission.code === 'forbidden'
@@ -535,7 +545,7 @@ export function createClaimHoldService(deps: ClaimHoldDependencies): ClaimHoldPo
           + 'this Goal\'s secretary or adviser may')
         : admission;
     }
-    return { status: 'ready', session: round.session, guards: admission.value.guards };
+    return { status: 'ready', releasedBy: { kind: 'agent', session: round.session }, guards: admission.value.guards };
   }
 
   async function releaseReason(
@@ -563,7 +573,8 @@ export function createClaimHoldService(deps: ClaimHoldDependencies): ClaimHoldPo
       change: (facts) => {
         const current = facts.current;
         const draft = nextTaskClaimHold(current, { ref: current.ref, workspaceId: current.workspaceId });
-        const by: HoldReleasedByV1 = { kind: 'agent', session: { ...facts.right.session } };
+        // 撤销者由 `releaseRight` 交回：平台一支记平台和那次操作号，其余照旧记放的那条线。
+        const by: HoldReleasedByV1 = facts.right.releasedBy;
         const released = releaseHoldReason(draft, input.reasonId, by, input.note ?? null);
         // 读时已核过有这个原因。
         if (released === null || !released.released) {

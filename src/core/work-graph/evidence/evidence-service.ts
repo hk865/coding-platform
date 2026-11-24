@@ -2544,7 +2544,7 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
             }
             const callerCtx = caller.ctx;
             admitPlanning = () => admitPlanningRework(callerCtx, { records, ...planningRounds },
-                { aggregateType: 'Goal', projectId: task.projectId, goalId: task.goalId }, 'request a recheck');
+                { aggregateType: 'Goal', projectId: task.projectId, goalId: task.goalId }, 'request a recheck', 'request_recheck');
             // `bindReverifyCaller` 按 principal 的种类定了 `query_run`。
             const frozen = await planningRoundActorOf(records,
                 (callerCtx.principal as Extract<CorePrincipal, { kind: 'query_run' }>).queryRunRef);
@@ -2850,7 +2850,9 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
         if (!isRecord(args)) return { status: 'undetermined', reason: 'invalid_arguments' };
         const expected = args['expected'];
         const acknowledgement = args['acknowledgement'];
-        if (!Array.isArray(expected) || (acknowledgement !== undefined && !isRecord(acknowledgement))) {
+        const basisMessage = args['basisMessage'];
+        if (!Array.isArray(expected) || (acknowledgement !== undefined && !isRecord(acknowledgement))
+            || (basisMessage !== undefined && !isRecord(basisMessage))) {
             return { status: 'undetermined', reason: 'invalid_arguments' };
         }
         const candidate: ReverifyRoundInput = {
@@ -2858,6 +2860,9 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
             ...(args['onlyIfSourceChanged'] === undefined ? {} : { onlyIfSourceChanged: args['onlyIfSourceChanged'] as boolean }),
             ...(args['reason'] === undefined ? {} : { reason: args['reason'] as string }),
             ...(acknowledgement === undefined ? {} : { acknowledgement: acknowledgement as SessionMessageRef }),
+            ...(basisMessage === undefined ? {} : {
+                newInputRefs: [{ kind: 'session_message', ref: basisMessage as SessionMessageRef }],
+            }),
         };
         const scope = { projectId: input.origin.runRef.projectId, workspaceId: input.origin.workspaceId };
         if (reverifyInputProblem(candidate, scope) !== null) return { status: 'undetermined', reason: 'invalid_arguments' };

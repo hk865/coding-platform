@@ -40,12 +40,12 @@ import { ag2bPlanDraft, graphWrite, plain } from './AG2b-collaboration-fixture.j
 import { s6aCardsWorkspace } from './S6A-cards-fixture.js';
 import { openS6AHostWorld, type S6AHostWorld, type S6AHostWorldOptions, type S6AToolCall } from './S6A-host-fixture.js';
 import {
-  S6A_AT, S6A_SCOPE,
+  OPERATOR, S6A_AT, S6A_SCOPE,
   type S6ABackend, type S6AExtraBinding, type S6ASession,
 } from './S6A-request-fixture.js';
 import { createS6BLine, governS6B, holdS6BRequestRound, openS6BRoleLine, type S6BHeldRound } from './S6B1-fixture.js';
 import { valueOf } from './S6B3-fixture.js';
-import { sessionOf } from './S7A-fixture.js';
+import { assertTaskCompleted, checkConfiguration, sessionOf } from './S7A-fixture.js';
 import { assignGoalAdviserLine } from './S7C-handoff-fixture.js';
 import { draftFrom } from '../scenarios/support/common.js';
 import type { PreparedQueryManifestV1 } from '../../src/contracts/core/prepared-execution.js';
@@ -262,6 +262,18 @@ export async function memberCardOf(target: S7C1World, commandId: string, reason:
   return result;
 }
 
+/**
+ * Ends `taskId`'s node on an `every_step` `goal`: drives its own `select_work` through its checks (a world opened with
+ * `checks: true`) until it is satisfied. Under `every_step` no claim, a named advance included (GL-2,
+ * `gl-frozen.md:7`), is made while a node's Run has ended and its checks have not; a node without changed files
+ * leaves nothing for the person to review once satisfied.
+ */
+export async function endS7C1Node(world: S6AHostWorld, goal: GoalRef, taskId: string): Promise<void> {
+  await driveWorkflow(world.ag2b, { schemaVersion: 1, goalRef: goal, flowId: `s7c-end-${taskId}`, sessionHint: null,
+    kind: 'select_work', taskId });
+  await assertTaskCompleted(world, goal, taskId);
+}
+
 /** L1-22: the first Task's Run state when the world returns (`ended`: the existing row; the other two hold m1). */
 export type S7C1FirstRun = 'ended' | 'held' | 'deferred';
 
@@ -272,15 +284,20 @@ export async function openS7C1World(options: { backend?: S6ABackend; adviser?: b
   extraBindings?: readonly S6AExtraBinding[];
   /** Host start options that are not bindings (for example an input consumer). */
   extraHostOptions?: Record<string, unknown>;
+  /** S7A's trusted static check configuration, so a node can end through its own checks (`endS7C1Node`). */
+  checks?: boolean;
   /** Mutate the finished S7C configuration; needed because the adviser binding is created inside this factory,
    *  after `extraBindings`, and a duplicate-Role binding in one scope is refused by validation. */
   configure?: (configuration: WorkbenchRuntimeConfiguration) => void } = {}): Promise<S7C1World> {
   const backend = options.backend ?? 'memory';
   const adviser = options.adviser ?? true;
   const firstRun = options.firstRun ?? 'ended';
+  const extraHostOptions = options.checks === true
+    ? { checks: checkConfiguration({ ...OPERATOR, kind: 'human' }), ...(options.extraHostOptions ?? {}) }
+    : options.extraHostOptions;
   const world = await withS7CCapturedBackend(() => openConfiguredHost({ backend, scribe: true,
     ...(options.extraBindings === undefined ? {} : { extraBindings: options.extraBindings }),
-    ...(options.extraHostOptions === undefined ? {} : { extraHostOptions: options.extraHostOptions }) }, options.hostGrant, options.configure));
+    ...(extraHostOptions === undefined ? {} : { extraHostOptions }) }, options.hostGrant, options.configure));
   try {
     world.clock.set(S6A_AT);
     const main = s6aCardsWorkspace(world, S6A_SCOPE);

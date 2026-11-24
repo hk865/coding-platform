@@ -70,6 +70,11 @@ describe('T18 handoff 1: the three owner refusals', () => {
   it('T18c a served claim at r1 meets the request at r2: revision_conflict, counter and pointer unchanged', async () => {
     const p1 = await worlds.open({ running: true, autonomy: 'every_step' });
     const { a, ref, revision } = await pendingDispatch(p1, 't18c');
+    /* gl-frozen.md:7 (GL-2, lead ruling 4) / :172 (the T34 fix; lead notice
+       `a-lead-notice-b-group.md`): a named advance reads the same claimHold, so end tB's Run first
+       (M-04, tests/business/P2-T14-action-rounds.test.ts:131-132). This row's claim is the
+       stale-revision refusal, so there is no claim receipt to re-read the line from. */
+    await p1.endB();
     const step = await p1.claimStep(p1.lines.E, p1.task.tA, 't18c-r1');
     /* Approve through the real card answer; the owner needs the saved answer, not the round source. */
     const card = (await s6aCardsWorkspace(p1.world, S6A_SCOPE).readCards(p1.goal))

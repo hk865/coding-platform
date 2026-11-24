@@ -13,7 +13,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { driveWorkflow } from '../helpers/A2-restart-fixture.js';
 import { createS6BLine } from '../helpers/S6B1-fixture.js';
 import { ready, sessionOf } from '../helpers/S7A-fixture.js';
-import { S7C1_CREATE_ROLE } from '../helpers/S7C-member-fixture.js';
+import { endS7C1Node, S7C1_CREATE_ROLE } from '../helpers/S7C-member-fixture.js';
 import { askS7D2Member } from '../helpers/S7D2-role-line-world.js';
 import { openS7D2RulesWorld, type S7D2RulesWorld } from '../helpers/S7D2-rules-world.js';
 
@@ -53,6 +53,8 @@ describe('RL-17: an out-of-bounds action answers at once and stops only itself a
     const cardKey = asked.status === 'needs_decision' ? asked.cardKey : null;
     const card = (await world.main.readCards(world.g)).find(candidate => candidate.source.kind === 'member_creation');
     expect(card?.source.key).toBe(cardKey);
+    // G is every_step: T0's node ends through its checks before any other claim (GL-2, `gl-frozen.md:7`).
+    await endS7C1Node(world.world, world.g, 'rl17-t0');
 
     // (4) T3 advances; T1 and T2 do not dispatch.
     await world.world.scripted.script(t3Line, [{ kind: 'text', text: 'RL-17 T3 done' }]);
@@ -60,6 +62,8 @@ describe('RL-17: an out-of-bounds action answers at once and stops only itself a
     for (const taskId of ['rl17-t1', 'rl17-t2', 'rl17-t3']) await advance(world, taskId, `rl17-${taskId}`);
     expect(await runOf('rl17-t3')).not.toBeNull();
     expect([await runOf('rl17-t1'), await runOf('rl17-t2')]).toEqual([null, null]);
+    // T3's node ends too, so in (5)–(6) T1 and T2 wait for their own blocks, not for T3.
+    await endS7C1Node(world.world, world.g, 'rl17-t3');
 
     // (5)–(6) seven days later (past every former timeout) nothing was released and nothing applied.
     world.world.clock.advance(604_800_000);

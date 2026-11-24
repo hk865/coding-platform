@@ -333,7 +333,7 @@ export type WorkflowDependencies = {
    * `readEffectiveClaimBlocker` 是 claim-service 的同一个只读组合（读记录 + 领取 owner 的失效判断 + 卡位），
    * 目标循环在首领、接续和返工的领取前用它；两个都可选，没接时门和目标循环照旧跳过暂缓判断。
    */
-  claimHolds?: Pick<ClaimHoldPort, 'readHold'> & {
+  claimHolds?: Pick<ClaimHoldPort, 'readHold' | 'placeScribeStop' | 'release'> & {
     readEffectiveClaimBlocker?: (ctx: CoreCallContext, input: { taskRef: TaskTriple }) =>
       Promise<{ status: 'ready'; blocker: HoldBlockerV1 | null } | CoreRejection>;
   };

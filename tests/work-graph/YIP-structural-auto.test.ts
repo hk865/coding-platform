@@ -25,6 +25,7 @@ import { S6A_SCOPE, type S6ASession } from '../helpers/S6A-request-fixture.js';
 import { openS6BProjectWorld, scribeUnderstanding } from '../helpers/S6B1-fixture.js';
 import { dexcCommand, dexcNextCard, dexcProposal, openS7D2ColdStartWorld, type S7D2ColdStartWorld }
   from '../helpers/S7D2-coldstart-world.js';
+import { endS7C1Node } from '../helpers/S7C-member-fixture.js';
 import { openProposalWorld, type ProposalWorld } from '../helpers/S8C-proposal-world.js';
 
 vi.mock('../../src/core/record-store/in-memory-record-store.js', async importOriginal =>
@@ -176,8 +177,9 @@ it('Y9 two incompatible proposals of one round: one is applied, the other\'s car
   expect((await cold.proposalCards()).map(card => card.state)).toEqual(['waiting_answer']);
 }, 300_000);
 
-async function proposalWorld(value: StructuralApprovalV1 | null, backend: 'memory' | 'sqlite' = 'memory') {
-  const world = kept(await openProposalWorld({ backend }));
+async function proposalWorld(value: StructuralApprovalV1 | null, backend: 'memory' | 'sqlite' = 'memory',
+  checks = false) {
+  const world = kept(await openProposalWorld({ backend, checks }));
   await save(world.staff.world, value);
   return world;
 }
@@ -273,7 +275,10 @@ it('Y3f an auto-applied batch whose commit lands but whose file write fails is r
 // Q7（lead：只看开关，不看 Run 所属目标的档位）。今天红在存设置；落地后每步确认的目标里，参谋工作轮的提案照样采用。
 // 改坏：自动判定也读目标的 autonomy → needs_decision。
 it('Y3q (Q7) under an every_step Goal the switch alone decides: the proposal is applied', async () => {
-  const world = await proposalWorld(null);
+  // Under every_step the adviser's named advance waits while the world's first node s7c-m1 is still in its checks
+  // (GL-2, `gl-frozen.md:7`), so that node ends through its checks first.
+  const world = await proposalWorld(null, 'memory', true);
+  await endS7C1Node(world.staff.world, world.staff.goal, 's7c-m1');
   const { goal } = readyValue<{ goal: { revision: number } }>(await world.staff.main.route('goals/settings',
     { goalRef: world.staff.goal }), 'goals/settings');
   expect(await world.staff.main.post('goals/settings/set', graphWrite(S6A_SCOPE, { goalRef: world.staff.goal,

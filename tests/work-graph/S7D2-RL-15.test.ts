@@ -18,6 +18,7 @@ import { advanceUntil, driveWorkflow } from '../helpers/A2-restart-fixture.js';
 import { commitBarrier } from '../helpers/S6A-commit-barrier.js';
 import type { S6ABackend } from '../helpers/S6A-request-fixture.js';
 import { committed } from '../helpers/S7A-fixture.js';
+import { endS7C1Node } from '../helpers/S7C-member-fixture.js';
 import { askS7D2Member } from '../helpers/S7D2-role-line-world.js';
 import { openS7D2RulesWorld, type S7D2RulesWorld } from '../helpers/S7D2-rules-world.js';
 
@@ -84,10 +85,13 @@ describe('RL-15: autonomy rules', () => {
     expect(await askS7D2Member(world.world, { caller: world.lines.noCreate, goal: world.g,
       callerTask: world.gTask('rl15-e'), memberTask: world.gTask('rl15-me'), label: 'rl15-e' })).toEqual({
       status: 'rejected', code: 'forbidden', reason: 'the member caller Run is not admitted to create a member' });
+    // G is every_step: each caller's node ends through its checks before the next claim (GL-2, `gl-frozen.md:7`).
+    await endS7C1Node(world.world, world.g, 'rl15-e');
     const q = await askQ(world, 'rl15-q');
     expect(q).toMatchObject({ status: 'created' });
     expect(await createdNotices(world)).toBe(1);
     expect(await memberCards(world)).toEqual([]);
+    await endS7C1Node(world.world, world.g, 'rl15-q');
     const s = await world.secretaryMember(world.gTask('rl15-ms'), 'rl15-s');
     expect(s).toMatchObject({ status: 'created' });
     expect(await createdNotices(world)).toBe(2);
