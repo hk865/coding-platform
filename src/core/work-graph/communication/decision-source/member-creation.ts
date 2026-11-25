@@ -14,6 +14,7 @@ import type {
 import { decisionSourceKey } from '../../../../contracts/goal-decisions.js';
 import { rejectedWithCurrent } from '../../../../contracts/core/rejections.js';
 import type { GoalRef, GoalSnapshot } from '../../../../contracts/ledger.js';
+import type { QueryJobRef } from '../../../../contracts/query-job.js';
 import type { SessionOperationRecordOf } from '../../model/session-contracts.js';
 import type { MemberCreateActionV1 } from '../../state/member-creation.js';
 import { decodeSessionOperationRecord } from '../../sessions/session-record-codecs.js';
@@ -31,6 +32,8 @@ export type MemberCreationCardFactsV1 = {
   closedReason: 'source_resolved' | null;
   /** The operation's own requested time. */
   openedAt: string;
+  /** The secretary request round that triggered the tool; other callers have no request round (D103-1 甲). */
+  requestRef: QueryJobRef | null;
 };
 
 /** `done`/`rejected`/`stale` are the three terminal member stages; every other stage is still open. */
@@ -89,6 +92,8 @@ export function memberCreationCardFacts(
       : [],
     closedReason,
     openedAt: operation.requestedAt,
+    requestRef: operation.action.input.caller.kind === 'secretary_query'
+      ? { ...operation.action.input.caller.round } : null,
   };
 }
 

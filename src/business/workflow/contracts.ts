@@ -531,6 +531,21 @@ export type GoalWaitBasisV1 = {
   reasons: readonly string[];
 };
 
+/** D101-3: one blocked Task's exact L46 wait row; the closure's root is included. */
+export type WorkflowWaitRowV1 = {
+  taskId: string;
+  /** The exact `closeBranches` reason, e.g. `l46_dependency_blocked: the Task C waits on A`. */
+  reason: string;
+};
+
+/** D101-3: every blocked Task of one Goal, and the Goal-wide all-blocked reason with its merged basis. */
+export type WorkflowWaitsReadV1 = {
+  goalRef: GoalRef;
+  waits: WorkflowWaitRowV1[];
+  /** The same condition and the same `l46_blocked` text `selectOrdinary` uses, or null. */
+  goalBlocked: { reason: string; waitBasis: GoalWaitBasisV1 } | null;
+};
+
 /**
  * The ONE fixed platform identity of the Host's automatic notices (a finished round's close-out, an expiry, a
  * "please note"): a system actor, never the configured operator and never an agent line. It is deliberately not

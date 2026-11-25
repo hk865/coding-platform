@@ -35,6 +35,9 @@ export interface TaskNodeCommitPort {
       /** A `starting|running` Run of the active Plan's Tasks, or a node still under an execution result review or an
        *  undecided unknown-call review (NR-24). */
       liveWork: boolean }>>;
+  /** 121-45/121-93: whether any node of this Goal waits for the person, read from records only (no work-tree
+   *  blob, no conflict graph). The decision queue's node_review source is its only caller. */
+  readPendingNodeReview(ctx: CoreCallContext, input: { goalRef: GoalRef }): Promise<ReadResult<boolean>>;
   commitNode(ctx: CoreCallContext, request: GraphWrite<{
     goalRef: GoalRef; taskRef: TaskTriple;
     decision: 'commit' | 'acknowledge';

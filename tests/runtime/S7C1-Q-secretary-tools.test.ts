@@ -14,6 +14,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { QueryJobRef } from '../../src/contracts/query-job.js';
 import type { SessionMessageRef } from '../../src/contracts/core/session-message.js';
 import type { SessionMessage } from '../../src/core/work-graph/model/communication-contracts.js';
+import type { DecisionCardV1 } from '../../src/core/work-graph/model/decision-contracts.js';
 import type { PreparedQueryManifestV1 } from '../../src/contracts/core/prepared-execution.js';
 import type { WorkflowStepReceipt } from '../../src/business/workflow/contracts.js';
 import type { ModelRequest } from '../../vendor/coding-agent/dist/public-api.js';
@@ -30,7 +31,7 @@ import { jsonOf } from '../helpers/S7C-member-fixture.js';
 import { openLink } from '../helpers/S7D1-role-line-world.js';
 import { s6aCardsWorkspace } from '../helpers/S6A-cards-fixture.js';
 import { platformRoleProfile } from '../../src/core/agent-runtime/role-profiles.js';
-import { sessionOf, setS7AAutonomy } from '../helpers/S7A-fixture.js';
+import { ready, sessionOf, setS7AAutonomy } from '../helpers/S7A-fixture.js';
 import type { ModuleOverlapGateV1 } from '../../src/core/work-graph/persistence/module-overlap-gate-codecs.js';
 
 const SECRETARY_TOOLS = [
@@ -75,7 +76,7 @@ function readValue<T>(answer: unknown, what: string): T {
   return result.value as T;
 }
 
-type Held = { secretary: S6ASession; requestRoot: QueryJobRef; manifest: PreparedQueryManifestV1 };
+type Held = { secretary: S6ASession; requestRoot: QueryJobRef; requestRound: QueryJobRef; manifest: PreparedQueryManifestV1 };
 
 /** Runs one real round with its first reply and optional later replies added at the held next request. */
 async function runRound(world: S6AHostWorld, input: {
@@ -100,7 +101,8 @@ async function runRound(world: S6AHostWorld, input: {
       }
     })();
     task = run;
-    return { secretary: round.secretary, requestRoot: round.request.requestRoot, manifest: round.manifest };
+    return { secretary: round.secretary, requestRoot: round.request.requestRoot,
+      requestRound: round.request.round, manifest: round.manifest };
   });
   await task;
   return { ...held.value, requests: await world.scripted.requests(held.value.secretary) };
@@ -170,6 +172,52 @@ describe('Q-secretary-tools-service: the secretary request round', () => {
     // A plain Query now carries the P2 coordination families (the planning shape); the six names that
     // no Query may use are the class ceiling's stripped set.
     for (const name of STRIPPED) expect(plainOffered).not.toContain(name);
+  });
+  it('B7: a member card\'s requestRef reaches the secretary round and the only-write answer stays on that request', async () => {
+    const options: S6AWorldOptions & { secretaryTools: readonly string[] } = {
+      backend: 'memory', secretaryTools: SECRETARY_TOOLS, extraHostOptions: { requestDriver: 'off' },
+    };
+    const { world } = await openS7B2RoundWorld(options);
+    worlds.push(world);
+    await setS7AAutonomy(world, world.goals.first, 'every_step');
+    const main = s6aCardsWorkspace(world, S6A_SCOPE);
+    const { tasks } = await adoptS6BPlan(main, world.goals.first, { label: 'q-service-requestref',
+      role: S6A_WORK_ROLE.templateId, taskIds: ['q-service-requestref-task'] });
+    const adviser = await sessionOf(world, await createS6BLine(main, {
+      label: 'q-service-requestref-adviser', role: platformRoleProfile('adviser').template }));
+    await openLink(world, { line: adviser, target: { kind: 'goal', ref: world.goals.first },
+      requestId: 'q-service-requestref-adviser-goal' });
+    const round = await runRound(world, { label: 'q-service-requestref', goalId: world.goals.first.goalId,
+      first: [
+        { kind: 'calls', calls: [{ callId: 'q-service-requestref-member', name: 'create_member', args: {
+          duty: 'executor', scope: { kind: 'task', task: tasks[0]! }, reason: 'Q service member request',
+        } }] },
+        { kind: 'text', text: secretaryAnswer({ body: 'Q service answer' }) },
+      ] });
+
+    const queue = ready<{ waitingAnswer: DecisionCardV1[] }>(await world.post('decisions/queue',
+      plain(S6A_SCOPE, { workspace: S6A_SCOPE, goalRef: world.goals.first, sections: ['waiting_answer'],
+        page: { limit: 100 } })), 'the decision queue');
+    const card = queue.waitingAnswer.find(entry => entry.source.kind === 'member_creation');
+    if (card === undefined) throw new Error('the member_creation card must be queued');
+    expect(card.requestRef).toEqual(round.requestRound);
+    const requestRef = card.requestRef;
+    if (requestRef === null) throw new Error('the member card must name its request round');
+
+    const asked = (await world.post('requests/ask', plain(S6A_SCOPE, { commandId: 'q-service-ask',
+      round: requestRef, cardRefs: card.source.pins, regenerate: false, text: 'Q service follow-up' }))).body as {
+      status?: string; followupRound?: QueryJobRef };
+    expect(asked.status).toBe('queued');
+    const followupRound = asked.followupRound;
+    if (followupRound === undefined) throw new Error('the ask must answer its follow-up round');
+
+    const view = ready<{ rounds: { ref: QueryJobRef }[] }>(await world.post('requests/read',
+      plain(S6A_SCOPE, { requestRoot: round.requestRoot })), 'the request read');
+    expect(view.rounds.map(entry => entry.ref)).toContainEqual(followupRound);
+
+    const reread = ready<DecisionCardV1>(await world.post('decisions/card',
+      plain(S6A_SCOPE, { source: card.source })), 'the member card');
+    expect(reread).toMatchObject({ cardKey: card.cardKey, state: 'waiting_answer' });
   });
 });
 

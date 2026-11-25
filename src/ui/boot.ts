@@ -2221,13 +2221,13 @@ type TaskMapGoalRef = { aggregateType: 'Goal'; projectId: string; goalId: string
 
 /**
  * The one scope choice of the read and the pin write. Without a goal id it is
- * the first workspace. With one, decision 104-1 (a read inside a project is not
- * limited by the workspace): each project is tried once, with its first
- * workspace in bootstrap order, and the first `ready` `goals/read` names the
- * scope; that read is returned so the Goal is not read twice. A project that
- * does not hold the Goal answers `not_found` and the next one is tried; when
- * none holds it that `not_found` stands. Any other failure is the read's own
- * error. No workspace at all is `null`.
+ * the first workspace. With one, each workspace is tried once in bootstrap
+ * order: `goals/read` answers `ready` in the workspace that holds the Goal, and
+ * that scope is the read's and the fixed writes' scope; the read is returned so
+ * the Goal is not read twice. `not_found` and `forbidden` both mean this
+ * workspace is not its home, so the next one is tried and each real error is
+ * kept; any other failure is the read's own error. After every workspace,
+ * `forbidden` is thrown first, then `not_found`; no workspace at all is `null`.
  */
 async function taskMapScope(
   client: ReturnType<typeof createHostClient>, workspaces: BootstrapReply['workspaces'], goalId: string | null,
@@ -2236,20 +2236,21 @@ async function taskMapScope(
     const first = workspaces[0];
     return first === undefined ? null : { scope: first.scope, goal: null };
   }
-  const tried = new Set<string>();
+  let denied: RouteReadError | null = null;
   let missing: RouteReadError | null = null;
   for (const { scope } of workspaces) {
-    if (tried.has(scope.projectId)) continue;
-    tried.add(scope.projectId);
     const ref = { aggregateType: 'Goal' as const, projectId: scope.projectId, goalId };
     try {
       const read = readyRouteValue<TaskMapGoalRead>(await client.post('goals/read', scope, ref), 'goals/read');
       return { scope, goal: { ref, read } };
     } catch (error) {
-      if (!(error instanceof RouteReadError) || error.code !== 'not_found') throw error;
-      missing = error;
+      if (!(error instanceof RouteReadError)
+        || (error.code !== 'not_found' && error.code !== 'forbidden')) throw error;
+      if (error.code === 'not_found') missing = error;
+      else denied = error;
     }
   }
+  if (denied !== null) throw denied;
   if (missing !== null) throw missing;
   return null;
 }
@@ -2267,9 +2268,9 @@ type QueueCountsRead = { counts?: unknown; capabilities?: unknown };
 /**
  * E3-NAV §2.2/§2.4/§2.7/§2.11: the chrome read of Main and of every board that
  * takes the navigation segment. The scope is the same `taskMapScope` the
- * TaskMap read uses (decision 104-1), so `?goal=` is resolved per project and
- * the navigation reads never fall back to `workspaces[0]` when a Goal was
- * asked for. With no Goal id the first unfinished Goal is chosen: a `null` list
+ * TaskMap read uses (decision 104-1), so `?goal=` is resolved in the workspace
+ * that holds the Goal and the navigation reads never fall back to
+ * `workspaces[0]` when a Goal was asked for. With no Goal id the first unfinished Goal is chosen: a `null` list
  * phase is read through `goals/display` before it is called unfinished, and a
  * finished one is skipped. The returned `cursor` is this read's bootstrap
  * `changesHead`, never a later head.

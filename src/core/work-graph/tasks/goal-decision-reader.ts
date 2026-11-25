@@ -113,7 +113,7 @@ const DECISION_CAUSE_CODES: ReadonlySet<string> = new Set([
   'auto_rework_count', 'auto_rework_pending',
   'auto_rework_cap_reached', 'no_new_basis', 'verification_uncovered',
   'budget_exhausted', 'not_reworkable', 'unknown_outcome',
-  'interrupted_pending_resume',
+  'interrupted_pending_resume', 'gate_needs_fix',
 ]);
 
 /** R2：停止卡点名可撤检查的两种原因（一个常量）。 */

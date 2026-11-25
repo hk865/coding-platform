@@ -229,3 +229,15 @@ describe('K3-29 step 6b (c) variant: a record answered safer_method', () => {
     expect(approvalCards[0]!.source.pins[0]).toMatchObject({ revision: approved.value.revision });
   }, 300_000);
 });
+
+describe('K3-29 startup automation mode in the reconcile report', () => {
+  it.each(['auto', 'ask', 'off'] as const)('B1: reconcile report carries the startup mode [%s]', async mode => {
+    const h = await HostScenario.open({ gitWorkspace: true, workIds: null, check: 'pass',
+      automation: { schemaVersion: 1, autoReworkLimit: 3, resumeOnStartup: mode } });
+    const read = await h.post<unknown>('host/reconcile-report', plain(AG2B_SCOPE, {}));
+    expect(read).toMatchObject({
+      status: 'ready',
+      value: { automation: { resumeOnStartup: mode }, report: expect.anything() },
+    });
+  });
+});

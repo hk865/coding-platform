@@ -239,3 +239,51 @@ it('C5 control: a fix that does not repair the failure FAILs its own round, the 
   expect(h.counts()).toEqual(before);
   await assertInvariants(h, 'end');
 }, 180_000);
+
+it('B6: gate_needs_fix has a card, and a text-only answer saves', async () => {
+  const { openEnvironment, drive, select, isGateStep, goalDisplay, ctx, goalRef, ids, GATE } = gateCase;
+  const { platform, workspaceRoot } = await openEnvironment(async () => undefined);
+  const toGate = await drive(platform, select('t6-card-flow'), isGateStep('open_checks'));
+  if (toGate.stopped === null) throw new Error('the Workflow must reach the gate open');
+  await writeFile(join(workspaceRoot, 'source.txt'), 'the delivered work, broken later\n');
+  const failed = await drive(platform, toGate.stopped);
+  expect(failed).toMatchObject({ state: 'waiting', reason: expect.stringMatching(/^gate_needs_fix: /) });
+  expect(await goalDisplay(platform)).toMatchObject({ phase: 'NEEDS_DECISION', row: 'GOAL-30',
+    cause: { code: 'gate_needs_fix', taskId: GATE } });
+
+  const queue = await platform.decisions.queryDecisionQueue(ctx(), { workspace: ids.scope, goalRef,
+    sections: ['waiting_answer'], page: { limit: 100 } });
+  if (queue.status !== 'ready') throw new Error(JSON.stringify(queue));
+  const goalCauses = queue.value.waitingAnswer.filter(card => card.source.kind === 'goal_cause');
+  expect(goalCauses).toHaveLength(1);
+  const card = goalCauses[0]!;
+  expect((JSON.parse(card.source.key) as { code?: string }).code).toBe('gate_needs_fix');
+  expect(card.source.subject).toEqual({ kind: 'goal', goalRef });
+  expect(card.taskRef).toEqual({ projectId: goalRef.projectId, goalId: goalRef.goalId, taskId: GATE });
+  expect(card.options).toEqual([]);
+  expect(card.actions).toContain('answer');
+  expect(card.objects).toEqual([]);
+  const reread = await platform.decisions.readDecisionCard(ctx(), { source: card.source });
+  expect(reread).toMatchObject({ status: 'ready', value: { cardKey: card.cardKey, state: 'waiting_answer' } });
+});
+
+it('B6: gate_needs_fix text-only answer saves', async () => {
+  const { openEnvironment, drive, select, isGateStep, ctx, goalRef, ids } = gateCase;
+  const { platform, workspaceRoot } = await openEnvironment(async () => undefined);
+  const toGate = await drive(platform, select('t6-answer-flow'), isGateStep('open_checks'));
+  if (toGate.stopped === null) throw new Error('the Workflow must reach the gate open');
+  await writeFile(join(workspaceRoot, 'source.txt'), 'the delivered work, broken later\n');
+  const failed = await drive(platform, toGate.stopped);
+  expect(failed).toMatchObject({ state: 'waiting', reason: expect.stringMatching(/^gate_needs_fix: /) });
+
+  const queue = await platform.decisions.queryDecisionQueue(ctx(), { workspace: ids.scope, goalRef,
+    sections: ['waiting_answer'], page: { limit: 100 } });
+  if (queue.status !== 'ready') throw new Error(JSON.stringify(queue));
+  const card = queue.value.waitingAnswer.find(entry => entry.source.kind === 'goal_cause');
+  if (card === undefined) throw new Error('the gate_needs_fix card must be queued');
+  const resolved = await platform.workflow.resolveDecision!(ctx(), {
+    input: { source: card.source, selection: { kind: 'other' }, text: '', annotations: [] },
+    meta: { requestId: 't6-answer', expected: card.source.pins },
+  });
+  expect(resolved).toMatchObject({ status: 'ready', value: { answer: { status: 'committed' } } });
+});

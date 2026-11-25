@@ -110,7 +110,8 @@ export type DecisionSourceV1 = {
     | 'planning_question' | 'goal_conflict' | 'action_release'
     | 'unknown_call_review' | 'command_rerun_request'
     | 'member_creation' | 'rework_request' | 'handoff_approval' | 'adviser_creation'
-    | 'module_maintainer_assignment' | 'repair_approval' | 'structural_proposal' | 'role_capacity' | 'role_line_change';
+    | 'module_maintainer_assignment' | 'repair_approval' | 'structural_proposal' | 'role_capacity' | 'role_line_change'
+    | 'node_review';
   key: string; subject: DecisionSubjectV1; pins: VersionPin[];
   goalBases?: GoalDecisionBasisV1[];
 };
@@ -255,7 +256,8 @@ export type DecisionSourceIdentityV1 =
   | { kind: 'repair_approval'; note: VersionPin }
   | { kind: 'structural_proposal'; batch: ArchitectureProposalBatchRef }
   | { kind: 'role_capacity'; duty: RoleLineDutyV1; capValue: number; episode: number }
-  | { kind: 'role_line_change'; operationRef: OperationRef };
+  | { kind: 'role_line_change'; operationRef: OperationRef }
+  | { kind: 'node_review'; goalRef: GoalRef };
 
 const goalKey = (goalRef: GoalRef): string => canonicalJson(goalRef as never);
 const compareText = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
@@ -329,6 +331,8 @@ export function decisionSourceKey(identity: DecisionSourceIdentityV1): string {
         episode: identity.episode } as never);
     case 'role_line_change':
       return canonicalJson({ kind: 'role_line_change', operationRef: identity.operationRef } as never);
+    case 'node_review':
+      return canonicalJson({ kind: 'node_review', goalRef: identity.goalRef } as never);
     default: {
       const unknownKind: never = identity;
       throw new Error(`unknown decision source identity ${JSON.stringify(unknownKind)}`);

@@ -64,13 +64,13 @@ import type { CommandRerunRequestRef, CommandRerunRequestV1 } from '../../contra
 import type {
   CommandRerunRequestPort, CommandRerunRequestReadPort,
 } from '../../core/work-graph/model/command-rerun-request-contracts.js';
-import type { ConsultationInput, ConsultationResult, FailedCardRefV1, GoalWaitBasisV1, InitialPlanningGoalInput, InitialPlanningGoalInputResult, ResolveDecisionInputV1, ResolveDecisionReadV1, WorkflowAdvanceInput, WorkflowAdvanceInternal, WorkflowAdvanceResult, WorkflowCalls, WorkflowOperation, WorkflowSessionRequeue, WorkflowSessionReview, WorkflowStepReceipt } from './contracts.js';
+import type { ConsultationInput, ConsultationResult, FailedCardRefV1, GoalWaitBasisV1, InitialPlanningGoalInput, InitialPlanningGoalInputResult, ResolveDecisionInputV1, ResolveDecisionReadV1, WorkflowAdvanceInput, WorkflowAdvanceInternal, WorkflowAdvanceResult, WorkflowCalls, WorkflowOperation, WorkflowSessionRequeue, WorkflowSessionReview, WorkflowStepReceipt, WorkflowWaitsReadV1 } from './contracts.js';
 import type { LineAskCommandV1, LineAskResultV1, WorkflowDependencies, WorkflowHostConfiguration, WorkflowPort } from './ports.js';
 import type { HandoffWorkflowDependencies } from './contracts.js';
 import { createSecretaryHandoffWorkflow } from './session-handoff.js';
 import { createConsultationConsumer, asRejection } from './consultation.js';
 import { createLineAsk } from './line-ask.js';
-import { createTaskGate, goalWaitBasisOf, type L46WaitV1, type ReviewGate } from './task-gate.js';
+import { createTaskGate, goalWaitBasisOf, goalL46Blocked, gapWaitBasisOf, mergedWaitBasisOf, taskUnsatisfied, carriesWork, type L46WaitV1, type ReviewGate } from './task-gate.js';
 import { planOnlyTargetOf, refinementRoundOf, systemRoundSendInput } from './plan-round.js';
 import { orderTasksByDependency } from './task-order.js';
 import { createSessionArchiveService } from './session-archive.js';
@@ -773,9 +773,6 @@ function orderTasks(tasks: readonly RuntimeTask[], dependsOn: Parameters<typeof 
  * L-15 (§9 VD-11, C7): a cancelled or superseded Task carries no work any more
  * (`completion-policy.ts` skips it too); a deferred one waits for a plan change.
  */
-function carriesWork(task: RuntimeTask): boolean {
-  return task.disposition !== 'cancelled' && task.disposition !== 'superseded';
-}
 function describeGap(ordered: readonly RuntimeTask[], graph: TaskGraph): string {
   const parts: string[] = [];
   for (const task of ordered) {
@@ -2898,25 +2895,15 @@ export function createWorkflow(deps: WorkflowDependencies & {
     // It records that candidate's wait basis and keeps looking; only when no
     // other Task can advance does it return the merged basis. A selection pinned
     // to one `taskId` still waits at once.
-    // DRV-15: the one wait-basis merge. The Goal-scope collection and the L46
-    // block union both dedupe kinds/reasons here, and the basis is always built
-    // by `goalWaitBasisOf` rather than a hand-written object.
-    const mergeWaitBasis = (bases: readonly GoalWaitBasisV1[]): GoalWaitBasisV1 =>
-      goalWaitBasisOf(goal,
-        [...new Set(bases.flatMap(wait => wait.reasons))],
-        [...new Set(bases.flatMap(wait => wait.recordKinds))]);
+    // DRV-15: the one wait-basis merge, shared with the L46 read port (`task-gate.ts`).
     const collectedWaits: GoalWaitBasisV1[] = [];
     let collectedReason: string | null = null;
     const rememberWaiting = (reason: string, basis?: GoalWaitBasisV1): void => {
       if (collectedReason === null) collectedReason = reason;
       if (basis !== undefined) collectedWaits.push(basis);
     };
-    const gapWaitBasis = (): GoalWaitBasisV1 => mergeWaitBasis([
-      goalWaitBasisOf(goal, ['plan_adoption', 'plan_change', 'task_claimable', 'formal_check', 'evidence'],
-        ['PlanRevision', 'PlanProposal', 'Run', 'TaskLease', 'DispatchOutboxEntry', 'VerificationRound',
-          'Evidence', 'TaskEvidenceIndex', 'ActionRequest', 'TaskClaimHold']),
-      ...collectedWaits,
-    ]);
+    /** This pass's Goal gap basis: the static gap plus every wait the loop collected. */
+    const gapWaitBasis = (): GoalWaitBasisV1 => gapWaitBasisOf(goal, collectedWaits);
     /**
      * §5.1.4: the Goal-level waiting exits carry the refinement trigger. The
      * real block reason, every collected wait, the candidate wait and the
@@ -2930,7 +2917,7 @@ export function createWorkflow(deps: WorkflowDependencies & {
       const planOnly = planOnlyWait(goal, graph);
       if (planOnly !== null) bases.push(planOnly);
       if (bases.length === 0) return result;
-      const basis = mergeWaitBasis(bases);
+      const basis = mergedWaitBasisOf(goal, bases);
       const target = planOnlyTargetOf(basis);
       // A candidate still on its way to adoption answers the same placeholders; a second round would compete with it.
       const round = candidateWait?.inFlight === true ? null : refinementRoundOf({
@@ -2976,7 +2963,7 @@ export function createWorkflow(deps: WorkflowDependencies & {
               : `${result.value.reason ?? 'the Goal is waiting'}; ${candidateWait.reason}`;
             return waiting(result.value.receipt, `no_adviser: the Goal is queued for an adviser; ${kept}`,
               (result.value.source ?? candidateWait?.source) ?? undefined,
-              mergeWaitBasis([basis, goalWaitBasisOf(goal, ['no_adviser'], ['Goal', 'Session', 'GoalPhase'])]));
+              mergedWaitBasisOf(goal, [basis, goalWaitBasisOf(goal, ['no_adviser'], ['Goal', 'Session', 'GoalPhase'])]));
           }
         }
       }
@@ -3130,36 +3117,17 @@ export function createWorkflow(deps: WorkflowDependencies & {
     //    a cancelled or superseded required Task carries no work and is not
     //    waited for; when only deferred required work is left, the wait says so
     //    (prefix `required_task_deferred:`, the Goal's GOAL-30 reason).
-    const unsatisfied = (task: RuntimeTask): boolean => {
-      const row = graph.tasks.find((candidate) => candidate.ref.taskId === task.taskId);
-      return row === undefined || row.effectivePhase !== 'satisfied';
-    };
-    const required = graph.plan.tasks.filter((task) => task.requirementLevel === 'required' && carriesWork(task));
-    const unfinishedWork = required.filter((task) => task.taskKind === 'work' && unsatisfied(task));
-    // §5.1.3: a stage/module gate whose required coverage has no unfinished
-    // work runs before the goal-wide unfinishedWork gate. `gateCoveredTaskIds`
-    // is the one coverage derivation (never `gateFixInProgress`).
-    const coveredGate = required.find((task) => task.taskKind === 'gate'
-      && task.scope.kind !== 'goal'
-      && task.disposition === 'active'
-      && unsatisfied(task)
-      && !gateCoveredTaskIds(graph.plan.tasks, task)
-        .some((taskId) => unfinishedWork.some((work) => work.taskId === taskId))
-      && !(base.taskId === null && base.activeTaskIds?.has(task.taskId) === true));
+    //    The stage/module gate and the all-blocked arm come from the one
+    //    `goalL46Blocked` (task-gate.ts).
+    const { coveredGate, required, unfinishedWork, block } =
+      goalL46Blocked(goal, graph, ordered, base, blocks, branch);
     if (coveredGate !== undefined) {
       return await advanceGate(owned, base, roundWaitBasis, graph, coveredGate);
     }
-    // L46 §3.13 item 3: every candidate this pass could start is inside a block → the Goal waits with all bases.
-    const candidates = ordered.filter(task => {
-      if (task.taskKind !== 'work' || task.disposition !== 'active'
-        || task.executionIntent === 'plan_only') return false;
-      const row = graph.tasks.find(candidate => candidate.ref.taskId === task.taskId);
-      return row !== undefined && row.effectivePhase !== 'satisfied';
-    });
-    if (blocks.length > 0 && candidates.length > 0 && candidates.every(task => branch.has(task.taskId))) {
+    if (block !== null) {
       // The block roots stay the Goal's reason; their bases join the common close-out (DR-P4-07).
-      return attachRefinement(waiting(null, `l46_blocked: ${blocks.map(block => block.task.taskId).join(', ')}`, undefined,
-        mergeWaitBasis([...blocks.map(block => block.wakeBasis), gapWaitBasis()])));
+      return attachRefinement(waiting(null, block.reason, undefined,
+        mergedWaitBasisOf(goal, [...block.blocks.map(entry => entry.wakeBasis), gapWaitBasis()])));
     }
     if (unfinishedWork.length > 0) {
       const gap = describeGap(ordered, graph);
@@ -3174,13 +3142,13 @@ export function createWorkflow(deps: WorkflowDependencies & {
     // §3.1: a gate a live Run watch is already advancing is skipped like any other Task.
     // §5.1.3: this arm is only the goal gate; stage/module gates were selected above.
     const gateTask = required.find((task) => task.taskKind === 'gate' && task.scope.kind === 'goal'
-      && unsatisfied(task));
+      && taskUnsatisfied(graph, task));
     if (gateTask !== undefined && !(base.taskId === null && base.activeTaskIds?.has(gateTask.taskId) === true)) {
       return await advanceGate(owned, base, roundWaitBasis, graph, gateTask);
     }
 
     // 4. Only a fully satisfied required set may propose the formal Goal completion.
-    if (required.every((task) => !unsatisfied(task))) {
+    if (required.every((task) => !taskUnsatisfied(graph, task))) {
       return advancing(null, makePerform(base, completeGoalStep(base, owned.projectId, goal, graph.completion)));
     }
     return attachRefinement(waiting(null, collectedReason ?? describeGap(ordered, graph), undefined, gapWaitBasis()));
@@ -5171,6 +5139,53 @@ export function createWorkflow(deps: WorkflowDependencies & {
   };
 
   /**
+   * D101-3: the L46 wait read. It runs the same `taskBlocks`/`closeBranches` and the same `goalL46Blocked` as
+   * `selectOrdinary`, and writes nothing. The Goal-wide basis joins the block roots with the static gap only
+   * (`gapWaitBasisOf(goal, [])`): this read answers L46, not what one advance happened to collect.
+   */
+  const readGoalWaits = async (ctx: CoreCallContext, input: { goalRef: GoalRef }):
+  Promise<ReadResult<WorkflowWaitsReadV1>> => {
+    if (!isRecord(input) || !isRecord(input.goalRef) || input.goalRef.aggregateType !== 'Goal'
+      || !nonEmpty(input.goalRef.projectId) || !nonEmpty(input.goalRef.goalId)) {
+      return rejection('invalid', 'readGoalWaits requires a complete GoalRef');
+    }
+    const goalRef = input.goalRef as GoalRef;
+    if (goalRef.projectId !== ctx.projectId) {
+      return rejection('forbidden', 'the Goal belongs to another project');
+    }
+    const owned = ownContext(ctx);
+    if ('rejection' in owned) return owned.rejection;
+    const goalRead = await deps.plans.queryGoal(owned.ctx, goalRef, { scope: 'project' });
+    if (goalRead.status !== 'ready') return readRejection(goalRead);
+    const goal = goalRead.value.goal;
+    const goalOwned = ownedInWorkspace(owned, goal.workspaceRef.workspaceId);
+    const graphRead = await deps.plans.queryTaskGraph(goalOwned.ctx, { goalRef: goal.ref });
+    if (graphRead.status !== 'ready') return readRejection(graphRead);
+    const graph = graphRead.value;
+    const config = deps.configuration;
+    if (config === undefined) return rejection('unsupported', 'no trusted Workflow configuration is registered');
+    const base: Base = {
+      goalRef: goal.ref, flowId: '', sessionHint: null, actor: owned.actor, taskId: null, failedCardRefs: [],
+    };
+    const ordered = orderTasks(graph.plan.tasks, graph.plan.executionDag?.dependsOn ?? []);
+    const blockRead = await taskBlocks(goalOwned, base, config, goal, graph, ordered);
+    if (blockRead.status !== 'ready') return readRejection(blockRead);
+    const { blocks, waiting } = blockRead.value;
+    const blocked = goalL46Blocked(goal, graph, ordered, base, blocks, waiting);
+    return { status: 'ready', value: {
+      goalRef: structuredClone(goal.ref),
+      waits: [...waiting.values()].map(row => ({ taskId: row.task.taskId, reason: row.reason })),
+      // The covered stage/module gate runs first in `selectOrdinary`, so it also makes this read's Goal-level
+      // all-blocked answer null (the same condition as the advance).
+      goalBlocked: blocked.coveredGate !== undefined || blocked.block === null ? null : {
+        reason: blocked.block.reason,
+        waitBasis: mergedWaitBasisOf(goal,
+          [...blocked.block.blocks.map(entry => entry.wakeBasis), gapWaitBasisOf(goal, [])]),
+      },
+    } };
+  };
+
+  /**
    * §2.8/F06: the target loop's ONE claim judgment, read-only. It runs the same occupancy/gate/line checks as
    * `selectOrdinary`, but never performs a step: the card source and the task detail read the blockers named
    * `module_gate`, `node_occupied` and `line_busy` without re-deriving them. `claimable` is the target loop's own
@@ -5272,6 +5287,7 @@ export function createWorkflow(deps: WorkflowDependencies & {
     handleIntervention: intervention.handleIntervention,
     readDeliveryEligibilityFacts,
     readTaskClaimability,
+    readGoalWaits,
     ...(closingNotice === undefined ? {} : { closingNotice }),
     // S1: one ended request round becomes this request's candidate; without the
     // request-candidate dependency the entry answers "unsupported" and writes nothing.

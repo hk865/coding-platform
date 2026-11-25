@@ -218,7 +218,7 @@ const CARD_KINDS: readonly DecisionSourceV1['kind'][] = [
   'message', 'goal_cause', 'candidate', 'note_review', 'planning_question', 'goal_conflict', 'action_release',
   'unknown_call_review', 'command_rerun_request',
   'member_creation', 'rework_request', 'handoff_approval', 'adviser_creation', 'module_maintainer_assignment',
-  'repair_approval', 'structural_proposal', 'role_capacity', 'role_line_change',
+  'repair_approval', 'structural_proposal', 'role_capacity', 'role_line_change', 'node_review',
 ];
 const NOTICE_CATEGORIES: readonly NoticeCategoryV1[] = [
   'member_notice', 'member_created', 'second_expiry', 'handoff', 'note_review', 'undelivered_reply', 'automatic_rework',
@@ -1188,10 +1188,29 @@ async function queryDecisionQueuePrepared(
   return prepared.last ? windowNeverStable() : { status: 'moved' };
 }
 
+/** A complete ISO-8601 date-time with `Z` or an explicit `±hh:mm` offset; a date-only value is not one. */
+const QUEUE_ISO_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?(?:Z|[+-]\d{2}:\d{2})$/;
+
 /** The sections and the page are required inputs: a read without one is `invalid`, like a bad cursor. */
 function queueInputProblem(input: QueueInput): CoreRejection | null {
   if (!Array.isArray(input.sections)) return { status: 'rejected', code: 'invalid', reason: 'the queue read requires sections' };
   if (!isRecord(input.page)) return { status: 'rejected', code: 'invalid', reason: 'the queue read requires a page' };
+  // The bounded history read: shape first, then a finite instant, then an ordered interval.
+  for (const key of ['since', 'until'] as const) {
+    const value = input[key];
+    if (value === undefined) continue;
+    if (typeof value !== 'string' || !QUEUE_ISO_TIME.test(value)) {
+      return { status: 'rejected', code: 'invalid',
+        reason: `the queue read's ${key} must be an ISO-8601 date-time with an explicit offset` };
+    }
+    if (!Number.isFinite(Date.parse(value))) {
+      return { status: 'rejected', code: 'invalid', reason: `the queue read's ${key} is not a real instant` };
+    }
+  }
+  if (input.since !== undefined && input.until !== undefined
+    && Date.parse(input.since) > Date.parse(input.until)) {
+    return { status: 'rejected', code: 'invalid', reason: 'the queue read requires since <= until' };
+  }
   return null;
 }
 
@@ -1691,6 +1710,16 @@ async function readDecisionQueueWindow(
   const answered = sortCards(finalized.filter((card) => card.state === 'answered_pending_application'));
   const history = sortCards(finalized.filter((card) => card.state === 'applied'
     || card.state === 'answered_no_application' || card.state === 'closed'));
+  // D49-28: a bounded read filters only the history segment, before the one
+  // global page; waiting/answered cards and their counts keep their own rule,
+  // and a card with no stored time is outside any bounded read.
+  const sinceMs = input.since === undefined ? null : Date.parse(input.since);
+  const untilMs = input.until === undefined ? null : Date.parse(input.until);
+  const boundedHistory = sinceMs === null && untilMs === null ? history : history.filter((card) => {
+    if (card.openedAt === null) return false;
+    const openedAt = Date.parse(card.openedAt);
+    return (sinceMs === null || openedAt >= sinceMs) && (untilMs === null || openedAt < untilMs);
+  });
 
   // ---- notices -------------------------------------------------------------
   const allNotices: NoticeItemV1[] = [];
@@ -1751,7 +1780,7 @@ async function readDecisionQueueWindow(
   // L11: append without an unbounded argument spread.
   if (input.sections.includes('waiting_answer')) for (const card of waiting) orderedCards.push(card);
   if (input.sections.includes('answered_pending_application')) for (const card of answered) orderedCards.push(card);
-  if (input.sections.includes('history')) for (const card of history) orderedCards.push(card);
+  if (input.sections.includes('history')) for (const card of boundedHistory) orderedCards.push(card);
 
   const cut = mode.kind === 'whole'
     ? wholePageCut(orderedCards, groupedAll, mode.noticeGoal, wantsNotices, workspace.projectId)
@@ -2136,6 +2165,8 @@ function identityScopeProblem(ctx: CoreCallContext, identity: DecisionSourceIden
       return null;
     case 'role_line_change':
       return foreignRef(identity.operationRef) ? forbidden : null;
+    case 'node_review':
+      return identity.goalRef.projectId !== ctx.projectId ? forbidden : null;
     default: {
       const unknown: never = identity;
       void unknown;
@@ -2726,6 +2757,7 @@ function mergeCards(existing: DecisionCardV1, incoming: DecisionCardV1): Decisio
     // only contributes its answer fields.
     taskRef: incoming.taskRef,
     runRef: incoming.runRef,
+    requestRef: incoming.requestRef,
     answerMessageRef: existing.answerMessageRef ?? incoming.answerMessageRef,
     answer: existing.answer ?? incoming.answer,
     application: existing.application ?? incoming.application,
@@ -2803,7 +2835,7 @@ export function createMemberCreationCardSource(
       return {
         cardKey: facts.source.key, source: facts.source,
         state: facts.closedReason === null ? 'waiting_answer' : 'closed',
-        subject: structuredClone(subject), senderSessionRef: null, requestRef: null,
+        subject: structuredClone(subject), senderSessionRef: null, requestRef: facts.requestRef,
         objects: facts.objects, options: facts.options, answerMessageRef: null, answer: null, application: null,
         candidateStatus: null, staleReason: null, closedReason: facts.closedReason, openedAt: facts.openedAt,
         taskRef: taskRefOfPins(facts.source.pins), runRef: runRefOfPins(facts.source.pins),

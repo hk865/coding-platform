@@ -10,7 +10,7 @@
  * The explicit-C case is folded into case 1: it is the same named-C assertion.
  */
 import { afterEach, expect, it } from 'vitest';
-import type { WorkflowAdvanceInput, WorkflowAdvanceResult } from '../../src/business/workflow/contracts.js';
+import type { WorkflowAdvanceInput, WorkflowAdvanceResult, WorkflowWaitsReadV1 } from '../../src/business/workflow/contracts.js';
 import type { DecisionCardV1 } from '../../src/core/work-graph/model/decision-contracts.js';
 import type { GoalRef } from '../../src/contracts/ledger.js';
 import { ready } from '../helpers/S7A-fixture.js';
@@ -182,3 +182,43 @@ it('legacy exact artifact on D: goal scope selects B and never D; named D waits 
       reason: 'l46_dependency_blocked: the Task s7b3-d waits on s7b3-a',
       source: gate.decisionCause?.source });
   }, 120_000);
+
+it('B4: workflow/waits returns each blocked Task with its dependency reason', async () => {
+  const { world, goalRef, tasks } = await openDefault();
+  const gate = await selectNamed(world, goalRef, tasks.A.taskId, 'l46-waits-a');
+  expect(gate).toMatchObject({ state: 'waiting', receipt: null, next: null,
+    reason: 'automation_confirmation_required:system_requeue' });
+  const c = await selectNamed(world, goalRef, tasks.C.taskId, 'l46-waits-c');
+  expect(c).toMatchObject({ state: 'waiting', receipt: null, next: null,
+    reason: 'l46_dependency_blocked: the Task s7b3-c waits on s7b3-a' });
+
+  const read = ready<WorkflowWaitsReadV1>(await world.post('workflow/waits', plain(S6A_SCOPE, { goalRef })),
+    'the workflow waits');
+  expect(read).toEqual({
+    goalRef,
+    waits: [
+      { taskId: 's7b3-a', reason: 'automation_confirmation_required:system_requeue' },
+      { taskId: 's7b3-c', reason: 'l46_dependency_blocked: the Task s7b3-c waits on s7b3-a' },
+    ],
+    goalBlocked: null,
+  });
+});
+
+it('B5: workflow/waits reports the all-blocked Goal and the merged L46 basis', async () => {
+  const { world, goalRef } = await openDefault();
+  const { value } = await driveGoal(world, goalRef, 'l46-waits-all');
+  expect(value).toMatchObject({ state: 'waiting', receipt: null, next: null, reason: 'l46_blocked: s7b3-a' });
+
+  const read = ready<WorkflowWaitsReadV1>(await world.post('workflow/waits', plain(S6A_SCOPE, { goalRef })),
+    'the workflow waits');
+  expect(read.waits).toEqual([
+    { taskId: 's7b3-a', reason: 'automation_confirmation_required:system_requeue' },
+    { taskId: 's7b3-c', reason: 'l46_dependency_blocked: the Task s7b3-c waits on s7b3-a' },
+  ]);
+  expect(read.goalBlocked?.reason).toBe('l46_blocked: s7b3-a');
+  expect(read.goalBlocked?.waitBasis.reasons).toEqual([
+    'automation_confirmation:system_requeue', 'plan_adoption', 'plan_change', 'task_claimable', 'formal_check', 'evidence']);
+  expect(read.goalBlocked?.waitBasis.recordKinds).toEqual([
+    'SessionMessage', 'TaskRequeue', 'Goal', 'PlanRevision', 'PlanProposal', 'Run', 'TaskLease',
+    'DispatchOutboxEntry', 'VerificationRound', 'Evidence', 'TaskEvidenceIndex', 'ActionRequest', 'TaskClaimHold']);
+});

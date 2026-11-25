@@ -91,12 +91,15 @@ import type {
   WorkspaceDecisionSettingsPort,
 } from '../core/work-graph/model/decision-contracts.js';
 import type { StartupReconcileReportV1 } from './startup-reconcile.js';
+import type { ResumeOnStartupMode } from '../contracts/task-requeue.js';
 import type { WorkflowPort } from '../business/workflow/ports.js';
 import type { LineAskInputV1, LineAskResultV1 } from '../business/workflow/ports.js';
 import type {
   RequestAskResultV1, RequestIntakePort, RequestRouteResultV1, RequestSelectIdeaResultV1, RequestSubmitResultV1,
 } from '../business/workflow/request-intake.js';
 import type { MainSurfaceReadPort } from '../core/work-graph/views/main-surface-read-model.js';
+import type { GoalSecretaryPort } from '../core/work-graph/tasks/goal-secretary.js';
+import { isGoalRef } from '../core/work-graph/communication/mailbox-common.js';
 import type { CollaborationDriverPort } from './collaboration-driver.js';
 import type { GoalControlPort } from './goal-fan-out-driver.js';
 import type { WorkbenchToolsPort } from './workbench-tools.js';
@@ -143,6 +146,7 @@ import {
   type VerificationCoreRouteDto,
   type ExecutionsCoreRouteDto,
   type WorkspaceFilesCoreRouteDto,
+  type WorkflowWaitsCoreRouteDto,
   type SecretariesArchiveBody,
   type SecretariesArchiveResponse,
   type SecretariesHandoffBody,
@@ -235,6 +239,8 @@ export type CoreRouteBindings = {
   handleGoalInput: WorkflowPort['handleGoalInput'];
   advanceWork: WorkflowPort['advanceWork'];
   consumeConsultation: NonNullable<WorkflowPort['consumeConsultation']>;
+  /** D101-3: the L46 wait read; a narrow Workflow without it answers `unsupported`. */
+  readGoalWaits: NonNullable<WorkflowPort['readGoalWaits']>;
   /** The person's ask command; the Host layer fills the Query profile fields before the Workflow call. */
   askLine: (ctx: CoreCallContext, input: LineAskInputV1) => Promise<LineAskResultV1>;
   // AG2b collaboration driver: the Host-layer handle lifetime, one binding per
@@ -382,6 +388,8 @@ export type CoreRouteBindings = {
   // open to any trusted caller of the workspace like the other reads.
   readMainPage: MainSurfaceReadPort['readMainPage'];
   readRequestView: MainSurfaceReadPort['readRequestView'];
+  /** D49-09: who the target's current request root is owned by; `null` is no owner and no eligible candidate. */
+  readGoalRecipient: (ctx: CoreCallContext, input: { goalRef: GoalRef }) => Promise<ReadResult<SessionRef | null>>;
   // The two secretary lifecycle commands. Each binding validates the person, accepts through the owner and then
   // drives the Workflow's advance over the operation it just accepted; the progress it answers with is the
   // Workflow's own read of that operation.
@@ -575,6 +583,8 @@ export type CoreRoutePlatform = {
   overlapGates?: OverlapGatePort;
   /** §2.5: the claim-hold owner's operator-only release-all write; internal like the other owner groups. */
   claimHolds?: Pick<ClaimHoldPort, 'releaseAll'>;
+  /** D49-09: the target's current secretary read, non-enumerable like the other owner groups. */
+  recipients?: Pick<GoalSecretaryPort, 'resolveGoalSecretary'>;
   /** The two secretary lifecycle accept owners, non-enumerable on the composed platform (they are internal owners,
    * not public keys), so a narrow platform without them answers `unsupported`. The advance half is the Workflow's
    * `sessionHandoff`, published beside them. */
@@ -636,6 +646,8 @@ export type HostReconcileReportV1 = {
   leaseReason: string;
   /** null when this Host did not reconcile (it does not hold the lease, L-10). */
   report: StartupReconcileReportV1 | null;
+  /** The resume mode in force when this report was produced, not the setting read later (5.8b-4). */
+  automation: { resumeOnStartup: ResumeOnStartupMode };
 };
 
 export type CoreRouteSpec = {
@@ -659,6 +671,7 @@ export const CORE_ROUTE_SPECS: Record<
   | keyof ArchitectureCoreRouteDto
   | keyof OverlapCoreRouteDto
   | keyof RequestCommandCoreRouteDto | keyof SecretaryLifecycleCoreRouteDto | keyof WaitsCoreRouteDto
+  | keyof WorkflowWaitsCoreRouteDto
   | keyof RoleLineCoreRouteDto | keyof MaintainerCoreRouteDto | keyof WorkspaceFilesCoreRouteDto | keyof ExecutionsCoreRouteDto
   | keyof VerificationCoreRouteDto | keyof ExplorationCoreRouteDto | keyof KnowledgeCoreRouteDto
   | keyof QueriesCancelCoreRouteDto | keyof NodesCoreRouteDto | keyof DeliveryCoreRouteDto,
@@ -741,6 +754,8 @@ export const CORE_ROUTE_SPECS: Record<
   'workflow/goal-input': { kind: 'plain', binding: 'handleGoalInput', owner: 'workflow.handleGoalInput' },
   'workflow/advance': { kind: 'plain', binding: 'advanceWork', owner: 'workflow.advanceWork' },
   'workflow/consultation': { kind: 'plain', binding: 'consumeConsultation', owner: 'workflow.consumeConsultation' },
+  // D101-3: every blocked Task of one Goal with its exact L46 reason, plus the Goal-wide all-blocked reason.
+  'workflow/waits': { kind: 'plain', binding: 'readGoalWaits', owner: 'workflow.readGoalWaits' },
   'workflow/driver-start': { kind: 'plain', binding: 'driverStart', owner: 'collaboration.start' },
   'workflow/driver-read': { kind: 'plain', binding: 'driverRead', owner: 'collaboration.read' },
   'workflow/driver-stop': { kind: 'plain', binding: 'driverStop', owner: 'collaboration.stop' },
@@ -869,6 +884,8 @@ export const CORE_ROUTE_SPECS: Record<
   'requests/route': { kind: 'plain', binding: 'routeRequest', owner: 'requestIntake.route' },
   'requests/select-idea': { kind: 'plain', binding: 'selectRequestIdea', owner: 'requestIntake.selectIdea' },
   'requests/ask': { kind: 'plain', binding: 'askRequest', owner: 'requestIntake.ask' },
+  // D49-09: the target's current secretary, read before a request is sent.
+  'requests/recipient': { kind: 'plain', binding: 'readGoalRecipient', owner: 'recipients.resolveGoalSecretary' },
   // The main conversation's read and one request's read with its cards.
   'main/read': { kind: 'plain', binding: 'readMainPage', owner: 'mainSurface.readMainPage' },
   'requests/read': { kind: 'plain', binding: 'readRequestView', owner: 'mainSurface.readRequestView' },
@@ -1250,6 +1267,9 @@ export function createPlatformCoreRouteBindings(
       return advanced;
     },
     consumeConsultation: platform.workflow.consumeConsultation.bind(platform.workflow),
+    readGoalWaits: platform.workflow.readGoalWaits === undefined
+      ? unsupported('the Host Workflow does not publish the Goal waits read (readGoalWaits)')
+      : platform.workflow.readGoalWaits.bind(platform.workflow),
     driverStart: driver === undefined ? unsupportedDriver('start') : driver.start.bind(driver),
     driverRead: driver === undefined ? unsupportedDriver('read') : driver.read.bind(driver),
     driverStop: driver === undefined ? unsupportedDriver('stop') : driver.stop.bind(driver),
@@ -1531,6 +1551,21 @@ export function createPlatformCoreRouteBindings(
     readRequestView: platform.mainSurface === undefined
       ? unsupported('the platform does not publish mainSurface.readRequestView')
       : platform.mainSurface.readRequestView.bind(platform.mainSurface),
+    // D49-09: a plain read of the target's current secretary. It validates the complete GoalRef and the project
+    // before the one selection owner runs; `null` means no owner and no eligible candidate, never a failed read.
+    readGoalRecipient: platform.recipients === undefined
+      ? unsupported('the platform does not publish recipients.resolveGoalSecretary')
+      : async (ctx, input) => {
+        const candidate = isPlainObject(input) ? input['goalRef'] : undefined;
+        if (!isGoalRef(candidate)) {
+          return { status: 'rejected', code: 'invalid', reason: 'requests/recipient requires a complete GoalRef' };
+        }
+        const goalRef = candidate as GoalRef;
+        if (goalRef.projectId !== ctx.projectId) {
+          return { status: 'rejected', code: 'forbidden', reason: 'the Goal belongs to another project' };
+        }
+        return platform.recipients!.resolveGoalSecretary(ctx, { goalRef });
+      },
     // The two secretary lifecycle commands. The person's decision is the route's: a member or a system actor is
     // `forbidden` BEFORE the accept owner runs, so no operation is recorded and no line is created. After a real
     // accept the route drives the Workflow's own advance/manualArchive once and answers with its progress read.
@@ -1868,6 +1903,7 @@ export async function dispatchCoreRoute(
       case 'workflow/goal-input': return bindings.handleGoalInput(ctx, plain.input as never);
       case 'workflow/advance': return bindings.advanceWork(ctx, plain.input as never);
       case 'workflow/consultation': return bindings.consumeConsultation(ctx, plain.input as never);
+      case 'workflow/waits': return bindings.readGoalWaits(ctx, plain.input as never);
       case 'workflow/driver-start': return bindings.driverStart(ctx, plain.input as never);
       case 'workflow/driver-read': return bindings.driverRead(ctx, plain.input as never);
       case 'workflow/driver-stop': return bindings.driverStop(ctx, plain.input as never);
@@ -1960,6 +1996,7 @@ export async function dispatchCoreRoute(
       case 'requests/route': return bindings.routeRequest(ctx, plain.input as never);
       case 'requests/select-idea': return bindings.selectRequestIdea(ctx, plain.input as never);
       case 'requests/ask': return bindings.askRequest(ctx, plain.input as never);
+      case 'requests/recipient': return bindings.readGoalRecipient(ctx, plain.input as never);
       case 'main/read': return bindings.readMainPage(ctx, plain.input as never);
       case 'requests/read': return bindings.readRequestView(ctx, plain.input as never);
       // The two secretary lifecycle commands.

@@ -1806,7 +1806,9 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
         disconnect: platform.disconnect },
       // A project opened after the start-up reconcile starts from an empty report (with its lease).
       report: { hostInstanceId: lease.hostInstanceId, lease: lease.lease, leaseRow: lease.row, leaseReason: lease.reason,
-        report: owned && reconcileAddedScope !== null ? emptyStartupReport(lease.hostInstanceId) : null } };
+        report: owned && reconcileAddedScope !== null ? emptyStartupReport(lease.hostInstanceId) : null,
+        // The start-up reconcile overwrites this with the mode it actually ran under; until then it is only a placeholder.
+        automation: { resumeOnStartup: platform.automationPolicy().resumeOnStartup } } };
     // The platform's formal triggers reach the driver. A Host without the lease writes nothing (HL-02, HL-07), so it
     // never captures.
     if (owned) project.captureTrigger = event => autoCapture.projectChanged(event.projectId, event.kind);
@@ -2915,6 +2917,9 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       const project = projects.get(scope.projectId);
       if (project === undefined || project.runtime.lease.lease !== 'owned') return null;
       const { platform, lease } = project.runtime;
+      // The one mode this reconcile ran under; the report carries it, never a later setting read (5.8b-4).
+      const resumeOnStartup = platform.automationPolicy().resumeOnStartup;
+      project.report.automation = { resumeOnStartup };
       return {
         platform: { sessions: platform.sessions, executions: platform.executions, controls: platform.controls,
           plans: platform.plans, reconcile: platform.reconcile,
@@ -2922,7 +2927,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
           deliverControl: (...args) => platform.runtime.deliverControl!(...args),
           repairs: platform.repairs, redriveRepairAnswers, redriveActionReleaseAnswers },
         hostInstanceId: lease.hostInstanceId,
-        resumeOnStartup: platform.automationPolicy().resumeOnStartup,
+        resumeOnStartup,
         takeover: lease.takeover,
         members: platform.memberCreations,
         fanOut: (ctx, goalRef, options) => project.goalFanOut.fanOut(ctx, goalRef, options),

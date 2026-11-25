@@ -71,7 +71,7 @@ import type { DeviationInputV1 } from '../../contracts/plan-deviation.js';
 import type { RequestSubmitPort } from './request-intake.js';
 import type { ActivityBackfillBatchV1, ActivityBackfillInput, ActivityBackfillRangeInput,
   ConsultationInput, ConsultationResult, InitialPlanningGoalInput, InitialPlanningGoalInputResult,
-  RedriveAnswerV1, ResolveDecisionInputV1, ResolveDecisionReadV1, WorkflowAdvanceInput, WorkflowAdvanceInternal, WorkflowAdvanceResult, WorkflowCloseEventReader } from './contracts.js';
+  RedriveAnswerV1, ResolveDecisionInputV1, ResolveDecisionReadV1, WorkflowAdvanceInput, WorkflowAdvanceInternal, WorkflowAdvanceResult, WorkflowCloseEventReader, WorkflowWaitsReadV1 } from './contracts.js';
 import type { ConsultationFactsPort } from '../../core/work-graph/queries/platform-facts.js';
 import type { MemberRequestPortV1 } from '../../core/work-graph/tasks/member-service.js';
 import type { OverlapGatePort } from '../../core/work-graph/tasks/overlap-gates.js';
@@ -494,6 +494,9 @@ export interface WorkflowPort {
    *  action card and the task detail. Optional so a composition without the target loop keeps `not_read`. */
   readTaskClaimability?(ctx: CoreCallContext, input: { goalRef: GoalRef; task: TaskTriple }):
     Promise<ReadResult<TaskClaimJudgmentV1>>;
+  /** D101-3: the L46 wait read — every blocked Task of one Goal with its exact reason, plus the Goal-wide
+   *  all-blocked reason and merged basis. Read-only: it never writes a record or opens a Kernel turn. */
+  readGoalWaits?(ctx: CoreCallContext, input: { goalRef: GoalRef }): Promise<ReadResult<WorkflowWaitsReadV1>>;
   /** The one fixed closing notice of a finished round, read by the notice writer's own source-and-part identity;
    *  absent keeps the consumable view's older classification. `reason` narrows the proof to one closing reason (the
    *  formal `no_answer` conclusion); absent proves any reason. */

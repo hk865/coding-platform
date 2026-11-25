@@ -19,6 +19,7 @@ const KNOWN_CAUSE_CODES: ReadonlySet<string> = new Set([
   'auto_rework_count', 'auto_rework_pending',
   'auto_rework_cap_reached', 'no_new_basis', 'verification_uncovered',
   'budget_exhausted', 'not_reworkable', 'unknown_outcome', 'interrupted_pending_resume',
+  'gate_needs_fix',
   'automation_confirmation_required',
   'missing_initial_architecture', 'missing_initial_completion_policy',
   // §5.5.3: derived (not persisted) when a refinement need exists and the

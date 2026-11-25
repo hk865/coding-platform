@@ -559,6 +559,9 @@ export interface DecisionReadPort {
     workspace: WorkspaceScope; goalRef?: GoalRef;
     sections: ('waiting_answer' | 'answered_pending_application' | 'history' | 'notices')[];
     categories?: NoticeCategoryV1[];
+    /** ISO-8601 with `Z` or an explicit offset, millisecond precision; `since` inclusive, `until` exclusive;
+     *  a null `openedAt` is outside any bounded read. */
+    since?: string; until?: string;
     page: { limit: number; cursor?: string; atLeastCursor?: CommitCursor };
   }): Promise<ReadResult<DecisionQueueReadV1>>;
   readDecisionCard(ctx: CoreCallContext, input: {

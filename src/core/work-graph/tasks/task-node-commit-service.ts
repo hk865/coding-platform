@@ -13,11 +13,12 @@
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { VersionPin } from '../../../contracts/core/identity.js';
 import { rejected, rejectedWithNonEmptyCurrent } from '../../../contracts/core/rejections.js';
-import type { CoreRejection } from '../../../contracts/core/results.js';
+import type { CoreRejection, ReadResult } from '../../../contracts/core/results.js';
 import { defineShape, f } from '../../../contracts/data-format.js';
 import { GoalRefShape, TaskTripleShape, id } from '../../../contracts/data-format-refs.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
-import type { GoalRef, WorkspaceRef } from '../../../contracts/ledger.js';
+import type { GoalSnapshot, GoalRef, WorkspaceRef } from '../../../contracts/ledger.js';
+import type { PlanRevisionSnapshot } from '../../../contracts/plan.js';
 import type { TaskReductionRef } from '../../../contracts/reduction.js';
 import {
   TASK_NODE_COMMIT_BY_GOAL_LOOKUP, type TaskNodeCommittedEventV1, type TaskNodeCommitV1,
@@ -39,7 +40,7 @@ import {
   taskNodeFilesOf, taskNodePending, type ExecutedFileV1, type TaskNodeCommitDraftV1,
 } from '../state/task-node-commit.js';
 import { bindTrustedContext, isolateWrite, operatorProblem } from './execution-entry-service.js';
-import { readCanonicalTaskFacts, readGoalPlanWindow } from './plan-readers.js';
+import { readCanonicalTaskFacts, readGoalPlanWindow, type CanonicalTaskFacts } from './plan-readers.js';
 import { liveRunsOf } from './plan-service.js';
 import { pinRevision } from './revision-guard.js';
 
@@ -67,6 +68,14 @@ type CommitFacts =
   /** NR-14: the git commit of this identity and fingerprint already landed; only the record is missing. */
   | { kind: 'recovered'; draft: TaskNodeCommitDraftV1; sha: string }
   | { kind: 'fresh'; draft: TaskNodeCommitDraftV1; workspace: WorkspaceRef; paths: string[] };
+
+/** The stable ledger half of a Goal's node review: records only (no work-tree blob, no conflict graph, 121-93). */
+type NodeReviewLedgerV1 =
+  | { plan: null; goal: GoalSnapshot }
+  | { plan: PlanRevisionSnapshot; goal: GoalSnapshot; facts: CanonicalTaskFacts;
+      nodeFiles: Map<string, ReturnType<typeof taskNodeFilesOf>>;
+      reviews: Map<string, TaskNodeCommitV1>;
+      pendingByTaskId: Map<string, boolean> };
 
 export function createTaskNodeCommitService(deps: TaskNodeCommitServiceDependencies): TaskNodeCommitPort {
   const records = deps.records;
@@ -97,16 +106,15 @@ export function createTaskNodeCommitService(deps: TaskNodeCommitServiceDependenc
     return read.value.files;
   }
 
-  async function readNodeRows(ctx: CoreCallContext, input: { goalRef: GoalRef }):
-    ReturnType<TaskNodeCommitPort['readNodeRows']> {
-    const goalRef = input.goalRef;
+  async function readNodeReviewLedger(ctx: CoreCallContext, goalRef: GoalRef):
+    Promise<ReadResult<NodeReviewLedgerV1>> {
     if (ctx.projectId !== goalRef.projectId) return rejected('forbidden', 'the Goal belongs to another project');
     const window = await readGoalPlanWindow(records, goalRef);
     if (window.status !== 'ready') return window;
     const goal = window.goal;
     if (goal.workspaceRef.workspaceId !== ctx.workspaceId) return rejected('forbidden', 'the Goal belongs to another workspace');
     const plan = window.plan;
-    if (plan === null) return { status: 'ready', value: { rows: [], pending: [], liveWork: false } };
+    if (plan === null) return { status: 'ready', value: { plan: null, goal } };
     const facts = await readCanonicalTaskFacts(records, goalRef, plan);
     if (facts.status !== 'ready') return facts;
     const executed = await readExecuted(ctx, goalRef);
@@ -115,6 +123,26 @@ export function createTaskNodeCommitService(deps: TaskNodeCommitServiceDependenc
     if (!(reviews instanceof Map)) return reviews;
     const nodeFiles = new Map(plan.tasks.map(task => [task.taskId, taskNodeFilesOf(
       new Set((facts.value.runsByTaskId.get(task.taskId) ?? []).map(run => run.ref.runId)), executed)]));
+    const pendingByTaskId = new Map<string, boolean>();
+    for (const task of plan.tasks) {
+      const state = facts.value.byTaskId.get(task.taskId)!;
+      const node = nodeFiles.get(task.taskId)!;
+      const review = state.reductionRevision === null ? null
+        : reviews.get(`${task.taskId}:${state.reductionRevision}`) ?? null;
+      pendingByTaskId.set(task.taskId, taskNodePending({ autonomy: goal.settings.autonomy, taskKind: task.taskKind,
+        executionIntent: task.executionIntent, effectivePhase: state.effectivePhase,
+        reductionRevision: state.reductionRevision, hasFiles: node.files.length > 0, reviewed: review !== null }));
+    }
+    return { status: 'ready', value: { plan, goal, facts: facts.value, nodeFiles, reviews, pendingByTaskId } };
+  }
+
+  async function readNodeRows(ctx: CoreCallContext, input: { goalRef: GoalRef }):
+    ReturnType<TaskNodeCommitPort['readNodeRows']> {
+    const goalRef = input.goalRef;
+    const ledger = await readNodeReviewLedger(ctx, goalRef);
+    if (ledger.status !== 'ready') return ledger;
+    if (ledger.value.plan === null) return { status: 'ready', value: { rows: [], pending: [], liveWork: false } };
+    const { plan, goal, facts, nodeFiles, reviews, pendingByTaskId } = ledger.value;
     const paths = [...new Set([...nodeFiles.values()].flatMap(node => node.files.map(file => file.path)))];
     const blobs = new Map<string, string | null>();
     const shared = new Map<string, GoalRef[]>();
@@ -139,19 +167,17 @@ export function createTaskNodeCommitService(deps: TaskNodeCommitServiceDependenc
     }
     const rows: TaskNodeReviewRowV1[] = [];
     // The Goal display's live Runs (`starting|running`), and NR-24's node still under review.
-    let liveWork = liveRunsOf(plan, facts.value).length > 0;
+    let liveWork = liveRunsOf(plan, facts).length > 0;
     for (const task of plan.tasks) {
-      const state = facts.value.byTaskId.get(task.taskId)!;
-      const runs = facts.value.runsByTaskId.get(task.taskId) ?? [];
-      const reduction = state.reductionRevision === null ? undefined : facts.value.reductionsByTaskId.get(task.taskId);
+      const state = facts.byTaskId.get(task.taskId)!;
+      const runs = facts.runsByTaskId.get(task.taskId) ?? [];
+      const reduction = state.reductionRevision === null ? undefined : facts.reductionsByTaskId.get(task.taskId);
       const node = nodeFiles.get(task.taskId)!;
       const review = state.reductionRevision === null ? null
         : reviews.get(`${task.taskId}:${state.reductionRevision}`) ?? null;
-      const pending = taskNodePending({ autonomy: goal.settings.autonomy, taskKind: task.taskKind,
-        executionIntent: task.executionIntent, effectivePhase: state.effectivePhase,
-        reductionRevision: state.reductionRevision, hasFiles: node.files.length > 0, reviewed: review !== null });
+      const pending = pendingByTaskId.get(task.taskId)!;
       liveWork ||= taskAwaitsReview({ taskKind: task.taskKind, effectivePhase: state.effectivePhase,
-        round: facts.value.roundsByTaskId.get(task.taskId), unknownCallReview: state.unknownCallReview });
+        round: facts.roundsByTaskId.get(task.taskId), unknownCallReview: state.unknownCallReview });
       rows.push({
         task: { taskId: task.taskId, title: task.title, taskKind: task.taskKind, requirementLevel: task.requirementLevel,
           disposition: task.disposition, phase: state.effectivePhase,
@@ -165,6 +191,14 @@ export function createTaskNodeCommitService(deps: TaskNodeCommitServiceDependenc
       });
     }
     return { status: 'ready', value: { rows, pending: rows.filter(row => row.pending), liveWork } };
+  }
+
+  async function readPendingNodeReview(ctx: CoreCallContext, input: { goalRef: GoalRef }):
+    ReturnType<TaskNodeCommitPort['readPendingNodeReview']> {
+    const ledger = await readNodeReviewLedger(ctx, input.goalRef);
+    if (ledger.status !== 'ready') return ledger;
+    if (ledger.value.plan === null) return { status: 'ready', value: false };
+    return { status: 'ready', value: [...ledger.value.pendingByTaskId.values()].some(Boolean) };
   }
 
   async function commitNode(ctx: CoreCallContext, request: Parameters<TaskNodeCommitPort['commitNode']>[1]):
@@ -326,7 +360,7 @@ export function createTaskNodeCommitService(deps: TaskNodeCommitServiceDependenc
       reviewedBy: actor, reviewedAt: deps.now(), requestId } };
   }
 
-  return { readNodeRows, commitNode };
+  return { readNodeRows, readPendingNodeReview, commitNode };
 }
 
 /** NR-06: `meta.expected` is exactly the Goal pin and the TaskReduction pin (revision 0 before any reduction). */

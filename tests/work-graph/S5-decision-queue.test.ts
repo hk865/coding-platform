@@ -101,7 +101,7 @@ async function open(kind: 'memory' | 'sqlite', reopen = false) {
       knowledge: f.knowledge,
       now: f.now, eventId: f.newId }).abandonPlanProposal(f.ctx,
       { input: { proposalRef }, meta: { requestId: f.newId(), expected: [await pin(f.records, proposalRef), await pin(f.records, GOAL_B)] } }));
-  return { f, plans, q, card, answer, control, abandon, mailbox };
+  return { f, plans, q, card, answer, control, abandon, mailbox, reads };
 }
 
 async function budgetCause(f: S5DecisionFixture, plans: PlanTaskPort) {
@@ -333,5 +333,61 @@ describe.each(['memory', 'sqlite'] as const)('S5 decision queue (%s)', kind => {
     expect((await q()).sourceCursor).toEqual(first.sourceCursor);
     expect({ store: await f.storeSnapshot(), messages: await messageFacts(), workspace: await storedRecord(f.records, WORKSPACE),
       allocations: { ...f.allocationCounts }, models: await modelRequestCounts(f) }).toEqual(before);
+  });
+
+  it('B3: the decision queue filters history by openedAt', async () => {
+    const { f, mailbox, answer, abandon, q, reads } = await open(kind);
+    const until = '2026-10-08T00:01:00.000Z';
+    const defer = async (label: string): Promise<void> => {
+      const sent = committed(await mailbox.sendUserMessage(workContext(f, f.claimRA), {
+        input: { goalRef: GOAL_B, intent: 'decision_request', text: `B3 defer ${label}.`, needsReply: true, waitAfterSend: false,
+          options: [{ id: 'defer', label: '稍后再说', effect: 'defer' },
+            { id: 'accept', label: '现在采用', effect: 'apply' }], objects: [] }, meta: { requestId: f.newId(), expected: [] } }));
+      if (sent.decision === undefined) throw new Error('the send omitted its decision source');
+      await answer(sent.decision.source, { kind: 'option', optionId: 'defer' }, sent.ref);
+    };
+    await defer('one');
+    await defer('two');
+    await abandon(CANDIDATE_U1);
+
+    const base = await q({ sections: ['waiting_answer', 'answered_pending_application', 'history'], page: { limit: 50 } });
+    const historical = base.history.filter(card => card.openedAt !== null);
+    expect(base.history.filter(card => card.openedAt === null).length).toBeGreaterThanOrEqual(1);
+    expect(historical.length).toBeGreaterThanOrEqual(2);
+    expect(historical.every(card => card.openedAt === T)).toBe(true);
+    const keys = historical.map(card => card.cardKey);
+
+    const bounded = await q({ since: T, until });
+    expect(bounded.history.map(card => card.cardKey)).toEqual(keys);
+    expect(bounded.history.every(card => card.openedAt !== null && card.openedAt >= T && card.openedAt < until)).toBe(true);
+    expect(bounded.waitingAnswer.map(card => card.cardKey)).toEqual(base.waitingAnswer.map(card => card.cardKey));
+    expect(bounded.answeredPendingApplication.map(card => card.cardKey))
+      .toEqual(base.answeredPendingApplication.map(card => card.cardKey));
+    expect(bounded.counts.waitingAnswer).toBe(base.counts.waitingAnswer);
+    expect(bounded.counts.answeredPendingApplication).toBe(base.counts.answeredPendingApplication);
+
+    expect((await q({ until: T })).history).toEqual([]);
+    expect((await q({ since: T, until: T })).history).toEqual([]);
+
+    const refuses = (input: Partial<QueueInput>) => reads.queryDecisionQueue(f.ctx,
+      { workspace: WORKSPACE_SCOPE, sections: SECTIONS, page: { limit: 50 }, ...input });
+    for (const input of [{ since: 'not-a-date' }, { since: '2026-10-08' }, { since: until, until: T }]) {
+      expect(await refuses(input)).toMatchObject({ status: 'rejected', code: 'invalid' });
+    }
+
+    const first = await q({ since: T, until, sections: ['history'], page: { limit: 1 } });
+    expect(first.nextCursor).not.toBeNull();
+    const paged = first.history.map(card => card.cardKey);
+    let last = first;
+    let cursor = first.nextCursor;
+    while (cursor !== null) {
+      const page = await q({ since: T, until, sections: ['history'], page: { limit: 1, cursor } });
+      expect(page.history.every(card => card.openedAt !== null && card.openedAt >= T && card.openedAt < until)).toBe(true);
+      paged.push(...page.history.map(card => card.cardKey));
+      last = page;
+      cursor = page.nextCursor;
+    }
+    expect(paged).toEqual(keys);
+    expect(last.nextCursor).toBeNull();
   });
 });

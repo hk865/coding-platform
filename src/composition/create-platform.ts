@@ -70,6 +70,7 @@ import {
   createPlanningQuestionCardSource, createUnknownCallReviewCardSource, createActionReleaseCardSource,
   createMaintainerAssignmentCardSource, createRoleCapacityCardSource, createRoleLineChangeCardSource,
 } from '../core/work-graph/views/decision-read-model.js';
+import { createTaskNodeReviewCardSource } from '../core/work-graph/views/task-node-review-source.js';
 import { createPlanAdoptionNoticeSource } from '../core/work-graph/views/plan-adoption-notices.js';
 import { createPlanNoticeSource } from '../core/work-graph/views/plan-notices.js';
 import type { TaskbookExportReadPort } from '../contracts/plan-round.js';
@@ -382,7 +383,7 @@ import { createSessionHistoryCursorOwner, createSessionOperations } from '../cor
 import type { CoreCallContext } from '../contracts/core/call-context.js';
 import type { CommitCursor } from '../contracts/command-event.js';
 import type { DecisionApplicationReceiptV1 } from '../contracts/core/session-message.js';
-import type { ModuleRef, SessionRef, WorkspaceScope } from '../contracts/core/identity.js';
+import type { ModuleRef, SessionRef, VersionPin, WorkspaceScope } from '../contracts/core/identity.js';
 import type { NoteVersionSnapshot, ResponsibilityMoveV1 } from '../contracts/note.js';
 import type { CoreRejection, ReadResult } from '../contracts/core/results.js';
 import type { OperationRef } from '../contracts/core/operations.js';
@@ -395,7 +396,6 @@ import {
 } from '../core/work-graph/sessions/session-record-codecs.js';
 import type { ModuleMaintainerPort } from '../core/work-graph/model/module-maintainer-contracts.js';
 import { createModuleMaintainer } from '../core/work-graph/sessions/module-maintainer-service.js';
-import type { VersionPin } from '../contracts/core/identity.js';
 import type { GoalRef, WorkspaceRef } from '../contracts/ledger.js';
 import type { PlanProposalRef } from '../core/work-graph/model/plan-contracts.js';
 import type { RoleConfigurationRef } from '../contracts/core/identity.js';
@@ -3244,8 +3244,10 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
     const rawNodeCommits = createTaskNodeCommitService({ records: backend.records, executedFiles: goalExecutedFiles,
       conflicts: rawDecisionReads, workspace: nodeCommitGit, now,
       ...(operatorActor === undefined ? {} : { operatorActor }) });
+    decisionCardSources.push(createTaskNodeReviewCardSource({ nodeCommits: rawNodeCommits }));
     const nodeCommits: TaskNodeCommitPort = {
       readNodeRows: (...args) => trackedCall(() => rawNodeCommits.readNodeRows(...args), unavailable),
+      readPendingNodeReview: (...args) => trackedCall(() => rawNodeCommits.readPendingNodeReview(...args), unavailable),
       commitNode: (...args) => trackedCall(() => rawNodeCommits.commitNode(...args), unavailable),
     };
     // Delivery (121-45): the acceptance write owner and the delivery page read. The write owner admits the configured
@@ -4396,6 +4398,7 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       | 'archiveLine' | 'continueArchiveLine' | 'maintainSessions' | 'sessionHandoff'>> = {
       handleGoalInput: (...args) => trackedCall(() => rawWorkflow.handleGoalInput(...args), unavailable),
       advanceWork: (...args) => trackedCall(() => rawWorkflow.advanceWork(...args), unavailable),
+      readGoalWaits: (...args) => trackedCall(() => rawWorkflow.readGoalWaits!(...args), unavailable),
       consumeConsultation: (...args) => trackedCall(() => rawWorkflow.consumeConsultation(...args), unavailable),
       askLine: (...args) => trackedCall(() => rawWorkflow.askLine!(...args), unavailable),
       handleIntervention: (...args) => trackedCall(() => rawWorkflow.handleIntervention!(...args), unavailable),

@@ -270,6 +270,33 @@ describe.each(['memory', 'sqlite'] as const)('request routes (%s)', backend => {
 
 });
 
+describe('request recipient preview (memory)', () => {
+  it('B2: recipient preview names the assigned secretary and follows the owner', async () => {
+    const world = await open({ backend: 'memory' });
+    const empty = await world.post('requests/recipient', body({ goalRef: S6A_GOAL_1 }));
+    expect(empty.body).toEqual({ status: 'ready', value: null });
+    expect(empty.httpStatus).toBe(200);
+
+    const a = await world.createSecretary('a');
+    const b = await world.createSecretary('b');
+    const submitted = expectQueuedAssigned((await world.post('requests/submit', body(submitInput('s6a-h-recipient')))).body);
+    expect(sessionOf(submitted['secretary'])).toEqual(a.ref);
+    const round = submitted['round'] as QueryJobRef;
+
+    const foreign = await world.post('requests/recipient', body({ goalRef: { ...S6A_GOAL_1, projectId: 'other' } }));
+    expect(foreign.body).toMatchObject({ status: 'rejected', code: 'forbidden' });
+
+    const assigned = await world.post('requests/recipient', body({ goalRef: S6A_GOAL_1 }));
+    expect(assigned.body).toEqual({ status: 'ready', value: submitted['secretary'] });
+
+    const routed = expectObject((await world.post('requests/route',
+      body({ commandId: 's6a-h-recipient-route', round, to: b.ref, reason: 'manual' }))).body);
+    expect(routed['status']).toBe('routed');
+    const moved = await world.post('requests/recipient', body({ goalRef: S6A_GOAL_1 }));
+    expect(moved.body).toEqual({ status: 'ready', value: b.ref });
+  });
+});
+
 // ------------------------------------------------------------------------- //
 // A new line, the no-profile answer and the open cap                         //
 // ------------------------------------------------------------------------- //

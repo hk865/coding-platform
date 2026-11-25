@@ -308,7 +308,7 @@ function completeReadModel(records: ReadRecords, cardSources: readonly DecisionC
       emptyCardSource('handoff_approval'), emptyCardSource('adviser_creation'),
       emptyCardSource('module_maintainer_assignment'),
       emptyCardSource('repair_approval'), emptyCardSource('structural_proposal'),
-      emptyCardSource('role_capacity'), emptyCardSource('role_line_change')],
+      emptyCardSource('role_capacity'), emptyCardSource('role_line_change'), emptyCardSource('node_review')],
     noticeSources: (['second_expiry', 'handoff', 'note_review', 'undelivered_reply', 'automatic_rework',
       'continuation', 'disconnect', 'project_notice', 'plan_adoption', 'plan_notice'] as const).map(emptyNoticeSource),
     conflicts: createGoalConflictAssembler({ records, catalog: createArchitectureCatalogService({ records, knowledge }),

@@ -13,7 +13,7 @@ import type { SessionMessage } from '../../core/work-graph/model/communication-c
 import type { TaskGraph, TaskRow } from '../../core/work-graph/model/plan-contracts.js';
 import type { TaskInputUpstreamV1, TaskInputUpstreamsV1 } from '../../core/work-graph/model/context-input-contracts.js';
 import { lastHolderOf } from '../../core/work-graph/state/unknown-call-review.js';
-import { automationConfirmationCause } from '../../core/work-graph/state/decision-policy.js';
+import { automationConfirmationCause, gateCoveredTaskIds } from '../../core/work-graph/state/decision-policy.js';
 import { reverifyExemptionOfFacts, successorAutoCount } from '../../core/work-graph/state/verification-machine.js';
 import { isUnenteredReviewRoundForCancellation, reviewRoundEndedKnown } from '../../core/work-graph/state/review-lease.js';
 import { scribeStopHeld } from '../../core/work-graph/state/task-claim-hold.js';
@@ -192,6 +192,74 @@ export function closeBranches(edges: readonly FormalDependencyEdgeV1[], blocks: 
 export function goalWaitBasisOf(goal: Pick<GoalSnapshot, 'ref'>, reasons: readonly string[],
   recordKinds: readonly AggregateRef['aggregateType'][]): GoalWaitBasisV1 {
   return { projectId: goal.ref.projectId, goalId: goal.ref.goalId, recordKinds, reasons };
+}
+
+/** L-15 (§9 VD-11, C7): a cancelled or superseded Task carries no work any more; a deferred one still waits. */
+export function carriesWork(task: RuntimeTask): boolean {
+  return task.disposition !== 'cancelled' && task.disposition !== 'superseded';
+}
+
+/** DRV-15: the ONE wait-basis merge; reasons and kinds dedupe in encounter order. */
+export function mergedWaitBasisOf(goal: Pick<GoalSnapshot, 'ref'>,
+  bases: readonly GoalWaitBasisV1[]): GoalWaitBasisV1 {
+  return goalWaitBasisOf(goal,
+    [...new Set(bases.flatMap(wait => wait.reasons))],
+    [...new Set(bases.flatMap(wait => wait.recordKinds))]);
+}
+
+/** The static Goal gap wait plus what this pass collected; the advance basis is never hand-built. */
+export function gapWaitBasisOf(goal: Pick<GoalSnapshot, 'ref'>,
+  collected: readonly GoalWaitBasisV1[]): GoalWaitBasisV1 {
+  return mergedWaitBasisOf(goal, [
+    goalWaitBasisOf(goal, ['plan_adoption', 'plan_change', 'task_claimable', 'formal_check', 'evidence'],
+      ['PlanRevision', 'PlanProposal', 'Run', 'TaskLease', 'DispatchOutboxEntry', 'VerificationRound',
+        'Evidence', 'TaskEvidenceIndex', 'ActionRequest', 'TaskClaimHold']),
+    ...collected,
+  ]);
+}
+
+/** §5.1.3: whether a Task row still has to be satisfied; an unreadable row counts as unsatisfied. */
+export function taskUnsatisfied(graph: TaskGraph, task: RuntimeTask): boolean {
+  const row = graph.tasks.find(candidate => candidate.ref.taskId === task.taskId);
+  return row === undefined || row.effectivePhase !== 'satisfied';
+}
+
+/**
+ * L46 §3.13 item 2/3 and §5.1.3: the Goal-level gate facts, computed once from the same block read and branch:
+ * the covered stage/module gate that runs first, the required and unfinished work the later arms read, and the
+ * all-blocked reason when every candidate this pass could start is inside a block. It never writes and never
+ * builds a wait basis (the caller keeps the advance's collected waits and the read port passes none).
+ */
+export function goalL46Blocked(goal: GoalSnapshot, graph: TaskGraph, ordered: readonly RuntimeTask[],
+  base: Base, blocks: readonly L46BlockV1[], branch: ReadonlyMap<string, L46WaitV1>): {
+  coveredGate: RuntimeTask | undefined;
+  required: RuntimeTask[];
+  unfinishedWork: RuntimeTask[];
+  block: { reason: string; blocks: readonly L46BlockV1[] } | null;
+} {
+  const required = graph.plan.tasks.filter((task) => task.requirementLevel === 'required' && carriesWork(task));
+  const unfinishedWork = required.filter((task) => task.taskKind === 'work' && taskUnsatisfied(graph, task));
+  // §5.1.3: a stage/module gate whose required coverage has no unfinished
+  // work runs before the goal-wide unfinishedWork gate. `gateCoveredTaskIds`
+  // is the one coverage derivation (never `gateFixInProgress`).
+  const coveredGate = required.find((task) => task.taskKind === 'gate'
+    && task.scope.kind !== 'goal'
+    && task.disposition === 'active'
+    && taskUnsatisfied(graph, task)
+    && !gateCoveredTaskIds(graph.plan.tasks, task)
+      .some((taskId) => unfinishedWork.some((work) => work.taskId === taskId))
+    && !(base.taskId === null && base.activeTaskIds?.has(task.taskId) === true));
+  // L46 §3.13 item 3: every candidate this pass could start is inside a block → the Goal waits with all bases.
+  const candidates = ordered.filter(task => {
+    if (task.taskKind !== 'work' || task.disposition !== 'active'
+      || task.executionIntent === 'plan_only') return false;
+    const row = graph.tasks.find(candidate => candidate.ref.taskId === task.taskId);
+    return row !== undefined && row.effectivePhase !== 'satisfied';
+  });
+  const block = blocks.length > 0 && candidates.length > 0 && candidates.every(task => branch.has(task.taskId))
+    ? { reason: `l46_blocked: ${blocks.map(entry => entry.task.taskId).join(', ')}`, blocks }
+    : null;
+  return { coveredGate, required, unfinishedWork, block };
 }
 
 export function createTaskGate(gate: TaskGateDependencies): TaskGateFunctions {

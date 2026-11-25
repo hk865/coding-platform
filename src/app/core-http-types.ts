@@ -98,6 +98,7 @@ import type { OverlapGatePort } from '../core/work-graph/tasks/overlap-gates.js'
 import type { GoalConfirmPort, GoalCopyPort } from '../core/work-graph/model/goal-card-contracts.js';
 import type { InitializationAdoptionHostPort } from './initialization-adoption.js';
 import type { WorkflowPort } from '../business/workflow/ports.js';
+import type { GoalSecretaryPort } from '../core/work-graph/tasks/goal-secretary.js';
 import type { LineAskInputV1, LineAskResultV1 } from '../business/workflow/ports.js';
 import type { CollaborationDriverPort } from './collaboration-driver.js';
 import type { WorkbenchCommandState, WorkbenchToolsPort } from './workbench-tools.js';
@@ -259,6 +260,7 @@ export type CoreRouteSuffix =
   | 'workflow/goal-input'
   | 'workflow/advance'
   | 'workflow/consultation'
+  | 'workflow/waits'
   | 'workflow/driver-start'
   | 'workflow/driver-read'
   | 'workflow/driver-stop'
@@ -378,6 +380,8 @@ export type CoreRouteSuffix =
   | 'requests/route'
   | 'requests/select-idea'
   | 'requests/ask'
+  // D49-09: the target's current secretary, read before a request is sent.
+  | 'requests/recipient'
   // The main conversation's read and one request's read with its cards.
   | 'main/read'
   | 'requests/read'
@@ -787,6 +791,9 @@ export type RequestsSelectIdeaBody = PlainBody<RequestSubmitPort['selectIdea']>;
 export type RequestsSelectIdeaResponse = RouteResponse<RequestSubmitPort['selectIdea']>;
 export type RequestsAskBody = PlainBody<RequestSubmitPort['ask']>;
 export type RequestsAskResponse = RouteResponse<RequestSubmitPort['ask']>;
+// D49-09: the target's current secretary read; the body is `{goalRef}` and the value is `SessionRef | null`.
+export type RequestsRecipientBody = PlainBody<GoalSecretaryPort['resolveGoalSecretary']>;
+export type RequestsRecipientResponse = RouteResponse<GoalSecretaryPort['resolveGoalSecretary']>;
 
 // The two reads are `plain` and open to any trusted caller of the workspace.
 export type MainReadBody = PlainBody<MainSurfaceReadPort['readMainPage']>;
@@ -800,6 +807,7 @@ export type RequestCommandCoreRouteDto = {
   'requests/route': { body: RequestsRouteBody; response: RequestsRouteResponse };
   'requests/select-idea': { body: RequestsSelectIdeaBody; response: RequestsSelectIdeaResponse };
   'requests/ask': { body: RequestsAskBody; response: RequestsAskResponse };
+  'requests/recipient': { body: RequestsRecipientBody; response: RequestsRecipientResponse };
   'main/read': { body: MainReadBody; response: MainReadResponse };
   'requests/read': { body: RequestsReadBody; response: RequestsReadResponse };
 };
@@ -947,6 +955,12 @@ export type WorkflowGoalInputBody = PlainBody<WorkflowPort['handleGoalInput']>;
 export type WorkflowGoalInputResponse = RouteResponse<WorkflowPort['handleGoalInput']>;
 export type WorkflowAdvanceBody = PlainBody<WorkflowPort['advanceWork']>;
 export type WorkflowAdvanceResponse = RouteResponse<WorkflowPort['advanceWork']>;
+/** D101-3: the L46 wait read; `{goalRef}` -> `WorkflowWaitsReadV1`. */
+export type WorkflowWaitsBody = PlainBody<NonNullable<WorkflowPort['readGoalWaits']>>;
+export type WorkflowWaitsResponse = RouteResponse<NonNullable<WorkflowPort['readGoalWaits']>>;
+export type WorkflowWaitsCoreRouteDto = {
+  'workflow/waits': { body: WorkflowWaitsBody; response: WorkflowWaitsResponse };
+};
 /** The explicit-consultation route derives its body/response from the exact
  * optional `WorkflowPort.consumeConsultation` method; the composition root
  * always publishes it, so the NonNullable derivation is the real DTO. */
