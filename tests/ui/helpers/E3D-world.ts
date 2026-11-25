@@ -2,7 +2,7 @@ import type { QueryJobRef } from '../../../src/contracts/query-job.js';
 import type { WorkspaceScope } from '../../../src/contracts/core/identity.js';
 import type { DecisionCardV1 } from '../../../src/core/work-graph/model/decision-contracts.js';
 import type { NoticeCategoryV1 } from '../../../src/contracts/goal-decisions.js';
-import { AG2B_WORK_TASK_ID, graphWrite, plain } from '../../helpers/AG2b-collaboration-fixture.js';
+import { AG2B_SCOPE, AG2B_WORK_TASK_ID, graphWrite, plain } from '../../helpers/AG2b-collaboration-fixture.js';
 import { moveKernelAside } from '../../helpers/A2-restart-fixture.js';
 import { ensureProjectPointers, openS6AHostWorld, type S6AHostWorld } from '../../helpers/S6A-host-fixture.js';
 import { s6aCardsWorkspace, type S6ACandidate, type S6ACardsWorkspace, type S6ARequest } from '../../helpers/S6A-cards-fixture.js';
@@ -11,6 +11,11 @@ import { secretaryAnswer } from '../../helpers/S6A-history-fixture.js';
 import { claimWithSecretaryProfile, prepareAttempt, start } from '../../helpers/request-claim-steps.js';
 import { crashedUnknownKernel } from '../../helpers/S2C-K-scenario-support.js';
 import { openHostScenario, performs, type HostScenario } from '../../scenarios/harness.js';
+import { expect } from 'vitest';
+import type { ReadResult } from '../../../src/contracts/core/results.js';
+import { openP1World, type P1World } from '../../helpers/P1-round-fixture.js';
+import { write } from '../../helpers/P1-reads.js';
+import { openJoinedLineScenario } from '../../helpers/KLS3B-git-lines.js';
 import { createFileReplies, editThenText, readCall, redrivePolicy, textReply } from '../../scenarios/support/common.js';
 
 /**
@@ -206,4 +211,42 @@ export async function taskCardOf(h: HostScenario, taskId: string): Promise<Decis
   const card = read.value?.waitingAnswer?.find((entry) => entry.taskRef?.taskId === taskId);
   if (card === undefined) throw new Error(`E3D: no waiting card names ${taskId}: ${JSON.stringify(read)}`);
   return card;
+}
+
+
+/** P2 T33's world: P1's real held request round with one dispatch and one stop request. */
+export type T33World = { p1: P1World };
+export async function openT33(): Promise<T33World> {
+  const p1 = await openP1World({ backend: 'memory', running: true, autonomy: 'every_step' });
+  try {
+    const [a, s] = await p1.holdRounds([p1.lines.A, p1.lines.S], 'p2-t33');
+    expect(await p1.world.platform.claimHolds.place(s.ctx, write({
+      taskRef: p1.task.tA, reason: 'P2 T33 hold',
+    }, 't33-hold'))).toMatchObject({ status: 'committed' });
+    expect(await p1.world.platform.actionRequests.requestDispatch(a.ctx, write({
+      taskRef: p1.task.tA, reason: 'P2 T33 dispatch', preferredLine: p1.lines.E.ref,
+    }, 't33-dispatch'))).toMatchObject({ status: 'needs_decision' });
+    expect(await p1.world.platform.actionRequests.requestStop(s.ctx, write({
+      taskRef: p1.task.tB, reason: 'P2 T33 stop',
+    }, 't33-stop'))).toMatchObject({ status: 'needs_decision' });
+    return { p1 };
+  } catch (error) {
+    await p1.close().catch(() => undefined);
+    throw error;
+  }
+}
+
+let p13: { h: HostScenario; card: DecisionCardV1 } | null = null;
+/** The member-creation world (the KLS-3b line drive, stopped before its start). */
+export async function memberWorld(): Promise<NonNullable<typeof p13>> {
+  if (p13 !== null) return p13;
+  const { h } = await openJoinedLineScenario();
+  await h.advance(h.select('e3d-clkb-13', AG2B_WORK_TASK_ID), { stopBefore: performs('start') });
+  const queue = await h.post<ReadResult<{ waitingAnswer: DecisionCardV1[] }>>('decisions/queue',
+    plain(AG2B_SCOPE, { workspace: AG2B_SCOPE, sections: ['waiting_answer'], page: { limit: 100 } }));
+  const card = queue.status === 'ready'
+    ? queue.value.waitingAnswer.find((item: DecisionCardV1) => item.source.kind === 'member_creation') : undefined;
+  if (card === undefined) throw new Error(`E3D P13-5: no member_creation card: ${JSON.stringify(queue)}`);
+  p13 = { h, card };
+  return p13;
 }

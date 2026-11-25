@@ -70,7 +70,9 @@ describe('E3N-4 goal control', () => {
       await pause(findButton(page.root, '暂停'));
       await controlCall(log, 1);
       const goalbar = findClass(page.root, 'goalbar')!;
-      await expect.poll(() => findButton(goalbar, '继续') !== undefined, { timeout: 10_000, interval: 25 }).toBe(true);
+      /* The in-flight guard disables 继续 until the pause's own reread settles. */
+      await expect.poll(() => findButton(goalbar, '继续')?.getAttribute('aria-disabled') === 'false',
+        { timeout: 10_000, interval: 25 }).toBe(true);
       click(findButton(goalbar, '继续')!);
       /* 具名改坏: 继续时复用旧 pins（Goal@1）；Host 回 `revision_conflict`，
          N31 的 `committed` 和 `revision===2` 红。 */
@@ -96,10 +98,14 @@ describe('E3N-4 goal control', () => {
       await pause(findButton(page.root, '暂停'));
       await controlCall(log, 1);
       const goalbar = findClass(page.root, 'goalbar')!;
-      await expect.poll(() => findButton(goalbar, '继续') !== undefined, { timeout: 10_000, interval: 25 }).toBe(true);
+      /* The in-flight guard disables 继续 until the pause's own reread settles. */
+      await expect.poll(() => findButton(goalbar, '继续')?.getAttribute('aria-disabled') === 'false',
+        { timeout: 10_000, interval: 25 }).toBe(true);
       click(findButton(goalbar, '继续')!);
       await controlCall(log, 2);
-      await expect.poll(() => findButton(goalbar, '暂停') !== undefined, { timeout: 10_000, interval: 25 }).toBe(true);
+      /* The resume's own reread must settle before the next control is enabled. */
+      await expect.poll(() => findButton(goalbar, '暂停')?.getAttribute('aria-disabled') === 'false',
+        { timeout: 10_000, interval: 25 }).toBe(true);
 
       click(findButton(goalbar, '取消')!);
       expect(countRoute(log, 'goals/control')).toBe(2);

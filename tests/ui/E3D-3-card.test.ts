@@ -88,7 +88,7 @@ describe('E3D-3 the card and its details', () => {
       expect(cardFacts(page.root).map((fact) => fact.key)).toEqual(expect.arrayContaining(['失败类别', '谁做的', '尝试', '最近拒绝']));
       expect(factOf(page.root, '失败类别')).toBe('检查未通过');
       expect(factOf(page.root, '尝试')).toContain('第 4 次尝试');
-      expect(factOf(page.root, '最近拒绝')).toBe('');
+      expect(factOf(page.root, '最近拒绝')).toBe('没有');
       expect(textOf(page.root)).not.toContain('undefined');
       expect(textOf(page.root)).not.toContain('NaN');
     } finally {

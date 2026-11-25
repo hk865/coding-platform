@@ -17,6 +17,13 @@ export function click(element: FakeElement, init: Init = {}): void {
   element.dispatch('click', eventOf(element, init));
 }
 
+/** A browser sends no click to a disabled button; rows that check the disabled
+ *  state use this instead of `click`, so deleting a duplicate handler guard
+ *  still sends at most one write. */
+export function clickIfEnabled(element: FakeElement, init: Init = {}): void {
+  if (!element.disabled) click(element, init);
+}
+
 export function doubleClick(element: FakeElement): void {
   element.dispatch('dblclick', eventOf(element));
 }

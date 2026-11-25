@@ -35,7 +35,7 @@ function withToken(source: string, token: string | null): string {
 const PAGE_RECONNECT_MS = 2_000;
 
 export async function bootPage(options: {
-  name: string; search?: string; token: string | null | (() => string | null);
+  name: string; search?: string; hash?: string; token: string | null | (() => string | null);
   request: PageFetch; url?: string; source?: string;
 }): Promise<BootedPage> {
   const url = options.url ?? `http://host/workbench/${options.name}.dc.html`;
@@ -45,10 +45,14 @@ export async function bootPage(options: {
   const initialToken = tokenNow();
   const dom = installFakeDom();
   const page = dom as unknown as {
-    title: string; readyState: string; head: FakeElement; addEventListener(): void;
+    title: string; readyState: string; head: FakeElement; documentElement: FakeElement | null;
+    addEventListener(): void;
     querySelector(selector: string): FakeElement | null;
   };
   const root = new FakeElement('x-dc');
+  /* The browser exposes the mounted tree as the document root; the anchor code
+     finds a section by id through `document`, not through the board view. */
+  page.documentElement = root;
   const meta = new FakeElement('meta');
   if (initialToken !== null) meta.setAttribute('content', initialToken);
   page.title = options.name;
@@ -93,7 +97,7 @@ export async function bootPage(options: {
   }) as typeof fetch;
   Object.defineProperty(globalThis, 'location', {
     value: {
-      href: url, search: options.search ?? '',
+      href: url, search: options.search ?? '', hash: options.hash ?? '',
       reload: (): void => { throw new Error('E33: the page must not reload'); },
       /* a link the page follows itself is recorded, never navigated */
       assign: (to: string): void => { assigned.push(String(to)); },

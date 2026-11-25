@@ -111,7 +111,9 @@ describe('E3D-4 the one-route card writes', () => {
       click(done!);
       await settle(() => sectionNames(page.root).includes('已处理'), 3_000);
       await quiet(log);
-      /* W1 的已处理：两张已采用计划的候选卡加这张冲突卡。 */
+      /* W1 的已处理：两张已采用计划的候选卡加这张冲突卡。这台 Host 的冲突选择当场落实（卡状态 applied），
+         所以没有“已答复、待落实”那一组；分组的纯函数行在 E3D-15-cards-pure.test.ts。 */
+      expect(sectionNames(page.root)).toEqual(['已处理']);
       expect(sectionRows(page.root, '已处理')).toHaveLength(3);
     } finally {
       await page.restore();

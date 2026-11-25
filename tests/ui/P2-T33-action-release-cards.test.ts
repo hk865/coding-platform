@@ -5,14 +5,12 @@ import type { DecisionQueueReadV1 } from '../../src/core/work-graph/model/decisi
 import { asRecord, asText } from '../../src/ui/values.js';
 import { findButton } from './helpers/boot-page.js';
 import {
-  bootDecide, card, cardFacts, callsOf, factOf, opened, rowName, sectionRows, settle, worldTarget,
+  bootDecide, card, cardButton, cardFacts, callsOf, factOf, opened, rowName, sectionRows, settle, typeInto, worldTarget,
 } from './helpers/E3D-page.js';
 import { click } from './helpers/E3N-interact.js';
 import { textOf } from './helpers/E3N-page.js';
 import { plain } from '../helpers/AG2b-collaboration-fixture.js';
-import type { P1World } from '../helpers/P1-round-fixture.js';
-import { openP1World } from '../helpers/P1-round-fixture.js';
-import { write } from '../helpers/P1-reads.js';
+import { openT33, type T33World } from './helpers/E3D-world.js';
 import { S6A_SCOPE } from '../helpers/S6A-request-fixture.js';
 import { ready } from '../helpers/S7A-fixture.js';
 
@@ -27,29 +25,6 @@ import { ready } from '../helpers/S7A-fixture.js';
  * the first card assertion ("入口还没有"). The world is P1's real held request round (`P1-round-fixture.ts:105`):
  * the dispatch/stop owners are the real `platform.actionRequests` (`tasks/action-requests.ts:284`, `:374`).
  */
-
-type T33World = { p1: P1World };
-
-async function openT33(): Promise<T33World> {
-  const p1 = await openP1World({ backend: 'memory', running: true, autonomy: 'every_step' });
-  try {
-    const [a, s] = await p1.holdRounds([p1.lines.A, p1.lines.S], 'p2-t33');
-    /* A live hold on tA gives the dispatch card its current-blocker fact; the request still accepts it. */
-    expect(await p1.world.platform.claimHolds.place(s.ctx, write({
-      taskRef: p1.task.tA, reason: 'P2 T33 hold',
-    }, 't33-hold'))).toMatchObject({ status: 'committed' });
-    expect(await p1.world.platform.actionRequests.requestDispatch(a.ctx, write({
-      taskRef: p1.task.tA, reason: 'P2 T33 dispatch', preferredLine: p1.lines.E.ref,
-    }, 't33-dispatch'))).toMatchObject({ status: 'needs_decision' });
-    expect(await p1.world.platform.actionRequests.requestStop(s.ctx, write({
-      taskRef: p1.task.tB, reason: 'P2 T33 stop',
-    }, 't33-stop'))).toMatchObject({ status: 'needs_decision' });
-    return { p1 };
-  } catch (error) {
-    await p1.close().catch(() => undefined);
-    throw error;
-  }
-}
 
 function taskIdOf(card: unknown): string {
   return asText(asRecord(asRecord(card)['taskRef'])['taskId']);
@@ -171,6 +146,29 @@ describe('P2-T33 the action_release dispatch and stop cards', () => {
         expect(asRecord(input['selection'])['optionId']).toBe('approve');
         expect(JSON.stringify(answer)).not.toContain('message_release');
       }
+    } finally {
+      await booted.page.restore();
+      await p1.close();
+    }
+  }, 180_000);
+
+  /* Lead 11-25: Decide's 确定 reads the same needsOption as the main card; a
+     release card is one the server refuses a text-only answer for. */
+  it('T33-4 words alone leave 确定 grey on a release card until an option is picked', async () => {
+    const { p1 } = await openT33();
+    const booted = await bootDecide(worldTarget(p1.world));
+    try {
+      await opened(booted.log);
+      const row = sectionRows(booted.page.root, '要决定').find((entry) => rowName(entry).includes('放行请求'));
+      expect(row, 'a 放行请求 row').toBeDefined();
+      click(row!);
+      await settle(() => cardButton(booted.page.root, '批准') !== undefined, 3_000);
+      typeInto(booted.page.root, 'dc-answer', '先别派');
+      await settle(() => card(booted.page.root) !== undefined, 1_000);
+      expect(cardButton(booted.page.root, '确定')!.getAttribute('aria-disabled')).toBe('true');
+      click(cardButton(booted.page.root, '批准')!);
+      await settle(() => cardButton(booted.page.root, '确定')?.getAttribute('aria-disabled') === 'false', 2_000);
+      expect(cardButton(booted.page.root, '确定')!.getAttribute('aria-disabled')).toBe('false');
     } finally {
       await booted.page.restore();
       await p1.close();

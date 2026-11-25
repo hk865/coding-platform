@@ -1,11 +1,11 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import { findButton, findClass, findElement } from './helpers/boot-page.js';
 import type { FakeElement } from './helpers/dom.js';
-import { descendants, goalRows, lineRows, textOf } from './helpers/E3N-page.js';
+import { auxPanel, descendants, goalRows, hasClass, lineRows, textOf } from './helpers/E3N-page.js';
 import { click, hover } from './helpers/E3N-interact.js';
 import { openE3GW0, openE3GW1, type E3GWorld } from './helpers/E3G-world.js';
 import {
-  bootDecide, callsOf, card, cardPos, count, labelled, lineControl, opened, quiet, rowSub, sectionNames, sectionRows,
+  bootDecide, callsOf, card, cardButton, cardPos, count, labelled, lineControl, opened, quiet, rowSub, sectionNames, sectionRows,
   settle, worldTarget,
 } from './helpers/E3D-page.js';
 import { seePlanAdoptions } from './helpers/E3D-world.js';
@@ -121,6 +121,13 @@ describe('E3D-2 tabs, the filter and the card controls', () => {
       expect(conflict).toBeDefined();
       click(conflict!);
       await settle(() => findButton(page.root, '看答复') !== undefined, 2_000);
+      /* Y13: a done card is not answered again: no radios and no 确定. */
+      expect(findClass(card(page.root)!, 'opts')).toBeUndefined();
+      expect(descendants(card(page.root)!).some((element) => element.getAttribute('role') === 'radio')).toBe(false);
+      expect(cardButton(card(page.root)!, '确定')).toBeUndefined();
+      /* Z2: opening the conflict card switches the right panel to 架构图 and reads it;
+         let that read settle so the one answer-body read below is its own cycle. */
+      await quiet(log);
       expect(count(log, 'materials/open')).toBe(0);
       const look = findButton(page.root, '看答复');
       expect(look).toBeDefined();
@@ -160,11 +167,78 @@ describe('E3D-2 tabs, the filter and the card controls', () => {
     }
   }, 60_000);
 
-  it('D16 下一条 walks the list and wraps to the first card without a read', async () => {
+  it('Q2 ?goal= draws the Goal filter and clearing it reads every Goal', async () => {
+    const world = await worldW2();
+    const first = world.world.goals.first;
+    const { page, log } = await bootDecide(worldTarget(world.world), { search: '?goal=' + encodeURIComponent(first.goalId) });
+    try {
+      await opened(log);
+      const sub = findClass(page.root, 'head-sub');
+      const firstRow = goalRows(page.root).find((row) => textOf(findClass(row, 'row-ord')) === '1');
+      expect(sub).toBeDefined();
+      expect(firstRow).toBeDefined();
+      expect(textOf(sub!)).toBe('目标 1 · ' + textOf(findClass(firstRow!, 'row-name')));
+      expect(findClass(page.root, 'dq-filter')).toBeDefined();
+      const fullReads = callsOf(log, 'decisions/queue').filter((call) => (call.input as { page?: { limit?: number } }).page?.limit === 100);
+      const firstRead = fullReads[0]!.input as { goalRef?: { goalId?: string } };
+      expect(firstRead.goalRef?.goalId).toBe(first.goalId);
+      const clear = labelled(page.root, '清除筛选');
+      expect(clear).toBeDefined();
+      const before = count(log, 'decisions/queue');
+      click(clear!);
+      await settle(() => callsOf(log, 'decisions/queue').slice(before).some((call) => call.reply !== undefined), 3_000);
+      await quiet(log);
+      expect(findClass(page.root, 'dq-filter')).toBeUndefined();
+      expect(textOf(findClass(page.root, 'head-sub')!)).toBe('全部目标');
+      const reread = callsOf(log, 'decisions/queue').slice(before)
+        .filter((call) => (call.input as { page?: { limit?: number } }).page?.limit === 100).at(-1)!;
+      expect((reread.input as { goalRef?: unknown }).goalRef).toBeUndefined();
+    } finally {
+      await page.restore();
+    }
+  }, 60_000);
+
+  it('Q2b ?goal= lights its Goal row, and a click on that row shows every Goal again on the same tab', async () => {
+    const world = await worldW2();
+    const first = world.world.goals.first;
+    const { page, log } = await bootDecide(worldTarget(world.world), { search: '?goal=' + encodeURIComponent(first.goalId) });
+    try {
+      await opened(log);
+      click(tab(page.root, '已处理')!);
+      await settle(() => tab(page.root, '已处理')?.getAttribute('aria-selected') === 'true', 3_000);
+      await quiet(log);
+      const lit = goalRows(page.root).find((row) => textOf(findClass(row, 'row-ord')) === '1');
+      expect(lit).toBeDefined();
+      expect(hasClass(lit!, 'is-on')).toBe(true);
+      const before = count(log, 'decisions/queue');
+      /* 具名改坏: 左栏的 `pick` 仍判 `s.gf === g.goalId`；URL 带来的筛选点了不取消，本行红。 */
+      click(lit!);
+      await settle(() => textOf(findClass(page.root, 'head-sub')!) === '全部目标', 3_000);
+      await quiet(log);
+      expect(textOf(findClass(page.root, 'head-sub')!)).toBe('全部目标');
+      expect(findClass(page.root, 'dq-filter')).toBeUndefined();
+      const reread = callsOf(log, 'decisions/queue').slice(before)
+        .filter((call) => (call.input as { page?: { limit?: number } }).page?.limit === 100).at(-1);
+      expect(reread).toBeDefined();
+      expect((reread!.input as { goalRef?: unknown }).goalRef).toBeUndefined();
+      /* 具名改坏: 取消筛选那一支照旧发 `decideDone: false`；“已处理”页签读成待处理的队列，下面两行红。 */
+      expect((reread!.input as { sections?: unknown }).sections).toEqual(['answered_pending_application', 'history']);
+      expect(tab(page.root, '已处理')?.getAttribute('aria-selected')).toBe('true');
+    } finally {
+      await page.restore();
+    }
+  }, 60_000);
+
+  it('D16 下一条 in a closed panel reads nothing', async () => {
     const world = await worldW2();
     const { page, log } = await bootDecide(worldTarget(world.world));
     try {
       await opened(log);
+      const hide = labelled(auxPanel(page.root), '隐藏右栏');
+      expect(hide).toBeDefined();
+      click(hide!);
+      await quiet(log);
+      expect(hasClass(findClass(page.root, 'kit')!, 'no-panel')).toBe(true);
       const rows = sectionRows(page.root, '要决定');
       const total = rows.length;
       /* W2: two request candidates and the independent one, each Goal's two missing pointers and its pending initial Plan. */

@@ -1,7 +1,6 @@
 import { afterAll, describe, expect, it } from 'vitest';
-import type { ReadResult } from '../../src/contracts/core/results.js';
 import type { DecisionCardV1, DecisionQueueReadV1 } from '../../src/core/work-graph/model/decision-contracts.js';
-import { AG2B_SCOPE, AG2B_WORK_TASK_ID, plain } from '../helpers/AG2b-collaboration-fixture.js';
+import { AG2B_SCOPE, plain } from '../helpers/AG2b-collaboration-fixture.js';
 import { S6A_SCOPE, S6A_WORK_ROLE } from '../helpers/S6A-request-fixture.js';
 import { s6aCardsWorkspace } from '../helpers/S6A-cards-fixture.js';
 import { adoptS6BPlan, createS6BLine } from '../helpers/S6B1-fixture.js';
@@ -9,15 +8,14 @@ import { sessionOf } from '../helpers/S7A-fixture.js';
 import {
   answerS7BWait, openS7BWorld, retireS7BSender, sendS7BWaitingInquiry,
 } from '../helpers/S7B-fixture.js';
-import { openJoinedLineScenario } from '../helpers/KLS3B-git-lines.js';
-import { cleanupScenarios, performs, type HostScenario } from '../scenarios/harness.js';
+import { cleanupScenarios } from '../scenarios/harness.js';
 import type { FakeElement } from './helpers/dom.js';
 import { click } from './helpers/E3N-interact.js';
 import {
   bootDecide, callsOf, card, cardButton, cardTitle, count, hostTarget, isOff, opened, quiet, rowName, rowSub,
   sectionRows, settle, worldTarget, writeOf, type E3DLog,
 } from './helpers/E3D-page.js';
-import { seePlanAdoptionsVia } from './helpers/E3D-world.js';
+import { memberWorld, seePlanAdoptionsVia } from './helpers/E3D-world.js';
 
 /**
  * E3D CLKB P11-8 and P13-5 (test sheet §3 package 6, rows P11-8/P13-5):
@@ -39,13 +37,6 @@ import { seePlanAdoptionsVia } from './helpers/E3D-world.js';
  */
 
 let p11: { made: Awaited<ReturnType<typeof openS7BWorld>> } | null = null;
-let p13: { h: HostScenario; card: DecisionCardV1 } | null = null;
-
-afterAll(async () => {
-  await p11?.made.world.close();
-  await cleanupScenarios();
-});
-
 /** The undelivered-reply notice world (see the header). */
 async function undeliveredWorld(): Promise<NonNullable<typeof p11>> {
   if (p11 !== null) return p11;
@@ -74,20 +65,6 @@ async function undeliveredWorld(): Promise<NonNullable<typeof p11>> {
     await made.world.close().catch(() => undefined);
     throw error;
   }
-}
-
-/** The member-creation world (see the header; the same drive as the KLS-3b route row). */
-async function memberWorld(): Promise<NonNullable<typeof p13>> {
-  if (p13 !== null) return p13;
-  const { h } = await openJoinedLineScenario();
-  await h.advance(h.select('e3d-clkb-13', AG2B_WORK_TASK_ID), { stopBefore: performs('start') });
-  const queue = await h.post<ReadResult<{ waitingAnswer: DecisionCardV1[] }>>('decisions/queue',
-    plain(AG2B_SCOPE, { workspace: AG2B_SCOPE, sections: ['waiting_answer'], page: { limit: 100 } }));
-  const card = queue.status === 'ready'
-    ? queue.value.waitingAnswer.find((item) => item.source.kind === 'member_creation') : undefined;
-  if (card === undefined) throw new Error(`E3D P13-5: no member_creation card: ${JSON.stringify(queue)}`);
-  p13 = { h, card };
-  return p13;
 }
 
 /** The last queue answer that carried notices: the page's own token and seen-through for the row. */

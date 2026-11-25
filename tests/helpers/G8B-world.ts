@@ -30,11 +30,11 @@ import type { DecisionCardV1, NoticeItemV1 } from '../../src/core/work-graph/mod
 import { sessionMessageRefKey } from '../../src/core/work-graph/sessions/message-record-codecs.js';
 import { waitFor } from '../scenarios/harness.js';
 import { graphWrite } from './AG2b-collaboration-fixture.js';
-import { g8ModelId, g8PlanDraft, g8SplitChecks, g8Steps } from './G8-world.js';
+import { g8ModelId, g8PlanCall, g8PlanDraft, g8PlanForm, g8SplitChecks, g8Steps, type G8Check } from './G8-world.js';
 import { heartbeatUntil } from './IV-host-fixture.js';
 import { adoptPLPlanDraft } from './PL-workflow-fixture.js';
 import { initializeProject } from './S6A-history-fixture.js';
-import { openS6AHostWorld, type S6AHostWorld } from './S6A-host-fixture.js';
+import { openS6AHostWorld, type S6AHostWorld, type S6AReply } from './S6A-host-fixture.js';
 import { S6A_SCOPE, type S6ASession } from './S6A-request-fixture.js';
 import { kls2cNoteWrite } from './KLS2C-knowledge-host.js';
 import { committed } from './S7A-fixture.js';
@@ -191,6 +191,34 @@ export async function openG8BWorld(label: string) {
 }
 
 /** A8（P0）：人经 `notes/write` 写一条挂在模块上的注记（主工作区 scope，`goalId: null`），答回写回执的 `noteId`。 */
+/** G8B's one small-change world: the Goal's adviser and secretary lines, a base
+ * Plan v1, then the secretary's request round proposes `<tag>-work` with `check`;
+ * returns after the Host's own plan turn returned. */
+export const G8B_SECRETARY_OBJECTIVE = 'G8B 秘书的小改动';
+
+export async function secretaryChange(tag: string, check: G8Check, adviserReplies: S6AReply[], historyCallId?: string) {
+  const w = await openG8BWorld(tag);
+  const adviser = await w.line(`${tag}-adviser`, G8B_TEMPLATE.adviser);
+  const secretary = await w.line(`${tag}-secretary`, G8B_TEMPLATE.secretary);
+  const goal = await w.goal(tag, G8B_SECRETARY_OBJECTIVE, { adviser, base: true });
+  const before = await w.noticeKeys(goal);
+  if (adviserReplies.length > 0 || historyCallId !== undefined) await w.world.scripted.script(adviser, [
+    ...(historyCallId === undefined ? [] : [{ kind: 'calls' as const, calls: [p0History(historyCallId, goal)] }]),
+    ...adviserReplies], w.scope);
+  const adviserRequests = (await w.world.scripted.requests(adviser, w.scope)).length;
+  await w.world.scripted.script(secretary, [g8PlanCall(`${tag}-plan`, g8PlanForm(tag, G8B_ROLE, [check], true))],
+    w.scope);
+  const asked = await w.steps.ask(tag, secretary, goal);
+  expect(await w.turnEnded(asked.round), 'the Host\'s own plan turn').toEqual({ status: 'done' });
+  /** 这一份请求候选（`plans/request-candidate` 的 head）；采用以后 head 就不在了，所以要用的行在采用之前读。 */
+  const head = () => w.steps.candidate(goal, asked.requestRoot);
+  /** 等人回答的这一份候选卡（G8A 的 `proposedChecks`）。 */
+  const card = async () => JSON.stringify((await w.steps.read<import('../../src/core/work-graph/model/decision-contracts.js').DecisionQueueReadV1>('decisions/queue', {
+    workspace: w.scope, goalRef: goal, sections: ['waiting_answer'], page: { limit: 100 } })).waitingAnswer
+    .find(item => item.source.kind === 'candidate' && item.requestRef?.queryJobId === asked.requestRoot.queryJobId) ?? null);
+  return { w, adviser, secretary, goal, head, before, card, adviserRequests };
+}
+
 export async function p0PersonNote(w: G8BWorld, commandId: string, moduleId = 's6a-core'): Promise<string> {
   const answer = await w.world.post('notes/write',
     kls2cNoteWrite(S6A_SCOPE, commandId, { topic: commandId, anchor: { kind: 'module', moduleId } }));

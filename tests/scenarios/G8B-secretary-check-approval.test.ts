@@ -28,13 +28,11 @@
  */
 import { afterEach, describe, expect, it } from 'vitest';
 import type { DecisionQueueReadV1 } from '../../src/core/work-graph/model/decision-contracts.js';
-import { g8Check, g8PlanCall, g8PlanForm, type G8Check } from '../helpers/G8-world.js';
+import { g8Check, type G8Check } from '../helpers/G8-world.js';
 import {
-  expectB15, G8B_ROLE, G8B_TEMPLATE, g8bCheckReview, g8bSubjectOf, openG8BWorld, p0History,
-  P0_REVIEWER_TOOLS, p0ToolNames, P2_REVIEW_ROUND_TOOLS,
+  expectB15, g8bCheckReview, g8bSubjectOf, P0_REVIEWER_TOOLS, p0ToolNames, P2_REVIEW_ROUND_TOOLS, secretaryChange,
 } from '../helpers/G8B-world.js';
 import { adviserToolResult } from '../helpers/K3L3-adviser-world.js';
-import type { S6AReply } from '../helpers/S6A-host-fixture.js';
 
 const cleanup: (() => Promise<void>)[] = [];
 afterEach(async () => { await Promise.allSettled(cleanup.splice(0).reverse().map(close => close())); });
@@ -45,29 +43,6 @@ const OBJECTIVE = 'G8B 秘书的小改动';
  * 目标有参谋线、有底计划 v1；秘书交一个小改动（只加 `<tag>-work`），带 `check`。返回 Host 自己的计划轮入口返回之后
  * 的世界、两条线、目标、这份候选，以及行开始前这个目标已有的请知悉。
  */
-async function secretaryChange(tag: string, check: G8Check, adviserReplies: S6AReply[], historyCallId?: string) {
-  const w = await openG8BWorld(tag);
-  cleanup.push(w.close);
-  const adviser = await w.line(`${tag}-adviser`, G8B_TEMPLATE.adviser);
-  const secretary = await w.line(`${tag}-secretary`, G8B_TEMPLATE.secretary);
-  const goal = await w.goal(tag, OBJECTIVE, { adviser, base: true });
-  const before = await w.noticeKeys(goal);
-  if (adviserReplies.length > 0 || historyCallId !== undefined) await w.world.scripted.script(adviser, [
-    ...(historyCallId === undefined ? [] : [{ kind: 'calls' as const, calls: [p0History(historyCallId, goal)] }]),
-    ...adviserReplies], w.scope);
-  const adviserRequests = (await w.world.scripted.requests(adviser, w.scope)).length;
-  await w.world.scripted.script(secretary, [g8PlanCall(`${tag}-plan`, g8PlanForm(tag, G8B_ROLE, [check], true))],
-    w.scope);
-  const asked = await w.steps.ask(tag, secretary, goal);
-  expect(await w.turnEnded(asked.round), 'the Host\'s own plan turn').toEqual({ status: 'done' });
-  /** 这一份请求候选（`plans/request-candidate` 的 head）；采用以后 head 就不在了，所以要用的行在采用之前读。 */
-  const head = () => w.steps.candidate(goal, asked.requestRoot);
-  /** 等人回答的这一份候选卡（G8A 的 `proposedChecks`）。 */
-  const card = async () => JSON.stringify((await w.steps.read<DecisionQueueReadV1>('decisions/queue', {
-    workspace: w.scope, goalRef: goal, sections: ['waiting_answer'], page: { limit: 100 } })).waitingAnswer
-    .find(item => item.source.kind === 'candidate' && item.requestRef?.queryJobId === asked.requestRoot.queryJobId) ?? null);
-  return { w, adviser, secretary, goal, head, before, card, adviserRequests };
-}
 type Change = Awaited<ReturnType<typeof secretaryChange>>;
 
 /** 没有装上 `checkId`，计划停在 v1，候选卡列出这条检查（G8A C4 的同一组事实）。 */

@@ -1,6 +1,5 @@
 import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 import { commitBarrier } from '../helpers/S6A-commit-barrier.js';
-import { findClass } from './helpers/boot-page.js';
 import type { FakeElement } from './helpers/dom.js';
 import { descendants, hasClass, textOf } from './helpers/E3N-page.js';
 import { click } from './helpers/E3N-interact.js';
@@ -72,7 +71,8 @@ describe('E3D-12 the structural proposal card file list', () => {
       expect(row).toBeDefined();
       click(row!);
       await settle(() => card(page.root) !== undefined, 3_000);
-      const more = findClass(card(page.root)!, 'dc-more');
+      /* 3a adds the annotation button before the details button; this row is 详情. */
+      const more = descendants(card(page.root)!).find((element) => hasClass(element, 'dc-more') && textOf(element) === '详情');
       expect(more).toBeDefined();
       click(more!);
       await quiet(log);

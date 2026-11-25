@@ -64,10 +64,14 @@ describe('E3U Main goal bar and rail', () => {
     try {
       await waitFor(() => findButton(findClass(page.root, 'goalbar') ?? page.root, '重新入队') !== undefined);
       click(findButton(findClass(page.root, 'goalbar')!, '重新入队')!);
+      /* D49-13: the first click only reads the draft and opens the confirmation. */
+      await waitFor(() => findButton(page.root, '复制成新目标') !== undefined);
+      expect(countRoute(log, 'goals/copy-draft')).toBe(1);
+      expect(countRoute(log, 'goals/copy-confirm')).toBe(0);
+      click(findButton(page.root, '复制成新目标')!);
       /* 具名改坏: `copyGoal` 改调 `goals/control`；`goals/control` 零次红。 */
       await expect.poll(() => callsTo(log, 'goals/copy-confirm').filter((call) => call.reply !== undefined).length,
         { timeout: 8_000, interval: 25 }).toBe(1);
-      expect(countRoute(log, 'goals/copy-draft')).toBe(1);
       expect((callsTo(log, 'goals/copy-confirm')[0]!.input as { selectedInterventions: unknown }).selectedInterventions)
         .toEqual([]);
       await waitFor(() => goalRows(page.root).length === 3);

@@ -302,8 +302,9 @@ describe('E3U Main line view', () => {
       const reply = callsTo(log, 'tasks/requeue')[0]!.reply as { status?: string; value?: { kind?: string; refusal?: { reason?: string } } };
       expect([reply.status, reply.value?.kind]).toEqual(['committed', 'refused']);
       /* 具名改坏: `boot.ts` 的 `requeuedOrThrow` 回到 `writeTextOf`；这一句红（“写入失败。”）。
+         具名改坏: `requeuedOrThrow` 走 `reworkRefusalTextOf`，不再印后端英文原因。
          具名改坏: `Main.dc.html` 的 `lvGuarded` 不接 `.catch(lvFailed)`；这一句红（页脚还是原来那句）。 */
-      expect(textOf(lineComposer(page.root, 'to'))).toBe('重新入队被拒绝：' + reply.value!.refusal!.reason);
+      expect(textOf(lineComposer(page.root, 'to'))).toBe('未重新入队：预算耗尽后要给更大的预算，或补一句说明。');
     }, { mode: 'stream' });
   }, 240_000);
 

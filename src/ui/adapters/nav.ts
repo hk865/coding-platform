@@ -119,7 +119,54 @@ export type NavInbox = {
   none: boolean;
 };
 
-export type NavDisplay = { phase: string; st: string; word: string; why: string; runStops: number };
+/** The Goal reference a display fact names (the same three fields every RunRef has). */
+export type NavRunRefFact = { projectId: string; goalId: string; runId: string };
+
+/** One Run's actual stop state (`GoalRunStopStateV1`) as the reason line reads it.
+ * Only the fields the line words are narrowed here; the code never crosses the
+ * adapter boundary. */
+export type NavStopStateFact = {
+  kind: string;
+  pausedBy: string;
+  outcome: string;
+  reason: string;
+  intentKind: string;
+  status: string;
+};
+
+export type NavRunStopFact = { runRef: NavRunRefFact; stop: NavStopStateFact };
+
+/** A Run still waiting for its resume (`GoalResumePendingRunV1`). */
+export type NavResumePendingFact = { runRef: NavRunRefFact; intentKind: string; status: string };
+
+/** This Host's failed resume re-entry (`GoalReentryFailureV1`); `reason` is English
+ * and never drawn. */
+export type NavReentryFailureFact = { runRef: NavRunRefFact; reason: string };
+
+/** The cancelled Goal a copy continues from, with its rail number and objective. */
+export type NavContinuationFact = { goalId: string; ordinal: number | null; name: string };
+
+/** One `GoalDisplayCauseV1` row, kept at the JSON edge; `main.ts` owns the words. */
+export type NavCauseFact = Record<string, unknown>;
+
+/**
+ * The selected `goals/display` facts the Goal bar and the line view need: the
+ * causes, each Run's actual stop, the resume waits, the re-entry failures, the
+ * copy's source and the live set. Declared here, never imported from `src/core`.
+ */
+export type NavGoalFacts = {
+  cause: NavCauseFact | null;
+  causes: NavCauseFact[];
+  runStops: NavRunStopFact[];
+  liveRuns: NavRunRefFact[];
+  resumePending: NavResumePendingFact[];
+  reentryFailures: NavReentryFailureFact[];
+  continuedFrom: NavContinuationFact | null;
+};
+
+export type NavDisplay = {
+  phase: string; st: string; word: string; why: string; facts: NavGoalFacts;
+};
 
 /** §10: the selected line read's value, shared with Chain; the chrome reads
  * `row` and `kind`, Member reads the whole line. */
@@ -292,6 +339,70 @@ function synthLine(): NavLine {
   };
 }
 
+function runRefFactOf(value: unknown): NavRunRefFact | null {
+  const row = asRecord(value);
+  const projectId = asText(row.projectId);
+  const goalId = asText(row.goalId);
+  const runId = asText(row.runId);
+  return projectId === '' || goalId === '' || runId === '' ? null : { projectId, goalId, runId };
+}
+
+function stopStateFactOf(value: unknown): NavStopStateFact | null {
+  const row = asRecord(value);
+  const kind = asText(row.kind);
+  if (kind === '') return null;
+  return {
+    kind, pausedBy: asText(row.pausedBy), outcome: asText(row.outcome), reason: asText(row.reason),
+    intentKind: asText(row.intentKind), status: asText(row.status),
+  };
+}
+
+/** §2.1 display facts at the JSON edge: the same shape the `goals/display`
+ * answer carries, narrowed to what the Goal bar and the line view read. */
+function goalFactsOf(
+  selectedDisplay: Record<string, unknown> | null, goals: readonly NavGoal[],
+): NavGoalFacts {
+  const display = asRecord(selectedDisplay?.display);
+  const goal = asRecord(selectedDisplay?.goal);
+  const cause = asRecord(display.cause);
+  const causes = (Array.isArray(display.causes) ? display.causes : []).map((entry) => asRecord(entry));
+  const runStops: NavRunStopFact[] = [];
+  for (const entry of Array.isArray(display.runStops) ? display.runStops : []) {
+    const row = asRecord(entry);
+    const runRef = runRefFactOf(row.runRef);
+    const stop = stopStateFactOf(row.stop);
+    if (runRef !== null && stop !== null) runStops.push({ runRef, stop });
+  }
+  const liveRuns = (Array.isArray(selectedDisplay?.liveRuns) ? selectedDisplay.liveRuns : [])
+    .map(runRefFactOf).filter((ref): ref is NavRunRefFact => ref !== null);
+  const resumePending: NavResumePendingFact[] = [];
+  for (const entry of Array.isArray(selectedDisplay?.resumePending) ? selectedDisplay.resumePending : []) {
+    const row = asRecord(entry);
+    const runRef = runRefFactOf(row.runRef);
+    if (runRef !== null) {
+      resumePending.push({ runRef, intentKind: asText(row.intentKind), status: asText(row.status) });
+    }
+  }
+  const reentryFailures: NavReentryFailureFact[] = [];
+  for (const entry of Array.isArray(selectedDisplay?.reentryFailures) ? selectedDisplay.reentryFailures : []) {
+    const row = asRecord(entry);
+    const runRef = runRefFactOf(row.runRef);
+    if (runRef !== null) reentryFailures.push({ runRef, reason: asText(row.reason) });
+  }
+  const continuation = asRecord(goal.continuedFrom);
+  const sourceId = asText(asRecord(continuation.goal).goalId);
+  const source = sourceId === '' ? null : goals.find((row) => row.goalId === sourceId) ?? null;
+  return {
+    cause: Object.keys(cause).length === 0 ? null : cause,
+    causes,
+    runStops,
+    liveRuns,
+    resumePending,
+    reentryFailures,
+    continuedFrom: sourceId === '' ? null : { goalId: sourceId, ordinal: source?.ordinal ?? null, name: source?.objective ?? '' },
+  };
+}
+
 function archivedTextOf(count: number): string {
   return count === 0 ? '没有已归档的工作线' : '已归档 ' + String(count);
 }
@@ -385,7 +496,7 @@ export function adaptNav(
       : goals.filter((goal) => goal.goalId === selectedGoalId)[0]?.revision ?? null,
     selectedDisplay: displayState === null ? null : {
       phase: displayPhase, st: displayState.st, word: displayState.word, why: '',
-      runStops: Array.isArray(asRecord(selectedDisplay?.display).runStops) ? (asRecord(selectedDisplay?.display).runStops as unknown[]).length : 0,
+      facts: goalFactsOf(selectedDisplay, goals),
     },
     lines,
     archived,

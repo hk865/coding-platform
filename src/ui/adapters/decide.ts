@@ -14,8 +14,14 @@
  */
 
 import { asRecord, asText } from '../values.js';
-import { blockerTextOf, decisionCardCountPartial, goalDisplayState, localShortAt, planRefText, planVersionText, stopRunText, stopWordOf, taskState } from './task-map.js';
+import {
+  ACTOR_WORD, blockerTextOf, causeWordOf, decisionCardCountPartial, gapTextOf, goalDisplayState, localShortAt,
+  planRefText, planVersionText, reworkLines, stopRunText, stopWordOf, taskState,
+} from './task-map.js';
 import { dutyWordOf, lineNameOfSession, sessionRefAtEdge, type NavData } from './nav.js';
+import { OUTCOME_WORD } from './member.js';
+import { canonicalJson, type JsonValue } from '../../contracts/canonical-json.js';
+import type { SettingsCheckRow } from './settings.js';
 import type { SessionRef, WorkspaceScope } from '../../contracts/core/identity.js';
 import type {
   DecisionObjectV1, DecisionOptionV1, DecisionSelectionV1, DecisionSourceV1, DecisionSubjectV1,
@@ -29,6 +35,8 @@ import type {
   KnowledgeRecoverySourceV1, ProposalBatchFileV1,
 } from '../../contracts/knowledge.js';
 import { rawModuleId } from '../../contracts/workspace-module-id.js';
+import type { AuxPanelData } from './aux-panel.js';
+import type { MemberLine, MemberWriteBasis } from './member.js';
 
 /** The `DecisionCardV1` fields this page reads (the UI keeps its own boundary
  * shape at the JSON edge; no `src/core` import). */
@@ -37,6 +45,8 @@ export type DecisionCardV1 = {
   source: DecisionSourceV1;
   state: DecisionCardStateV1;
   subject: DecisionSubjectV1;
+  /** Y14b (121-110): the line that sent a platform card; null for platform cards. */
+  senderSessionRef?: SessionRef | null;
   requestRef: QueryJobRef | null;
   objects: DecisionObjectV1[];
   options: DecisionOptionV1[];
@@ -46,7 +56,11 @@ export type DecisionCardV1 = {
   taskRef: TaskTriple | null;
   runRef: RunRef | null;
   readOnly: boolean;
+  /** Y14: why a closed card closed; absent on old records. */
+  closedReason?: 'goal_cancelled' | 'source_resolved' | null;
   actions: readonly string[];
+  /** Y3/R2: the checks this stop card may withdraw and reverify. */
+  withdrawableChecks?: readonly string[];
   /** §2.8: the release card's request view; absent on every other source kind. */
   actionRelease?: ActionReleaseViewV1;
 };
@@ -115,7 +129,16 @@ export type DecideSource = {
   noticeFacts?: Record<string, KnowledgeNoticeRead>;
   /** The project's workspace names; with more than one, every file row says which. */
   workspaceNames?: Record<string, string>;
+  /** Y3: the settings snapshot's checks by checkId, with their structured taskIds;
+   * absent when the caller did not read the snapshot, null when that read failed. */
+  checkRows?: Record<string, DecideCheckRow> | null;
+  /** Y12: the raw answer bodies by cardKey, read on demand. */
+  answerBodies?: Record<string, string>;
 };
+
+/** Y3: one settings check row plus the structured task list the snapshot carries
+ * (never the page's `tasksText`). */
+export type DecideCheckRow = SettingsCheckRow & { taskIds?: 'all' | string[] };
 
 /** X9: one knowledge notice's two reads. `'not_found'` is the read saying there is
  * nothing (recovery items all gone, or the notice's problems gone), never a failure. */
@@ -142,6 +165,9 @@ export type DecideData = {
   workspaceRevision: number;
   sections: DecideSection[];
   history: DecideRow[];
+  /** Y2: the Goal the queue read was filtered to, from the URL's `?goal=` or
+   * the rail; the board draws the filter and its clear control from it. */
+  goalFilter: string | null;
   counts: { waitingAnswer: number; notices: number; answeredPendingApplication: number; complete: boolean };
   /** 121-146：所有页里 `read_failed` 的来源，按 capabilities 顺序去重，用中文种类词；为空时页面不写那一行。 */
   unreadable: string[];
@@ -154,6 +180,14 @@ export type DecideData = {
   /** The Goals whose `tasks/query` was read this round, including `not_found`
    * (absent from `plans`), so `readDecide` keeps the original 0-phase result. */
   taskGoalIds: string[];
+  /** Decide's right panel: the open tab's own read (`readAuxPanel`); absent
+   * when the panel is closed or the tab does not read. */
+  aux?: AuxPanelData | null;
+  /** The open line's record and requeue basis, through Member's own projection. */
+  line?: { line: MemberLine; write: MemberWriteBasis | null } | null;
+  /** The open line's read failure, as its page text; other failures still fail
+   * the whole read. */
+  lineError?: string | null;
   /** The on-demand answer body, by cardKey. */
   answerBodies: Record<string, string>;
   /** X9: the knowledge notices' detail rows, by notice item key (the notice's
@@ -170,7 +204,7 @@ export type DecideFact = {
   recover?: { itemNo: number; label: string; path: string; source: string };
 };
 
-export type DecideSection = { name: '要决定' | '请知悉' | '已处理'; level: 'decide' | 'notice' | 'done'; rows: DecideRow[] };
+export type DecideSection = { name: '要决定' | '请知悉' | '已处理' | '已答复、待落实'; level: 'decide' | 'notice' | 'done'; rows: DecideRow[] };
 
 export type DecideRow = {
   key: string;
@@ -219,13 +253,27 @@ export type DecideCard = {
   /** Secondary actions and the primary one; the page renders the primary in the foot. */
   acts: DecideAct[];
   primary: DecideAct | null;
-  checks: { checkId: string; reportRef: ArtifactRef | null }[];
+  checks: { checkId: string; reportRef: ArtifactRef | null; text: string }[];
   report: string;
   fixName: string;
   /** The repair assignment role; null when no public task carries the failed Run (X2). */
   fixRole: string | null;
   ownerTaskId: string;
   instructionChecks: string;
+  /** Y3: the withdrawable checks, each with the command · task count · source line. */
+  withdraw: { checkId: string; text: string }[];
+  /** Y14b: the card's “来自 〈line〉 · 〈range〉” line; empty for platform cards. */
+  sourceLine: string;
+  /** Y15: the release card's plan version is older than the Goal's current plan. */
+  stale: boolean;
+  /** Y11: the answer box's pure judgments, computed here so 4a shares them. */
+  answerBox: boolean;
+  needsOption: boolean;
+  askOnly: boolean;
+  /** Y11: the card's objects, each with its canonical key and Chinese label. */
+  objects: { objectKey: string; label: string }[];
+  /** Y1/Y3: the Task is a gate (the reverify step says 重新验收). */
+  isGate: boolean;
   /** The budget step's minimum (K units) and the prefilled default (§2.7 D35). */
   budget: { min: number; def: string; last: number } | null;
   reasonLabel: string;
@@ -250,10 +298,11 @@ export type DecideAct = {
 export type DecideActionKey =
   | 'answer' | 'ask' | 'seen' | 'locate'
   | 'defer' | 'cancel' | 'restore' | 'continue'
-  | 'requeue' | 'fix' | 'note' | 'attest' | 'answer-body';
+  | 'requeue' | 'fix' | 'note' | 'attest' | 'answer-body'
+  | 'reverify' | 'withdraw' | 'speak';
 
 export type DecideStepKey = 'requeue' | 'fix' | 'note' | 'attest'
-  | 'defer' | 'cancel' | 'restore' | 'continue' | 'repropose' | 'recover' | 'seen';
+  | 'defer' | 'cancel' | 'restore' | 'continue' | 'recover' | 'seen' | 'reverify' | 'withdraw';
 export type DecideForm = {
   reason?: string; budget?: string; name?: string; checks?: boolean[]; note?: string;
 };
@@ -264,10 +313,55 @@ export type DecideTaskFacts = {
   task: unknown;
 };
 
-const FAILURE_WORD: Record<string, string> = {
+export const FAILURE_WORD: Record<string, string> = {
   check_failed: '检查未通过', check_incomplete: '检查不完整', run_failed: '执行失败',
   interrupted: '执行中断', cancelled: '已取消',
 };
+
+/** Y1/Y6: the five policy refusal codes as page words; the one table the facts
+ * rows and the refusal sentences share. */
+const REWORK_REFUSAL_WORD: Record<string, string> = {
+  no_new_basis: '没有新依据',
+  auto_rework_cap_reached: '已达自动返工上限',
+  budget_not_increased: '预算没有加大',
+  source_unchanged: '源码没有变化',
+  verification_uncovered: '没有检查覆盖必需的要求',
+};
+export function reworkRefusalWordOf(code: string): string {
+  return REWORK_REFUSAL_WORD[code] ?? '';
+}
+
+/** Y6 (a): one committed policy refusal as a sentence. `rework` is the Task
+ * row's `rework` summary, read only to name the earlier requeue (`matchedRequeueRef`). */
+export function reworkRefusalTextOf(
+  op: 'requeue' | 'reverify', refusal: unknown, rework: unknown = null,
+): string {
+  const record = asRecord(refusal);
+  const code = asText(record.code);
+  if (op === 'requeue') {
+    if (code === 'no_new_basis') {
+      const after = asText(asRecord(record.matchedRequeueRef).afterRunId);
+      const entries = asRecord(rework).entries;
+      const index = after === '' || !Array.isArray(entries) ? -1
+        : entries.findIndex((entry) => asText(asRecord(asRecord(entry).ref).afterRunId) === after);
+      const nth = index < 0 ? '上次重新入队' : '第 ' + String(index + 1) + ' 次重新入队';
+      return '未重新入队：没有新依据，和' + nth + '时的失败、源码、计划都一样。补一句说明，或先改文件再试。';
+    }
+    if (code === 'budget_not_increased') return '未重新入队：预算耗尽后要给更大的预算，或补一句说明。';
+    if (code === 'auto_rework_cap_reached') return '未重新入队：已达自动返工上限。';
+    return '未重新入队：' + (reworkRefusalWordOf(code) || '没有通过') + '。';
+  }
+  if (code === 'no_new_basis') {
+    return '没有重新检查：没有新依据，失败、源码和检查配置都和上一轮一样。附上说明，或先改文件再试。';
+  }
+  if (code === 'source_unchanged') return '没有重新检查：源码自上一轮以来没有变化。先改文件再验收。';
+  if (code === 'verification_uncovered') {
+    return '没有重新检查：没有检查覆盖必需的要求。要补检查，在主对话里说，参谋会起草带新检查的计划；'
+      + '你采用以后再重新检查。';
+  }
+  if (code === 'auto_rework_cap_reached') return '没有重新检查：已达自动返工上限。';
+  return '没有重新检查：' + (reworkRefusalWordOf(code) || '没有通过') + '。';
+}
 
 /* The twelve notice categories' page words. `adaptNav` keeps no category table;
    this is the one the Decide page shows under a notice row (§2.6). */
@@ -292,6 +386,11 @@ const STATE_WORD: Record<string, string> = {
   waiting_answer: '等你答复', answered_pending_application: '已答复，等落实', applied: '已落实',
   answered_no_application: '已答复', closed: '已关闭',
 };
+
+/** The card state's page word (`STATE_WORD`), shared by the two pages. */
+export function cardStateWordOf(state: string): string {
+  return STATE_WORD[state] ?? '';
+}
 
 function selectionWord(selection: DecisionSelectionV1 | undefined, options: readonly DecisionOptionV1Like[]): string {
   if (selection === undefined) return '已答复';
@@ -369,27 +468,265 @@ export function subjectGoalId(subject: DecisionSubjectV1 | undefined): string | 
   return subject?.kind === 'goal' ? subject.goalRef.goalId : null;
 }
 
-/** §2.7 D19: the four detail facts come from `TaskRow.failure`/`attemptOrdinal`. */
-function factsOf(row: Record<string, unknown>): DecideCard['facts'] {
+/** Y1: the structured task count of one snapshot check; a missing `taskIds`
+ * reads as the same “n 个任务” shape, never by splitting `tasksText`. */
+function checkTaskCountText(taskIds: 'all' | string[] | undefined): string {
+  if (taskIds === 'all') return '全部任务';
+  if (Array.isArray(taskIds)) return String(taskIds.length) + ' 个任务';
+  return 'n 个任务';
+}
+
+/** Y1/Y3: one check's command and task count; a check the snapshot does not
+ * carry (or a failed snapshot read) is “一条检查”, with no checkId shown. */
+function checkTextOf(checkId: string, rows: Record<string, DecideCheckRow> | null | undefined): string {
+  const row = rows?.[checkId];
+  return row === undefined ? '一条检查' : row.command + ' · ' + checkTaskCountText(row.taskIds);
+}
+
+/** Y3: the withdrawable check's one line: command · task count · source. */
+function withdrawTextOf(checkId: string, rows: Record<string, DecideCheckRow> | null | undefined): string {
+  const row = rows?.[checkId];
+  if (row === undefined) return '一条检查（命令暂时读不到）';
+  return row.command + ' · ' + checkTaskCountText(row.taskIds) + ' · ' + row.sourceText;
+}
+
+/** Y1: one refusal fact's sentence: the stored time, who, the operation and the
+ * code word; `stale` adds the owner's “can try again” note. */
+function refusalFactText(refusal: unknown, operation: string): string {
+  const record = asRecord(refusal);
+  if (Object.keys(record).length === 0) return '没有';
+  const at = asText(record.refusedAt);
+  const who = ACTOR_WORD[asText(asRecord(record.requestedBy).kind)] ?? '人工';
+  const code = reworkRefusalWordOf(asText(record.code)) || '没有通过';
+  return (at === '' ? '' : localShortAt(at) + ' ') + who + operation + '被拒绝：' + code
+    + (record.stale === true ? '（已过期，可再试）' : '');
+}
+
+/** Y1: the round's result word (the owner stores PASS/FAIL/INCONCLUSIVE). */
+function roundResultWord(outcome: string): string {
+  return outcome === 'PASS' ? '通过' : outcome === 'FAIL' ? '未通过'
+    : outcome === 'INCONCLUSIVE' ? '不完整' : '还没有结果';
+}
+
+/** Y1: the eleven-plus failure facts from `TaskRow.failure`/`rework`/`attemptOrdinal`.
+ * The first three keys and their order are the unknown-outcome step's known facts
+ * (`Decide.dc.html` takes `facts.slice(0, 3)`). */
+function factsOf(row: Record<string, unknown>, checkRows?: Record<string, DecideCheckRow> | null): DecideCard['facts'] {
   const failure = asRecord(row.failure);
   if (Object.keys(failure).length === 0) return [];
   const definition = asRecord(row.definition);
   const run = asRecord(failure.run);
   const round = asRecord(failure.round);
-  const verdict = asRecord(asRecord(failure.automation).verdict);
+  const automation = asRecord(failure.automation);
+  const verdict = asRecord(automation.verdict);
   const origin = asText(run.origin);
   const isGate = asText(definition.taskKind) === 'gate' || asText(failure.subjectKind) === 'gate';
   const attempt = isGate
     ? '验收第 ' + String(typeof round.ordinal === 'number' ? round.ordinal : 1) + ' 轮'
     : '第 ' + String(typeof row.attemptOrdinal === 'number' ? row.attemptOrdinal : 1) + ' 次尝试';
-  const last = asText(asRecord(asRecord(failure.automation).lastRefusal).reason);
-  void verdict;
-  return [
-    { k: '失败类别', v: FAILURE_WORD[asText(failure.failureClass)] ?? '还不能归类' },
-    { k: '谁做的', v: origin === 'host_interrupted' ? '平台中断' : origin === 'human_attested' ? '人工认定' : '系统自动' },
-    { k: '尝试', v: attempt },
-    { k: '最近拒绝', v: last },
-  ];
+  const failureClass = asText(failure.failureClass);
+  const cause = asText(failure.notReworkableCause);
+  const out: DecideCard['facts'] = [];
+  /* 1: the failure class; without one, the not-reworkable cause's word. */
+  out.push({ k: '失败类别', v: (failureClass === '' ? '还不能归类' : FAILURE_WORD[failureClass] ?? '还不能归类')
+    + (failureClass === '' && cause !== '' ? '：' + causeWordOf(cause) : '') });
+  /* 2: who did it. */
+  out.push({ k: '谁做的', v: origin === 'host_interrupted' ? '平台中断' : origin === 'human_attested' ? '人工认定' : '系统自动' });
+  /* 3: the attempt. */
+  out.push({ k: '尝试', v: attempt });
+  /* 4: the latest requeue refusal. */
+  out.push({ k: '最近拒绝', v: refusalFactText(automation.lastRefusal, '重新入队') });
+  /* 5: the latest reverify refusal, when one exists. */
+  if (Object.keys(asRecord(automation.lastReverifyRefusal)).length > 0) {
+    out.push({ k: '最近重新检查被拒绝',
+      v: refusalFactText(automation.lastReverifyRefusal, isGate ? '重新验收' : '重新检查') });
+  }
+  /* 6: the Run's outcome, budget and end time. */
+  if (Object.keys(run).length > 0) {
+    let text = OUTCOME_WORD[asText(run.outcome) as keyof typeof OUTCOME_WORD] ?? '';
+    const budget = asRecord(run.budget).tokenBudget;
+    if (typeof budget === 'number') text += ' · 预算 ' + String(Math.round(budget / 1000)) + 'K';
+    const endedAt = asText(run.endedAt);
+    if (endedAt !== '') text += ' · ' + localShortAt(endedAt) + ' 结束';
+    out.push({ k: '执行', v: text });
+  }
+  /* 7: who paused or cancelled the execution. */
+  const stop = asRecord(failure.stop);
+  if (Object.keys(stop).length > 0) {
+    const requester = asText(stop.requester);
+    const who = requester === 'human' ? '你' : requester === 'goal_fan_out' ? '目标暂停或取消时一起'
+      : '平台';
+    out.push({ k: '停止', v: who + (asText(stop.kind) === 'cancel' ? '取消了这次执行' : '暂停了这次执行') });
+  }
+  /* 8: the chain head and the failed checks, from the snapshot's own taskIds. */
+  if (Object.keys(round).length > 0) {
+    let text = '第 ' + String(typeof round.ordinal === 'number' ? round.ordinal : 1) + ' 轮 · '
+      + roundResultWord(asText(round.outcome));
+    const failing = Array.isArray(round.failingChecks) ? round.failingChecks.map((entry) => asRecord(entry)) : [];
+    if (failing.length > 0) {
+      text += ' · 没过：' + failing.map((entry) => checkTextOf(asText(entry.checkId), checkRows)).join('、');
+    }
+    const gaps = Array.isArray(round.gapCodes) ? round.gapCodes.map((code) => asText(code)) : [];
+    if (gaps.length > 0) text += ' · 缺项：' + gapTextOf(gaps);
+    out.push({ k: '检查', v: text });
+  }
+  /* 9: whether the source changed after the failure. */
+  const sinceFailure = asText(asRecord(failure.source).sinceFailure);
+  if (sinceFailure === 'changed' || sinceFailure === 'unchanged') {
+    out.push({ k: '源码', v: sinceFailure === 'changed' ? '失败以后改过' : '失败以后没改过' });
+  }
+  /* 10: the counted automatic rework and its cap; a reverify counts the round chain. */
+  if (typeof automation.cap === 'number') {
+    const n = asText(asRecord(verdict.detail).operation) === 'reverify'
+      ? Number(round.autoCount ?? 0) : Number(automation.requeueAutoCount ?? 0);
+    const stopped = asText(verdict.kind) === 'stopped' && asText(verdict.reason) === 'auto_rework_cap_reached';
+    out.push({ k: '自动返工', v: String(n) + '/' + String(automation.cap)
+      + (stopped ? '（上限是当前设置，调高会立刻解除停止）' : '') });
+  }
+  /* 11: the owner's automation verdict, never “正在执行”. */
+  const kind = asText(verdict.kind);
+  if (kind !== 'none' && kind !== 'stopped' && kind !== '') {
+    let text = '';
+    if (kind === 'requeue') text = '待自动返工（' + (FAILURE_WORD[asText(verdict.failureClass)] ?? '还不能归类') + '）';
+    else if (kind === 'claim_requeued') text = '已重新入队，等待领取';
+    else if (kind === 'reverify') text = '待自动重新检查';
+    if (text !== '' && verdict.retryAfterRefusal === true) text += '；拒绝已过期，将重试一次';
+    if (text !== '') out.push({ k: '判定', v: text });
+  }
+  /* 12…: one row per rework history line. */
+  for (const line of reworkLines(row.rework)) out.push({ k: '返工', v: line });
+  /* 末: the one exit when no check covers the requirement. */
+  const stopReason = kind === 'stopped' ? asText(verdict.reason) : '';
+  const lastReverify = asRecord(automation.lastReverifyRefusal);
+  if (stopReason === 'verification_uncovered'
+    || (asText(lastReverify.code) === 'verification_uncovered' && lastReverify.stale !== true)) {
+    out.push({ k: '出路', v: '要补检查，在主对话里说，参谋会起草带新检查的计划' });
+  }
+  return out;
+}
+
+/** Y11: the four sources D103-1 names as “must pick an option”; the page sends
+ * text-only answers for these through the secretary, never `decisions/answer`.
+ * Copied as literals because `src/ui` cannot import `src/core`. */
+const ASK_ONLY_SOURCES: readonly string[] = ['member_creation', 'rework_request', 'handoff_approval', 'adviser_creation'];
+
+/** Y11: the answer box's one judgment, shared with 4a. Not read-only, the card
+ * accepts an answer, and its source is neither a stop card nor a plan candidate. */
+export function hasAnswerBox(card: DecisionCardV1): boolean {
+  return !card.readOnly && card.actions.includes('answer')
+    && card.source.kind !== 'goal_cause' && card.source.kind !== 'candidate';
+}
+
+/* Y7: the source kinds the server's `OPTION_REQUIRED_SOURCE_KINDS` refuses a
+ * text-only answer for (`decision-service.ts:503-513`); copied as literals
+ * because `src/ui` cannot import `src/core`. A conflict card must pick one of
+ * its three choices as well. */
+const OPTION_REQUIRED_SOURCE_KINDS: readonly string[] = ['action_release', 'unknown_call_review', 'member_creation',
+  'rework_request', 'handoff_approval', 'adviser_creation', 'module_maintainer_assignment', 'repair_approval',
+  'structural_proposal', 'role_capacity', 'role_line_change'];
+
+/** Y11: whether the card's choices must be shown and, for a conflict card,
+ * picked. The server's own set decides: a planning question that carries
+ * options still accepts a text-only answer. */
+export function needsOption(card: DecisionCardV1): boolean {
+  return card.source.kind === 'goal_conflict' || OPTION_REQUIRED_SOURCE_KINDS.includes(card.source.kind);
+}
+
+/** Y11: the object's canonical key, the same JSON the owner compares. */
+export function objectKeyOf(object: DecisionObjectV1): string {
+  /* The owner compares the same JSON value; the clone drops the UI's readonly
+     wrapper so the canonical encoder sees plain JSON. */
+  const plain = JSON.parse(JSON.stringify(object)) as JsonValue;
+  return canonicalJson(plain);
+}
+
+/** Y11: one object's Chinese label; unrecognised English labels fall back to the
+ * pin's aggregate type, never the owner's raw word. */
+export function objectLabelOf(object: DecisionObjectV1, taskName: string): string {
+  const record = asRecord(object);
+  if (asText(record.kind) === 'file') {
+    return asText(record.label) || asText(record.path);
+  }
+  const raw = asText(record.label);
+  if (raw === 'task') return taskName === '' ? '任务' : taskName;
+  if (raw === 'rework request' || raw === 'rework_request') return '返工请求';
+  if (raw === 'candidate') return '计划候选';
+  if (raw !== '' && !/^[\x20-\x7e]*$/.test(raw)) return raw;
+  const aggregate = asText(asRecord(asRecord(record.pin).ref).aggregateType);
+  const word = ({ Goal: '目标', Task: '任务', Run: '运行', Workspace: '工作区',
+    Project: '项目', Session: '会话', VerificationRound: '检查' } as Record<string, string>)[aggregate];
+  return word ?? '一个对象';
+}
+
+/** Y12: an answer body's page view: the person's own words as the line and the
+ * annotations as detail rows. Unparseable/other bodies keep their raw text. */
+export function answerBodyViewOf(
+  body: string, objects: readonly DecisionObjectV1[],
+): { line: string; facts: DecideCard['facts'] } {
+  const parse = (text: string): unknown => {
+    try { return JSON.parse(text); } catch { return null; }
+  };
+  let record = asRecord(parse(body));
+  /* A message card's body is the session-message envelope; its `text` is the
+     canonical answer JSON (`message-body-envelope.ts:45-47`). */
+  if (asText(record.kind) !== 'user_decision_response' && asText(record.text) !== '') {
+    record = asRecord(parse(asText(record.text)));
+  }
+  if (asText(record.kind) !== 'user_decision_response') return { line: body, facts: [] };
+  const text = asText(record.text);
+  const byKey = new Map(objects.map((object) => [objectKeyOf(object), objectLabelOf(object, '')]));
+  const annotations = Array.isArray(record.annotations) ? record.annotations.map((entry) => asRecord(entry)) : [];
+  const facts = annotations.map((annotation) => {
+    const key = asText(annotation.objectKey);
+    return { k: '批注', v: (byKey.get(key) ?? '一个对象') + '：' + asText(annotation.text) };
+  });
+  return { line: text === '' ? '' : '你的话：' + text, facts };
+}
+
+/** Y14b: “来自 〈line〉 · 〈range〉” for a platform card; a platform card with no
+ * sender line shows nothing. A line outside this page's rail is “其他工作线”. */
+export function cardFromOf(card: DecisionCardV1, nav: NavData): string {
+  const ref = card.senderSessionRef;
+  if (ref === null || ref === undefined) return '';
+  const session = sessionRefAtEdge(ref);
+  const line = lineNameOfSession(nav.lines, session) || lineNameOfSession(nav.archived, session) || '其他工作线';
+  const subject = asRecord(card.subject);
+  let range = '';
+  if (asText(subject.kind) === 'goal') {
+    const goalId = asText(asRecord(subject.goalRef).goalId);
+    const goal = nav.goals.find((entry) => entry.goalId === goalId);
+    range = goal === undefined ? '这个目标'
+      : '目标 ' + String(goal.ordinal ?? '') + '「' + goal.objective + '」';
+  } else if (asText(subject.kind) === 'project') {
+    range = '项目';
+  }
+  return range === '' ? '' : '来自 ' + line + ' · ' + range;
+}
+
+/** Y11/M9: one answerable card's empty reply state, the one Decide and the main
+ * card share. The object keys and labels are the same ones `makeView` gives the
+ * card; a conflict card takes only its words, never annotation fields, because
+ * the server refuses an annotation on it (`objects` is empty in the answer source). */
+export type DecideCardReply = {
+  hasAnswerBox: boolean;
+  needsOption: boolean;
+  note: string;
+  annotations: { objectKey: string; label: string; text: string }[];
+  busy: boolean;
+  error: string;
+};
+
+export function cardReplyOf(card: DecisionCardV1, taskName = ''): DecideCardReply {
+  return {
+    hasAnswerBox: hasAnswerBox(card),
+    needsOption: needsOption(card),
+    note: '',
+    annotations: card.source.kind === 'goal_conflict' ? [] : card.objects.map((object) => ({
+      objectKey: objectKeyOf(object), label: objectLabelOf(object, taskName), text: '',
+    })),
+    busy: false,
+    error: '',
+  };
 }
 
 /** KC-1 G2/X9: who last wrote a knowledge file, the one file-source word both the
@@ -617,18 +954,26 @@ function roleOf(plan: unknown, taskId: string): string | null {
   return role === '' ? null : role;
 }
 
-function actsOf(card: DecisionCardV1, row: Record<string, unknown> | null, conflict: boolean): DecideAct[] {
+function actsOf(
+  card: DecisionCardV1, row: Record<string, unknown> | null, conflict: boolean,
+  files: { path: string; parts: string[] }[],
+): DecideAct[] {
   const out: DecideAct[] = [];
   const add = (key: DecideActionKey, label: string, step: DecideStepKey | null, primary: boolean,
-    extra: Partial<DecideAct> = {}): void => {
-    out.push({ key, label, step, primary, cls: 'btn btn-sm btn-line' + (extra.off === 'true' ? ' is-off' : ''),
-      off: 'false', tip: '', ...extra });
+    extra: Partial<DecideAct> = {}): DecideAct => {
+    const act: DecideAct = { key, label, step, primary, cls: 'btn btn-sm btn-line' + (extra.off === 'true' ? ' is-off' : ''),
+      off: 'false', tip: '', ...extra };
+    out.push(act);
+    return act;
+  };
+  const markPrimary = (key: DecideActionKey): void => {
+    for (const act of out) act.primary = act.key === key;
   };
   if (card.readOnly) return out;
   if (conflict) {
-    add('locate', '在架构图里看', null, false, {
-      off: 'true', tip: '还没接通', cls: 'btn btn-sm btn-line is-off',
-    });
+    const names = files.map((file) => file.path.slice(file.path.lastIndexOf('/') + 1));
+    const shown = names.slice(0, 3).join('、') + (names.length > 3 ? ' 等 ' + names.length + ' 个文件' : '');
+    add('locate', '在架构图里看', null, false, { tip: '在架构图里点亮 ' + shown });
     add('answer', '确定', null, true);
     return out;
   }
@@ -647,46 +992,83 @@ function actsOf(card: DecisionCardV1, row: Record<string, unknown> | null, confl
     && asText(asRecord(card.source).key).includes('interrupted_pending_resume');
   if (interrupted) add('continue', '继续', null, true);
   if (card.source.kind === 'goal_cause' && row !== null) {
+    const failure = asRecord(row.failure);
     const stop = stopOf(row);
+    const disposition = asText(row.disposition);
+    const inactive = disposition === 'deferred' || disposition === 'cancelled' || disposition === 'superseded';
+    const gate = asText(asRecord(row.definition).taskKind) === 'gate' || asText(failure.subjectKind) === 'gate';
+    const actors = (value: unknown): string[] => Array.isArray(value) ? value.map((entry) => asText(entry)) : [];
+    const rq = actors(failure.requeueActors).includes('human');
+    const rv = actors(failure.reverifyActors).includes('human') && Object.keys(asRecord(failure.round)).length > 0;
+    const withdrawable = Array.isArray(card.withdrawableChecks) && card.withdrawableChecks.length > 0;
+    const W = withdrawable && rv;
+    const reverifyLabel = gate ? '重新验收' : '重新检查';
+    const reverifyAct = (): DecideAct => add('reverify', reverifyLabel, 'reverify', false);
+    const withdrawAct = (): DecideAct => add('withdraw', '撤回这些检查并重新检查', 'withdraw', false);
     if (interrupted) {
       /* The cause itself supplies the action; the Task row only adds the
          disposition actions below. */
     } else if (stop === 'auto_rework_cap_reached') {
-      add('defer', '延后任务', 'defer', false);
+      if (!gate) add('defer', '延后任务', 'defer', false);
       add('fix', '添加修复任务', 'fix', false);
-      add('requeue', '重新入队', 'requeue', true);
+      if (rv && asText(asRecord(asRecord(asRecord(asRecord(row.failure).automation).verdict).detail).operation) === 'reverify') reverifyAct();
+      if (W) withdrawAct();
+      if (rq) add('requeue', '重新入队', 'requeue', false);
+      markPrimary(rq ? 'requeue' : W ? 'withdraw' : rv ? 'reverify' : 'fix');
     } else if (stop === 'no_new_basis') {
-      add('defer', '延后任务', 'defer', false);
-      add('requeue', '重新入队', 'requeue', false);
-      add('note', '附上说明作为新依据', 'note', true);
+      if (!gate) add('defer', '延后任务', 'defer', false);
+      if (rq) add('requeue', '重新入队', 'requeue', false);
+      if (rv) add('note', '附上说明作为新依据', 'note', false);
+      if (W) withdrawAct();
+      markPrimary(W ? 'withdraw' : rv ? 'note' : rq ? 'requeue' : 'defer');
     } else if (stop === 'unknown_outcome') {
       add('attest', '核对未知结果', 'attest', true);
-    } else if (stop === 'gate_needs_fix' || stop === 'verification_uncovered') {
+    } else if (stop === 'gate_needs_fix') {
       add('fix', '添加修复任务', 'fix', true);
+    } else if (stop === 'verification_uncovered') {
+      add('speak', '去主对话说', null, true);
     } else if (stop === 'budget_exhausted') {
-      add('defer', '延后任务', 'defer', false);
-      add('cancel', '取消任务', 'cancel', false);
-      add('requeue', '重新入队', 'requeue', true);
+      if (!gate) {
+        add('defer', '延后任务', 'defer', false);
+        add('cancel', '取消任务', 'cancel', false);
+      }
+      if (rq) add('requeue', '重新入队', 'requeue', true);
     } else if (stop === 'task_paused') {
       add('cancel', '取消任务', 'cancel', false);
       add('continue', '继续', null, true);
     } else if (stop === 'task_cancelled' || stop === 'continuation_cancelled') {
       add('restore', '恢复任务', 'restore', true);
-    } else if (taskTripleOf(card) !== null && card.runRef !== null) {
+    } else if (taskTripleOf(card) !== null && card.runRef !== null && rq) {
       add('requeue', '重新入队', 'requeue', true);
     }
-    /* §2.7 D20/D23/D27: the same Task's disposition change; the three actions
-       are the owner's named values, never a second front-end pre-check. */
-    const disposition = asText(row.disposition);
-    const has = (key: DecideActionKey): boolean => out.some((act) => act.key === key);
-    if (disposition === 'deferred') {
-      if (!has('restore')) add('restore', '恢复任务', 'restore', !out.some((act) => act.primary));
-      if (!has('cancel')) add('cancel', '取消任务', 'cancel', false);
-    } else if (disposition === 'cancelled') {
-      if (!has('restore')) add('restore', '恢复任务', 'restore', !out.some((act) => act.primary));
-    } else {
-      if (!has('defer')) add('defer', '延后任务', 'defer', false);
-      if (!has('cancel')) add('cancel', '取消任务', 'cancel', false);
+    /* Y2/Y8: a gate's disposition is never changed; an inactive Task keeps only
+       its disposition actions (E3 :242). */
+    if (!gate && !interrupted) {
+      if (inactive) {
+        out.splice(0, out.length);
+        if (disposition === 'deferred') {
+          add('restore', '恢复任务', 'restore', true);
+          add('cancel', '取消任务', 'cancel', false);
+        } else if (disposition === 'cancelled') {
+          add('restore', '恢复任务', 'restore', true);
+        }
+      } else {
+        const hasAct = (key: DecideActionKey): boolean => out.some((act) => act.key === key);
+        if (!hasAct('defer')) add('defer', '延后任务', 'defer', false);
+        if (!hasAct('cancel')) add('cancel', '取消任务', 'cancel', false);
+      }
+    }
+    /* Y4: while a fresh `verification_uncovered` refusal stands, both the
+       reverify and the withdraw would be refused again; stale restores them. */
+    const lastReverify = asRecord(asRecord(failure.automation).lastReverifyRefusal);
+    if (asText(lastReverify.code) === 'verification_uncovered' && lastReverify.stale !== true) {
+      const tip = '没有检查覆盖这条要求，再点也会被拒；先按详情里的出路加检查';
+      for (const act of out) {
+        if (act.key !== 'reverify' && act.key !== 'withdraw') continue;
+        act.off = 'true';
+        act.tip = tip;
+        act.cls += ' is-off';
+      }
     }
   }
   return out;
@@ -705,6 +1087,8 @@ function makeView(args: {
   plan: unknown; pins: Array<{ ref: unknown; revision: number }>; files: { path: string; parts: string[] }[];
   proposalFiles?: readonly ProposalBatchFileV1[] | null;
   workspaceNames: Record<string, string>;
+  checkRows?: Record<string, DecideCheckRow> | null;
+  answerBody?: string;
 }): DecideCard {
   const { card, taskRow } = args;
   const files = args.files;
@@ -712,7 +1096,7 @@ function makeView(args: {
   const round = asRecord(failure.round);
   const failingChecks = Array.isArray(round.failingChecks) ? round.failingChecks.map((entry) => asRecord(entry)) : [];
   const conflict = card.source.kind === 'goal_conflict';
-  const acts = actsOf(card, taskRow, conflict);
+  const acts = actsOf(card, taskRow, conflict, files);
   const primary = acts.find((act) => act.primary) ?? null;
   const runRef = card.runRef;
   const failureRun = (failure.runRef ?? runRef) as RunRef | null;
@@ -721,6 +1105,7 @@ function makeView(args: {
   const fixRole = ownerTaskId === '' ? null : roleOf(args.plan, ownerTaskId);
   const checks = failingChecks.map((entry) => ({
     checkId: asText(entry.checkId), reportRef: (entry.reportRef ?? null) as ArtifactRef | null,
+    text: checkTextOf(asText(entry.checkId), args.checkRows),
   }));
   const roundOrdinal = typeof round.ordinal === 'number' ? round.ordinal : 1;
   const isGate = asText(asRecord(taskRow?.definition).taskKind) === 'gate' || asText(failure.subjectKind) === 'gate';
@@ -742,22 +1127,44 @@ function makeView(args: {
       : card.state === 'answered_pending_application' ? 'pending' as const : null,
   };
   const title = cardTitleOf(card, args.title);
+  const withdraw = (card.withdrawableChecks ?? []).map((checkId) => ({
+    checkId, text: withdrawTextOf(checkId, args.checkRows),
+  }));
+  const sourceLine = cardFromOf(card, args.nav);
+  /* One reply state, shared with 4a: the card's own judgments and object keys. */
+  const reply = cardReplyOf(card, args.taskName);
+  const answerBox = reply.hasAnswerBox;
+  const optionNeeded = reply.needsOption;
+  const objects = reply.annotations.map(({ objectKey, label }) => ({ objectKey, label }));
+  const currentPlanRevision = asRecord(asRecord(args.plan).plan ?? args.plan).planRevision;
+  const requestedPlanRevision = asRecord(release?.planVersion).planRevision;
+  const stale = typeof requestedPlanRevision === 'number' && typeof currentPlanRevision === 'number'
+    && requestedPlanRevision !== currentPlanRevision;
+  if (stale) {
+    const fact = actionFacts.find((entry) => entry.k === '请求时的计划版本');
+    if (fact !== undefined) {
+      fact.v += '（已过期：现在是计划第 ' + String(currentPlanRevision) + ' 版）';
+    }
+  }
+  const body = args.answerBody === undefined ? null : answerBodyViewOf(args.answerBody, card.objects);
+  const baseLine = answer !== null ? answer.selection + (answer.application === 'pending' ? '；等落实' : answer.application === 'applied' ? '；已落实' : '') : sourceLine;
+  const factsBase = args.proposalFiles !== undefined ? proposalFileFactsOf(args.proposalFiles, args.workspaceNames)
+    : release !== null ? actionFacts
+      : taskRow !== null ? factsOf(taskRow, args.checkRows)
+        : conflict ? [{ k: '重叠文件', v: '', files }] : [];
   return {
     key: args.key,
     source: card.source,
     level: args.level,
     state: card.state,
     title,
-    line: answer !== null ? answer.selection + (answer.application === 'pending' ? '；等落实' : answer.application === 'applied' ? '；已落实' : '') : '',
+    line: body !== null && body.line !== '' ? body.line : baseLine,
     path: args.path,
     position: '',
-    facts: args.proposalFiles !== undefined ? proposalFileFactsOf(args.proposalFiles, args.workspaceNames)
-      : release !== null ? actionFacts
-        : taskRow !== null ? factsOf(taskRow)
-          : conflict ? [{ k: '重叠文件', v: '', files }] : [],
+    facts: body === null ? factsBase : [...factsBase, ...body.facts],
     options,
     actions: [...new Set([
-      ...(card.options.length > 0 && !card.readOnly ? ['answer' as const] : []),
+      ...(answerBox ? ['answer' as const] : []),
       ...(card.source.kind === 'goal_cause' && card.taskRef !== null && card.runRef !== null && !card.readOnly ? ['requeue' as const] : []),
       ...(card.answer !== null ? ['answer-body' as const] : []),
     ])],
@@ -779,12 +1186,20 @@ function makeView(args: {
     fixRole,
     ownerTaskId,
     instructionChecks: checks.map((check) => check.checkId).join('、'),
+    withdraw,
+    sourceLine,
+    stale,
+    answerBox,
+    needsOption: optionNeeded,
+    askOnly: ASK_ONLY_SOURCES.includes(card.source.kind),
+    objects,
+    isGate,
     budget: taskRow === null ? null : budgetOfRow(taskRow),
     reasonLabel: '原因（必填；只记在记录里，不算新依据）',
     reasonPh: '例如：先把状态字段接上，再补测试',
     notePh: '例如：报告改写到 reports/e2e/ 下了，检查配置里已经登记新路径',
     cancelText: '取消后它不再画在任务图里，只在目标详情里计数；执行和检查记录都保留，之后可以恢复。',
-    after: '完成后' + (isGate ? '自动重新验收“' : '自动重新检查“') + args.taskName + '”',
+    after: (isGate ? '自动重新验收“' : '自动重新检查“') + args.taskName + '”',
     goalId: args.goalId,
   };
 }
@@ -855,7 +1270,10 @@ export function adaptDecide(source: DecideSource, ui: DecideUi): DecideData {
     const answerWord = card.answer === null ? '' : selectionWord(card.answer.decision.selection,
       card.options.map((option) => ({ id: option.id, label: option.label })));
     const sub = level === 'done'
-      ? answerWord + (card.state === 'applied' ? '；已落实' : '')
+      ? card.state === 'closed'
+        ? card.closedReason === 'source_resolved' ? '已关闭：来源已解决'
+          : card.closedReason === 'goal_cancelled' ? '已关闭：目标已取消' : '已关闭'
+        : answerWord + (card.state === 'applied' ? '；已落实' : '')
       : conflict
         ? '都要改 ' + files.map((file) => file.path).join('、')
         : card.source.kind === 'goal_cause'
@@ -871,6 +1289,8 @@ export function adaptDecide(source: DecideSource, ui: DecideUi): DecideData {
       goalId: goalId ?? '', ordinal, goalName: nameOf(goalId), taskName, taskRow, taskRef: triple,
       plan: taskGoalId === null ? null : source.tasks[taskGoalId] ?? null, pins, files,
       ...(proposalFiles === undefined ? {} : { proposalFiles }), workspaceNames: source.workspaceNames ?? {},
+      ...(source.checkRows === undefined ? {} : { checkRows: source.checkRows }),
+      ...(source.answerBodies?.[card.cardKey] === undefined ? {} : { answerBody: source.answerBodies[card.cardKey] }),
     });
     rows.push({
       key: card.cardKey, level, card, notice: null, label, sub, time, state,
@@ -932,9 +1352,15 @@ export function adaptDecide(source: DecideSource, ui: DecideUi): DecideData {
   for (const [goalId, value] of Object.entries(source.tasks)) {
     if (value !== null) plans[goalId] = value;
   }
-  const answerBodies: Record<string, string> = {};
+  const answerBodies: Record<string, string> = source.answerBodies ?? {};
+  const pendingApplication = done.filter((row) => row.card?.state === 'answered_pending_application');
+  const processed = done.filter((row) => row.card?.state !== 'answered_pending_application');
   const sections: DecideSection[] = ui.tab === 'done'
-    ? (done.length > 0 ? [{ name: '已处理', level: 'done', rows: done }] : [])
+    ? [
+      ...(pendingApplication.length > 0
+        ? [{ name: '已答复、待落实' as const, level: 'done' as const, rows: pendingApplication }] : []),
+      ...(processed.length > 0 ? [{ name: '已处理' as const, level: 'done' as const, rows: processed }] : []),
+    ]
     : [
       ...(waiting.length > 0 ? [{ name: '要决定' as const, level: 'decide' as const, rows: waiting }] : []),
       ...(notices.length > 0 ? [{ name: '请知悉' as const, level: 'notice' as const, rows: notices }] : []),
@@ -953,6 +1379,7 @@ export function adaptDecide(source: DecideSource, ui: DecideUi): DecideData {
     workspaceRevision: source.workspaceRevision,
     sections,
     history: ui.tab === 'done' ? done : [],
+    goalFilter: ui.goalFilter,
     counts,
     unreadable,
     doneTotal: done.length,
@@ -990,7 +1417,11 @@ export function draftOf(plan: unknown, change: {
     const row = asRecord(entry);
     const planTaskId = asText(row.taskId) || taskIdOf(row);
     if (change.taskId === undefined || planTaskId !== change.taskId || change.disposition === undefined) return { ...row };
-    return { ...row, disposition: change.disposition };
+    /* E3 :242: restore, defer and cancel all clear the Task's replacedByTaskId;
+       copying the old one back would be rejected. */
+    const { replacedByTaskId: _replaced, ...rest } = row;
+    void _replaced;
+    return { ...rest, disposition: change.disposition };
   });
   const assignments = (Array.isArray(source.assignments) ? source.assignments : []).map((entry) => ({ ...asRecord(entry) }));
   const obligations = (Array.isArray(source.obligations) ? source.obligations : []).map((entry) => {

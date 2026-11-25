@@ -129,7 +129,9 @@ describe('E3D-5 the Plan changes a card makes', () => {
       await openStep(page, '添加修复任务');
       typeInto(page.root, 'dc-name', FIX_NAME);
       const boxes = checkBoxes(page.root);
-      expect(boxes.map((entry) => entry.text).some((text) => text.includes('ag2b-static'))).toBe(true);
+      /* C2: the check's own id never reaches the screen. */
+      expect(boxes.length).toBeGreaterThan(0);
+      expect(boxes.map((entry) => entry.text).some((text) => text.includes('ag2b-static'))).toBe(false);
       for (const entry of checkBoxes(page.root)) if (entry.box.checked || entry.box.getAttribute('checked') === 'true') toggleBox(entry.box);
       await settle(() => isOff(stepConfirm(page.root)), 500);
       /* 具名改坏: 允许一项都不勾；D37 的零请求红。 */
@@ -138,7 +140,7 @@ describe('E3D-5 the Plan changes a card makes', () => {
       click(stepConfirm(page.root)!);
       expect(await quiet(log)).toBe(before);
       expect(count(log, 'plans/propose')).toBe(0);
-      const again = checkBoxes(page.root).find((entry) => entry.text.includes('ag2b-static'));
+      const again = checkBoxes(page.root)[0];
       expect(again).toBeDefined();
       toggleBox(again!.box);
       await settle(() => !isOff(stepConfirm(page.root)), 500);

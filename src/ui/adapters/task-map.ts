@@ -261,7 +261,13 @@ const PHASE_CAUSE_WORD: Record<string, string> = {
   unknown_outcome: '执行结果待核对', budget_exhausted: '预算耗尽',
   task_cancelled: '任务已取消', task_paused: '已暂停，可继续',
   unknown_call_review: '结果未知的调用待核对', interrupted_pending_resume: '被中断，等你继续',
+  round_chain_limit: '检查轮次已到上限',
 };
+
+/** A phase-cause code's page word (the one table above); an unknown code is ''. */
+export function causeWordOf(code: string): string {
+  return PHASE_CAUSE_WORD[code] ?? '';
+}
 
 /* The automatic rework count and its cap in brackets; a missing value drops
    only the brackets. */
@@ -459,7 +465,7 @@ export function localShortAt(iso: string): string {
 }
 
 /** Who requested or adopted a change (DESIGN `:607`). */
-const ACTOR_WORD: Record<string, string> = { human: '人工', system: '系统自动', agent: 'Agent' };
+export const ACTOR_WORD: Record<string, string> = { human: '人工', system: '系统自动', agent: 'Agent' };
 
 /** The five failure classes (DESIGN `:607`). */
 export const FAILURE_CLASS_WORD: Record<string, string> = {

@@ -17,6 +17,8 @@ export class FakeElement {
   valueWrites = 0;
   checked = false;
   parent: FakeElement | null = null;
+  /** Every `scrollIntoView` call on this element, in order (the anchor row reads it). */
+  readonly scrollCalls: unknown[] = [];
   private _value = '';
   constructor(readonly tagName: string) {}
   get value(): string { return this._value; }
@@ -59,6 +61,7 @@ export class FakeElement {
     }
   }
   get disabled(): boolean { return this.attributes.has('disabled'); }
+  scrollIntoView(options?: unknown): void { this.scrollCalls.push(options); }
   focus(): void {
     if (this.disabled) return;
     if (typeof document !== 'undefined') (document as unknown as FakeDocument).activeElement = this;
@@ -71,6 +74,9 @@ export class FakeElement {
 
 export type FakeDocument = {
   activeElement: FakeElement | null;
+  /** The mounted page root; `getElementById` walks it, as the browser walks the document. */
+  documentElement: FakeElement | null;
+  getElementById(id: string): FakeElement | null;
   createElement(tag: string): FakeElement;
   createElementNS(namespace: string, tag: string): FakeElement;
   createTextNode(text: string): FakeText;
@@ -83,6 +89,20 @@ let installed = false;
 export function installFakeDom(): FakeDocument {
   const document: FakeDocument = {
     activeElement: null,
+    documentElement: null,
+    getElementById(id: string): FakeElement | null {
+      const walk = (element: FakeElement): FakeElement | null => {
+        if (element.getAttribute('id') === id) return element;
+        for (const child of element.childNodes) {
+          if (child instanceof FakeElement) {
+            const found = walk(child);
+            if (found !== null) return found;
+          }
+        }
+        return null;
+      };
+      return document.documentElement === null ? null : walk(document.documentElement);
+    },
     createElement: (tag) => new FakeElement(tag),
     createElementNS: (_namespace, tag) => new FakeElement(tag),
     createTextNode: (text) => new FakeText(text),

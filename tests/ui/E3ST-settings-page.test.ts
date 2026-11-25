@@ -10,6 +10,7 @@ import {
   quietPage, settledN, textOf, turns, waitFor,
 } from './helpers/E3N-page.js';
 import { click, pressKey } from './helpers/E3N-interact.js';
+import { blockOf, heldSettingsPage, setBox, typeField } from './helpers/E3ST-settings.js';
 import type { FakeElement } from './helpers/dom.js';
 import { g8Check, openG8Project } from '../helpers/G8-world.js';
 import { adoptWithChecks } from '../helpers/G8B-world.js';
@@ -49,12 +50,6 @@ function inputBox(row: FakeElement | undefined, text: string): FakeElement | und
     : findElement(label, (element) => element.tagName.toLowerCase() === 'input');
 }
 
-/** One real checkbox change: flip the property, then dispatch the event the page listens to. */
-function setBox(box: FakeElement, checked: boolean): void {
-  box.checked = checked;
-  box.dispatch('change', { target: box, currentTarget: box });
-}
-
 function checkRow(root: FakeElement, checkId: string): FakeElement | undefined {
   return findAllClass(root, 'rl-check').find((row) => row.getAttribute('data-check') === checkId);
 }
@@ -86,12 +81,6 @@ function reviewLineField(root: FakeElement): FakeElement | undefined {
     && (element.getAttribute('aria-label') ?? '') === '命令审查线');
 }
 
-/** Types into a text field the way the page listens (`change` maps to `input`). */
-function typeField(field: FakeElement, value: string): void {
-  field.value = value;
-  field.dispatch('input', { target: field, currentTarget: field });
-}
-
 /** The Settings page on the shared world's Goal/first read. */
 async function settingsPage(project: Awaited<ReturnType<typeof world>>) {
   return await bootE3N(project.world, 'Settings', {
@@ -99,28 +88,10 @@ async function settingsPage(project: Awaited<ReturnType<typeof world>>) {
   });
 }
 
-/** Boot Settings with one settings route's answer replaced by `answer` after the
- *  real Host handled it, so the Host's own snapshot holds the new value. */
+/** Boot Settings with one settings route's answer replaced; the shared helper holds it. */
 async function heldSettings(project: Awaited<ReturnType<typeof world>>, route: string, answer: unknown) {
-  const log = newPageLog();
-  gateChanges(log);
-  const forward = forwardPage(project.world, log, 'stream');
-  let held = false;
-  const page = await bootPage({
-    name: 'Settings', search: '?from=Main&goal=' + encodeURIComponent(project.seedGoal.goalId),
-    token: () => project.world.token,
-    request: async (url, init, realFetch) => {
-      const sent = await forward(url, init, realFetch);
-      if (!held && url.endsWith('/api/real/settings/' + route)) {
-        held = true;
-        return new Response(JSON.stringify(answer), {
-          status: 200, headers: { 'content-type': 'application/json' },
-        });
-      }
-      return sent;
-    },
-  });
-  return { page, log };
+  return await heldSettingsPage(project.world,
+    '?from=Main&goal=' + encodeURIComponent(project.seedGoal.goalId), route, answer);
 }
 
 /** Open a check's inline 撤回 confirmation and press its 撤回. */
@@ -157,7 +128,7 @@ describe('settings page shell', () => {
       expect(settings.page.root.textContent).toContain('工作区与权限');
       expect(settings.page.root.textContent).toContain('自动化与规则');
       expect(settings.page.root.textContent).toContain('运行上限');
-      expect(settings.page.root.textContent).not.toContain('架构图和注记');
+      expect(settings.page.root.textContent).toContain('架构图和注记');
 
       const back = findLink(settings.page.root, '返回工作台', 'Main.dc.html');
       const backUrl = boardUrlOf(back!.getAttribute('href'), 'Settings.dc.html');
@@ -237,7 +208,9 @@ describe('settings page shell', () => {
     try {
       await waitFor(() => checkRow(settings.page.root, PLAN_CHECK) !== undefined);
       const row = checkRow(settings.page.root, PLAN_CHECK)!;
-      expect(textOf(findClass(row, 'rl-name'))).toContain(PLAN_CHECK);
+      expect(textOf(findClass(row, 'rl-name'))).toBe('true');
+      expect(textOf(row)).not.toContain(PLAN_CHECK);
+      expect(textOf(findClass(row, 'rl-sub'))).toContain('2 个任务');
       expect(textOf(findClass(row, 'rl-sub'))).toContain('计划带来的');
       click(findElement(row, (element) =>
         element.tagName.toLowerCase() === 'button' && textOf(element) === '撤回')!);
@@ -339,7 +312,7 @@ describe('settings page shell', () => {
       await waitFor(() => reviewLineField(settings.page.root) !== undefined);
       expect(textOf(findClass(settings.page.root, 'lim-cur'))).toContain('60 分钟');
       typeField(reviewLineField(settings.page.root)!, '30');
-      click(findButton(settings.page.root, '保存')!);
+      click(findButton(blockOf(settings.page.root, '命令审查线')!, '保存')!);
       await settledN(settings.log, 'settings/command-review/save', 1);
       expect(countRoute(settings.log, 'settings/command-review/save')).toBe(1);
       expect(callsTo(settings.log, 'settings/command-review/save')[0]?.input)
@@ -348,7 +321,7 @@ describe('settings page shell', () => {
       expect(textOf(findClass(settings.page.root, 'lim-saved'))).toContain('已保存');
 
       typeField(reviewLineField(settings.page.root)!, '');
-      click(findButton(settings.page.root, '保存')!);
+      click(findButton(blockOf(settings.page.root, '命令审查线')!, '保存')!);
       await settledN(settings.log, 'settings/command-review/save', 2);
       expect(callsTo(settings.log, 'settings/command-review/save')[1]?.input)
         .toEqual({ commandReviewLineMinutes: null });
@@ -372,13 +345,13 @@ describe('settings page shell', () => {
     try {
       await waitFor(() => reviewLineField(page.root) !== undefined);
       typeField(reviewLineField(page.root)!, '30');
-      click(findButton(page.root, '保存')!);
+      click(findButton(blockOf(page.root, '命令审查线')!, '保存')!);
       await settledN(log, 'settings/command-review/save', 1);
       await waitFor(() => textOf(findClass(page.root, 'lim-saved')).includes('已保存，尚未生效'));
       /* 表一 2：先重读快照，输入框旁画 Host 已存下的 30。 */
       await waitFor(() => textOf(findClass(page.root, 'lim-cur')).includes('30 分钟'));
       expect(countRoute(log, 'settings/snapshot')).toBe(2);
-      const retry = findButton(page.root, '重试');
+      const retry = findButton(blockOf(page.root, '命令审查线')!, '重试');
       expect(retry).toBeDefined();
       click(retry!);
       await settledN(log, 'settings/command-review/save', 2);
@@ -466,7 +439,7 @@ describe('settings page shell', () => {
     try {
       await waitFor(() => reviewLineField(settings.page.root) !== undefined);
       typeField(reviewLineField(settings.page.root)!, raw);
-      click(findButton(settings.page.root, '保存')!);
+      click(findButton(blockOf(settings.page.root, '命令审查线')!, '保存')!);
       await turns(() => true, 50);
       expect(countRoute(settings.log, 'settings/command-review/save')).toBe(0);
       expect(reviewLineField(settings.page.root)!.getAttribute('class')).toContain('is-bad');
@@ -482,7 +455,7 @@ describe('settings page shell', () => {
     { act: 'access', route: 'workspaces/access', code: 'invalid', reason: 'commandsAllowed requires writeAllowed', text: '跑命令要先允许改文件' },
     { act: 'access', route: 'workspaces/access', code: 'unsupported', reason: 'the Host does not publish the workspace access switch', text: '这个工作区的权限由启动配置决定，这里改不了' },
     { act: 'access', route: 'workspaces/access', code: 'unavailable', reason: 'the settings file could not be written', text: '设置文件写不进去，可以重试' },
-    { act: 'review', route: 'command-review/save', code: 'invalid', reason: 'commandReviewLineMinutes must be null or a positive integer', text: '要填正整数分钟，或者留空用默认' },
+    { act: 'review', route: 'command-review/save', code: 'invalid', reason: 'commandReviewLineMinutes must be null or a positive integer', text: '要 1 或更大的整数分钟；清空就回默认' },
     { act: 'withdraw', route: 'checks/withdraw', code: 'invalid', reason: '这个工作区的设置里没有检查 gone-check（Host 启动配置里的检查在启动配置里改）', text: '这个工作区的设置里没有检查 gone-check（Host 启动配置里的检查在启动配置里改）' },
     { act: 'access', route: 'workspaces/access', code: 'invalid', reason: 'something unexpected', text: '没有保存成功，可以重试', unknown: true },
   ])('S-10 $route says $text instead of $reason (表一 6)', async ({ act, route, code, reason, text, unknown }) => {
@@ -496,7 +469,7 @@ describe('settings page shell', () => {
       } else if (act === 'review') {
         await waitFor(() => reviewLineField(page.root) !== undefined);
         typeField(reviewLineField(page.root)!, '30');
-        click(findButton(page.root, '保存')!);
+        click(findButton(blockOf(page.root, '命令审查线')!, '保存')!);
       } else {
         await waitFor(() => checkRow(page.root, SEED) !== undefined);
         inlineWithdraw(page.root, SEED);

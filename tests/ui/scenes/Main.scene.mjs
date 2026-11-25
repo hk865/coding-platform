@@ -14,6 +14,13 @@
  * twice: the goal bar keeps the 有 Goal's `goals/display`.
  * The Main line view borrows the Member world (as `MainLV` does in review):
  *   --scene tests/ui/scenes/Main.scene.mjs --query '?goal=s7c-goal'
+ * Its task row carries an `awaiting_advice` review and its three messages carry
+ * the withdrawal and the transfer pair, so the line view draws 我来处理 and the
+ * three message facts.
+ * 4b's Goal bar states and the two-step requeue dialog have their own Goals:
+ *   --scene tests/ui/scenes/Main.scene.mjs --query '?goal=scene-goal-4b-paused'
+ *   --scene tests/ui/scenes/Main.scene.mjs --query '?goal=scene-goal-4b-decide'
+ *   --scene tests/ui/scenes/Main.scene.mjs --query '?goal=scene-goal-4b-cancelled'
  * `main/read` is the 有 state cleared to the Member Goal, `decisions/queue` has no sections,
  * `workspaces/registration` stays Main's, and every other route is Member's.
  */
@@ -64,6 +71,14 @@ for (const request of MR.value.requests) for (const round of request.rounds) {
   if (id === 'scene-req-2') round.runRef = qr(id, 'scene-run-2');
   if (id === 'scene-req-3') round.runRef = qr(id, 'scene-run-3');
 }
+/* 4a states live on the 有 Goal's page; the other Goals keep the base page and
+   queue so their screenshots do not grow a second batch's rows. */
+const MAIN_BASE = structuredClone(MR);
+MAIN_BASE.value.cards = MAIN_BASE.value.cards.filter((card) => card.cardKey === 'scene-card-1');
+MAIN_BASE.value.notices = MAIN_BASE.value.notices.filter((notice) => notice.itemKey === 'plan-adoption:scene-plan:1');
+const QUEUE_BASE = structuredClone(HAVE.routes['decisions/queue']);
+QUEUE_BASE.value.waitingAnswer = QUEUE_BASE.value.waitingAnswer.filter((card) => !card.cardKey.startsWith('scene-card-4a'));
+QUEUE_BASE.value.counts.waitingAnswer = QUEUE_BASE.value.waitingAnswer.length;
 const LIVE = HAVE.routes['executions/steps'];
 const ENDED = { status: 'ready', value: { kind: 'steps',
   summary: { startedAt: '2026-11-07T08:30:00+08:00', lastAt: '2026-11-07T08:34:00+08:00', live: false, reads: 2,
@@ -87,13 +102,94 @@ const RUNNING = {
   sessionRef: { projectId: 'e3w-scene', sessionId: 'scene-secretary' }, callId: 'scene-call-5', tool: 'run_readonly_command',
   commandPreview: 'npm test', expectedMs: 300000, startedAt: '2026-11-07T08:47:00+08:00', elapsedMs: 13 * 60000, lineMs: 3600000, overLine: true,
 };
+
+/* 4b: the Goal bar's paused and decision states, and the two-step requeue's
+ * dialog data. Each is opened with its own ?goal= so the screenshots do not
+ * depend on one another. */
+const FOUR_B = {
+  'scene-goal-4b-paused': {
+    name: '4b 暂停中的目标', phase: 'PAUSED', cause: null,
+    causes: [],
+    runStops: [
+      { runRef: { aggregateType: 'Run', projectId: 'e3w-scene', goalId: 'scene-goal-4b-paused', runId: 'scene-4b-run-a' },
+        stop: { kind: 'paused_interrupted', pausedBy: 'goal_fan_out' } },
+      { runRef: { aggregateType: 'Run', projectId: 'e3w-scene', goalId: 'scene-goal-4b-paused', runId: 'scene-4b-run-b' },
+        stop: { kind: 'stop_requested' } },
+    ],
+    liveRuns: [{ aggregateType: 'Run', projectId: 'e3w-scene', goalId: 'scene-goal-4b-paused', runId: 'scene-4b-run-a' }],
+  },
+  'scene-goal-4b-decide': {
+    name: '4b 有一份计划改动', phase: 'NEEDS_DECISION',
+    cause: { code: 'change_pending', proposalRef: { aggregateType: 'PlanProposal', projectId: 'e3w-scene', planId: 'scene-plan', proposalId: 'scene-4b-proposal' } },
+    causes: [{ code: 'change_pending', proposalRef: { aggregateType: 'PlanProposal', projectId: 'e3w-scene', planId: 'scene-plan', proposalId: 'scene-4b-proposal' } }],
+    runStops: null, liveRuns: [],
+  },
+  'scene-goal-4b-cancelled': {
+    name: '4b 已取消、可重新入队', phase: 'CANCELLED', cause: null, causes: [], runStops: null, liveRuns: [],
+  },
+};
+const fourBGoal = (id) => ({ ...HAVE.routes['goals/list'].value.goals[0],
+  ref: { ...HAVE.routes['goals/list'].value.goals[0].ref, goalId: id }, objective: FOUR_B[id].name,
+  ordinal: 9, order: 9, activePlanRevision: null, display: { phase: FOUR_B[id].phase } });
+const FOUR_B_DISPLAY = (id) => ({ ...HAVE.routes['goals/display'], value: {
+  ...HAVE.routes['goals/display'].value,
+  goal: { ...HAVE.routes['goals/display'].value.goal,
+    ref: { ...HAVE.routes['goals/display'].value.goal.ref, goalId: id }, objective: FOUR_B[id].name },
+  display: { phase: FOUR_B[id].phase, row: 'GOAL-20', cause: FOUR_B[id].cause,
+    causes: FOUR_B[id].causes, runStops: FOUR_B[id].runStops },
+  liveRuns: FOUR_B[id].liveRuns, resumePending: [], reentryFailures: [],
+} });
+const COPY_CANDIDATES = [
+  { messageRef: { aggregateType: 'SessionMessage', projectId: 'e3w-scene', workspaceId: 'e3w-scene', messageId: 'scene-4b-message-a' },
+    version: 1, state: 'not_delivered', selectable: true, reason: null, retractable: true, retractReason: null },
+  { messageRef: { aggregateType: 'SessionMessage', projectId: 'e3w-scene', workspaceId: 'e3w-scene', messageId: 'scene-4b-message-b' },
+    version: 2, state: 'applied', selectable: false, reason: 'applied', retractable: false, retractReason: 'applied' },
+];
+const FOUR_B_TASKS = (() => {
+  const reply = structuredClone(HAVE.routes['tasks/query']);
+  const [first, second] = reply.value.tasks;
+  first.ref.goalId = 'scene-goal-4b-paused';
+  first.definition.title = '暂停中的工作一';
+  first.execution = { aggregateType: 'Run', projectId: 'e3w-scene', goalId: 'scene-goal-4b-paused', runId: 'scene-4b-run-a' };
+  second.ref.goalId = 'scene-goal-4b-paused';
+  second.definition.title = '暂停中的工作二';
+  second.execution = { aggregateType: 'Run', projectId: 'e3w-scene', goalId: 'scene-goal-4b-paused', runId: 'scene-4b-run-b' };
+  return reply;
+})();
+const FOUR_B_COPY = { status: 'ready', value: {
+  source: { goal: { aggregateType: 'Goal', projectId: 'e3w-scene', goalId: 'scene-goal-4b-cancelled' }, revision: 3 },
+  objective: '4b 重新入队的目标', autonomy: 'after_plan_confirmation', order: 9,
+  toReconfirm: { waitForGoalRef: null, parallelRisks: [] }, understanding: null,
+  interventions: { available: true, candidates: COPY_CANDIDATES },
+} };
+const FOUR_B_BODIES = {
+  'scene-4b-message-a:message': { status: 'ready', value: { messageRef: COPY_CANDIDATES[0].messageRef, part: 'message',
+    text: '这一条旧的干预要在新目标里接着用', sourceRef: { kind: 'workspace', refId: 'e3w-scene', revision: '1' }, usage: 'message' } },
+  'scene-4b-message-b:message': { status: 'ready', value: { messageRef: COPY_CANDIDATES[1].messageRef, part: 'message',
+    text: '这一条已经生效了，不能再勾', sourceRef: { kind: 'workspace', refId: 'e3w-scene', revision: '1' }, usage: 'message' } },
+};
+
 const S7C_MAIN = structuredClone(MR);
 S7C_MAIN.value.goalId = S7C_GOAL;
 S7C_MAIN.value.requests = [];
 S7C_MAIN.value.next = null;
 S7C_MAIN.value.cards = [];
 S7C_MAIN.value.notices = [];
-const S7C_QUEUE = { status: 'ready', value: { ...HAVE.routes['decisions/queue'].value, sections: [] } };
+const S7C_QUEUE = { status: 'ready', value: { ...QUEUE_BASE.value, sections: [] } };
+/* 4a: the two writes the shot review clicks answer with success; the withdrawn
+   snapshot then shows the check only in `withdrawnChecks`. */
+let withdrawn4a = false;
+const snapshot4a = () => {
+  const value = structuredClone(HAVE.routes['settings/snapshot'].value);
+  const workspace = value.workspaces[0];
+  if (withdrawn4a) {
+    workspace.checks = [];
+    workspace.checkApprovals = [];
+    workspace.withdrawnChecks = [{ checkId: 'scene-docs-check', withdrawnAt: '2026-11-07T00:59:00.000Z',
+      plan: { proposalRef: { proposalId: 'scene-4a-cand' } } }];
+  }
+  return value;
+};
 
 /** The Goal the page opened on: the last `goals/read` it sent. */
 let pageGoal = null;
@@ -135,13 +231,53 @@ export const scene = {
   routes: { ...HAVE.routes, 'main/read': MR },
   reply(route, input) {
     if (route === 'goals/read') pageGoal = input?.goalId ?? null;
+    if (pageGoal in FOUR_B) {
+      if (route === 'goals/read') return { ...readGoal, value: { ...readGoal.value, goal: { ...readGoal.value.goal,
+        ref: { ...readGoal.value.goal.ref, goalId: pageGoal }, objective: FOUR_B[pageGoal].name } } };
+      if (route === 'goals/display') return FOUR_B_DISPLAY(pageGoal);
+      if (route === 'goals/list') return { ...HAVE.routes['goals/list'], value: { ...HAVE.routes['goals/list'].value,
+        goals: [...HAVE.routes['goals/list'].value.goals, ...Object.keys(FOUR_B).map(fourBGoal)] } };
+      if (route === 'goals/copy-draft') return FOUR_B_COPY;
+      if (route === 'tasks/query') return FOUR_B_TASKS;
+      if (route === 'messages/body') return FOUR_B_BODIES[`${input?.messageRef?.messageId}:${input?.part}`] ?? NOT_FOUND;
+    }
     const scened = stateReply(route, input);
     if (scened !== undefined) return scened;
     if (route === 'queries/cancel') return { status: 'ready', value: { cancelled: true } };
+    if (route === 'decisions/answer') return { status: 'ready', value: { answer: { status: 'committed' } } };
+    if (route === 'settings/snapshot') return { status: 'ready', value: snapshot4a() };
+    if (route === 'settings/checks/withdraw') {
+      withdrawn4a = true;
+      return { status: 'ready', value: snapshot4a() };
+    }
+    if (route === 'main/read' && pageGoal !== 'scene-goal' && pageGoal !== S7C_GOAL) return MAIN_BASE;
+    if (route === 'decisions/queue' && pageGoal !== 'scene-goal' && pageGoal !== S7C_GOAL) return QUEUE_BASE;
     if (pageGoal === S7C_GOAL) {
       if (route === 'main/read') return S7C_MAIN;
       if (route === 'decisions/queue') return S7C_QUEUE;
       if (route === 'workspaces/registration') return HAVE.routes['workspaces/registration'];
+      if (route === 'tasks/query') {
+        const reply = MEMBER.reply(route, input);
+        if (reply?.value === undefined) return reply;
+        return { ...reply, value: { ...reply.value, tasks: reply.value.tasks.map((task) => task.ref.taskId !== 's7c-m1'
+          ? task : { ...task, unknownCallReview: {
+            ref: { aggregateType: 'UnknownCallReview', projectId: 'ag2b-collab-project', goalId: 's7c-goal', runId: '3671ba29-7403-40da-ab76-b6ad47735275' },
+            revision: 2, status: 'awaiting_advice', decisionReasons: [], activeRound: null, hold: null, remainingRoundSlots: 7,
+          } }) } };
+      }
+      if (route === 'messages/view') {
+        const reply = MEMBER.reply(route, input);
+        if (reply?.value === undefined) return reply;
+        const message = reply.value.message;
+        const extra = message.ref.messageId === 'session-message-06d6b93735128a1cece7dbae2a8412eb070cfff4a23db6b59acd7a34b5af7621'
+          ? { withdrawnAt: '2026-10-23T09:00:02.000Z' }
+          : message.ref.messageId === 'session-message-53e59795223e856bd9998bb58f3c4efd4998bb974375ebdb60bfa6dfcbabd19a'
+            ? { transferredTo: { aggregateType: 'SessionMessage', projectId: 'ag2b-collab-project', workspaceId: 'ag2b-collab-workspace', messageId: 'session-message-9c5585a96ff349229ee6f0d0ab32edcccd806c1bfb53eea717db9cf2b3669403' } }
+            : message.ref.messageId === 'session-message-9c5585a96ff349229ee6f0d0ab32edcccd806c1bfb53eea717db9cf2b3669403'
+              ? { originalRef: { aggregateType: 'SessionMessage', projectId: 'ag2b-collab-project', workspaceId: 'ag2b-collab-workspace', messageId: 'session-message-53e59795223e856bd9998bb58f3c4efd4998bb974375ebdb60bfa6dfcbabd19a' } }
+              : {};
+        return { ...reply, value: { ...reply.value, message: { ...message, ...extra } } };
+      }
       return MEMBER.reply(route, input);
     }
     if ((route === 'tasks/query' || route === 'graph/hover') && input?.goalRef?.goalId === NONE_GOAL) return NOT_FOUND;

@@ -58,7 +58,7 @@ body { margin: 0; background: #1F1F1F; }
 .rl.is-revoked .rl-name { color: var(--text-3); }
 .rl-fold { display: inline-flex; align-items: center; gap: 6px; padding: 4px 0; font-size: 12px; color: var(--text-3); align-self: flex-start; }
 .rl-fold:hover { color: var(--text-2); }
-.rl-empty { margin: 0; font-size: 13px; color: var(--text-3); padding: 4px 8px; }
+.rl-empty { margin: 0; font-size: 13px; color: var(--text-3); padding: 4px 0; }
 .rl-edit { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 8px; font-size: 12px; color: var(--text-3); }
 /* the structural switches and the command review line, from the settings draft */
 .sw-list { display: flex; flex-direction: column; gap: 18px; }
@@ -79,13 +79,24 @@ body { margin: 0; background: #1F1F1F; }
 .in:focus-visible { box-shadow: inset 0 0 0 1px var(--text-3); }
 .in::placeholder { color: var(--text-3); }
 .in.w-l { width: 140px; }
+.in.w-m { width: 96px; }
+.in.w-s { width: 64px; }
 .in.is-bad { box-shadow: inset 0 0 0 1px var(--red-text); }
+/* the role-limits grid and the machine's capability line, from the settings draft */
+.lim { display: grid; grid-template-columns: 88px 120px 120px minmax(0, 1fr); align-items: center; column-gap: 12px; }
+.lim-th { height: 24px; display: flex; align-items: center; font-size: 12px; color: var(--text-3); }
+.lim-k { height: 32px; display: flex; align-items: center; color: var(--text); }
+.lim-v { height: 32px; display: flex; align-items: center; gap: 6px; color: var(--text); font-variant-numeric: tabular-nums; }
+.lim-d { font-size: 12px; color: var(--text-3); }
+.lim-now { height: 32px; display: flex; align-items: center; font-size: 12px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.machine { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-2); }
 @media (max-width: 820px) {
   .st { grid-template-columns: minmax(0, 1fr); grid-template-rows: 48px auto minmax(0, 1fr); }
   .st-nav { flex-direction: row; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--line); padding: 6px 8px; }
   .st-nav .row { width: auto; flex: none; }
   .st-col { padding: 20px 16px 80px; }
   .ws { grid-template-columns: minmax(0, 1fr); }
+  .lim { grid-template-columns: 64px 92px 92px minmax(0, 1fr); column-gap: 8px; }
   .fld { grid-template-columns: minmax(0, 1fr); }
 }
 </style>
@@ -107,8 +118,9 @@ body { margin: 0; background: #1F1F1F; }
 
   <nav class="st-nav" aria-label="设置分组">
     <a class="{{nav.wsCls}}" href="#g-ws" onClick="{{nav.pick.ws}}"><span class="row-name">工作区与权限</span><span class="row-meta">{{nav.workspaceCount}}</span></a>
-    <a class="{{nav.autoCls}}" href="#g-auto" onClick="{{nav.pick.auto}}"><span class="row-name">自动化与规则</span></a>
+    <a class="{{nav.autoCls}}" href="#g-auto" onClick="{{nav.pick.auto}}"><span class="row-name">自动化与规则</span><span class="row-meta">{{nav.rulesCount}}</span></a>
     <a class="{{nav.limCls}}" href="#g-lim" onClick="{{nav.pick.lim}}"><span class="row-name">运行上限</span></a>
+    <a class="{{nav.knowCls}}" href="#g-know" onClick="{{nav.pick.know}}"><span class="row-name">架构图和注记</span></a>
   </nav>
 
   <div class="st-body" onScroll="{{nav.onScroll}}">
@@ -139,7 +151,7 @@ body { margin: 0; background: #1F1F1F; }
                     <label class="{{w.writeCls}}" title="{{w.writeTip}}"><input type="checkbox" checked="{{w.writeAllowed}}" disabled="{{w.fixed}}" onChange="{{w.toggleWrite}}" /> 允许改文件</label>
                     <label class="{{w.commandCls}}" title="{{w.commandTip}}"><input type="checkbox" checked="{{w.commandsAllowed}}" disabled="{{w.commandDisabled}}" onChange="{{w.toggleCommands}}" /> 允许跑命令</label>
                   </div>
-                  <span class="ws-why">{{w.why}}<sc-if value="{{w.saved}}" hint-placeholder-val="{{ false }}"> <span class="saved">已保存</span></sc-if><sc-if value="{{w.pending}}" hint-placeholder-val="{{ false }}"> <span class="saved">已保存，尚未生效</span> <button class="btn-text" type="button" onClick="{{w.retryPending}}">重试</button></sc-if></span>
+                  <span class="ws-why">{{w.why}}<sc-if value="{{w.saved}}" hint-placeholder-val="{{ false }}"> <span class="saved">{{w.savedText}}</span></sc-if><sc-if value="{{w.pending}}" hint-placeholder-val="{{ false }}"> <span class="saved">已保存，尚未生效</span> <button class="btn-text" type="button" onClick="{{w.retryPending}}">重试</button></sc-if></span>
                 </div>
               </sc-for>
             </div>
@@ -167,8 +179,8 @@ body { margin: 0; background: #1F1F1F; }
                     <div class="rl rl-check" data-check="{{c.checkId}}" data-source="{{c.source}}">
                       <div class="rl-top">
                         <div class="rl-main">
-                          <span class="rl-name">{{c.checkId}}</span>
-                          <span class="rl-sub">{{c.command}} · {{c.tasksText}} · {{c.sourceText}}</span>
+                          <span class="rl-name">{{c.command}}</span>
+                          <span class="rl-sub">{{c.tasksText}} · {{c.sourceText}}</span>
                           <span class="rl-sub">{{c.error}}<sc-if value="{{c.pending}}" hint-placeholder-val="{{ false }}"> <span class="saved">已保存，尚未生效</span> <button class="btn-text" type="button" onClick="{{c.retryPending}}">重试</button></sc-if></span>
                         </div>
                         <div class="rl-acts"><button class="btn-text" type="button" onClick="{{c.withdraw}}">撤回</button></div>
@@ -251,12 +263,209 @@ body { margin: 0; background: #1F1F1F; }
             </div>
             <span class="err">{{structural.error}}</span>
           </div>
+
+          <div class="blk">
+            <div class="blk-head">
+              <span class="blk-name">启动时自动续做</span><span class="blk-scope">这台机器上的所有项目</span>
+            </div>
+            <span class="mode" role="radiogroup" aria-label="启动时自动续做">
+              <button class="{{auto.autoCls}}" type="button" role="radio" aria-checked="{{auto.autoOn}}" onClick="{{auto.pickAuto}}">自动<sc-if value="{{auto.autoDefault}}" hint-placeholder-val="{{ false }}"> <span class="t3">· 默认</span></sc-if></button>
+              <button class="{{auto.askCls}}" type="button" role="radio" aria-checked="{{auto.askOn}}" onClick="{{auto.pickAsk}}">问我<sc-if value="{{auto.askDefault}}" hint-placeholder-val="{{ false }}"> <span class="t3">· 默认</span></sc-if></button>
+              <button class="{{auto.offCls}}" type="button" role="radio" aria-checked="{{auto.offOn}}" onClick="{{auto.pickOff}}">关<sc-if value="{{auto.offDefault}}" hint-placeholder-val="{{ false }}"> <span class="t3">· 默认</span></sc-if></button>
+            </span>
+            <p class="blk-desc">{{auto.desc}}</p>
+            <ul class="blk-notes">
+              <li>三档的启动核对报告都列出被中断的目标。</li>
+              <li>模型服务连不上停下的，哪一档都等你点“继续”。</li>
+            </ul>
+            <div class="fld">
+              <span class="fld-k">自动返工上限</span>
+              <span class="fld-v">
+                <input class="{{auto.inputCls}}" type="text" inputmode="numeric" value="{{auto.input}}" aria-label="自动返工上限" onChange="{{auto.onInput}}" onKeyDown="{{auto.onKey}}">
+                <span class="fld-hint">次 · 0 到 {{auto.max}}，默认 {{auto.default}}</span>
+              </span>
+              <span></span>
+              <span class="fld-hint">同一个任务没过检查，平台自动返工最多几次，到了出卡问你；0 是不自动返工。</span>
+            </div>
+            <div class="blk-foot">
+              <button class="btn btn-sm btn-line" type="button" disabled="{{auto.saveOff}}" onClick="{{auto.save}}">保存</button>
+              <span class="saved auto-saved">{{auto.savedText}}<sc-if value="{{auto.pending}}" hint-placeholder-val="{{ false }}"> 已保存，尚未生效 <button class="btn-text" type="button" onClick="{{auto.retryPending}}">重试</button></sc-if></span>
+              <span class="err">{{auto.error}}</span>
+            </div>
+          </div>
+
+          <div class="blk">
+            <div class="blk-head">
+              <span class="blk-name">规则</span><span class="blk-scope">这个项目</span>
+            </div>
+            <p class="blk-desc">你答完卡时确认存下的“以后这类都这样”。平台照规则直接做，事后进“请知悉”。这里能看、改有效期、撤销；撤销只管以后，已经做了的不追溯。</p>
+            <sc-if value="{{rules.show}}" hint-placeholder-val="{{ false }}">
+              <div class="rl-list">
+                <sc-for list="{{rules.active}}" as="r" hint-placeholder-count="1">
+                  <div class="rl" data-rule="{{r.ruleId}}">
+                    <div class="rl-top">
+                      <div class="rl-main">
+                        <span class="rl-name">{{r.name}}</span>
+                        <span class="rl-sub">{{r.sub}}</span>
+                      </div>
+                      <div class="rl-acts">
+                        <button class="btn-text" type="button" ref="{{r.editRef}}" onClick="{{r.changeExpiry}}">改有效期</button>
+                        <button class="btn-text" type="button" onClick="{{r.askRevoke}}">撤销</button>
+                      </div>
+                    </div>
+                    <sc-if value="{{r.editing}}" hint-placeholder-val="{{ false }}">
+                      <div class="rl-edit">
+                        <span>有效期</span>
+                        <span class="mode" role="radiogroup" aria-label="有效期">
+                          <button class="{{rules.noneCls}}" type="button" role="radio" aria-checked="{{rules.noneOn}}" onClick="{{rules.pickNone}}">不过期</button>
+                          <button class="{{rules.dateCls}}" type="button" role="radio" aria-checked="{{rules.dateOn}}" onClick="{{rules.pickDate}}">到某天</button>
+                        </span>
+                        <sc-if value="{{rules.showDate}}" hint-placeholder-val="{{ false }}">
+                          <input class="in w-l" type="date" value="{{rules.date}}" aria-label="到哪天" onChange="{{rules.onDate}}" onKeyDown="{{rules.onKey}}">
+                        </sc-if>
+                        <button class="btn btn-sm btn-primary" type="button" disabled="{{rules.saveOff}}" onClick="{{r.saveExpiry}}">保存</button>
+                        <button class="btn btn-sm" type="button" disabled="{{rules.busy}}" onClick="{{r.cancelEdit}}">取消</button>
+                        <span class="t3">改了只管以后。</span>
+                        <span class="err">{{r.editError}}</span>
+                      </div>
+                    </sc-if>
+                    <sc-if value="{{r.confirming}}" hint-placeholder-val="{{ false }}">
+                      <div class="rl-edit">
+                        <span>撤销以后，这类事又会先问你；已经照这条做了的不变。</span>
+                        <button class="btn btn-sm btn-primary" type="button" disabled="{{rules.busy}}" onClick="{{r.confirmRevoke}}">撤销</button>
+                        <button class="btn btn-sm" type="button" disabled="{{rules.busy}}" onClick="{{r.cancelEdit}}">取消</button>
+                        <span class="err">{{r.editError}}</span>
+                      </div>
+                    </sc-if>
+                  </div>
+                </sc-for>
+              </div>
+              <sc-if value="{{rules.empty}}" hint-placeholder-val="{{ false }}">
+                <p class="rl-empty">还没有规则。答完卡时，平台会问你“以后这类都这样吗”。</p>
+              </sc-if>
+              <sc-if value="{{rules.hasRevoked}}" hint-placeholder-val="{{ false }}">
+                <button class="rl-fold" type="button" ref="{{rules.foldRef}}" aria-expanded="{{rules.revokedOpen}}" onClick="{{rules.toggleRevoked}}">
+                  <svg class="{{rules.foldCls}}" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4"></path></svg>
+                  <span>{{rules.revokedText}}</span>
+                </button>
+                <sc-if value="{{rules.revokedOpen}}" hint-placeholder-val="{{ false }}">
+                  <div class="rl-list">
+                    <sc-for list="{{rules.revoked}}" as="r" hint-placeholder-count="1">
+                      <div class="rl is-revoked" data-rule="{{r.ruleId}}">
+                        <div class="rl-main">
+                          <span class="rl-name">{{r.name}}</span>
+                          <span class="rl-sub">{{r.sub}}</span>
+                        </div>
+                      </div>
+                    </sc-for>
+                  </div>
+                </sc-if>
+              </sc-if>
+            </sc-if>
+            <sc-if value="{{rules.missing}}" hint-placeholder-val="{{ false }}">
+              <p class="rl-empty">{{rules.missingText}}<sc-if value="{{rules.missingRetry}}" hint-placeholder-val="{{ false }}"> <button class="btn-text" type="button" onClick="{{rules.retry}}">重试</button></sc-if></p>
+            </sc-if>
+          </div>
         </section>
 
         <section class="sx" id="g-lim" aria-labelledby="g-lim-t">
           <div class="sx-head">
             <h2 class="sx-title" id="g-lim-t">运行上限</h2>
             <p class="sx-lead">同时开多少条线、一次执行最多花多少 token、一条命令最多用多少内存和进程。命令跑得太久，先发一条请知悉给你。</p>
+          </div>
+
+          <div class="blk">
+            <div class="blk-head">
+              <span class="blk-name">工作线上限</span><span class="blk-scope">这个项目</span>
+            </div>
+            <sc-if value="{{rlim.show}}" hint-placeholder-val="{{ false }}">
+              <div class="lim">
+                <span class="lim-th">职责</span><span class="lim-th">同时运行</span><span class="lim-th">保留</span><span class="lim-th">现在</span>
+                <sc-for list="{{rlim.rows}}" as="r" hint-placeholder-count="4">
+                  <span class="lim-k" data-duty="{{r.duty}}">{{r.name}}</span>
+                  <span class="lim-v" data-duty="{{r.duty}}"><sc-if value="{{r.editing}}" hint-placeholder-val="{{ false }}"><input class="{{r.runningCls}}" type="text" inputmode="numeric" value="{{r.runningInput}}" aria-label="{{r.runningLabel}}" onChange="{{r.onRunning}}" onKeyDown="{{r.onKey}}"><span class="lim-d">默认 {{r.runningDefault}}</span></sc-if><sc-if value="{{r.viewing}}" hint-placeholder-val="{{ false }}">{{r.running}}<sc-if value="{{r.runningDefaultMark}}" hint-placeholder-val="{{ false }}"><span class="lim-d">默认 {{r.runningDefault}}</span></sc-if></sc-if></span>
+                  <span class="lim-v" data-duty="{{r.duty}}"><sc-if value="{{r.editing}}" hint-placeholder-val="{{ false }}"><input class="{{r.openCls}}" type="text" inputmode="numeric" value="{{r.openInput}}" aria-label="{{r.openLabel}}" onChange="{{r.onOpen}}" onKeyDown="{{r.onKey}}"><span class="lim-d">默认 {{r.openDefault}}</span></sc-if><sc-if value="{{r.viewing}}" hint-placeholder-val="{{ false }}">{{r.open}}<sc-if value="{{r.openDefaultMark}}" hint-placeholder-val="{{ false }}"><span class="lim-d">默认 {{r.openDefault}}</span></sc-if></sc-if></span>
+                  <span class="lim-now" data-duty="{{r.duty}}">{{r.nowText}}</span>
+                </sc-for>
+              </div>
+              <ul class="blk-notes">
+                <li>同时运行：同一时刻在跑模型的线。到了，后来的排队等，不拒绝、不出卡。</li>
+                <li>保留：没归档的线，待命的也算。到了还要加线，先收这个职责里最久没活动的空闲线；没有空闲线时，你手动开会提示，平台自动加会出一张卡。</li>
+                <li>只有你能改，平台记下谁、什么时候、从几改到几。调低到现有条数以下不会强制归档，只是不再加。</li>
+              </ul>
+              <div class="blk-foot">
+                <sc-if value="{{rlim.editing}}" hint-placeholder-val="{{ false }}">
+                  <button class="btn btn-sm btn-primary" type="button" disabled="{{rlim.busy}}" onClick="{{rlim.save}}">保存</button>
+                  <button class="btn btn-sm" type="button" onClick="{{rlim.cancel}}">取消</button>
+                  <button class="btn-text" type="button" onClick="{{rlim.fillDefaults}}">填回默认值</button>
+                </sc-if>
+                <sc-if value="{{rlim.viewing}}" hint-placeholder-val="{{ false }}">
+                  <button class="btn btn-sm btn-line" type="button" ref="{{rlim.editRef}}" onClick="{{rlim.edit}}">改</button>
+                </sc-if>
+                <span class="saved rlim-saved">{{rlim.savedText}}</span>
+                <span class="err">{{rlim.error}}</span>
+              </div>
+            </sc-if>
+            <sc-if value="{{rlim.missing}}" hint-placeholder-val="{{ false }}">
+              <p class="rl-empty">{{rlim.missingText}}<sc-if value="{{rlim.missingRetry}}" hint-placeholder-val="{{ false }}"> <button class="btn-text" type="button" onClick="{{rlim.retry}}">重试</button></sc-if></p>
+            </sc-if>
+          </div>
+
+          <div class="blk">
+            <div class="blk-head">
+              <span class="blk-name">每次执行的 token 上限</span><span class="blk-scope">这台机器上的所有项目</span>
+            </div>
+            <p class="blk-desc">执行者每次执行最多用多少 token，用完就停下。现在是 <span class="cur tok-cur">{{tok.currentText}}</span>。</p>
+            <div class="fld">
+              <span class="fld-k">改成</span>
+              <span class="fld-v">
+                <input class="{{tok.inputCls}}" type="text" inputmode="numeric" value="{{tok.input}}" placeholder="{{tok.placeholder}}" aria-label="每次执行的 token 上限" onChange="{{tok.onInput}}" onKeyDown="{{tok.onKey}}">
+                <span class="fld-hint">{{tok.hint}}</span>
+              </span>
+            </div>
+            <ul class="blk-notes">
+              <li>保存后下一次领取生效；已经在跑的执行保留领取时的上限。</li>
+            </ul>
+            <div class="blk-foot">
+              <button class="btn btn-sm btn-line" type="button" disabled="{{tok.saveOff}}" onClick="{{tok.save}}">保存</button>
+              <span class="saved tok-saved">{{tok.savedText}}<sc-if value="{{tok.pending}}" hint-placeholder-val="{{ false }}"> 已保存，尚未生效 <button class="btn-text" type="button" onClick="{{tok.retryPending}}">重试</button></sc-if></span>
+              <span class="err">{{tok.error}}</span>
+            </div>
+          </div>
+
+          <div class="blk">
+            <div class="blk-head">
+              <span class="blk-name">命令的内存和进程数</span><span class="blk-scope">这台机器上的所有项目</span>
+            </div>
+            <p class="blk-desc">沙箱里每条命令各自的上限：执行者跑的命令、检查、你在“命令”页跑的命令都算。超了只影响这一条命令，Host 照常。</p>
+            <div class="fld">
+              <span class="fld-k">本机</span>
+              <span class="fld-v"><span class="machine"><sc-if value="{{cap.machineOk}}" hint-placeholder-val="{{ false }}"><span class="dot s-satisfied"></span></sc-if>{{cap.machineText}}</span></span>
+            </div>
+            <div class="fld">
+              <span class="fld-k">内存</span>
+              <span class="fld-v">
+                <input class="{{cap.memoryCls}}" type="text" inputmode="numeric" value="{{cap.memory}}" placeholder="{{cap.memoryDefault}}" aria-label="内存上限" onChange="{{cap.onMemory}}" onKeyDown="{{cap.onKey}}">
+                <span class="fld-hint">MiB · 默认 {{cap.memoryDefault}}（本机内存的一半和 6 GiB 取小）；清空用默认</span>
+              </span>
+            </div>
+            <div class="fld">
+              <span class="fld-k">进程数</span>
+              <span class="fld-v">
+                <input class="{{cap.tasksCls}}" type="text" inputmode="numeric" value="{{cap.tasks}}" placeholder="{{cap.tasksDefault}}" aria-label="进程数上限" onChange="{{cap.onTasks}}" onKeyDown="{{cap.onKey}}">
+                <span class="fld-hint">默认 {{cap.tasksDefault}}，线程也算；清空用默认</span>
+              </span>
+            </div>
+            <ul class="blk-notes">
+              <li>改了以后，之后启动的命令用新值；已经在跑的命令不变。</li>
+              <li>上限不能关，要放宽就调大。</li>
+            </ul>
+            <div class="blk-foot">
+              <button class="btn btn-sm btn-line" type="button" disabled="{{cap.saveOff}}" onClick="{{cap.save}}">保存</button>
+              <button class="btn-text" type="button" onClick="{{cap.fillDefaults}}">填回默认值</button>
+              <span class="saved cap-saved">{{cap.savedText}}<sc-if value="{{cap.pending}}" hint-placeholder-val="{{ false }}"> 已保存，尚未生效 <button class="btn-text" type="button" onClick="{{cap.retryPending}}">重试</button></sc-if></span>
+              <span class="err">{{cap.error}}</span>
+            </div>
           </div>
 
           <div class="blk">
@@ -278,6 +487,43 @@ body { margin: 0; background: #1F1F1F; }
             </div>
           </div>
         </section>
+
+        <section class="sx" id="g-know" aria-labelledby="g-know-t">
+          <div class="sx-head">
+            <h2 class="sx-title" id="g-know-t">架构图和注记</h2>
+            <p class="sx-lead">平台把架构图和注记写在工作区的 .workbench/ 文件夹里，默认和代码一起进 git。</p>
+          </div>
+          <div class="blk">
+            <div class="blk-head">
+              <span class="blk-name">只留在本机，不进 git</span><span class="blk-scope">每个 git 仓库</span>
+            </div>
+            <div class="ws-list">
+              <sc-for list="{{knowRows}}" as="w" hint-placeholder-count="2">
+                <div class="ws" data-know-ws="{{w.projectId}}/{{w.workspaceId}}">
+                  <div class="ws-id">
+                    <span class="ws-name">{{w.name}}</span>
+                    <span class="ws-path">{{w.knowPath}}</span>
+                  </div>
+                  <div class="ws-acts">
+                    <sc-if value="{{w.showKnow}}" hint-placeholder-val="{{ false }}">
+                      <label class="ck"><input type="checkbox" checked="{{w.knowChecked}}" disabled="{{w.knowBusy}}" onChange="{{w.toggleKnow}}" /> 只留在本机</label>
+                    </sc-if>
+                  </div>
+                  <span class="ws-why">{{w.why}}<sc-if value="{{w.saved}}" hint-placeholder-val="{{ false }}"> <span class="saved">{{w.savedText}}</span></sc-if><sc-if value="{{w.pending}}" hint-placeholder-val="{{ false }}"> <span class="saved">已保存，尚未生效</span> <button class="btn-text" type="button" onClick="{{w.retryPending}}">重试</button></sc-if><sc-if value="{{w.hasError}}" hint-placeholder-val="{{ false }}"> <span class="err">{{w.error}}</span></sc-if></span>
+                </div>
+              </sc-for>
+            </div>
+            <sc-if value="{{knowRetryShow}}" hint-placeholder-val="{{ false }}">
+              <div class="blk-foot"><button class="btn-text" type="button" onClick="{{knowRetry}}">重试</button></div>
+            </sc-if>
+            <ul class="blk-notes">
+              <li>打开后用 git 的 info/exclude 忽略这些文件，不改你的 .gitignore。</li>
+              <li>已经提交进 git 的架构图和注记不受影响，仍在 git 里。</li>
+              <li>这一项跟着 git 仓库走：同一个仓库的其他检出、打开这个仓库的其他项目，也一起变。</li>
+              <li>不在 git 仓库里的文件夹没有这一项。</li>
+            </ul>
+          </div>
+        </section>
       </sc-if>
     </div>
   </div>
@@ -286,6 +532,9 @@ body { margin: 0; background: #1F1F1F; }
 <script data-dc-script data-props='{"theme":{"default":"dark"}}'>
 class Component extends DCLogic {
   dataVals() {
+    /* Refs are collected on every commit; start each render from the elements
+       this render will actually draw. */
+    this._refs = {};
     const read = this.props.readState === undefined ? null : this.props.readState;
     const data = this.props.data || null;
     const s = this.state || {};
@@ -302,38 +551,91 @@ class Component extends DCLogic {
     const wsSaved = s.wsSaved || {};
     const checkErrors = s.checkErrors || {};
     const checkPending = s.checkPending || {};
-    const checkConfirm = s.checkConfirm || {};
     const revokedOpen = s.revokedOpen || {};
     const clearKey = (map, key) => { const next = Object.assign({}, map); delete next[key]; return next; };
+    const two = (n) => String(n).padStart(2, '0');
+    const savedNow = (consequence) => {
+      const at = new Date();
+      return '已保存 ' + two(at.getHours()) + ':' + two(at.getMinutes()) + ' · ' + consequence;
+    };
+    /* 备注 9/共同规矩：every new field's Esc only blurs it and never reaches the
+       page's leave handler; 命令审查线 and the new fields share this one. */
+    const blurOnEsc = (event) => {
+      if (event && event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        event.target.blur();
+      }
+    };
+    /* E 第 4 件：one editor slot for the check's inline confirmation, the rule's
+       expiry form and its revoke confirmation — opening one closes the others. */
+    const editor = s.editor || '';
+    const closeEditor = () => set({ editor: '' });
     /* The Host's “saved but not confirmed” answer keeps the same write for 重试;
        a real failure clears that pending write and shows the Host's reason. */
     const notEffectiveOf = (outcome) => !!(outcome && outcome.notEffective === true);
-    const saveSettingField = (route, input, key, field, pendingField, message, savedField) => {
+    const whyOf = (error) => String(error && error.message ? error.message : error);
+    /* Every settings write answers in one of three ways: the Host stored it but
+       did not confirm it (keep the write for 重试), it is saved, or it failed with
+       the Host's own sentence. */
+    const settingWrite = (route, input, pending, saved, failed) => {
       Promise.resolve(actions.saveSettings(route, input))
         .then((outcome) => {
           if (notEffectiveOf(outcome)) {
-            set({
-              [field]: clearKey(this.state[field] || {}, key),
-              [pendingField]: Object.assign({}, this.state[pendingField] || {}, { [key]: input }),
-            });
+            pending();
             return;
           }
-          set({
-            [field]: clearKey(this.state[field] || {}, key),
-            [pendingField]: clearKey(this.state[pendingField] || {}, key),
-            ...(savedField === undefined ? {}
-              : { [savedField]: Object.assign({}, this.state[savedField] || {}, { [key]: true }) }),
-          });
+          saved();
         })
-        .catch((error) => set({
-          [field]: Object.assign({}, this.state[field] || {}, { [key]: message(error) }),
+        .catch((error) => failed(whyOf(error)));
+    };
+    const saveSettingField = (route, input, key, field, pendingField, message, savedField, consequence,
+      busyField) => {
+      /* A row's own in-flight flag (the J block's per-workspace checkbox) rides the
+         same three-answer path; the 1C rows pass no busy field (不放在途). */
+      const idle = () => (busyField === undefined ? {}
+        : { [busyField]: clearKey(this.state[busyField] || {}, key) });
+      if (busyField !== undefined) {
+        set({ [busyField]: Object.assign({}, this.state[busyField] || {}, { [key]: true }) });
+      }
+      settingWrite(route, input,
+        () => set({
+          [field]: clearKey(this.state[field] || {}, key),
+          [pendingField]: Object.assign({}, this.state[pendingField] || {}, { [key]: input }),
+          ...idle(),
+        }),
+        () => set({
+          [field]: clearKey(this.state[field] || {}, key),
           [pendingField]: clearKey(this.state[pendingField] || {}, key),
+          ...(savedField === undefined ? {}
+            : { [savedField]: Object.assign({}, this.state[savedField] || {},
+              { [key]: savedNow(consequence) }) }),
+          ...idle(),
+        }),
+        (text) => set({
+          [field]: Object.assign({}, this.state[field] || {}, { [key]: message(text) }),
+          [pendingField]: clearKey(this.state[pendingField] || {}, key),
+          ...idle(),
         }));
     };
-    const whyOf = (error) => String(error && error.message ? error.message : error);
+    /* One block-level save: A, B and C each own `${prefix}Busy/Pending/Saved/Error`
+       and pass the state their success also clears. */
+    const saveBlock = (prefix, route, input, consequence, after) => {
+      const busyKey = prefix + 'Busy';
+      const pendingKey = prefix + 'Pending';
+      const savedKey = prefix + 'Saved';
+      const errorKey = prefix + 'Error';
+      set({ [busyKey]: true, [errorKey]: '' });
+      settingWrite(route, input,
+        () => set({ [busyKey]: false, [pendingKey]: input, [savedKey]: '', [errorKey]: '' }),
+        () => set(Object.assign({
+          [busyKey]: false, [pendingKey]: null, [savedKey]: savedNow(consequence), [errorKey]: '',
+        }, after === undefined ? {} : after())),
+        (text) => set({ [busyKey]: false, [pendingKey]: null, [errorKey]: text }));
+    };
     const workspaces = rows.map((w) => {
       const writeAccess = (input) => saveSettingField('workspaces/access', input, w.key,
-        'wsErrors', 'wsPending', whyOf, 'wsSaved');
+        'wsErrors', 'wsPending', whyOf, 'wsSaved', '下一次开工起生效');
       const withdrawSavedCheck = (checkId, input) => saveSettingField('checks/withdraw', input,
         w.key + '\u0000' + checkId, 'checkErrors', 'checkPending', whyOf);
       /* A withdraw's “saved but not effective” answer sits inside the 已撤回
@@ -348,6 +650,7 @@ class Component extends DCLogic {
         commandTip: w.fixed ? w.fixedText : (w.writeAllowed ? '' : '要先允许改文件'),
         why: wsErrors[w.key] || w.fixedText || '',
         saved: !!wsSaved[w.key] && !wsErrors[w.key] && !wsPending[w.key],
+        savedText: wsSaved[w.key] || '',
         pending: !!wsPending[w.key],
         retryPending: () => writeAccess(wsPending[w.key]),
         toggleWrite: (event) => {
@@ -361,19 +664,20 @@ class Component extends DCLogic {
         },
         checks: w.checks.map((c) => {
           const key = w.key + '\u0000' + c.checkId;
+          const slot = 'check:' + key;
           const input = { scope: w.scope, checkId: c.checkId };
           return Object.assign({}, c, {
             error: checkErrors[key] || '',
             pending: !!checkPending[key],
             retryPending: () => withdrawSavedCheck(c.checkId, checkPending[key]),
             /* 备注 8: 撤回 asks inline first; 取消 only closes the question. */
-            confirm: !!checkConfirm[key],
-            withdraw: () => set({ checkConfirm: Object.assign({}, checkConfirm, { [key]: true }) }),
+            confirm: editor === slot,
+            withdraw: () => set({ editor: slot }),
             confirmWithdraw: () => {
-              set({ checkConfirm: clearKey(checkConfirm, key) });
+              closeEditor();
               withdrawSavedCheck(c.checkId, input);
             },
-            cancelWithdraw: () => set({ checkConfirm: clearKey(checkConfirm, key) }),
+            cancelWithdraw: closeEditor,
           });
         }),
         /* A reread after the Host saved a withdraw puts the check here; the pending
@@ -398,14 +702,29 @@ class Component extends DCLogic {
       proposals: { mode: 'auto', autoOn: true, askOn: false, autoIsDefault: true, askIsDefault: false },
       repairs: { mode: 'auto', autoOn: true, askOn: false, autoIsDefault: true, askIsDefault: false },
     };
-    const structuralSaved = s.structuralSaved || '';
+    const structuralSavedField = s.structuralSavedField || '';
+    const structuralSavedText = s.structuralSavedText || '';
     const structuralPending = s.structuralPending || null;
     const sendStructural = (field, input) => {
       Promise.resolve(actions.saveSettings('structural-approval/save', input))
-        .then((outcome) => (notEffectiveOf(outcome)
-          ? set({ structuralSaved: '', structuralError: '', structuralPending: { field, input } })
-          : set({ structuralSaved: field, structuralError: '', structuralPending: null })))
-        .catch((error) => set({ structuralSaved: '', structuralError: whyOf(error), structuralPending: null }));
+        .then((outcome) => {
+          if (notEffectiveOf(outcome)) {
+            set({ structuralSavedField: '', structuralSavedText: '', structuralError: '',
+              structuralPending: { field, input } });
+            return;
+          }
+          /* E: the consequence names what the saved mode means for the next
+             proposal/repair; a card already waiting stays a card. */
+          const what = field === 'proposals' ? '之后的结构提案' : '之后的结构修补';
+          const mode = input.value[field];
+          set({
+            structuralSavedField: field,
+            structuralSavedText: savedNow(what + (mode === 'auto' ? '自动采用' : '出卡问你') + '；已经在等的卡照旧'),
+            structuralError: '', structuralPending: null,
+          });
+        })
+        .catch((error) => set({ structuralSavedField: '', structuralSavedText: '',
+          structuralError: whyOf(error), structuralPending: null }));
     };
     const saveStructural = (field, next) => {
       if (!data || !data.projectId) return;
@@ -426,7 +745,7 @@ class Component extends DCLogic {
         askCls: 'mode-btn' + (source.askOn ? ' is-on' : ''),
         autoIsDefault: source.autoIsDefault,
         askIsDefault: source.askIsDefault,
-        savedText: structuralSaved === field ? '已保存' : '',
+        savedText: structuralSavedField === field ? structuralSavedText : '',
         pending: pending,
         retryPending: () => sendStructural(field, structuralPending.input),
         pickAuto: () => saveStructural(field, 'auto'),
@@ -442,9 +761,10 @@ class Component extends DCLogic {
         .then((outcome) => (notEffectiveOf(outcome)
           /* 表一 2: the reread already drew the Host's stored value; the retry keeps
              the same write. */
-          ? set({ limSaved: false, limError: '', limPending: input, limInput: undefined })
-          : set({ limSaved: true, limInput: undefined, limError: '', limPending: null })))
-        .catch((error) => set({ limSaved: false, limError: whyOf(error), limPending: null }));
+          ? set({ limSavedText: '', limError: '', limPending: input, limInput: undefined })
+          : set({ limSavedText: savedNow('马上生效；已经超过旧线的命令不再提醒'),
+            limInput: undefined, limError: '', limPending: null })))
+        .catch((error) => set({ limSavedText: '', limError: whyOf(error), limPending: null }));
     };
     const lim = {
       currentText: review === null ? ''
@@ -453,20 +773,13 @@ class Component extends DCLogic {
       inputCls: 'in w-l' + (s.limBad ? ' is-bad' : ''),
       placeholder: review === null ? '' : String(review.effective),
       default: review === null ? 60 : review.default,
-      savedText: s.limSaved === true ? '已保存' : '',
+      savedText: s.limSavedText || '',
       pending: limPending !== null,
       retryPending: () => sendLim(limPending),
       error: s.limError || '',
-      /* 备注 9: Esc in the field only blurs it and never reaches the page's leave handler. */
-      onKey: (event) => {
-        if (event && event.key === 'Escape') {
-          event.preventDefault();
-          event.stopPropagation();
-          event.target.blur();
-        }
-      },
+      onKey: blurOnEsc,
       onInput: (event) => set({
-        limInput: String(event && event.target ? event.target.value : ''), limSaved: false,
+        limInput: String(event && event.target ? event.target.value : ''), limSavedText: '',
         limError: '', limBad: false, limPending: null,
       }),
       /* 表一 5: empty clears to the default; a positive integer saves; anything
@@ -486,6 +799,452 @@ class Component extends DCLogic {
         sendLim({ commandReviewLineMinutes: Number(raw) });
       },
     };
+
+    /* ── A: 启动时自动续做 and 自动返工上限, saved together (5.8a-1 / 5.6-14) ── */
+    const automation = data && data.automation ? data.automation : null;
+    const autoDefaults = data && data.automationDefaults ? data.automationDefaults : null;
+    const autoMax = data && typeof data.automationMax === 'number' ? data.automationMax : null;
+    const autoPick = s.autoPick !== undefined ? s.autoPick
+      : automation === null ? '' : automation.resumeOnStartup;
+    const autoInput = s.autoInput !== undefined ? String(s.autoInput)
+      : automation === null ? '' : String(automation.autoReworkLimit);
+    const autoPending = s.autoPending || null;
+    const autoBusy = !!s.autoBusy;
+    const AUTO_DESC = {
+      auto: '自动：Host 启动后直接续做被中断的目标，不记原因、不出卡。',
+      ask: '问我：记下原因、给你一张卡，你点“继续”才续做；排队的请求和抓取照旧。',
+      off: '关：同样记下原因、给卡；排队的请求等你下一次发请求才处理，也不重试抓取。',
+    };
+    const sendAuto = (input) => saveBlock('auto', 'automation/save', input, '马上生效',
+      () => ({ autoPick: undefined, autoInput: undefined, autoBad: false }));
+    const pushAuto = (input) => {
+      set({ autoBad: false });
+      sendAuto(input);
+    };
+    const auto = {
+      desc: AUTO_DESC[autoPick] || '',
+      input: autoInput,
+      inputCls: 'in w-s' + (s.autoBad ? ' is-bad' : ''),
+      max: autoMax === null ? '' : autoMax,
+      default: autoDefaults === null ? '' : autoDefaults.autoReworkLimit,
+      autoOn: autoPick === 'auto' ? 'true' : 'false',
+      askOn: autoPick === 'ask' ? 'true' : 'false',
+      offOn: autoPick === 'off' ? 'true' : 'false',
+      autoCls: 'mode-btn' + (autoPick === 'auto' ? ' is-on' : ''),
+      askCls: 'mode-btn' + (autoPick === 'ask' ? ' is-on' : ''),
+      offCls: 'mode-btn' + (autoPick === 'off' ? ' is-on' : ''),
+      autoDefault: autoDefaults !== null && autoDefaults.resumeOnStartup === 'auto',
+      askDefault: autoDefaults !== null && autoDefaults.resumeOnStartup === 'ask',
+      offDefault: autoDefaults !== null && autoDefaults.resumeOnStartup === 'off',
+      pickAuto: () => set({ autoPick: 'auto', autoError: '' }),
+      pickAsk: () => set({ autoPick: 'ask', autoError: '' }),
+      pickOff: () => set({ autoPick: 'off', autoError: '' }),
+      /* 表二 8: 没改动时 the save stays disabled. */
+      saveOff: autoBusy || automation === null || autoMax === null
+        || (autoPick === automation.resumeOnStartup
+          && autoInput.trim() === String(automation.autoReworkLimit)),
+      savedText: s.autoSaved || '',
+      pending: autoPending !== null,
+      retryPending: () => pushAuto(autoPending),
+      error: s.autoError || '',
+      onKey: blurOnEsc,
+      onInput: (event) => set({
+        autoInput: String(event && event.target ? event.target.value : ''),
+        autoSaved: '', autoError: '', autoBad: false,
+      }),
+      save: () => {
+        const raw = autoInput.trim();
+        if (!/^\d+$/.test(raw) || Number(raw) > autoMax) {
+          set({ autoBad: true, autoError: '自动返工上限要 0 到 ' + autoMax + ' 的整数' });
+          return;
+        }
+        pushAuto({ autoReworkLimit: Number(raw), resumeOnStartup: autoPick });
+      },
+    };
+
+    /* ── B: 每次执行的 token 上限 (D107-1) ── */
+    const tokenBudget = data && data.tokenBudget ? data.tokenBudget : null;
+    const yiOf = (n) => {
+      const value = Number(n);
+      const yi = Math.round((value / 100000000) * 100) / 100;
+      return String(yi) + ' 亿';
+    };
+    const tokSaved = tokenBudget === null ? null : tokenBudget.saved;
+    const tokRaw = s.tokInput !== undefined ? String(s.tokInput)
+      : tokenBudget === null || tokSaved === null ? '' : String(tokSaved);
+    const tokNormal = tokRaw.replace(/[,\s]/g, '');
+    const tokParsed = tokNormal === '' ? null : Number(tokNormal);
+    const tokPending = s.tokPending || null;
+    const tokBusy = !!s.tokBusy;
+    const sendTok = (input) => saveBlock('tok', 'run-budget/save', input, '下一次领取生效',
+      () => ({ tokInput: undefined, tokBad: false }));
+    const pushTok = (input) => {
+      set({ tokBad: false });
+      sendTok(input);
+    };
+    const tok = {
+      currentText: tokenBudget === null ? ''
+        : tokSaved === null ? yiOf(tokenBudget.effective) + '（默认）' : yiOf(tokenBudget.effective),
+      input: tokRaw,
+      inputCls: 'in w-l' + (s.tokBad ? ' is-bad' : ''),
+      placeholder: tokenBudget === null ? '' : String(tokenBudget.effective),
+      hint: tokenBudget === null ? '' : tokNormal === ''
+        ? '1 到 ' + yiOf(tokenBudget.max) + ' 的整数；清空就回默认'
+        : /^\d+$/.test(tokNormal) ? '= ' + yiOf(tokParsed) : '要整数',
+      /* 表二 8: the parsed value equal to the stored one (empty and null both mean
+         the default) keeps the save disabled. */
+      saveOff: tokBusy || tokenBudget === null || tokParsed === tokSaved,
+      savedText: s.tokSaved || '',
+      pending: tokPending !== null,
+      retryPending: () => pushTok(tokPending),
+      error: s.tokError || '',
+      onKey: blurOnEsc,
+      onInput: (event) => set({
+        tokInput: String(event && event.target ? event.target.value : ''),
+        tokSaved: '', tokError: '', tokBad: false, tokPending: null,
+      }),
+      save: () => {
+        const raw = tokRaw.trim();
+        const normal = raw.replace(/[,\s]/g, '');
+        if (raw === '') {
+          pushTok({ workRunTokenBudget: null });
+          return;
+        }
+        if (!/^\d+$/.test(normal) || Number(normal) < 1 || Number(normal) > tokenBudget.max) {
+          set({ tokBad: true,
+            tokError: '要 1 到 ' + tokenBudget.max + '（' + yiOf(tokenBudget.max) + '）之间的整数' });
+          return;
+        }
+        pushTok({ workRunTokenBudget: Number(normal) });
+      },
+    };
+
+    /* ── C: 命令的内存和进程数 (the resource-cap setting) ── */
+    const rc = data && data.resourceCaps ? data.resourceCaps : null;
+    const machine = rc === null ? null : rc.machine;
+    const memRaw = s.memInput !== undefined ? String(s.memInput)
+      : rc === null || rc.memoryMaxMiB === null ? '' : String(rc.memoryMaxMiB);
+    const tasksRaw = s.tasksInput !== undefined ? String(s.tasksInput)
+      : rc === null || rc.tasksMax === null ? '' : String(rc.tasksMax);
+    const memNormal = memRaw.trim();
+    const tasksNormal = tasksRaw.trim();
+    const memParsed = memNormal === '' ? null : Number(memNormal);
+    const tasksParsed = tasksNormal === '' ? null : Number(tasksNormal);
+    const capPending = s.capPending || null;
+    const capBusy = !!s.capBusy;
+    const sendCap = (input) => saveBlock('cap', 'resource-caps/save', input, '之后启动的命令用新值',
+      () => ({ capMemBad: false, capTasksBad: false }));
+    const pushCap = (input) => {
+      set({ capMemBad: false, capTasksBad: false });
+      sendCap(input);
+    };
+    const cap = {
+      machineText: machine === null ? ''
+        : machine.status === 'available' ? '能设上限'
+          : machine.status === 'unavailable' ? machine.text : '还没检查',
+      machineOk: machine !== null && machine.status === 'available',
+      memory: memRaw,
+      memoryDefault: rc === null ? '' : String(rc.defaults.memoryMaxMiB),
+      memoryCls: 'in w-m' + (s.capMemBad ? ' is-bad' : ''),
+      tasks: tasksRaw,
+      tasksDefault: rc === null ? '' : String(rc.defaults.tasksMax),
+      tasksCls: 'in w-m' + (s.capTasksBad ? ' is-bad' : ''),
+      /* 表二 8: both cells equal the stored values (empty and null both mean the
+         default) keeps the save disabled; 填回默认值 has the same guard. */
+      saveOff: capBusy || rc === null || (memParsed === rc.memoryMaxMiB && tasksParsed === rc.tasksMax),
+      savedText: s.capSaved || '',
+      pending: capPending !== null,
+      retryPending: () => pushCap(capPending),
+      error: s.capError || '',
+      onKey: blurOnEsc,
+      onMemory: (event) => set({
+        memInput: String(event && event.target ? event.target.value : ''),
+        capSaved: '', capError: '', capMemBad: false,
+      }),
+      onTasks: (event) => set({
+        tasksInput: String(event && event.target ? event.target.value : ''),
+        capSaved: '', capError: '', capTasksBad: false,
+      }),
+      fillDefaults: () => set({
+        memInput: '', tasksInput: '', capSaved: '', capError: '', capMemBad: false, capTasksBad: false,
+      }),
+      save: () => {
+        const problems = [];
+        let memBad = false;
+        let tasksBad = false;
+        /* 裁定 13: the page only refuses what is not an integer; a number outside
+           the Host's range goes to the Host for its own sentence. */
+        if (memNormal !== '' && !/^\d+$/.test(memNormal)) {
+          problems.push('内存要整数');
+          memBad = true;
+        }
+        if (tasksNormal !== '' && !/^\d+$/.test(tasksNormal)) {
+          problems.push('进程数要整数');
+          tasksBad = true;
+        }
+        if (problems.length > 0) {
+          set({ capMemBad: memBad, capTasksBad: tasksBad, capError: problems.join('；') });
+          return;
+        }
+        pushCap({
+          memoryMaxMiB: memNormal === '' ? null : Number(memNormal),
+          tasksMax: tasksNormal === '' ? null : Number(tasksNormal),
+        });
+      },
+    };
+    /* 7D2 G: a Host with no project open reads none of the four project routes;
+       the two project blocks say so instead of offering a retry. */
+    const noProject = data !== null && data.scope === null;
+
+    /* ── H: 规则 (D62-2) ── */
+    const rules = data && data.rules ? data.rules : null;
+    const rulesOpen = !!s.rulesOpen;
+    const ruleBusy = !!s.ruleBusy;
+    const ruleDateMode = s.ruleDateMode || 'none';
+    const ruleDate = s.ruleDate !== undefined ? String(s.ruleDate) : '';
+    const ruleError = s.ruleError || '';
+    const ruleKeyOf = (ruleId, kind) => 'rule-' + kind + ':' + ruleId;
+    /* A rule write keeps the slot it was sent from: another row's editor or a
+       check's 撤回 may take the one editor slot while it is in flight, so a
+       failure gives the slot (and its own date) back to the row that sent it,
+       and a success closes only that row's own slot. */
+    const ruleWriteDone = (ruleId, key, focus) => () => {
+      const slot = (this.state || {}).editor || '';
+      const revoked = key === ruleKeyOf(ruleId, 'revoke');
+      /* A revoke takes its rule's row away, so that rule's expiry editor goes with it. */
+      const mine = slot === key || (revoked && slot === ruleKeyOf(ruleId, 'expiry'));
+      if (mine) this._focusNext = focus;
+      /* Another rule's editor stays open, but the rows redraw by position: one
+         below the revoked row is drawn anew and its focus drops to <body>, so the
+         focus goes back to that row's 改有效期 if it was lost. */
+      else if (revoked && /^rule-(expiry|revoke):/.test(slot)) this._focusIfLost = 'rule-edit:' + slot.slice(slot.indexOf(':') + 1);
+      set(Object.assign({ ruleBusy: false, ruleError: '' }, mine ? { editor: '' } : {}));
+    };
+    const ruleWriteFailed = (key, back) => (error) =>
+      set(Object.assign({ ruleBusy: false, ruleError: whyOf(error), editor: key }, back));
+    const saveRuleExpiry = (ruleId) => {
+      const sent = { ruleDateMode: ruleDateMode, ruleDate: ruleDate };
+      set({ ruleBusy: true, ruleError: '' });
+      Promise.resolve(actions.changeRuleExpiry(ruleId, ruleDateMode === 'date' ? ruleDate : null))
+        .then(ruleWriteDone(ruleId, ruleKeyOf(ruleId, 'expiry'), 'rule-edit:' + ruleId))
+        .catch(ruleWriteFailed(ruleKeyOf(ruleId, 'expiry'), sent));
+    };
+    const confirmRevokeRule = (ruleId) => {
+      set({ ruleBusy: true, ruleError: '' });
+      Promise.resolve(actions.revokeRule(ruleId))
+        .then(ruleWriteDone(ruleId, ruleKeyOf(ruleId, 'revoke'), 'rules-fold'))
+        .catch(ruleWriteFailed(ruleKeyOf(ruleId, 'revoke'), {}));
+    };
+    const keepRef = (name) => (element) => {
+      if (!this._refs) this._refs = {};
+      this._refs[name] = element;
+    };
+    const ruleRowsOf = (list, revoked) => list.map((r) => {
+      const expiryKey = ruleKeyOf(r.ruleId, 'expiry');
+      const revokeKey = ruleKeyOf(r.ruleId, 'revoke');
+      const editing = !revoked && editor === expiryKey;
+      const confirming = !revoked && editor === revokeKey;
+      return Object.assign({}, r, {
+        editing, confirming,
+        editRef: keepRef('rule-edit:' + r.ruleId),
+        editError: editing || confirming ? ruleError : '',
+        changeExpiry: () => set({
+          editor: expiryKey, ruleDateMode: r.expiryDate === null ? 'none' : 'date',
+          ruleDate: r.expiryDate || '', ruleError: '',
+        }),
+        askRevoke: () => set({ editor: revokeKey, ruleError: '' }),
+        cancelEdit: closeEditor,
+        saveExpiry: () => saveRuleExpiry(r.ruleId),
+        confirmRevoke: () => confirmRevokeRule(r.ruleId),
+      });
+    });
+    const dateOn = ruleDateMode === 'date';
+    const rulesView = {
+      show: rules !== null,
+      missing: rules === null,
+      missingText: noProject ? '还没有打开的项目。' : '暂时读不到规则。',
+      missingRetry: !noProject,
+      empty: rules !== null && rules.active.length === 0,
+      active: rules === null ? [] : ruleRowsOf(rules.active, false),
+      revoked: rules === null ? [] : ruleRowsOf(rules.revoked, true),
+      hasRevoked: rules !== null && rules.revoked.length > 0,
+      revokedText: rules === null ? '' : '已撤销 ' + rules.revoked.length + ' 条',
+      revokedOpen: rulesOpen,
+      foldRef: keepRef('rules-fold'),
+      foldCls: 'ico xs chev' + (rulesOpen ? ' is-open' : ''),
+      toggleRevoked: () => set({ rulesOpen: !rulesOpen }),
+      retry: () => actions.rereadSettings(),
+      noneCls: 'mode-btn' + (!dateOn ? ' is-on' : ''),
+      dateCls: 'mode-btn' + (dateOn ? ' is-on' : ''),
+      noneOn: dateOn ? 'false' : 'true',
+      dateOn: dateOn ? 'true' : 'false',
+      showDate: dateOn,
+      date: ruleDate,
+      onDate: (event) => set({
+        ruleDate: String(event && event.target ? event.target.value : ''), ruleError: '',
+      }),
+      onKey: blurOnEsc,
+      pickNone: () => set({ ruleDateMode: 'none', ruleError: '' }),
+      pickDate: () => set({ ruleDateMode: 'date', ruleError: '' }),
+      saveOff: ruleBusy || (dateOn && ruleDate === ''),
+      busy: ruleBusy,
+    };
+
+    /* ── I: 工作线上限 and “现在 n 条” (D60-5) ── */
+    const limits = data && data.roleLimits ? data.roleLimits : null;
+    const rlimEditing = !!s.rlimEditing;
+    const rlimDraft = s.rlimDraft || {};
+    const rlimBad = s.rlimBad || {};
+    const rlimBusy = !!s.rlimBusy;
+    const rlimSavedText = s.rlimSavedText || '';
+    const rlimError = s.rlimError || '';
+    const cellOf = (row, field) => {
+      const key = row.duty + '.' + field;
+      return rlimDraft[key] !== undefined ? String(rlimDraft[key]) : String(row[field]);
+    };
+    const rlimRows = limits === null ? [] : limits.rows.map((row) => {
+      const runningKey = row.duty + '.running';
+      const openKey = row.duty + '.open';
+      return Object.assign({}, row, {
+        editing: rlimEditing,
+        viewing: !rlimEditing,
+        runningDefaultMark: row.running !== row.runningDefault,
+        openDefaultMark: row.open !== row.openDefault,
+        runningInput: cellOf(row, 'running'),
+        openInput: cellOf(row, 'open'),
+        runningCls: 'in w-s' + (rlimBad[runningKey] ? ' is-bad' : ''),
+        openCls: 'in w-s' + (rlimBad[openKey] ? ' is-bad' : ''),
+        runningLabel: row.name + '同时运行',
+        openLabel: row.name + '保留',
+        onRunning: (event) => set({
+          rlimDraft: Object.assign({}, this.state.rlimDraft || {},
+            { [runningKey]: String(event && event.target ? event.target.value : '') }),
+          rlimError: '', rlimBad: {},
+        }),
+        onOpen: (event) => set({
+          rlimDraft: Object.assign({}, this.state.rlimDraft || {},
+            { [openKey]: String(event && event.target ? event.target.value : '') }),
+          rlimError: '', rlimBad: {},
+        }),
+        onKey: blurOnEsc,
+        nowText: row.now === null ? '—' : String(row.now) + ' 条',
+      });
+    });
+    const rlimSave = () => {
+      const bad = {};
+      let invalid = false;
+      for (const row of limits.rows) {
+        for (const field of ['running', 'open']) {
+          const raw = cellOf(row, field).trim();
+          if (!/^\d+$/.test(raw) || Number(raw) < 1) {
+            bad[row.duty + '.' + field] = true;
+            invalid = true;
+          }
+        }
+      }
+      if (invalid) {
+        set({ rlimBad: bad, rlimError: '每一格要 1 或更大的整数' });
+        return;
+      }
+      /* Only cells the person touched and changed go in the request; the backend
+         merges the keys it receives (`state/role-limits.ts:30-33`). */
+      const change = {};
+      let cells = 0;
+      for (const row of limits.rows) {
+        for (const field of ['running', 'open']) {
+          const key = row.duty + '.' + field;
+          if (rlimDraft[key] === undefined) continue;
+          const value = Number(String(rlimDraft[key]).trim());
+          if (value === row[field]) continue;
+          change[field] = Object.assign({}, change[field] || {}, { [row.duty]: value });
+          cells += 1;
+        }
+      }
+      if (cells === 0) {
+        set({ rlimEditing: false, rlimDraft: {}, rlimBad: {}, rlimError: '', rlimSavedText: '没有改动' });
+        return;
+      }
+      set({ rlimBusy: true, rlimError: '', rlimBad: {} });
+      Promise.resolve(actions.saveRoleLimits(change))
+        .then(() => {
+          this._focusNext = 'rlim-edit';
+          set({
+            rlimBusy: false, rlimEditing: false, rlimDraft: {}, rlimError: '',
+            rlimSavedText: savedNow('改了 ' + cells + ' 格，记下了你、时间和从几改到几'),
+          });
+        })
+        .catch((error) => set({ rlimBusy: false, rlimError: whyOf(error) }));
+    };
+    const rlim = {
+      show: limits !== null,
+      missing: limits === null,
+      missingText: noProject ? '还没有打开的项目。' : '暂时读不到工作线上限。',
+      missingRetry: !noProject,
+      rows: rlimRows,
+      editing: rlimEditing,
+      viewing: !rlimEditing,
+      busy: rlimBusy,
+      savedText: rlimSavedText,
+      error: rlimError,
+      retry: () => actions.rereadSettings(),
+      editRef: keepRef('rlim-edit'),
+      edit: () => set({
+        rlimEditing: true, rlimDraft: {}, rlimBad: {}, rlimError: '', rlimSavedText: '',
+      }),
+      cancel: () => set({ rlimEditing: false, rlimDraft: {}, rlimBad: {}, rlimError: '' }),
+      fillDefaults: () => {
+        const draft = Object.assign({}, rlimDraft);
+        for (const row of limits.rows) {
+          draft[row.duty + '.running'] = String(row.runningDefault);
+          draft[row.duty + '.open'] = String(row.openDefault);
+        }
+        set({ rlimDraft: draft, rlimBad: {}, rlimError: '' });
+      },
+      save: rlimSave,
+    };
+
+    /* ── J: 只留在本机，不进 git (121-74) ── */
+    const knowGit = data && data.knowledgeGit ? data.knowledgeGit : {};
+    const knowBusy = s.knowBusy || {};
+    const knowPending = s.knowPending || {};
+    const knowErrors = s.knowErrors || {};
+    const knowSaved = s.knowSaved || {};
+    /* J: the row's write rides the 1C `saveSettingField` path with its own busy
+       key (表二第 10 条: only the writing cell is disabled). */
+    const saveKnowledgeLocal = (w, input) => saveSettingField('knowledge-local', input, w.key,
+      'knowErrors', 'knowPending', whyOf, 'knowSaved',
+      input.localOnly ? '已写进 info/exclude'
+        : '已从 info/exclude 去掉，之后会出现在 git 的改动里', 'knowBusy');
+    const knowRows = rows.map((w) => {
+      const git = knowGit[w.key];
+      const unknown = git === null;
+      const notGit = git === false;
+      const savedText = knowSaved[w.key] || '';
+      return Object.assign({}, w, {
+        projectId: w.scope.projectId,
+        workspaceId: w.scope.workspaceId,
+        knowPath: String(w.path).replace(/\/+$/, '') + '/.workbench/',
+        showKnow: !notGit,
+        knowChecked: !!w.knowledgeLocalOnly,
+        knowBusy: !!knowBusy[w.key],
+        why: notGit ? '不在 git 仓库里，没有这一项。'
+          : unknown ? '暂时读不到这个工作区的 git 判断' : '',
+        saved: savedText !== '' && !knowErrors[w.key] && !knowPending[w.key],
+        savedText,
+        pending: !!knowPending[w.key],
+        hasError: !!knowErrors[w.key],
+        error: knowErrors[w.key] || '',
+        retryPending: () => saveKnowledgeLocal(w, knowPending[w.key]),
+        toggleKnow: (event) => {
+          const localOnly = !!(event && event.target && event.target.checked);
+          saveKnowledgeLocal(w, {
+            projectId: w.scope.projectId, workspaceId: w.scope.workspaceId, localOnly,
+          });
+        },
+      });
+    });
+    const knowRetryShow = rows.some((w) => knowGit[w.key] === null);
+
     const navOn = s.navOn || 'g-ws';
     const pickNav = (id) => () => set({ navOn: id });
     const onScroll = (event) => {
@@ -495,7 +1254,7 @@ class Component extends DCLogic {
       body.querySelectorAll('.sx').forEach((section) => {
         if (section.getBoundingClientRect().top <= top) cur = section.id;
       });
-      if (body.scrollTop + body.clientHeight >= body.scrollHeight - 4) cur = 'g-lim';
+      if (body.scrollTop + body.clientHeight >= body.scrollHeight - 4) cur = 'g-know';
       if (cur !== navOn) set({ navOn: cur });
     };
     return {
@@ -511,12 +1270,24 @@ class Component extends DCLogic {
         error: s.structuralError || '',
       },
       lim: lim,
+      auto: auto,
+      tok: tok,
+      cap: cap,
+      rules: rulesView,
+      rlim: rlim,
+      knowRows: knowRows,
+      knowRetryShow: knowRetryShow,
+      knowRetry: () => actions.rereadSettings(),
       nav: {
         workspaceCount: rows.length,
+        rulesCount: rules === null ? '' : String(rules.active.length) + ' 条规则',
         wsCls: 'row' + (navOn === 'g-ws' ? ' is-on' : ''),
         autoCls: 'row' + (navOn === 'g-auto' ? ' is-on' : ''),
         limCls: 'row' + (navOn === 'g-lim' ? ' is-on' : ''),
-        pick: { ws: pickNav('g-ws'), auto: pickNav('g-auto'), lim: pickNav('g-lim') },
+        knowCls: 'row' + (navOn === 'g-know' ? ' is-on' : ''),
+        pick: {
+          ws: pickNav('g-ws'), auto: pickNav('g-auto'), lim: pickNav('g-lim'), know: pickNav('g-know'),
+        },
         onScroll: onScroll,
       },
       blank: { show: blankText !== '', text: blankText,
@@ -527,6 +1298,43 @@ class Component extends DCLogic {
 
   renderVals() {
     return this.dataVals();
+  }
+
+  componentDidUpdate() {
+    const data = this.props.data || null;
+    const read = this.props.readState;
+    /* 4a's “调高上限” link carries `#g-lim`; the groups only exist after the first
+       successful read, so the browser's own anchor jump ran too early. Scroll and
+       light the nav once, after this commit. */
+    if (!this._hashDone && data && read && read.status === 'ready') {
+      this._hashDone = true;
+      if (typeof location !== 'undefined' && location.hash) {
+        const id = location.hash.slice(1);
+        if (typeof document !== 'undefined' && typeof document.getElementById === 'function') {
+          const target = document.getElementById(id);
+          if (target && typeof target.scrollIntoView === 'function') {
+            target.scrollIntoView({ block: 'start' });
+          }
+        }
+        this.setState({ navOn: id });
+      }
+    }
+    /* A write that removes its own button would drop the browser's focus to
+       <body>; the write's own success names the control that replaces it. */
+    const next = this._focusNext;
+    if (next) {
+      this._focusNext = null;
+      const target = this._refs ? this._refs[next] : null;
+      if (target && typeof target.focus === 'function') target.focus();
+    }
+    const lost = this._focusIfLost;
+    if (lost) {
+      this._focusIfLost = null;
+      const active = typeof document !== 'undefined' ? document.activeElement : null;
+      const target = this._refs ? this._refs[lost] : null;
+      if ((!active || active === document.body || active.isConnected === false)
+        && target && typeof target.focus === 'function') target.focus();
+    }
   }
 }
 </script>

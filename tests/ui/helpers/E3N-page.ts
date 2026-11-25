@@ -155,7 +155,7 @@ export function forwardPage(world: Pick<E3NTarget, 'base'>, log: PageLog, mode: 
 }
 
 export async function bootE3N(world: E3NTarget, name: 'Main' | 'TaskMap' | 'Goals' | 'ArchOverview' | 'Decide' | 'Member' | 'Chain' | 'Done' | 'Plan' | 'Settings', options: {
-  search?: string; mode?: ChangeMode; token?: string | (() => string | null); source?: string;
+  search?: string; hash?: string; mode?: ChangeMode; token?: string | (() => string | null); source?: string;
   gate?: boolean; unavailable?: string; unavailableOnce?: string; failOnce?: string; rejectOnce?: OneShotRejection;
   before?: Record<string, (log: PageLog) => Promise<void>>;
 } = {}): Promise<{ page: BootedPage; log: PageLog }> {
@@ -182,6 +182,7 @@ export async function bootE3N(world: E3NTarget, name: 'Main' | 'TaskMap' | 'Goal
   const page = await bootPage({
     name,
     ...(options.search === undefined ? {} : { search: options.search }),
+    ...(options.hash === undefined ? {} : { hash: options.hash }),
     token: options.token ?? (() => world.token),
     request: pageRequest,
     ...(options.source === undefined ? {} : { source: options.source }),
@@ -232,6 +233,12 @@ export function settledN(log: PageLog, route: string, n: number): Promise<void> 
   return waitFor(() => callsTo(log, route).filter((call) => call.reply !== undefined).length === n);
 }
 
+export function callsOf(log: PageLog, route: string): RecordedCall[] {
+  return log.calls.filter((call) => call.route === route);
+}
+export function count(log: PageLog, route: string): number {
+  return callsOf(log, route).length;
+}
 export function countRoute(log: PageLog, route: string): number {
   return log.calls.filter((call) => call.route === route).length;
 }
@@ -249,6 +256,15 @@ export function sentWrite(call: RecordedCall | undefined): { input: Record<strin
  * Waits until no new core call starts for `stillMs` and every call has its
  * answer (25 ms turns of the runner's clock, never `Date`: the S6A worlds fake it).
  */
+/** The page's first read and its stream-open reread landed; same rule as E3D's `opened`, for a `PageLog`. */
+export async function openedPage(log: PageLog, timeoutMs = 6_000): Promise<number> {
+  for (let waited = 0; waited < timeoutMs; waited += 25) {
+    if (log.calls.some((call) => call.route === 'decisions/queue' && call.reply !== undefined)) break;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  return await quietPage(log);
+}
+
 export async function quietPage(log: PageLog, stillMs = 300, timeoutMs = 8_000): Promise<number> {
   let last = -1;
   let still = 0;

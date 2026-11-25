@@ -19,6 +19,9 @@ export type E3DTarget = { base(): string; token(): string };
 export type E3DCall = { route: string; input: unknown; body: Record<string, unknown>; reply: unknown };
 export type E3DLog = { calls: E3DCall[]; changes: number };
 
+/** The only shape the log helpers read; E3N's `PageLog` fits it too, so a row may boot through `bootE3N`. */
+export type E3DLogLike = { calls: Array<{ route: string; reply?: unknown }> };
+
 export function worldTarget(world: { base: string; token: string }): E3DTarget {
   return { base: () => world.base, token: () => world.token };
 }
@@ -78,7 +81,7 @@ export async function settle(predicate: () => boolean, timeoutMs = 5_000): Promi
  * answer; returns the call count. It counts 25 ms turns, never `Date`: the S6A
  * worlds fake `Date` alone, so a `Date` deadline would never pass.
  */
-export async function quiet(log: E3DLog, stillMs = 200, timeoutMs = 8_000): Promise<number> {
+export async function quiet(log: E3DLogLike, stillMs = 200, timeoutMs = 8_000): Promise<number> {
   let last = -1;
   let still = 0;
   for (let waited = 0; waited < timeoutMs; waited += 25) {
@@ -95,21 +98,21 @@ export async function quiet(log: E3DLog, stillMs = 200, timeoutMs = 8_000): Prom
   return log.calls.length;
 }
 
-export function count(log: E3DLog, route: string): number {
+export function count(log: E3DLogLike, route: string): number {
   return log.calls.filter((call) => call.route === route).length;
 }
 
-export function callsOf(log: E3DLog, route: string): E3DCall[] {
+export function callsOf<T extends { route: string; reply?: unknown }>(log: { calls: T[] }, route: string): T[] {
   return log.calls.filter((call) => call.route === route);
 }
 
 /** Every call whose route starts with `prefix` (`architecture/` names the whole family). */
-export function countPrefix(log: E3DLog, prefix: string): number {
+export function countPrefix(log: E3DLogLike, prefix: string): number {
   return log.calls.filter((call) => call.route.startsWith(prefix)).length;
 }
 
 /** A graph write's `{ input, meta }` as the page sent it. */
-export function writeOf(call: E3DCall): { input: Record<string, unknown>; meta: { requestId?: string; expected: unknown[] } } {
+export function writeOf(call: { body: unknown }): { input: Record<string, unknown>; meta: { requestId?: string; expected: unknown[] } } {
   return (call.body as { request: { input: Record<string, unknown>; meta: { requestId?: string; expected: unknown[] } } }).request;
 }
 
@@ -124,7 +127,7 @@ export function pinSet(pins: readonly unknown[]): string[] {
  * (the frozen sample board) the wait ends at its bound and the row's own
  * assertion fails.
  */
-export async function opened(log: E3DLog, timeoutMs = 6_000): Promise<number> {
+export async function opened(log: E3DLogLike, timeoutMs = 6_000): Promise<number> {
   await settle(() => callsOf(log, 'decisions/queue').some((call) => call.reply !== undefined), timeoutMs);
   return await quiet(log);
 }

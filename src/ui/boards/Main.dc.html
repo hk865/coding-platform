@@ -109,9 +109,24 @@ button.bq-ref:hover { color: var(--text); }
 .row.rail-arch .row-name { white-space: normal; }
 .rail-archived { gap: 2px; color: var(--text-3); }
 .rail-archived .rail-arch-ln { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* D49-13: the copy confirmation's tick list, the three rules copied from Decide
+   (the same box, its row and its checkbox), as the X4 prototype rule does. */
+.dc-checks { display: flex; flex-direction: column; gap: 2px; }
+.dc-check { display: flex; align-items: center; gap: 8px; font-size: 12px; line-height: 20px; color: var(--text-2); cursor: pointer; }
+.dc-check input { margin: 0; width: 12px; height: 12px; flex: none; accent-color: var(--text-2); }
 /* decision 33: the rules this board carried after the independent verification (the spinner of "正在建立咨询…", the
    two-row head, the card's name, a step's words, the "·" of a result word, the >-rules across an <sc-if>) are kit §19 now —
    integration 2026-10-07, DESIGN §22.4 */
+/* M9/D42-1: the card's own answer input and annotations, the same classes
+   Decide's step block uses (its card copies these from there). */
+.dc-field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; line-height: 18px; color: var(--text-3); }
+.dc-input { all: unset; box-sizing: border-box; display: block; width: 100%; padding: 6px 10px; border-radius: 6px; background: var(--ground); box-shadow: inset 0 0 0 1px var(--line-2); font-size: 13px; line-height: 20px; color: var(--text-strong); white-space: pre-wrap; }
+textarea.dc-input { min-height: 52px; }
+.dc-input::placeholder { color: var(--text-3); }
+/* A8: a long fold text keeps the expand key on one line at the right edge. */
+.plan-line > span { flex: 1 1 auto; min-width: 0; }
+.plan-line .btn-text { flex: none; white-space: nowrap; }
+.dc-input:focus-visible { box-shadow: inset 0 0 0 1px var(--text-3); }
 </style>
 </helmet>
 
@@ -488,9 +503,23 @@ button.bq-ref:hover { color: var(--text); }
           </sc-if>
 
           <sc-for list="{{log}}" as="l" hint-placeholder-count="1">
+            <sc-if value="{{l.isFold}}" hint-placeholder-val="{{ false }}">
+              <div class="plan-line">
+                <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="M6.75 4.25h6.5M6.75 8h6.5M6.75 11.75h6.5"></path><path d="m2.5 4.25.9.9 1.6-1.65M2.5 8l.9.9L5 7.25M2.75 11.75h1.5"></path></svg>
+                <span>{{l.text}}</span>
+                <sc-if value="{{l.hasToggle}}" hint-placeholder-val="{{ false }}"><button class="btn-text{{l.toggleCls}}" type="button" onClick="{{l.toggle}}" aria-expanded="{{l.open}}" aria-disabled="{{l.toggleOff}}" title="{{l.toggleTip}}">{{l.act}}</button></sc-if>
+              </div>
+              <sc-if value="{{l.open}}" hint-placeholder-val="{{ false }}">
+                <section class="plan" aria-label="{{l.title}}">
+                  <div class="plan-head"><span class="ttl">{{l.title}}</span><span class="st">{{l.from}}</span></div>
+                  <dl class="dc-facts"><sc-for list="{{l.facts}}" as="f" hint-placeholder-count="1"><dt>{{f.k}}</dt><dd>{{f.v}}</dd></sc-for></dl>
+                  <sc-if value="{{l.hasActs}}" hint-placeholder-val="{{ false }}"><div class="plan-foot"><sc-for list="{{l.acts}}" as="a" hint-placeholder-count="0"><button class="{{a.cls}}" type="button" onClick="{{a.go}}" title="{{a.tip}}" aria-disabled="{{a.off}}">{{a.label}}</button></sc-for><sc-if value="{{l.hasFail}}" hint-placeholder-val="{{ false }}"><span class="tx-failed">{{l.fail}}</span></sc-if></div></sc-if>
+                </section>
+              </sc-if>
+            </sc-if>
             <sc-if value="{{l.isSys}}" hint-placeholder-val="{{ true }}">
               <div class="sys-line">
-                <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="m3.25 8.5 3 3 6.5-7"></path></svg>
+                <sc-if value="{{l.tick}}" hint-placeholder-val="{{ true }}"><svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="m3.25 8.5 3 3 6.5-7"></path></svg></sc-if>
                 <span>{{l.text}}</span>
                 <span class="t">{{l.t}}</span>
               </div>
@@ -499,6 +528,8 @@ button.bq-ref:hover { color: var(--text); }
               <div class="msg-user">
                 <div class="bubble"><sc-for list="{{l.quotes}}" as="q" hint-placeholder-count="0"><span class="bq"><sc-if value="{{q.canOpen}}" hint-placeholder-val="{{ true }}"><button class="bq-ref" type="button" onClick="{{q.toggle}}" aria-expanded="{{q.open}}" title="{{q.tip}}"><svg class="ico xs chev {{q.chevCls}}" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4"></path></svg><span class="bq-path">{{q.path}}</span><span>{{q.lines}}</span><sc-if value="{{q.snap}}" hint-placeholder-val="{{ false }}"><span class="cq-snap">草稿快照</span></sc-if></button></sc-if><sc-if value="{{q.cantOpen}}" hint-placeholder-val="{{ false }}"><span class="bq-ref"><svg class="ico xs" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 1.75h5.25l3 3v9.5H4Z"></path><path d="M9 1.75V5h3.25"></path></svg><span class="bq-path">{{q.path}}</span><span>{{q.lines}}</span><sc-if value="{{q.snap}}" hint-placeholder-val="{{ false }}"><span class="cq-snap">草稿快照</span></sc-if></span></sc-if><sc-if value="{{q.open}}" hint-placeholder-val="{{ false }}"><span class="bq-text">{{q.text}}</span></sc-if></span></sc-for>{{l.text}}</div>
                 <span class="msg-time">{{l.t}}</span>
+                <sc-if value="{{l.hasTo}}" hint-placeholder-val="{{ false }}"><button class="btn-text plink" type="button" onClick="{{l.toGo}}" title="{{l.toTip}}">{{l.to}}</button></sc-if>
+                <sc-if value="{{l.hasToText}}" hint-placeholder-val="{{ false }}"><span class="msg-from">{{l.to}}</span></sc-if>
               </div>
             </sc-if>
             <!-- A2 (121-147): the round's own `executions/steps`, the prototype's expandable run block -->
@@ -541,6 +572,12 @@ button.bq-ref:hover { color: var(--text); }
 
           <!-- §2.8/T37: the original request's own feedback (the Tasks it touched, the holds/dispatches/stops it left, the plan revision), not only the round answers -->
           <sc-if value="{{fb.show}}" hint-placeholder-val="{{ false }}">
+            <sc-if value="{{fb.hasArranged}}" hint-placeholder-val="{{ false }}">
+              <div class="plan-line">
+                <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="M6.75 4.25h6.5M6.75 8h6.5M6.75 11.75h6.5"></path><path d="m2.5 4.25.9.9 1.6-1.65M2.5 8l.9.9L5 7.25M2.75 11.75h1.5"></path></svg>
+                <span>{{fb.arranged}}</span>
+              </div>
+            </sc-if>
             <section class="plan" aria-label="请求的处理">
               <div class="plan-head">
                 <span class="ttl">{{fb.title}}</span>
@@ -550,6 +587,24 @@ button.bq-ref:hover { color: var(--text); }
               </dl>
             </section>
           </sc-if>
+
+          <!-- M2/M4/M6: the page-level cards, the notices and the unreadable-source line -->
+          <sc-for list="{{pageLines}}" as="pl" hint-placeholder-count="0">
+            <sc-if value="{{pl.isFold}}" hint-placeholder-val="{{ true }}">
+              <div class="plan-line">
+                <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="M6.75 4.25h6.5M6.75 8h6.5M6.75 11.75h6.5"></path><path d="m2.5 4.25.9.9 1.6-1.65M2.5 8l.9.9L5 7.25M2.75 11.75h1.5"></path></svg>
+                <span>{{pl.text}}</span>
+                <sc-if value="{{pl.hasToggle}}" hint-placeholder-val="{{ false }}"><button class="btn-text{{pl.toggleCls}}" type="button" onClick="{{pl.toggle}}" aria-expanded="{{pl.open}}" aria-disabled="{{pl.toggleOff}}" title="{{pl.toggleTip}}">{{pl.act}}</button></sc-if>
+              </div>
+              <sc-if value="{{pl.open}}" hint-placeholder-val="{{ false }}">
+                <section class="plan" aria-label="{{pl.title}}">
+                  <div class="plan-head"><span class="ttl">{{pl.title}}</span><span class="st">{{pl.from}}</span></div>
+                  <dl class="dc-facts"><sc-for list="{{pl.facts}}" as="f" hint-placeholder-count="1"><dt>{{f.k}}</dt><dd>{{f.v}}</dd></sc-for></dl>
+                  <sc-if value="{{pl.hasActs}}" hint-placeholder-val="{{ false }}"><div class="plan-foot"><sc-for list="{{pl.acts}}" as="a" hint-placeholder-count="0"><button class="{{a.cls}}" type="button" onClick="{{a.go}}" title="{{a.tip}}" aria-disabled="{{a.off}}">{{a.label}}</button></sc-for><sc-if value="{{pl.hasFail}}" hint-placeholder-val="{{ false }}"><span class="tx-failed">{{pl.fail}}</span></sc-if></div></sc-if>
+                </section>
+              </sc-if>
+            </sc-if>
+          </sc-for>
 
             <!-- plan versions: round 1 always, round 2 after one iteration -->
             <sc-for list="{{plans}}" as="p" hint-placeholder-count="1">
@@ -708,19 +763,22 @@ button.bq-ref:hover { color: var(--text); }
               </button>
             </sc-if>
             <sc-if value="{{gb.canResume}}" hint-placeholder-val="{{ false }}">
-              <button class="btn btn-sm" type="button" onClick="{{gb.resume}}" title="从停下的地方接续">
+              <button class="{{gb.resumeCls}}" type="button" onClick="{{gb.resume}}" title="从停下的地方接续" aria-disabled="{{gb.resumeAria}}">
                 <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="M5.25 3.5v9l7-4.5Z"></path></svg>
                 继续
               </button>
             </sc-if>
             <sc-if value="{{gb.canCancel}}" hint-placeholder-val="{{ true }}">
-              <button class="btn btn-sm" type="button" onClick="{{gb.askCancel}}" title="取消目标：进行中的执行会停下，记录保留">
+              <button class="{{gb.cancelCls}}" type="button" onClick="{{gb.askCancel}}" title="取消目标：进行中的执行会停下，记录保留" aria-disabled="{{gb.cancelAria}}">
                 <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><rect x="4" y="4" width="8" height="8" rx="1.25"></rect></svg>
                 取消
               </button>
             </sc-if>
+            <sc-if value="{{gb.hasRetry}}" hint-placeholder-val="{{ false }}">
+              <button class="{{gb.retryCls}}" type="button" onClick="{{gb.retry}}" title="{{gb.retryTip}}" aria-disabled="{{gb.retryOff}}">重试恢复</button>
+            </sc-if>
             <sc-if value="{{gb.canRequeue}}" hint-placeholder-val="{{ false }}">
-              <button class="{{gb.requeueCls}}" type="button" onClick="{{gb.requeue}}">
+              <button class="{{gb.requeueCls}}" type="button" onClick="{{gb.requeue}}" aria-disabled="{{gb.requeueOff}}">
                 <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="M12.75 3.25v3h-3"></path><path d="M12.5 6.25A5 5 0 1 0 13 9.25"></path></svg>
                 重新入队
               </button>
@@ -731,9 +789,36 @@ button.bq-ref:hover { color: var(--text); }
         <sc-if value="{{gb.confirm}}" hint-placeholder-val="{{ false }}">
           <div class="decision" role="alertdialog" aria-label="确认取消目标" onKeyDown="{{gb.key}}">
             <p class="dc-line">取消目标：进行中的执行会停下，已完成的步骤和记录保留，之后可以重新入队。</p>
+            <sc-if value="{{gb.hasLive}}" hint-placeholder-val="{{ false }}"><p class="dc-line">{{gb.liveText}}</p></sc-if>
             <div class="dc-foot">
               <button class="btn btn-sm first" type="button" onClick="{{gb.keep}}" onKeyDown="{{gb.key}}" ref="{{gb.keepRef}}">不取消</button>
-              <button class="btn btn-sm btn-primary" type="button" onClick="{{gb.cancel}}" onKeyDown="{{gb.key}}">取消目标</button>
+              <button class="{{gb.goCls}}" type="button" onClick="{{gb.cancel}}" onKeyDown="{{gb.key}}" aria-disabled="{{gb.goAria}}">取消目标</button>
+            </div>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{gb.copy.show}}" hint-placeholder-val="{{ false }}">
+          <div class="decision" role="alertdialog" aria-label="确认重新入队" onKeyDown="{{gb.copy.key}}">
+            <p class="dc-title">{{gb.copy.title}}</p>
+            <p class="dc-line">{{gb.copy.objective}}</p>
+            <p class="dc-line">{{gb.copy.autonomy}}</p>
+            <p class="dc-line">{{gb.copy.position}}</p>
+            <sc-if value="{{gb.copy.hasWait}}" hint-placeholder-val="{{ false }}"><p class="dc-line">{{gb.copy.waitFor}}</p></sc-if>
+            <sc-if value="{{gb.copy.hasParallel}}" hint-placeholder-val="{{ false }}"><p class="dc-line">{{gb.copy.parallel}}</p></sc-if>
+            <sc-if value="{{gb.copy.hasReconfirm}}" hint-placeholder-val="{{ false }}"><p class="dc-line">{{gb.copy.reconfirm}}</p></sc-if>
+            <sc-if value="{{gb.copy.available}}" hint-placeholder-val="{{ false }}">
+              <div class="dc-checks">
+                <sc-for list="{{gb.copy.checks}}" as="c" hint-placeholder-count="2">
+                  <label class="dc-check"><input type="checkbox" checked="{{c.on}}" disabled="{{c.disabled}}" onChange="{{c.toggle}}" /><span>{{c.text}}</span></label>
+                </sc-for>
+              </div>
+              <p class="dc-line">{{gb.copy.hint}}</p>
+            </sc-if>
+            <sc-if value="{{gb.copy.unavailable}}" hint-placeholder-val="{{ false }}"><p class="dc-line">旧的干预这次读不到，复制时一条都不带。</p></sc-if>
+            <sc-if value="{{gb.copy.hasError}}" hint-placeholder-val="{{ false }}"><p class="dc-line"><span class="tx-failed">{{gb.copy.error}}</span></p></sc-if>
+            <div class="dc-foot">
+              <button class="btn btn-sm first" type="button" onClick="{{gb.copy.close}}" onKeyDown="{{gb.copy.key}}" ref="{{gb.copy.keepRef}}">不复制</button>
+              <button class="btn btn-sm btn-primary{{gb.copy.confirmCls}}" type="button" onClick="{{gb.copy.confirm}}" onKeyDown="{{gb.copy.key}}" aria-disabled="{{gb.copy.off}}">复制成新目标</button>
             </div>
           </div>
         </sc-if>
@@ -757,6 +842,21 @@ button.bq-ref:hover { color: var(--text); }
             </div>
             <p class="dc-title">{{dc.title}}</p>
             <p class="dc-line">{{dc.line}}</p>
+            <sc-if value="{{dc.hasAnswerBox}}" hint-placeholder-val="{{ false }}">
+              <div class="dc-field">
+                <label for="dc-answer">{{dc.noteLabel}}</label>
+                <textarea id="dc-answer" class="dc-input" rows="2" placeholder="{{dc.notePh}}" value="{{dc.note}}" onChange="{{dc.onNote}}"></textarea>
+              </div>
+              <sc-for list="{{dc.annotations}}" as="an" hint-placeholder-count="0">
+                <div class="dc-field">
+                  <label>{{an.label}}</label>
+                  <textarea class="dc-input" rows="2" value="{{an.text}}" onChange="{{an.onText}}"></textarea>
+                </div>
+              </sc-for>
+            </sc-if>
+            <sc-if value="{{dc.hasReplyFail}}" hint-placeholder-val="{{ false }}">
+              <p class="dc-line"><span class="tx-failed">{{dc.replyFail}}</span></p>
+            </sc-if>
             <sc-if value="{{dc.isChoice}}" hint-placeholder-val="{{ false }}">
               <div class="opts no-key" role="radiogroup" aria-label="怎么处理冲突">
                 <sc-for list="{{dc.opts}}" as="o" hint-placeholder-count="3">
@@ -927,28 +1027,34 @@ button.bq-ref:hover { color: var(--text); }
         </div>
         <div class="lv-acts" role="group" aria-label="控制这条工作线">
           <sc-if value="{{lv.acts.canPause}}" hint-placeholder-val="{{ true }}">
-            <button class="btn btn-sm" type="button" onClick="{{lv.acts.pause}}" onMouseEnter="{{lv.acts.tipPause}}" onMouseLeave="{{lv.untip}}" onFocus="{{lv.acts.tipPause}}" onBlur="{{lv.untip}}">
+            <button class="btn btn-sm{{lv.acts.ctlCls}}" type="button" aria-disabled="{{lv.acts.ctlOff}}" onClick="{{lv.acts.pause}}" onMouseEnter="{{lv.acts.tipPause}}" onMouseLeave="{{lv.untip}}" onFocus="{{lv.acts.tipPause}}" onBlur="{{lv.untip}}">
               <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="M5.75 3.75v8.5M10.25 3.75v8.5"></path></svg>
               暂停
             </button>
           </sc-if>
           <sc-if value="{{lv.acts.canResume}}" hint-placeholder-val="{{ false }}">
-            <button class="btn btn-sm" type="button" onClick="{{lv.acts.resume}}" onMouseEnter="{{lv.acts.tipResume}}" onMouseLeave="{{lv.untip}}" onFocus="{{lv.acts.tipResume}}" onBlur="{{lv.untip}}">
+            <button class="btn btn-sm{{lv.acts.ctlCls}}" type="button" aria-disabled="{{lv.acts.ctlOff}}" onClick="{{lv.acts.resume}}" onMouseEnter="{{lv.acts.tipResume}}" onMouseLeave="{{lv.untip}}" onFocus="{{lv.acts.tipResume}}" onBlur="{{lv.untip}}">
               <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="M5.25 3.5v9l7-4.5Z"></path></svg>
               继续
             </button>
           </sc-if>
           <sc-if value="{{lv.acts.canCancel}}" hint-placeholder-val="{{ true }}">
-            <button class="btn btn-sm" type="button" onClick="{{lv.acts.askCancel}}" onMouseEnter="{{lv.acts.tipCancel}}" onMouseLeave="{{lv.untip}}" onFocus="{{lv.acts.tipCancel}}" onBlur="{{lv.untip}}">
+            <button class="btn btn-sm{{lv.acts.ctlCls}}" type="button" aria-disabled="{{lv.acts.ctlOff}}" onClick="{{lv.acts.askCancel}}" onMouseEnter="{{lv.acts.tipCancel}}" onMouseLeave="{{lv.untip}}" onFocus="{{lv.acts.tipCancel}}" onBlur="{{lv.untip}}">
               <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><rect x="4" y="4" width="8" height="8" rx="1.25"></rect></svg>
               取消
             </button>
           </sc-if>
           <sc-if value="{{lv.acts.canRequeue}}" hint-placeholder-val="{{ false }}">
-            <button class="btn btn-sm" type="button" onClick="{{lv.acts.requeue}}" onMouseEnter="{{lv.acts.tipRequeue}}" onMouseLeave="{{lv.untip}}" onFocus="{{lv.acts.tipRequeue}}" onBlur="{{lv.untip}}">
+            <button class="btn btn-sm{{lv.acts.ctlCls}}" type="button" aria-disabled="{{lv.acts.ctlOff}}" onClick="{{lv.acts.requeue}}" onMouseEnter="{{lv.acts.tipRequeue}}" onMouseLeave="{{lv.untip}}" onFocus="{{lv.acts.tipRequeue}}" onBlur="{{lv.untip}}">
               <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="M12.75 3.25v3h-3"></path><path d="M12.5 6.25A5 5 0 1 0 13 9.25"></path></svg>
               重新入队
             </button>
+          </sc-if>
+          <sc-if value="{{lv.acts.canHandle}}" hint-placeholder-val="{{ false }}">
+            <button class="{{lv.acts.handleCls}}" type="button" onClick="{{lv.acts.handle}}" title="{{lv.acts.handleTip}}" aria-disabled="{{lv.acts.handleOff}}">我来处理</button>
+          </sc-if>
+          <sc-if value="{{lv.acts.canResumeReview}}" hint-placeholder-val="{{ false }}">
+            <button class="{{lv.acts.resumeCls}}" type="button" onClick="{{lv.acts.resumeReview}}" title="{{lv.acts.resumeTip}}" aria-disabled="{{lv.acts.resumeOff}}">继续</button>
           </sc-if>
           <sc-if value="{{lv.tipAt.acts}}" hint-placeholder-val="{{ false }}">
             <div class="hcard" role="tooltip">
@@ -3335,10 +3441,34 @@ class Component extends DCLogic {
         const lvFailed = (e) => set({ lvErr: { line: openLine.id, text: String(e && e.message ? e.message : e) } });
         const lvGuarded = (go) => () => { set({ lvErr: null }); go().catch(lvFailed); };
         const err = s.lvErr && s.lvErr.line === openLine.id ? s.lvErr.text : '';
+        const review = lineRead.review || null;
+        const handleStatuses = ['pending_review', 'awaiting_proposal', 'awaiting_advice', 'needs_decision', 'awaiting_approval'];
+        const canHandle = review !== null && !review.held && handleStatuses.indexOf(review.status) >= 0;
+        const canResumeReview = review !== null && review.held;
+        const holding = s.lvHolding === openLine.id;
+        /* One in-flight state for the line's writes: the four controls (pause,
+           resume, cancel, requeue) and the hold and release share it, so the
+           six buttons grey together and a second click while one write is in
+           flight sends nothing. boot's per-line latch guards the same writes. */
+        const lineAct = (fn) => () => {
+          if ((this.state || {}).lvHolding === openLine.id) return;
+          lvGuarded(() => {
+            set({ lvHolding: openLine.id });
+            return fn().finally(() => { if ((this.state || {}).lvHolding === openLine.id) set({ lvHolding: null }); });
+          })();
+        };
         lv.acts = Object.assign({}, lv.acts, {
           canPause: D.canPause, canResume: D.canResume, canCancel: D.canCancel, canRequeue: D.canRequeue,
-          pause: lvGuarded(() => actions.controlLine('pause')), resume: lvGuarded(() => actions.controlLine('resume')),
-          requeue: lvGuarded(() => actions.requeueLine())
+          ctlCls: holding ? ' is-off' : '', ctlOff: holding ? 'true' : 'false',
+          pause: lineAct(() => actions.controlLine('pause')), resume: lineAct(() => actions.controlLine('resume')),
+          requeue: lineAct(() => actions.requeueLine()),
+          canHandle: canHandle, canResumeReview: canResumeReview,
+          handleTip: '先暂停这项任务，你自己看过再点继续', resumeTip: '放开这条核对记录，按原来的任务和那次执行接着做',
+          handleCls: 'btn btn-sm' + (holding ? ' is-off' : ''),
+          resumeCls: 'btn btn-sm' + (holding ? ' is-off' : ''),
+          handleOff: holding ? 'true' : 'false', resumeOff: holding ? 'true' : 'false',
+          handle: lineAct(() => actions.holdReview()),
+          resumeReview: lineAct(() => actions.releaseReviewHold())
         });
         /* SPEC-5 (A36): the confirm opens on the read's own cancel control, also
            for a line paused at its safe point (no live run in the record) */
@@ -3346,7 +3476,7 @@ class Component extends DCLogic {
         lv.confirm = Object.assign({}, lv.confirm, { show: confirmShow,
           line: (D.status.word === '已暂停' ? '它已停在安全点，取消立即生效' : '它会在下一个安全点停下，然后取消生效')
             + '：任务记为“已取消”，之后只有你能重新入队；改动和工作记录保留。',
-          go: lvGuarded(() => { set({ lvConfirm: null }); return actions.controlLine('cancel'); }) });
+          go: lineAct(() => { set({ lvConfirm: null }); return actions.controlLine('cancel'); }) });
         /* M1: the line and way of the send in flight (lvSending) keep its send off until it is answered,
            as the main composer's `st.sending` does */
         const lvModeOf = (x) => (D.readOnly ? 'ask' : x.lvMode === 'act' ? 'act' : 'ask');
@@ -3385,7 +3515,8 @@ class Component extends DCLogic {
         /* SPEC-6: before its read lands, for a branched line and after a failed
            read, the view simulates nothing: no control, no send, no attempt */
         lv.sub = data.detail && data.detail.kind === 'branched' ? '这条工作线分成了几条，请从左栏选一条' : '';
-        lv.acts = Object.assign({}, lv.acts, { canPause: false, canResume: false, canCancel: false, canRequeue: false });
+        lv.acts = Object.assign({}, lv.acts, { canPause: false, canResume: false, canCancel: false, canRequeue: false,
+          canHandle: false, canResumeReview: false, ctlCls: '', ctlOff: 'false' });
         lv.confirm = Object.assign({}, lv.confirm, { show: false });
         lv.cm = Object.assign({}, lv.cm, { show: true, send: () => {}, sendOff: true, sendCls: 'send is-off' });
         lv.facts = (lv.facts || []).map((fact) => fact.k === '尝试' ? Object.assign({}, fact, { v: '—' }) : fact);
@@ -3398,24 +3529,57 @@ class Component extends DCLogic {
     const phase = selected ? selected.phase : '';
     const finished = phase === 'COMPLETED' || phase === 'CANCELLED';
     const read = this.props.readState || null;
-    const control = (kind) => { if (typeof actions.controlGoal === 'function') void actions.controlGoal(kind); };
+    const goalBar = data.goalBar || null;
+    /* One in-flight state for pause, resume, cancel and retry; the guard reads
+       the live state, not the render closure, so two clicks in one turn still
+       send one write. */
+    const control = (kind) => {
+      if (typeof actions.controlGoal !== 'function' || (this.state || {}).ctlBusy) return;
+      set({ ctlBusy: true, err: '', ctlReport: null });
+      Promise.resolve(actions.controlGoal(kind)).then((lines) => {
+        if (Array.isArray(lines) && lines.length > 0) {
+          set({ ctlReport: { goalId: data.selectedGoalId || null, lines: lines } });
+        }
+      }).catch((e) => set({ err: String(e && e.message ? e.message : e) }))
+        .finally(() => set({ ctlBusy: false }));
+    };
+    const busy = !!s.ctlBusy;
     const gb = Object.assign({}, base.gb, {
       sq: 'sq z10 s-' + this.goalSt(),
       word: this.goalWord(),
-      why: read && read.stale && read.staleText ? String(read.staleText) : selected ? selected.why : '',
-      whyTip: null,
+      why: read && read.stale && read.staleText ? String(read.staleText)
+        : goalBar ? goalBar.why : selected ? selected.why : '',
+      whyTip: goalBar ? goalBar.tip : null,
       hasDecide: !!data.inbox.hasDecide, decideN: data.inbox.decideText,
       canPause: selected !== null && !finished && phase !== 'PAUSED',
       canResume: phase === 'PAUSED',
       canCancel: selected !== null && !finished,
       canRequeue: phase === 'CANCELLED',
-      pauseCls: 'btn btn-sm',
+      hasLive: !!(goalBar && goalBar.live),
+      liveText: goalBar ? goalBar.live : '',
+      hasRetry: !!data.retry,
+      retryTip: '重试这次继续：原样再发一次',
+      retryCls: 'btn btn-sm' + (busy ? ' is-off' : ''),
+      retryOff: busy ? 'true' : 'false',
+      retry: () => {
+        if (typeof actions.retryResume !== 'function' || (this.state || {}).ctlBusy) return;
+        set({ ctlBusy: true, err: '' });
+        Promise.resolve(actions.retryResume()).catch((e) => set({ err: String(e && e.message ? e.message : e) }))
+          .finally(() => set({ ctlBusy: false }));
+      },
+      resumeCls: 'btn btn-sm' + (busy ? ' is-off' : ''),
+      resumeAria: busy ? 'true' : 'false',
+      cancelCls: 'btn btn-sm' + (busy ? ' is-off' : ''),
+      cancelAria: busy ? 'true' : 'false',
+      goCls: 'btn btn-sm btn-primary' + (busy ? ' is-off' : ''),
+      goAria: busy ? 'true' : 'false',
+      pauseCls: 'btn btn-sm' + (busy ? ' is-off' : ''),
       pauseTip: '在下一个安全点停下；已完成的步骤保留，之后由你继续',
-      pauseAria: 'false',
+      pauseAria: busy ? 'true' : 'false',
       pause: () => control('pause'),
       resume: () => control('resume'),
       confirm: !!s.confirmCancel,
-      askCancel: (e) => { this.cancelOpened('goal', e); this.setState({ confirmCancel: true }); },
+      askCancel: (e) => { this.cancelOpened('goal', e); this.setState({ confirmCancel: true, copyOpen: false }); },
       keep: () => { this.cancelClosed('goal'); this.setState({ confirmCancel: false }); },
       keepRef: (el) => this.cancelRef('goal', el),
       key: (e) => this.cancelKey('goal', e, () => { this.cancelClosed('goal'); this.setState({ confirmCancel: false }); }),
@@ -3453,15 +3617,25 @@ class Component extends DCLogic {
 
     /* A06/L01/L02: the Goal bar and the inbox count the same read; the inbox stays
        the workspace's own total (Y1), the Goal bar counts only the selected Goal. */
-    const openAt = (index) => { if (index >= 0) set({ dcAt: index, dcOpen: true, picked: null, facts: false }); };
+    const allHref = 'Decide.dc.html' + (data.selectedGoalId ? '?goal=' + encodeURIComponent(data.selectedGoalId) : '');
+    const openAt = (index) => { if (index >= 0) set({ dcAt: index, dcOpen: true, facts: false }); };
     const inbox = Object.assign({}, base.inbox, {
-      openDecide: () => openAt(decideRows.findIndex((row) => row.level === 'decide')),
+      /* M7: a queue that read only unreadable sources has no card to place; the
+         row goes to the page that says which source could not be read. */
+      openDecide: () => {
+        const first = decideRows.findIndex((row) => row.level === 'decide');
+        if (first < 0 && data.inbox.hasDecide === true && typeof location !== 'undefined') {
+          location.assign(allHref);
+          return;
+        }
+        openAt(first);
+      },
       openNotice: () => openAt(decideRows.findIndex((row) => row.level === 'notice'))
     });
     const goals = base.goals.map((row, i) => {
       const n = nBy[data.goals[i].goalId] || 0;
       return Object.assign({}, row, { n: countsPartial && n > 0 ? '至少 ' + n : n, hasN: n > 0, pick: () => {
-        set({ mainPages: 1, dcOpen: false, picked: null, facts: false, pending: [] });
+        set({ mainPages: 1, dcOpen: false, facts: false, pending: [], ctlReport: null, copyOpen: false, copyDraft: null, copyPick: [] });
         row.pick();
       } });
     });
@@ -3491,6 +3665,7 @@ class Component extends DCLogic {
     const pending = (s.pending || []).filter((row) => !roots.has(row.root));
     const log = [];
     const pushRow = (row, quotes) => log.push(Object.assign({}, row, {
+      tick: row.tick === undefined ? !!row.isSys : row.tick,
       quotes: this.bqItems(quotes || [], 'M' + log.length, s.bqOpen, set)
     }));
     /* A2 (121-147): a run row is the round's own `executions/steps`; the
@@ -3530,13 +3705,92 @@ class Component extends DCLogic {
         runRawHref: run !== null && run.rawHref ? run.rawHref : ''
       });
     };
-    for (const row of data.conversation || []) pushRow(convRow(row), row.quotes);
+    /* M2/M4/M6: one folded line and its one toggle. A card line opens the centre
+       card (the queue already read); a notice line opens its own facts and asks
+       for the one on-demand read that kind needs. */
+    const mapPut = (map, key, value) => Object.assign({}, map || {}, { [key]: value });
+    const foldItem = (row) => {
+      const open = !!(s.foldOpen && s.foldOpen[row.key]);
+      const busy = !!(s.foldBusy && s.foldBusy[row.key]);
+      const fail = (s.foldFail && s.foldFail[row.key]) || '';
+      const acts = (row.acts || []).map((a) => ({
+        label: a.label, cls: 'btn btn-sm btn-line' + (busy ? ' is-off' : ''),
+        off: busy ? 'true' : a.off, tip: a.tip,
+        go: () => {
+          if (busy || ((this.state || {}).foldBusy || {})[row.key]) return;
+          if (a.kind === 'raise_cap') {
+            if (a.href && typeof location !== 'undefined') location.assign(a.href);
+            return;
+          }
+          if (a.kind !== 'withdraw' || !a.scope || !a.checkId || typeof actions.withdrawCheck !== 'function') return;
+          set({ foldBusy: mapPut(s.foldBusy, row.key, true), foldFail: mapPut(s.foldFail, row.key, '') });
+          Promise.resolve(actions.withdrawCheck(a.scope, a.checkId)).then(() => {
+            const now = this.state || {};
+            set({ foldBusy: mapPut(now.foldBusy, row.key, false) });
+          }).catch((e) => {
+            const now = this.state || {};
+            set({ foldBusy: mapPut(now.foldBusy, row.key, false),
+              foldFail: mapPut(now.foldFail, row.key, msg(e)) });
+          });
+        }
+      }));
+      const toggle = () => {
+        if (!row.openable) return;
+        if (row.opens === 'card') {
+          const at = decideRows.findIndex((r) => r.key === row.cardKey);
+          if (at >= 0) openAt(at);
+          return;
+        }
+        const next = !(this.state || {}).foldOpen || !((this.state || {}).foldOpen || {})[row.key];
+        set({ foldOpen: mapPut((this.state || {}).foldOpen, row.key, next) });
+        if (typeof actions.readMore === 'function') {
+          if (row.reads === 'snapshot') {
+            actions.readMore(next ? { mainNoticeOpen: row.noticeKey } : { mainNoticeOpen: null });
+          } else if (row.reads === 'answer') {
+            actions.readMore(next ? { mainCardAnswer: row.cardKey } : { mainCardAnswer: null });
+          }
+        }
+      };
+      const disabled = row.opens === 'card' && !row.openable;
+      return {
+        isFold: true, text: row.text, title: row.title, from: row.from, facts: row.facts || [],
+        hasToggle: row.openable || row.opens === 'card', act: row.opens === 'card' ? '打开' : open ? '收起' : '展开',
+        toggleCls: disabled ? ' is-off' : '', toggleOff: disabled ? 'true' : 'false',
+        toggleTip: disabled ? '这张卡现在不在卡位里，去“需要你决定”页看' : '',
+        toggle: toggle, open: open, hasActs: acts.length > 0, acts: acts,
+        hasFail: fail !== '', fail: fail,
+      };
+    };
+    const conversation = data.conversation || [];
+    for (let index = 0; index < conversation.length; index += 1) {
+      const row = conversation[index];
+      const target = row.isUser && row.toKey
+        ? lvr.rows.concat(lvr.archived || []).find((r) => r.id === row.toKey) || null : null;
+      pushRow(Object.assign({}, convRow(row), {
+        hasTo: !!(row.to && target !== null), hasToText: !!(row.to && target === null),
+        toGo: target === null ? () => {} : target.pick, toTip: '打开这条秘书线'
+      }), row.quotes);
+      const next = conversation[index + 1];
+      if (!next || next.root !== row.root) {
+        for (const item of (data.cardLines && data.cardLines[row.root]) || []) log.push(foldItem(item));
+      }
+    }
+    const pageLines = (data.pageLines || []).map(foldItem);
     for (const row of pending) {
       pushRow({ root: row.root, isSys: false, isUser: true, isAgent: false, isRun: false,
         text: row.input, t: '', from: '', hasFrom: false, quotes: [], hasQuotes: false, ideas: [], hasIdeas: false }, []);
       if (row.answer !== null && row.answer !== undefined) {
         pushRow({ root: row.root, isSys: false, isUser: false, isAgent: true, isRun: false,
           text: row.answer, t: '', from: '', hasFrom: false, quotes: [], hasQuotes: false, ideas: [], hasIdeas: false }, []);
+      }
+    }
+    /* 5.5-2/5.6-6: the last control's receipt sits at the end of `log` and before
+       `fb` (the agreed assembly order); a Goal pick removes it. */
+    const report = s.ctlReport;
+    if (report && Array.isArray(report.lines) && report.goalId === (data.selectedGoalId || null)) {
+      for (const line of report.lines) {
+        pushRow({ root: '', isSys: true, isUser: false, isAgent: false, isRun: false, text: line.text,
+          tick: line.tick, t: '', from: '', hasFrom: false, quotes: [], hasQuotes: false, ideas: [], hasIdeas: false }, []);
       }
     }
     const older = {
@@ -3551,10 +3805,12 @@ class Component extends DCLogic {
     /* §2.8/T37: the request surface's own feedback; the adapter already wrote
        the Chinese sentences, the board only draws them. */
     const rf = data.requestFeedback && roots.has(data.requestFeedback.root) ? data.requestFeedback : null;
-    const fb = rf === null ? { show: false, title: '', rows: [] } : {
-      show: Array.isArray(rf.rows) && rf.rows.length > 0,
+    const arranged = rf === null ? '' : String(rf.arranged || '');
+    const fb = rf === null ? { show: false, title: '', rows: [], hasArranged: false, arranged: '' } : {
+      show: (Array.isArray(rf.rows) && rf.rows.length > 0) || arranged !== '',
       title: rf.title || '',
-      rows: (rf.rows || []).map((row) => ({ k: row.k, v: row.v }))
+      rows: (rf.rows || []).map((row) => ({ k: row.k, v: row.v })),
+      hasArranged: arranged !== '', arranged: arranged
     };
 
     /* MF6(4): the newest answer's ideas become one plan card; 采用 goes through
@@ -3594,29 +3850,103 @@ class Component extends DCLogic {
     const display = data.selectedDisplay;
     const phase = display ? display.phase : '';
     const progress = data.progress;
-    const why = read && read.stale && read.staleText ? String(read.staleText)
-      : phase === 'CANCELLED' ? '记录保留，可重新入队'
-        : phase === 'PAUSED' ? '已暂停'
-          : (data.counts.working || 0) > 0 ? data.counts.working + ' 条工作线工作中'
-            : '没有工作线在工作';
+    const goalBar = data.goalBar || { why: '', tip: '', live: '' };
+    const why = read && read.stale && read.staleText ? String(read.staleText) : goalBar.why;
     const goalIndex = decideRows.findIndex((row) => row.level === 'decide' && row.goalId === selectedId);
     const goalN = selectedId ? (nBy[selectedId] || 0) : 0;
+    /* D49-13: the confirmation's whole data; the tick list keeps its own local
+       selection, and the revision is the one the first step read. */
+    const copyDraft = s.copyDraft || null;
+    const copyPicks = Array.isArray(s.copyPick) ? s.copyPick : [];
+    let copy = base.gb.copy;
+    if (s.copyOpen && copyDraft) {
+      const checks = (copyDraft.candidates || []).map((candidate) => {
+        const on = copyPicks.indexOf(candidate.ref.messageId) >= 0;
+        const reason = candidate.selectable ? '' : '（' + candidate.reasonWord + '）';
+        const retract = !candidate.selectable || on || candidate.retractable ? ''
+          : '（撤不回：' + candidate.retractWord + '）';
+        return {
+          text: candidate.text + reason + retract,
+          on: on,
+          disabled: !candidate.selectable,
+          toggle: () => {
+            const next = copyPicks.slice();
+            const at = next.indexOf(candidate.ref.messageId);
+            if (at >= 0) next.splice(at, 1); else if (candidate.selectable) next.push(candidate.ref.messageId);
+            set({ copyPick: next });
+          }
+        };
+      });
+      copy = {
+        show: true, title: '重新入队：复制成一个新目标',
+        objective: '目标：' + copyDraft.objective, autonomy: '自治：' + copyDraft.autonomy,
+        position: '排在原来的位置。',
+        hasWait: !!copyDraft.waitFor, waitFor: copyDraft.waitFor,
+        hasParallel: !!copyDraft.parallel, parallel: copyDraft.parallel,
+        hasReconfirm: !!(copyDraft.waitFor || copyDraft.parallel),
+        reconfirm: '确认就照这个复制；要改，复制以后在主对话里说。',
+        available: copyDraft.available, checks: checks,
+        hint: '勾上的，会在新目标的第一版方案采用后发给原来的线，旧消息标“已转交”；没勾的会撤回。',
+        unavailable: !copyDraft.available,
+        hasError: !!s.copyErr, error: s.copyErr || '',
+        off: s.copyBusy ? 'true' : 'false', confirmCls: s.copyBusy ? ' is-off' : '',
+        close: () => { this.cancelClosed('copy'); set({ copyOpen: false, copyDraft: null, copyPick: [], copyErr: '' }); },
+        key: (e) => this.cancelKey('copy', e, () => {
+          this.cancelClosed('copy');
+          set({ copyOpen: false, copyDraft: null, copyPick: [], copyErr: '' });
+        }),
+        keepRef: (el) => this.cancelRef('copy', el),
+        confirm: () => {
+          if (s.copyBusy) return;
+          const selected = (copyDraft.candidates || [])
+            .filter((candidate) => candidate.selectable && copyPicks.indexOf(candidate.ref.messageId) >= 0)
+            .map((candidate) => candidate.ref);
+          set({ copyBusy: true, copyErr: '' });
+          Promise.resolve(actions.confirmCopy(copyDraft, selected)).then((lines) => {
+            set({ copyBusy: false, copyOpen: false, copyDraft: null, copyPick: [],
+              ctlReport: { goalId: data.selectedGoalId || null, lines: lines || [] } });
+          }).catch((e) => {
+            /* The conflict text says the draft was reread; replace it here
+               while the dialog stays open, keeping the ticks that still exist. */
+            if (e && e.rereadCopy) {
+              Promise.resolve(actions.readCopyDraft(copyDraft.goalId)).then((draft) => {
+                const ids = (draft.candidates || []).map((candidate) => candidate.ref.messageId);
+                set({ copyBusy: false, copyDraft: draft, copyOpen: true,
+                  copyPick: copyPicks.filter((id) => ids.indexOf(id) >= 0), copyErr: msg(e) });
+              }).catch((again) => set({ copyBusy: false, copyErr: msg(again) }));
+              return;
+            }
+            set({ copyBusy: false, copyErr: msg(e) });
+          });
+        }
+      };
+    }
     const gb = Object.assign({}, base.gb, {
-      why: why, whyTip: null,
+      why: why, whyTip: goalBar.tip,
       done: progress.done + '/' + progress.total,
       hasDecide: goalIndex >= 0, decideN: countsPartial && goalN > 0 ? '至少 ' + goalN : goalN,
       openDecide: () => openAt(goalIndex),
-      requeueCls: 'btn btn-sm',
-      requeue: () => {
-        if (selectedId === null || typeof actions.copyGoal !== 'function') return;
-        Promise.resolve(actions.copyGoal(selectedId)).catch((e) => set({ err: msg(e) }));
+      requeueCls: 'btn btn-sm' + (s.copyBusy ? ' is-off' : ''),
+      requeueOff: s.copyBusy ? 'true' : 'false',
+      copy: copy,
+      requeue: (e) => {
+        if (selectedId === null || typeof actions.readCopyDraft !== 'function' || s.copyBusy) return;
+        /* Keep the opener element; the click event may be gone by the time the
+           draft read answers and the dialog takes the focus. */
+        const opener = e && e.currentTarget ? e.currentTarget : null;
+        set({ copyBusy: true, err: '', copyOpen: false, copyDraft: null, copyPick: [], copyErr: '' });
+        Promise.resolve(actions.readCopyDraft(selectedId)).then((draft) => {
+          this.cancelOpened('copy', { currentTarget: opener });
+          set({ copyBusy: false, copyDraft: draft, copyOpen: true, copyPick: [], copyErr: '' });
+        }).catch((e2) => set({ copyBusy: false, err: msg(e2) }));
       }
     });
 
     /* A23–A30: the card comes from the queue's complete card (never `decisions/card`).
-       A closed card hands the composer back; an answer failure leaves it closed so
-       the write error lands in the composer's own `.to` slot. */
-    const closeCard = (patch) => set(Object.assign({ dcOpen: false, picked: null, facts: false }, patch || {}));
+       A closed card hands the composer back. An answer failure keeps the card open
+       with its line under the card (`cardErr[cardKey]`, kept across a card switch);
+       a 标为已读 failure still closes it and lands in the composer's own `.to` slot. */
+    const closeCard = (patch) => set(Object.assign({ dcOpen: false, facts: false }, patch || {}));
     let dc = { show: false };
     if (decideRows.length > 0 && s.dcOpen && !s.confirmCancel) {
       const at = (s.dcAt || 0) % decideRows.length;
@@ -3635,22 +3965,67 @@ class Component extends DCLogic {
       const k = same.indexOf(row);
       const stepPrimary = v !== null && v.primary !== null && v.primary.key !== 'answer';
       const isChoice = !!v && !v.readOnly && v.options.length > 0;
-      const needsPick = isChoice && s.picked === null;
-      const reproposePicked = s.picked === 'repropose';
-      const REPROPOSE_GUIDE = '要写一句哪里不对：点上面的“全部”，到“需要你决定”页里提。';
+      /* M9: the one answerable card's own pick, words and annotations; they are
+         keyed by cardKey (Decide's rule), so a reread that puts another card at
+         this index shows that card's own inputs, and its busy/error belong to it. */
+      const reply = (data.cardReply && data.cardReply[row.key]) || null;
+      const cardEdit = (s.cardEdits && s.cardEdits[row.key]) || {};
+      const putEdit = (patch) => {
+        const now = this.state || {};
+        set({ cardEdits: mapPut(now.cardEdits, row.key, Object.assign({}, (now.cardEdits || {})[row.key] || {}, patch)) });
+      };
+      const picked = cardEdit.pick === undefined ? null : cardEdit.pick;
+      const needsPick = isChoice && picked === null;
+      const reproposePicked = picked === 'repropose';
+      const REPROPOSE_GUIDE = '要写一句哪里不对：在上面的框里写原因，写完再点确定。';
+      const note = cardEdit.note !== undefined ? String(cardEdit.note) : reply ? reply.note : '';
+      const cardBusy = !!(s.cardBusy && s.cardBusy[row.key]);
+      const replyErr = (s.cardErr && s.cardErr[row.key]) || '';
+      const hasAnswerBox = !!(reply && reply.hasAnswerBox && v !== null);
+      const needsOption = !!(reply && reply.needsOption);
+      /* Y7: Decide's one needsOption, as the server rules it: outside it the
+         words alone answer the card as 其他 ({kind:'other'}), a planning
+         question that carries options too. */
+      const wordsOnly = hasAnswerBox && !needsOption && note.trim() !== '';
+      const editAnnotation = (objectKey, text) => {
+        const current = ((this.state || {}).cardEdits || {})[row.key] || {};
+        putEdit({ annotations: mapPut(current.annotations, objectKey, text) });
+      };
+      const annotations = (reply ? reply.annotations : []).map((a) => {
+        const edited = cardEdit.annotations && cardEdit.annotations[a.objectKey] !== undefined
+          ? String(cardEdit.annotations[a.objectKey]) : a.text;
+        return { label: a.label, text: edited, onText: (e) => editAnnotation(a.objectKey, e && e.target ? e.target.value : '') };
+      });
+      const sentAnnotations = () => {
+        const now = this.state || {};
+        const edited = ((now.cardEdits || {})[row.key] || {}).annotations || {};
+        return (reply ? reply.annotations : [])
+          .map((a) => ({ objectKey: a.objectKey,
+            text: edited[a.objectKey] !== undefined ? String(edited[a.objectKey]) : a.text }))
+          .filter((a) => a.text.trim() !== '');
+      };
       const opts = (v ? v.options : []).map((o) => {
-        const on = s.picked === o.id;
+        const on = picked === o.id;
         return { title: o.label, how: o.id === 'repropose' ? REPROPOSE_GUIDE : '', on: on,
-          cls: 'opt' + (on ? ' is-on' : ''), pick: () => set({ picked: o.id }) };
+          cls: 'opt' + (on ? ' is-on' : ''), pick: () => putEdit({ pick: o.id }) };
       });
       const facts = (v ? v.facts : []).map((f) => {
         const paths = (f.files || []).map((file) => file.path).join('、');
         return { k: f.k, v: paths === '' ? f.v : f.v === '' ? paths : f.v + '：' + paths };
       });
       const submitAnswer = (optionId) => {
-        Promise.resolve(actions.answerCard(row.key, optionId))
-          .then(() => closeCard())
-          .catch((e) => closeCard({ err: msg(e) }));
+        set({ cardBusy: mapPut(s.cardBusy, row.key, true), cardErr: mapPut(s.cardErr, row.key, '') });
+        Promise.resolve(actions.answerCard(row.key, optionId, note.trim(), sentAnnotations()))
+          .then(() => {
+            const now = this.state || {};
+            set({ cardBusy: mapPut(now.cardBusy, row.key, false), cardEdits: mapPut(now.cardEdits, row.key, {}) });
+            closeCard();
+          })
+          .catch((e) => {
+            const now = this.state || {};
+            set({ cardBusy: mapPut(now.cardBusy, row.key, false),
+              cardErr: mapPut(now.cardErr, row.key, msg(e)) });
+          });
       };
       dc = Object.assign({}, base.dc, {
         show: true,
@@ -3659,7 +4034,7 @@ class Component extends DCLogic {
         title: row.label, line: v ? v.line : row.sub + recoveryLine, path: v ? v.path : '',
         pos: same.length > 1 ? (k + 1) + ' / ' + same.length : '',
         hasNext: decideRows.length > 1,
-        next: () => set({ dcAt: ((s.dcAt || 0) + 1) % decideRows.length, picked: null, facts: false }),
+        next: () => set({ dcAt: ((s.dcAt || 0) + 1) % decideRows.length, facts: false }),
         close: () => closeCard(),
         locate: nc, locateTip: '还没接通', locateCls: 'is-off', locateOff: 'true',
         isChoice: isChoice,
@@ -3672,11 +4047,21 @@ class Component extends DCLogic {
         ask: v === null ? nc : () => {
           set({ askCardKey: row.key, askRef: row.label,
             askSq: 'sq z8 ' + (row.level === 'decide' ? 's-decide' : 's-waiting'),
-            dcOpen: false, picked: null, facts: false, pane: 'chat', confirmCancel: false });
+            dcOpen: false, facts: false, pane: 'chat', confirmCancel: false });
         },
         askCls: v === null ? 'is-off' : '', askTip: v === null ? '还没接通' : '', askOff: v === null ? 'true' : 'false',
-        hasPrimary: v === null || v.primary !== null || isChoice,
-        primaryLabel: v ? (v.primary ? v.primary.label : '确定') : '标为已读',
+        /* M9/D42-1: the card's words and annotations, and the two ways a card
+           answers without an option (an explicit {kind:'other'}). A card whose
+           source needs an option never turns text-only. */
+        hasAnswerBox: hasAnswerBox, needsOption: needsOption,
+        note: note, onNote: (e) => putEdit({ note: e && e.target ? e.target.value : '' }),
+        notePh: reproposePicked ? '写一句哪里不对' : '可以写一句你的话（可选）',
+        noteLabel: reproposePicked || (hasAnswerBox && !isChoice)
+          ? '你的话（写一句才能确定）' : '你的话（可选；要说明就写在这里）',
+        annotations: annotations,
+        hasReplyFail: replyErr !== '', replyFail: replyErr,
+        hasPrimary: v === null || v.primary !== null || isChoice || hasAnswerBox,
+        primaryLabel: v === null ? '标为已读' : hasAnswerBox && !isChoice ? '确定' : v.primary ? v.primary.label : '确定',
         primaryGo: v === null
           ? () => {
             Promise.resolve(actions.markNoticeSeen(row.key))
@@ -3684,11 +4069,20 @@ class Component extends DCLogic {
               .catch((e) => closeCard({ err: msg(e) }));
           }
           : stepPrimary ? nc
-            : reproposePicked ? () => {}
-              : () => { if (s.picked !== null) submitAnswer(s.picked); },
-        primaryTip: reproposePicked ? REPROPOSE_GUIDE : stepPrimary ? '还没接通' : '',
-        primaryCls: 'btn btn-sm btn-primary' + (stepPrimary || needsPick || reproposePicked ? ' is-off' : ''),
-        primaryOff: stepPrimary || needsPick || reproposePicked ? 'true' : 'false',
+            : hasAnswerBox && !isChoice
+              ? () => { if (!cardBusy && wordsOnly) submitAnswer(null); }
+              : reproposePicked
+                ? () => { if (!cardBusy && note.trim() !== '') submitAnswer('repropose'); }
+                : () => { if (!cardBusy && (picked !== null || wordsOnly)) submitAnswer(picked); },
+        primaryTip: reproposePicked ? REPROPOSE_GUIDE
+          : hasAnswerBox && !isChoice && note.trim() === '' ? '写一句再点确定'
+            : stepPrimary ? '还没接通' : '',
+        primaryCls: 'btn btn-sm btn-primary' + (stepPrimary || (needsPick && !wordsOnly) || cardBusy
+          || (reproposePicked && note.trim() === '')
+          || (hasAnswerBox && !isChoice && !wordsOnly) ? ' is-off' : ''),
+        primaryOff: stepPrimary || (needsPick && !wordsOnly) || cardBusy
+          || (reproposePicked && note.trim() === '')
+          || (hasAnswerBox && !isChoice && !wordsOnly) ? 'true' : 'false',
         acts: (v ? v.acts : []).map((a) => ({ label: a.label, cls: 'btn btn-sm btn-line is-off',
           tip: '还没接通', off: 'true', go: nc })),
         allHref: 'Decide.dc.html' + (data.selectedGoalId ? '?goal=' + encodeURIComponent(data.selectedGoalId) : '')
@@ -3725,8 +4119,8 @@ class Component extends DCLogic {
     return Object.assign({}, base, {
       isG1: false, isG2: false, isG3: false,
       inbox: inbox, goals: goals, rail: rail, lvr: lvr, gb: gb, dc: dc,
-      log: log, track: track, plans: plans, older: older, fb: fb,
-      composerOpen: !dc.show && !s.confirmCancel,
+      log: log, pageLines: pageLines, track: track, plans: plans, older: older, fb: fb,
+      composerOpen: !dc.show && !s.confirmCancel && !s.copyOpen,
       hasAsk: !!s.askRef, askRef: s.askRef || '', askSq: s.askSq || 'sq z8 s-pending',
       clearAsk: () => set({ askRef: '', askSq: '', askCardKey: '' }),
       send: sendMain, sendCls: 'send' + (String(s.draft || '').trim() || (s.quotes || []).length ? '' : ' is-off'),
@@ -4138,7 +4532,14 @@ class Component extends DCLogic {
     const stopEnd = (kind, c) => ((this.state || {}).stops || []).map((x) => (x.kind === kind && !x.until ? Object.assign({}, x, { until: '10-04 14:' + pad(c) }) : x));
     const tmG = this.taskModel(goal);
     const gbBase = { sq: 'sq z10 s-' + this.goalSt(goal), word: this.goalWord(goal), done: tmG.root.sat + '/' + tmG.root.leaves,
-      whyTip: null, canPause: false, canResume: false, canCancel: false, canRequeue: false, confirm: false, pause: noop, resume: noop, askCancel: noop, keep: noop, cancel: noop, requeue: noop };
+      whyTip: null, canPause: false, canResume: false, canCancel: false, canRequeue: false, confirm: false,
+      hasLive: false, liveText: '', hasRetry: false, retryTip: '重试这次继续：原样再发一次', retryCls: 'btn btn-sm', retryOff: 'false', retry: noop, requeueOff: 'false',
+      resumeCls: 'btn btn-sm', resumeAria: 'false', cancelCls: 'btn btn-sm', cancelAria: 'false',
+      goCls: 'btn btn-sm btn-primary', goAria: 'false',
+      copy: { show: false, title: '', objective: '', autonomy: '', position: '', hasWait: false, waitFor: '', hasParallel: false, parallel: '',
+        hasReconfirm: false, reconfirm: '', available: false, checks: [], hint: '', unavailable: false, hasError: false, error: '',
+        off: 'false', confirmCls: '', close: noop, confirm: noop, key: noop, keepRef: noop },
+      pause: noop, resume: noop, askCancel: noop, keep: noop, cancel: noop, requeue: noop };
     const decG = decideOf(goal);
     gbBase.hasDecide = decG.length > 0; gbBase.decideN = decG.length; gbBase.openDecide = () => { if (decG[0]) openDec(decG[0].id); };
     let gb;
@@ -4477,7 +4878,7 @@ class Component extends DCLogic {
       plans: goal === 'g1' ? plans : [], sent: s.sent || '', sentQuotes: this.bqItems(s.sentQuotes, 'sent', s.bqOpen, set), cf2: cf2,
       log: (s.log || []).map((l, i) => [l, i]).filter((p) => (p[0].goal || 'g1') === goal).map((p) => {
         const l = p[0];
-        return { isSys: !!l.isSys, isUser: !!l.isUser, isAgent: !!l.isAgent, text: l.text, t: l.t, from: l.from || '', hasFrom: !!l.from,
+        return { isSys: !!l.isSys, isUser: !!l.isUser, isAgent: !!l.isAgent, tick: !!l.isSys, text: l.text, t: l.t, from: l.from || '', hasFrom: !!l.from,
           quotes: this.bqItems(l.quotes, 'L' + p[1], s.bqOpen, set) };
       }),
       /* file paths in the conversation open in the auxiliary area (those that exist in the repository) */
@@ -4489,7 +4890,8 @@ class Component extends DCLogic {
       },
 
       gb: gb, dc: dc,
-      composerOpen: !dc.show && !s.confirmCancel,
+      pageLines: [],
+      composerOpen: !dc.show && !s.confirmCancel && !s.copyOpen,
       composerLabel: '发给秘书', composerPh: '问秘书，或说出你要做的事。输入 # 引用任务或模块',
       hasAsk: !!s.askRef, askRef: s.askRef || '', askSq: s.askSq || 'sq z8 s-pending',
       clearAsk: () => set({ askRef: '', askSq: '' }),
@@ -7672,7 +8074,7 @@ class Component extends DCLogic {
     };
 
     /* ---- the record as the conversation's rows */
-    const B = { isDay: false, isSep: false, isSys: false, isMark: false, isBrief: false, isRun: false, isRow: false, isAsk: false, isAct: false, quotes: [],
+    const B = { isDay: false, isSep: false, isSys: false, isMark: false, isBrief: false, isRun: false, isRow: false, isAsk: false, isAct: false, tick: true, quotes: [],
       hasWake: false, wakeWord: '',
       noGo: true, goBtn: false, goLink: false, go: noop, goTip: '', noteOnly: true, noteGo: false, noteLink: false, noteA: '', noteB: '' };
     /* 「需要你决定」 of a line that waits for your decision (final fix 2026-10-07): the record's newest 需要你决定 mark and the held
@@ -7735,8 +8137,9 @@ class Component extends DCLogic {
     const recAct = (a) => {
       const S = a.stage === undefined ? 2 : a.stage;
       const words = ['已排队', '已送达', a.res === 'rejected' ? '被拒绝' : '已生效'];
-      const note = S === 0 ? '等下一个安全点送达' : S === 1 ? '已送达，等它处理'
-        : a.res === 'rejected' ? (a.why ? '原因：' + a.why : '被拒绝') : a.why || '已生效：它按你说的调整了接下来的做法';
+      const note = a.closed ? a.closed
+        : S === 0 ? '等下一个安全点送达' : S === 1 ? '已送达，等它处理'
+          : a.res === 'rejected' ? (a.why ? '原因：' + a.why : '被拒绝') : a.why || '已生效：它按你说的调整了接下来的做法';
       const msgFlags = [a.replyWord, a.wakeWord].filter(Boolean).join(' · ');
       return Object.assign({}, B, { isAct: true, text: a.text, t: a.time,
         track: words.slice(0, S + 1).map((w, j) => ({ word: w, sep: j > 0, cls: j === S ? 'on' : '' })),

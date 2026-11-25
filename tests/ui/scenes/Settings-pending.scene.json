@@ -1,14 +1,38 @@
 {
   "now": "2026-11-24T09:00:00+08:00",
   "routes": {
-    "bootstrap": {"workspaces":[{"scope":{"projectId":"scene-settings","workspaceId":"scene-main"},"name":"设置场景项目"},{"scope":{"projectId":"scene-settings","workspaceId":"scene-other"},"name":"设置场景项目 · 另一个工作区"}],"changesHead":"c0000000010"},
-    "goals/read": {"status":"ready","value":{}},
+    "bootstrap": {
+      "workspaces": [
+        {
+          "scope": {
+            "projectId": "scene-settings",
+            "workspaceId": "scene-main"
+          },
+          "name": "设置场景项目"
+        },
+        {
+          "scope": {
+            "projectId": "scene-settings",
+            "workspaceId": "scene-other"
+          },
+          "name": "设置场景项目 · 另一个工作区"
+        }
+      ],
+      "changesHead": "c0000000010"
+    },
+    "goals/read": {
+      "status": "ready",
+      "value": {}
+    },
     "settings/snapshot": {
       "status": "ready",
       "value": {
         "workspaces": [
           {
-            "scope": {"projectId": "scene-settings", "workspaceId": "scene-main"},
+            "scope": {
+              "projectId": "scene-settings",
+              "workspaceId": "scene-main"
+            },
             "name": "主工作区",
             "root": "/work/scene-settings",
             "writeAllowed": true,
@@ -39,16 +63,21 @@
                 "checkId": "scene-lint",
                 "withdrawnAt": "2026-11-19T10:20:00+08:00"
               }
-            ]
+            ],
+            "knowledgeLocalOnly": false
           },
           {
-            "scope": {"projectId": "scene-settings", "workspaceId": "scene-other"},
+            "scope": {
+              "projectId": "scene-settings",
+              "workspaceId": "scene-other"
+            },
             "name": "另一个工作区",
             "root": "/work/scene-settings-other",
             "writeAllowed": true,
             "commandsAllowed": false,
             "accessFixed": null,
-            "checks": []
+            "checks": [],
+            "knowledgeLocalOnly": false
           }
         ],
         "structuralApproval": {
@@ -62,12 +91,53 @@
           "saved": 30,
           "effective": 30,
           "default": 60
+        },
+        "automation": {
+          "schemaVersion": 1,
+          "autoReworkLimit": 3,
+          "resumeOnStartup": "ask"
+        },
+        "workRunTokenBudget": {
+          "saved": null,
+          "effective": 400000000,
+          "max": 600000000
+        },
+        "resourceCaps": {
+          "memoryMaxMiB": null,
+          "tasksMax": null,
+          "defaults": {
+            "memoryMaxMiB": 6144,
+            "tasksMax": 512
+          },
+          "effective": {
+            "memoryMaxMiB": 6144,
+            "tasksMax": 512
+          },
+          "machine": {
+            "status": "available"
+          }
         }
       }
     },
-    "settings/command-review/save": {"status":"rejected","code":"unavailable","reason":"the command review line was saved but the Host configuration was not confirmed; retry the same save"},
-    "settings/workspaces/access": {"status":"rejected","code":"unavailable","reason":"the workspace access was saved but the Host configuration was not confirmed; retry the same save"},
-    "settings/structural-approval/save": {"status":"rejected","code":"unavailable","reason":"the setting was saved but the Host configuration was not confirmed; retry the same save"},
-    "settings/checks/withdraw": {"status":"rejected","code":"unavailable","reason":"撤回已保存，Host 还没确认；重做同一个撤回"}
+    "settings/command-review/save": {
+      "status": "rejected",
+      "code": "unavailable",
+      "reason": "the command review line was saved but the Host configuration was not confirmed; retry the same save"
+    },
+    "settings/workspaces/access": {
+      "status": "rejected",
+      "code": "unavailable",
+      "reason": "the workspace access was saved but the Host configuration was not confirmed; retry the same save"
+    },
+    "settings/structural-approval/save": {
+      "status": "rejected",
+      "code": "unavailable",
+      "reason": "the setting was saved but the Host configuration was not confirmed; retry the same save"
+    },
+    "settings/checks/withdraw": {
+      "status": "rejected",
+      "code": "unavailable",
+      "reason": "撤回已保存，Host 还没确认；重做同一个撤回"
+    }
   }
 }

@@ -9,7 +9,7 @@ import { qualifyProjectPath, splitWorkspacePath } from '../contracts/workspace-p
 import type { ChecksConfirmationV1 } from '../contracts/initialization-adoption.js';
 import { createAutoRefresh, type RefreshRead, type RefreshSnapshot, type RefreshSources } from './refresh.js';
 import {
-  adaptNav, completionRevisionOf, goalHref, lineHref,
+  adaptNav, completionRevisionOf, goalHref, lineHref, lineNameOfSession, sessionRefAtEdge,
   type LineKey, type NavData, type NavLineDetail,
 } from './adapters/nav.js';
 import {
@@ -18,8 +18,12 @@ import {
 } from './adapters/member.js';
 import { adaptChain, type ChainData, type ChainSource } from './adapters/chain.js';
 import {
-  readSettings, saveSettings, SettingsNotEffectiveError, type SettingsData,
+  ACCESS_FIXED_TEXT, adaptSettings, readSettings, ruleExpiresAtOf, saveSettings, settingsRoleLimitsOf,
+  settingsRulesOf, settingsScopeKeyOf, SettingsNotEffectiveError,
+  type SettingsData, type SettingsGoalName, type SettingsRoleLimits, type SettingsRuleAnswer,
+  type SettingsRules, type SettingsRuleView, type SettingsSnapshot, type SettingsSnapshotData,
 } from './adapters/settings.js';
+import type { RoleLineDutyV1 } from '../contracts/role-lines.js';
 import {
   adaptDone, type DoneData, type DoneDeliveryRead, type DonePolicyRead, type DoneRoundRead, type DoneRunActivity, type DoneSource,
 } from './adapters/done.js';
@@ -30,9 +34,10 @@ import {
   runningMinutesText, type RunningCommandItemV1,
 } from './adapters/run-steps.js';
 import {
-  adaptMain, failedRunStepsOf, lvRecordOf, mainRequestFeedbackOf, mainRunStepsOf, requestRootKey,
-  type MainData, type MainLineRecord, type MainPageCursorV1, type MainPageV1, type MainRequestFeedback, type MainRunStepStop,
-  type MainRunSteps, type MainTrackRow,
+  adaptMain, copyDraftOf, copyReportOf, failedRunStepsOf, goalControlReportOf, lvRecordOf,
+  mainRequestFeedbackOf, mainRunStepsOf, requestRootKey,
+  type GoalControlOutcomeReadV1, type GoalControlReportLine, type MainCopyDraft, type MainData, type MainLineRecord, type MainPageCursorV1, type MainPageV1,
+  type MainRequestFeedback, type MainRunStepStop, type MainRunSteps, type MainTrackRow,
 } from './adapters/main.js';
 import {
   adaptPlan, adoptedPlanDoc, candidateReadOf, ideasRoundOf, versionRowsOf,
@@ -48,8 +53,8 @@ import {
 } from './adapters/aux-panel.js';
 import { adaptGoals, conflictSelectionOf, goalOrderOf, type GoalsData } from './adapters/goals.js';
 import {
-  adaptDecide, budgetTokensOf, draftOf, pinsFor, subjectGoalId, taskTripleOf,
-  type DecideCard, type DecideData, type DecideRow, type DecideStepKey, type KnowledgeNoticeRead,
+  adaptDecide, budgetTokensOf, draftOf, pinsFor, reworkRefusalTextOf, subjectGoalId, taskTripleOf,
+  type DecideCard, type DecideCheckRow, type DecideData, type DecideRow, type DecideStepKey, type KnowledgeNoticeRead,
 } from './adapters/decide.js';
 import {
   adaptArchOverview, type ArchCatalogRead, type ArchNoteRead, type ArchObservedRead, type ArchOperationRow,
@@ -69,7 +74,7 @@ import type { QueryRunRef } from '../contracts/query-job.js';
 import {
   RUN_STEPS_PAGE_LIMIT, type RunStepsReadV1, type RunStepV1,
 } from '../contracts/run-steps.js';
-import type { GoalCopyDraftResultV1 } from '../contracts/goal-card.js';
+import type { GoalCopyConfirmResultV1, GoalCopyDraftResultV1 } from '../contracts/goal-card.js';
 import type { MessageBody, SessionMessageReadV1 } from '../contracts/mailbox.js';
 import type { TaskExecutionRecord } from '../contracts/execution-read.js';
 import type { ArtifactRecord } from '../contracts/artifact.js';
@@ -105,7 +110,17 @@ let latestNavScope: CoreScope | null = null;
 let latestSelectedGoalId: string | null = null;
 /** §2.7: the one line the four line actions read, set by `publish` from a
  * successful Member or Main read only (READS-1); a failed reread keeps none. */
-let latestLine: { scope: CoreScope; line: MemberLine; write: MemberWriteBasis | null } | null = null;
+let latestLine: {
+  scope: CoreScope; line: MemberLine; write: MemberWriteBasis | null;
+  /** K3 L7: the line's task-row review record, from the same Main read. */
+  review: MainLineRecord['review'];
+} | null = null;
+/** 5.5-10: this page's last 继续, kept with its own request id and the two pins it
+ * used, so 重试恢复 resends exactly that write. Cleared on a Goal pick. */
+let lastResume: {
+  goalId: string; scope: CoreScope; goalRef: { aggregateType: 'Goal'; projectId: string; goalId: string };
+  requestId: string; expected: Array<{ ref: unknown; revision: number }>;
+} | null = null;
 /** K2: the shown delivery's write facts, set by `publish` from a successful Done
  * read only; a failed reread keeps the previous ones like every other write seam. */
 let latestDelivery: DoneData['deliveryWrite'] = null;
@@ -182,6 +197,9 @@ export type BoardReadDemand = TaskMapReadDemand & {
    * withdraw; `detailTaskId` is in `TaskMapReadDemand`. */
   auxTab?: AuxTab | null;
   auxPath?: string | null;
+  /** Which Goal the right panel's two maps show; `null`/undefined means
+   * `nav.selectedGoalId`. */
+  mapGoal?: string | null;
   /** ArchOverview's page state: the search needle, the work-only switch, the
    * directory view and the selected node's anchor. Explicit values replace the
    * old demand, so closing one passes `''`, `false` or `null`. */
@@ -191,6 +209,11 @@ export type BoardReadDemand = TaskMapReadDemand & {
   noteAnchor?: NoteAnchorV1 | null;
   /** Done: expanding one requirement's report reads its `materials/open` once. */
   doneReport?: string | null;
+  /** Main M2: the expanded answered card whose `materials/open` body is read once.
+   * `null` withdraws it; the result is not cached. */
+  mainCardAnswer?: string | null;
+  /** Main M4: the expanded check notice whose `settings/snapshot` is read once. */
+  mainNoticeOpen?: string | null;
   /** 只给 Main：本页自己的命令句柄，键是 `projectId/workspaceId|<行键>`。 */
   commandRuns?: Map<string, { scope: CoreScope; commandId: string } | 'gone'>;
 };
@@ -461,8 +484,11 @@ export type BoardActions = {
   notConnected: (event: { preventDefault(): void; stopPropagation(): void }) => void;
   notConnectedAttrs: () => ReturnType<typeof notConnectedAttrs>;
   /** §2.8: one `goals/control` write with the Goal and GoalPhase pins the page
-   * last showed, then the same refresh loop rereads the chrome. */
-  controlGoal: (control: 'pause' | 'resume' | 'cancel') => Promise<void>;
+   * last showed, then the same refresh loop rereads the chrome. Returns the
+   * receipt's system lines (5.5-2/5.6-6). */
+  controlGoal: (control: 'pause' | 'resume' | 'cancel') => Promise<GoalControlReportLine[]>;
+  /** 5.5-10: resend this page's last 继续 with its own request id and pins. */
+  retryResume: () => Promise<void>;
   /** K3: one `goals/accept-delivery` with the shown delivery's Goal and GoalPhase pins. */
   ackDelivery: () => Promise<void>;
   /** K4: one `queries/ask` to the delivery's secretary; returns the Member-page
@@ -476,6 +502,10 @@ export type BoardActions = {
   /** §2.7 A10: `goals/copy-draft` then `goals/copy-confirm`, both from the
    * draft's own source revision, then the same refresh loop rereads. */
   copyGoal: (goalId: string) => Promise<void>;
+  /** D49-13: the first step of the two-step requeue; the dialog reads the answer. */
+  readCopyDraft: (goalId: string) => Promise<MainCopyDraft>;
+  /** D49-13: the confirmation, with the revision the first step read. */
+  confirmCopy: (draft: MainCopyDraft, selected: readonly SessionMessageRef[]) => Promise<GoalControlReportLine[]>;
   /** §2.4: one `decisions/answer` write for the shown conflict card, then a
    * reread; `revision_conflict` is shown, never retried with fresh revisions. */
   answerConflict: (cardKey: string, optionId: 'wait' | 'order' | 'parallel') => Promise<void>;
@@ -488,7 +518,8 @@ export type BoardActions = {
   ) => Promise<{ root: string; input: string; answer: string | null } | null>;
   /** D18/D30: one `decisions/answer` with the card's own source and pins. `text` is
    * the repropose reason; every other card sends `''`. */
-  answerCard: (cardKey: string, optionId: string, text?: string) => Promise<void>;
+  answerCard: (cardKey: string, optionId: string | null, text?: string,
+    annotations?: readonly { objectKey: string; text: string }[]) => Promise<void>;
   /** 7D2 X9: one `knowledge/recover` for the shown knowledge notice's recovery
    * item (the notice id is the row's `project_notice:` suffix), then a reread. */
   recoverKnowledge: (itemKey: string, itemNo: number) => Promise<void>;
@@ -502,9 +533,12 @@ export type BoardActions = {
   /** 121-74: commit the shown workspace's architecture and note files, from the same last read. */
   commitKnowledge: (projectId: string, workspaceId: string, message: string | null) => Promise<void>;
   /** D22/D24/D34/D35: `tasks/requeue`, afterRun and pins from the card itself. */
-  requeueCard: (cardKey: string, input: { reason: string; budget: string | null }) => Promise<void>;
-  /** D26/D39: `verification/reverify` with the Task's head round and its one pin. */
-  reverifyCard: (cardKey: string, note: string) => Promise<void>;
+  requeueCard: (cardKey: string, input: { reason: string; budget: string | null; note?: string | null }) => Promise<void>;
+  /** D26/D39: `verification/reverify` with the Task's head round and its one pin;
+   * a null note sends no `note` key at all. */
+  reverifyCard: (cardKey: string, note: string | null) => Promise<void>;
+  /** Y3: withdraw every check the card names, then reverify without a note. */
+  withdrawAndReverify: (cardKey: string) => Promise<void>;
   /** D25/D40: `executions/resolve-unknown` with the card's Run. */
   attestCard: (cardKey: string, reason: string) => Promise<void>;
   /** D20/D23/D27: `plans/propose` + `plans/apply`, changing one Task's disposition. */
@@ -513,6 +547,8 @@ export type BoardActions = {
   addRepairTask: (cardKey: string, input: { name: string; checkIds: string[] }) => Promise<void>;
   /** D28: `decisions/notices/seen` with the row's own page token. */
   markNoticeSeen: (itemKey: string) => Promise<void>;
+  /** M4/121-138: one `settings/checks/withdraw` in the named workspace, then a reread. */
+  withdrawCheck: (scope: { projectId: string; workspaceId: string }, checkId: string) => Promise<void>;
   /** D31/D43/D44: the card's question; returns the user's text, this round's root
    * key and answer. */
   askCard: (cardKey: string, text: string) => Promise<{ root: string; input: string; answer: string | null } | null>;
@@ -534,6 +570,10 @@ export type BoardActions = {
     => Promise<{ root: string; input: string; answer: string | null } | null>;
   /** E3 Member §2.12: one published control of the line in the centre. */
   controlLine: (kind: 'pause' | 'resume' | 'cancel') => Promise<void>;
+  /** K3 L7: "我来处理" holds this line's unknown-call review (the page's last task read). */
+  holdReview: () => Promise<void>;
+  /** K3 L7: release that hold; the line continues by the original Task and Run. */
+  releaseReviewHold: () => Promise<void>;
   /** E3 Member §2.12: one `tasks/requeue` from the facts of the last successful read. */
   requeueLine: () => Promise<void>;
   /** E3 Chain §2.7: one published control of the line whose chain is shown. */
@@ -558,7 +598,27 @@ export type BoardActions = {
    * confirmed” answer, a page-facing data flag (the page never inspects the
    * error). */
   saveSettings: (route: string, input: unknown) => Promise<{ notEffective: boolean }>;
+  /** 7D2 D60-5: one `projects/role-limits/set`, carrying only the changed cells.
+   *  The page keeps an edit open across a conflict reread; the next save takes the
+   *  reread's revision. */
+  saveRoleLimits: (change: {
+    running?: Partial<Record<RoleLineDutyV1, number>>;
+    open?: Partial<Record<RoleLineDutyV1, number>>;
+  }) => Promise<void>;
+  /** 7D2 D62-2: one `autonomy-rules/update`; `date` null clears the expiry. */
+  changeRuleExpiry: (ruleId: string, date: string | null) => Promise<void>;
+  /** 7D2 D62-2: one `autonomy-rules/revoke` for a row the page draws. */
+  revokeRule: (ruleId: string) => Promise<void>;
+  /** A block's own 重试: reread the whole page, so one failed secondary read
+   *  does not need its own route read. */
+  rereadSettings: () => void;
 };
+
+/* One write per line at a time: the line's four controls and its requeue share
+   this key, so a second click while the first is in flight gets that promise
+   instead of a second `controls/submit`/`tasks/requeue`. The board also greys
+   the four buttons while the write is in flight; both read the same latch. */
+const lineWrites = new Map<string, Promise<void>>();
 
 /**
  * Browser entry for one frozen board page. The Host serves the original
@@ -652,8 +712,9 @@ export async function bootBoardPage(): Promise<void> {
   /* Ruling 3 "默认页": opening the board reads the DAG's today track and today
    * hour calendar, not only the six base reads. */
   const demand: BoardReadDemand = { track: true, win: 'today', commandRuns };
-  /* Main B §2.1: the panel opens on 任务图, so its first read is `auxTab:'task'`. */
-  if (boardName === 'Main') demand.auxTab = 'task';
+  /* Main B §2.1: the panel opens on 任务图, so its first read is `auxTab:'task'`;
+     Decide's panel opens on 任务图 too. */
+  if (boardName === 'Main' || boardName === 'Decide') demand.auxTab = 'task';
   if ((boardName === 'Member' || boardName === 'Chain')
     && lineProject !== null && lineProject !== '' && lineSession !== null && lineSession !== '') {
     demand.lineKey = { projectId: lineProject, sessionId: lineSession };
@@ -680,6 +741,21 @@ export async function bootBoardPage(): Promise<void> {
    * both in place from its own answer. */
   let latestSettings: SettingsData | null = null;
   let settingsDataVersion = 0;
+  /** 7D2 K: the three project writes share one path — commit the answer, reread
+   *  when the row moved or vanished so the next click carries the reread's
+   *  versions, and reread after every commit. */
+  const projectWrite = async (route: string, send: () => Promise<RouteReply>): Promise<void> => {
+    try {
+      committedRouteValue(await send(), route);
+    } catch (error) {
+      if (error instanceof RouteReadError
+        && (error.code === 'revision_conflict' || error.code === 'not_found')) {
+        await refresh.reread();
+      }
+      throw new Error(projectWriteTextOf(route, error));
+    }
+    await refresh.reread();
+  };
   const decideRowOf = (key: string): DecideRow | null => {
     const data = latestDecide;
     if (data === null) return null;
@@ -687,6 +763,18 @@ export async function bootBoardPage(): Promise<void> {
       .find((row) => row.key === key) ?? null;
   };
   const decideCardOf = (key: string): DecisionCardV1 | null => decideRowOf(key)?.card ?? null;
+  /** Y1/Y6: the card's Task row from the same last Decide read, for its `rework`
+   * history (the refusal sentence names the earlier requeue). */
+  const decideTaskRowOf = (card: DecisionCardV1 | null): Record<string, unknown> | null => {
+    if (card === null) return null;
+    const triple = taskTripleOf(card);
+    if (triple === null) return null;
+    const graph = latestDecide?.plans[triple.goalId];
+    const tasks = asRecord(graph).tasks;
+    if (!Array.isArray(tasks)) return null;
+    return tasks.map((entry) => asRecord(entry))
+      .find((entry) => asText(asRecord(entry.ref).taskId) === triple.taskId) ?? null;
+  };
   /** One ArchOverview row's own range; a row that is no longer in the last read never becomes a
    * guessed scope. */
   const archRowScope = (row: { projectId: string; workspaceId: string } | null): CoreScope => {
@@ -723,7 +811,7 @@ export async function bootBoardPage(): Promise<void> {
       });
       committedRouteValue(apply, 'plans/apply');
     } catch (error) {
-      throw new Error(writeTextOf(error));
+      throw new Error(planWriteTextOf(error));
     }
     await refresh.reread();
   }
@@ -787,6 +875,50 @@ export async function bootBoardPage(): Promise<void> {
     return { root: requestRootKey((readRoot ?? readInput) as QueryJobRef), input: text, answer };
   }
 
+  /** Y4: the one `verification/reverify` write, shared by the card action and
+   * the withdraw-then-reverify action. A null/blank note sends no `note` key. */
+  async function reverifyWrite(cardKey: string, note: string | null): Promise<void> {
+    const row = decideRowOf(cardKey);
+    const card = row?.card ?? null;
+    const view = row?.view ?? null;
+    const scope = latestDecideScope;
+    if (card === null || view === null || scope === null || view.roundRef === null) {
+      throw new Error(reworkWriteTextOf(new Error('this card has no head round to reverify')));
+    }
+    const clean = note === null ? null : note.trim() === '' ? null : note;
+    let value: unknown;
+    try {
+      const reply = await client.write('verification/reverify', scope, {
+        input: { predecessorRoundRef: view.roundRef, ...(clean === null ? {} : { note: clean }) },
+        meta: { requestId: crypto.randomUUID(), expected: [{ ref: view.roundRef, revision: view.roundRevision ?? 0 }] },
+      });
+      value = committedRouteValue<unknown>(reply, 'verification/reverify');
+    } catch (error) {
+      throw new Error(reworkWriteTextOf(error));
+    }
+    if (asText(asRecord(value).kind) === 'refused') {
+      throw new Error(reworkRefusalTextOf('reverify', asRecord(value).refusal,
+        decideTaskRowOf(card)?.rework ?? null));
+    }
+    await refresh.reread();
+  }
+
+  /** The one unknown-call-review write; `input` adds the route's own fields. */
+  async function writeReview(route: string, input: Record<string, unknown>): Promise<void> {
+    const line = latestLine;
+    if (line === null || line.review === null) throw new Error(reviewWriteTextOf(new Error('no review')));
+    try {
+      committedRouteValue(await client.write(route, line.scope, {
+        input: { reviewRef: line.review.ref, ...input },
+        meta: { requestId: crypto.randomUUID(), expected: [{ ref: line.review.ref, revision: line.review.revision }] },
+      }), route);
+    } catch (error) {
+      logReadError(error);
+      throw new Error(reviewWriteTextOf(error));
+    }
+    await refresh.reread();
+  }
+
   const actions: BoardActions = {
     readMore(next: BoardReadDemand): void {
       /* Explicit fields replace the old demand, including `false`/`null`, so a
@@ -829,6 +961,7 @@ export async function bootBoardPage(): Promise<void> {
        * links move with the pick at once; a failed reread falls back to the
        * URL Goal through `defaults`. */
       goalId = next === '' ? null : next;
+      if (lastResume !== null && lastResume.goalId !== goalId) lastResume = null;
       demand.lineKey = null;
       demand.archive = false;
       /* §2.3: a Goal pick goes back to the conversation's first page. */
@@ -846,25 +979,66 @@ export async function bootBoardPage(): Promise<void> {
     },
     notConnected: guardNotConnected,
     notConnectedAttrs: () => notConnectedAttrs(),
-    async controlGoal(control: 'pause' | 'resume' | 'cancel'): Promise<void> {
+    async controlGoal(control: 'pause' | 'resume' | 'cancel'): Promise<GoalControlReportLine[]> {
       const data = latest;
       if (data === null || data.scope === null || data.selectedGoalId === null
         || data.selectedGoalRevision === null || data.phaseRevision === null) {
         throw new Error('goals/control needs the shown Goal and its GoalPhase revision');
       }
-      const goalRef = { aggregateType: 'Goal' as const, projectId: data.scope.projectId, goalId: data.selectedGoalId };
-      const phaseRef = { aggregateType: 'GoalPhase' as const, projectId: data.scope.projectId, goalId: data.selectedGoalId };
-      const reply = await client.write('goals/control', data.scope, {
-        input: { goalRef, control, reason: null },
-        meta: {
-          requestId: crypto.randomUUID(),
-          expected: [
-            { ref: goalRef, revision: data.selectedGoalRevision },
-            { ref: phaseRef, revision: data.phaseRevision },
-          ],
-        },
-      });
-      committedRouteValue(reply, 'goals/control');
+      const scope = data.scope;
+      const goalRef = { aggregateType: 'Goal' as const, projectId: scope.projectId, goalId: data.selectedGoalId };
+      const phaseRef = { aggregateType: 'GoalPhase' as const, projectId: scope.projectId, goalId: data.selectedGoalId };
+      const requestId = crypto.randomUUID();
+      const expected = [
+        { ref: goalRef, revision: data.selectedGoalRevision },
+        { ref: phaseRef, revision: data.phaseRevision },
+      ];
+      let outcome: GoalControlOutcomeReadV1;
+      try {
+        outcome = committedRouteValue<GoalControlOutcomeReadV1>(await client.write('goals/control', scope, {
+          input: { goalRef, control, reason: null },
+          meta: { requestId, expected },
+        }), 'goals/control');
+      } catch (error) {
+        logReadError(error);
+        /* 5.5-11: a conflict rereads before the page offers the same click again. */
+        if (error instanceof RouteReadError && error.code === 'revision_conflict') await refresh.reread();
+        throw new Error(goalControlTextOf(error));
+      }
+      /* 5.5-2: only a resume's receipt carries an intentRef per Run; it is the
+       * one control whose "已进入" the Host can answer. */
+      const entered = control === 'resume'
+        ? await readEnteredResumes(client, scope, outcome)
+        : new Map<string, ControlIntentSnapshotV1>();
+      if (control === 'resume') lastResume = { goalId: goalRef.goalId, scope, goalRef, requestId, expected };
+      const fanOut = outcome.fanOut;
+      if ((fanOut.problem ?? '') !== '') logReadError(new Error(fanOut.problem!));
+      /* 5.5-2/5.6-6: each skipped/failed/refused reason is raw and stays in the log. */
+      for (const run of fanOut.runs) {
+        if ((run.outcome === 'skipped' || run.outcome === 'failed') && (run.reason ?? '') !== '') {
+          logReadError(new Error(run.reason!));
+        }
+      }
+      for (const continuation of fanOut.continuations ?? []) {
+        if ((continuation.outcome === 'refused' || continuation.outcome === 'failed')
+          && (continuation.reason ?? '') !== '') logReadError(new Error(continuation.reason!));
+      }
+      const lines = goalControlReportOf(outcome, control, data.tasks, entered);
+      await refresh.reread();
+      return lines;
+    },
+    async retryResume(): Promise<void> {
+      const saved = lastResume;
+      if (saved === null) return;
+      try {
+        committedRouteValue(await client.write('goals/control', saved.scope, {
+          input: { goalRef: saved.goalRef, control: 'resume', reason: null },
+          meta: { requestId: saved.requestId, expected: saved.expected },
+        }), 'goals/control');
+      } catch (error) {
+        logReadError(error);
+        throw new Error(goalControlTextOf(error));
+      }
       await refresh.reread();
     },
     async ackDelivery(): Promise<void> {
@@ -988,6 +1162,64 @@ export async function bootBoardPage(): Promise<void> {
       }
       await refresh.reread();
     },
+
+    async readCopyDraft(goalId: string): Promise<MainCopyDraft> {
+      const scope = latestNavScope;
+      const nav = latest;
+      if (scope === null || nav === null) throw new Error(writeTextOf(new Error('no navigation scope')));
+      const goalRef = { aggregateType: 'Goal' as const, projectId: scope.projectId, goalId };
+      let draft: GoalCopyDraftResultV1;
+      try {
+        draft = readyRouteValue<GoalCopyDraftResultV1>(
+          await client.post('goals/copy-draft', scope, { goalRef }), 'goals/copy-draft');
+      } catch (error) {
+        logReadError(error);
+        throw new Error(writeTextOf(error));
+      }
+      /* D49-13: each candidate's body is read once; a failed one is that row's
+       * fixed sentence, never a failed dialog. */
+      const bodies: Record<string, string> = {};
+      if (draft.interventions.available) {
+        for (const candidate of draft.interventions.candidates) {
+          const key = messageBodyKey(candidate.messageRef, 'message');
+          try {
+            bodies[key] = readyRouteValue<MessageBody>(
+              await client.post('messages/body', scope, { messageRef: candidate.messageRef, part: 'message' }),
+              'messages/body').text;
+          } catch (error) {
+            logReadError(error);
+            bodies[key] = '这条消息暂时读不到';
+          }
+        }
+      }
+      return copyDraftOf(draft, bodies, nav);
+    },
+    async confirmCopy(draft: MainCopyDraft, selected: readonly SessionMessageRef[]): Promise<GoalControlReportLine[]> {
+      const scope = latestNavScope;
+      if (scope === null) throw new Error(writeTextOf(new Error('no navigation scope')));
+      const sourceGoalRef = { aggregateType: 'Goal' as const, projectId: scope.projectId, goalId: draft.goalId };
+      let result: GoalCopyConfirmResultV1;
+      try {
+        result = committedRouteValue<GoalCopyConfirmResultV1>(
+          await client.post('goals/copy-confirm', scope, {
+            commandId: crypto.randomUUID(),
+            sourceGoalRef,
+            expectedSourceRevision: draft.sourceRevision,
+            selectedInterventions: selected,
+          }), 'goals/copy-confirm');
+      } catch (error) {
+        logReadError(error);
+        /* A conflict is the Goal's own revision moving; reread the draft's
+         * source and ask for the click again instead of reusing the old one. */
+        if (error instanceof RouteReadError && error.code === 'revision_conflict') {
+          await refresh.reread();
+          throw Object.assign(new Error('原目标刚变过，已重新读取，请再确认一次。'), { rereadCopy: true });
+        }
+        throw new Error(writeTextOf(error));
+      }
+      await refresh.reread();
+      return copyReportOf(result);
+    },
     async confirmGoalDraft(round: QueryJobRef, index: number): Promise<void> {
       const scope = latestNavScope;
       if (scope === null) throw new Error(writeTextOf(new Error('no navigation scope')));
@@ -1045,7 +1277,7 @@ export async function bootBoardPage(): Promise<void> {
         if (error instanceof RouteReadError && error.code === 'revision_conflict') {
           await refresh.reread();
         }
-        const shown = new Error(writeTextOf(error));
+        const shown = new Error(planWriteTextOf(error));
         throw error instanceof RouteReadError && error.code === 'busy' ? Object.assign(shown, { keep: true }) : shown;
       }
       await refresh.reread();
@@ -1173,29 +1405,32 @@ export async function bootBoardPage(): Promise<void> {
       }
       return { root: requestRootKey(requestRoot as QueryJobRef), input: text, answer };
     },
-    async answerCard(cardKey: string, optionId: string, text = ''): Promise<void> {
+    async answerCard(cardKey: string, optionId: string | null, text = '',
+      annotations: readonly { objectKey: string; text: string }[] = []): Promise<void> {
       const card = decideCardOf(cardKey);
       const scope = latestDecideScope;
-      if (card === null || scope === null) throw new Error(writeTextOf(new Error('the shown card is gone')));
+      if (card === null || scope === null) throw new Error(cardWriteTextOf(new Error('the shown card is gone')));
       const pins = Array.isArray(card.source.pins) ? card.source.pins : [];
       let selection: unknown;
-      if (card.source.kind === 'goal_conflict') {
+      if (card.source.kind === 'goal_conflict' && optionId !== null && optionId !== 'repropose') {
         const ids = pinsFor(card, 'Goal').map((pin) => asText(asRecord(pin.ref).goalId)).filter((id) => id !== '');
         const goals = (latestDecide?.nav.goals ?? []).map((goal) => ({
           ref: { aggregateType: 'Goal' as const, projectId: scope.projectId, goalId: goal.goalId }, order: goal.order,
         }));
         ids.sort((a, b) => (goals.find((goal) => goal.ref.goalId === a)?.order ?? 0)
           - (goals.find((goal) => goal.ref.goalId === b)?.order ?? 0));
-        if (ids.length < 2) throw new Error(writeTextOf(new Error('the conflict Goals are not in the list')));
+        if (ids.length < 2) throw new Error(cardWriteTextOf(new Error('the conflict Goals are not in the list')));
         selection = conflictSelectionOf(optionId,
           { ref: { aggregateType: 'Goal' as const, projectId: scope.projectId, goalId: ids[0]! } },
           { ref: { aggregateType: 'Goal' as const, projectId: scope.projectId, goalId: ids[1]! } }, goals);
+      } else if (optionId === null) {
+        selection = { kind: 'other' as const };
       } else {
-        selection = { kind: 'option' as const, optionId };
+        selection = optionId === null ? { kind: 'other' as const } : { kind: 'option' as const, optionId };
       }
       try {
         const reply = await client.write('decisions/answer', scope, {
-          input: { source: card.source, selection, text, annotations: [] },
+          input: { source: card.source, selection, text, annotations: [...annotations] },
           meta: { requestId: crypto.randomUUID(), expected: pins },
         });
         const receipt = reply.status === 'ready' ? asRecord(asRecord(reply.value).answer) : null;
@@ -1203,7 +1438,7 @@ export async function bootBoardPage(): Promise<void> {
           throw new RouteReadError('decisions/answer', reply.code || reply.status || 'no status', reply.reason ?? '');
         }
       } catch (error) {
-        throw new Error(writeTextOf(error));
+        throw new Error(cardWriteTextOf(error));
       }
       await refresh.reread();
     },
@@ -1286,7 +1521,8 @@ export async function bootBoardPage(): Promise<void> {
       }
       await refresh.reread();
     },
-    async requeueCard(cardKey: string, input: { reason: string; budget: string | null }): Promise<void> {
+    async requeueCard(cardKey: string,
+      input: { reason: string; budget: string | null; note?: string | null }): Promise<void> {
       const card = decideCardOf(cardKey);
       const scope = latestDecideScope;
       /* D6: the Goal-level interruption card's 继续 starts the Goal's driver
@@ -1295,7 +1531,7 @@ export async function bootBoardPage(): Promise<void> {
         && asText(asRecord(card.source).key).includes('interrupted_pending_resume');
       if (interrupted && card !== null && scope !== null) {
         const goalId = asText(asRecord(pinsFor(card, 'Goal')[0]?.ref).goalId);
-        if (goalId === '') throw new Error(writeTextOf(new Error('this interruption names no Goal')));
+        if (goalId === '') throw new Error(cardWriteTextOf(new Error('this interruption names no Goal')));
         try {
           const reply = await client.post('workflow/driver-start', scope, {
             advance: { schemaVersion: 1, goalRef: { aggregateType: 'Goal' as const, projectId: scope.projectId, goalId },
@@ -1304,60 +1540,71 @@ export async function bootBoardPage(): Promise<void> {
           });
           readyRouteValue(reply, 'workflow/driver-start');
         } catch (error) {
-          throw new Error(writeTextOf(error));
+          throw new Error(reworkWriteTextOf(error));
         }
         await refresh.reread();
         return;
       }
       const triple = card === null ? null : taskTripleOf(card);
       if (card === null || scope === null || triple === null || card.runRef === null) {
-        throw new Error(writeTextOf(new Error('this card has no Task and Run to requeue')));
+        throw new Error(reworkWriteTextOf(new Error('this card has no Task and Run to requeue')));
       }
       const expected = [...pinsFor(card, 'Goal'), ...pinsFor(card, 'Run')];
       const budget = input.budget === null ? null : budgetTokensOf(input.budget);
       if (input.budget !== null && budget === null) {
-        throw new Error(writeTextOf(new RouteReadError('tasks/requeue', 'invalid', 'bad budget')));
+        throw new Error(reworkWriteTextOf(new RouteReadError('tasks/requeue', 'invalid', 'bad budget')));
       }
+      const note = typeof input.note === 'string' && input.note.trim() !== '' ? input.note : null;
+      let value: unknown;
       try {
         const reply = await client.write('tasks/requeue', scope, {
           input: { taskRef: triple, afterRunRef: card.runRef, reason: input.reason,
-            ...(budget === null ? {} : { budget }) },
+            ...(budget === null ? {} : { budget }), ...(note === null ? {} : { note }) },
           meta: { requestId: crypto.randomUUID(), expected },
         });
         if (reply.status === 'needs_decision' || asText(asRecord(reply.value).status) === 'needs_decision') {
           await refresh.reread();
           return;
         }
-        const value = committedRouteValue<unknown>(reply, 'tasks/requeue');
-        if (asText(asRecord(value).kind) === 'refused') {
-          throw new RouteReadError('tasks/requeue', 'refused', asText(asRecord(value).refusal));
-        }
+        value = committedRouteValue<unknown>(reply, 'tasks/requeue');
       } catch (error) {
-        throw new Error(writeTextOf(error));
+        throw new Error(reworkWriteTextOf(error));
+      }
+      if (asText(asRecord(value).kind) === 'refused') {
+        throw new Error(reworkRefusalTextOf('requeue', asRecord(value).refusal, decideTaskRowOf(card)?.rework ?? null));
       }
       await refresh.reread();
     },
-    async reverifyCard(cardKey: string, note: string): Promise<void> {
+    async reverifyCard(cardKey: string, note: string | null): Promise<void> {
+      await reverifyWrite(cardKey, note);
+    },
+    async withdrawAndReverify(cardKey: string): Promise<void> {
       const row = decideRowOf(cardKey);
       const card = row?.card ?? null;
       const view = row?.view ?? null;
       const scope = latestDecideScope;
       if (card === null || view === null || scope === null || view.roundRef === null) {
-        throw new Error(writeTextOf(new Error('this card has no head round to reverify')));
+        throw new Error(reworkWriteTextOf(new Error('this card has no head round to reverify')));
       }
-      try {
-        const reply = await client.write('verification/reverify', scope, {
-          input: { predecessorRoundRef: view.roundRef, note },
-          meta: { requestId: crypto.randomUUID(), expected: [{ ref: view.roundRef, revision: view.roundRevision ?? 0 }] },
-        });
-        const value = committedRouteValue<unknown>(reply, 'verification/reverify');
-        if (asText(asRecord(value).kind) === 'refused') {
-          throw new RouteReadError('verification/reverify', 'refused', asText(asRecord(value).refusal));
+      for (const check of view.withdraw) {
+        try {
+          await saveSettings(client, 'checks/withdraw', { scope, checkId: check.checkId }, scope.projectId);
+        } catch (error) {
+          /* E3 :498: a check already gone from the settings does not stop the
+             rest; the person replaced the whole list in between. */
+          if (error instanceof RouteReadError && error.code === 'not_found') continue;
+          if (error instanceof SettingsNotEffectiveError) {
+            throw new Error('撤回已保存，Host 还没确认，所以没有重新检查。再点一次“撤回并重新检查”。');
+          }
+          const text = settingsWriteTextOf('checks/withdraw', error);
+          if (text === null) logReadError(error);
+          throw new Error(text ?? '撤回没有成功，可以重试。');
         }
-      } catch (error) {
-        throw new Error(writeTextOf(error));
       }
-      await refresh.reread();
+      /* The settings route carries no requestId; a repeat answers `ready`, so a
+         second click is safe. Withdrawing changed the configuration, so the
+         reverify carries no note. */
+      await reverifyWrite(cardKey, null);
     },
     async attestCard(cardKey: string, reason: string): Promise<void> {
       const card = decideCardOf(cardKey);
@@ -1372,7 +1619,7 @@ export async function bootBoardPage(): Promise<void> {
         });
         committedRouteValue(reply, 'executions/resolve-unknown');
       } catch (error) {
-        throw new Error(writeTextOf(error));
+        throw new Error(attestWriteTextOf(error));
       }
       await refresh.reread();
     },
@@ -1440,7 +1687,23 @@ export async function bootBoardPage(): Promise<void> {
         });
         committedRouteValue(reply, 'decisions/notices/seen');
       } catch (error) {
-        throw new Error(writeTextOf(error));
+        throw new Error(cardWriteTextOf(error));
+      }
+      await refresh.reread();
+    },
+    async withdrawCheck(scope: { projectId: string; workspaceId: string }, checkId: string): Promise<void> {
+      try {
+        await saveSettings(client, 'checks/withdraw', { scope, checkId }, scope.projectId);
+      } catch (error) {
+        if (error instanceof SettingsNotEffectiveError) {
+          throw new Error('撤回已保存，Host 还没确认，可以重试');
+        }
+        const text = settingsWriteTextOf('checks/withdraw', error);
+        if (text === null) {
+          logReadError(error);
+          throw new Error('没有撤回成功，可以重试');
+        }
+        throw new Error(text);
       }
       await refresh.reread();
     },
@@ -1457,12 +1720,23 @@ export async function bootBoardPage(): Promise<void> {
       if (data === null || line === null) throw new Error(writeTextOf(new Error('no line')));
       const control = line.controls.find((entry) => entry.kind === kind && entry.availability === 'available') ?? null;
       if (control === null) throw new Error(writeTextOf(new Error('this control is not available')));
+      const key = line.key.projectId + '|' + line.key.sessionId;
+      const inFlight = lineWrites.get(key);
+      if (inFlight !== undefined) return inFlight;
+      const pendingWrite = (async (): Promise<void> => {
+        try {
+          await submitRunControl(client, data.scope, control, kind);
+        } catch (error) {
+          throw new Error(writeTextOf(error));
+        }
+        await refresh.reread();
+      })();
+      lineWrites.set(key, pendingWrite);
       try {
-        await submitRunControl(client, data.scope, control, kind);
-      } catch (error) {
-        throw new Error(writeTextOf(error));
+        await pendingWrite;
+      } finally {
+        lineWrites.delete(key);
       }
-      await refresh.reread();
     },
     async stopQueryRun(ref: QueryRunRef): Promise<void> {
       /* A8: the Query run's own scope, as its `executions/steps` read uses; the
@@ -1478,31 +1752,48 @@ export async function bootBoardPage(): Promise<void> {
       }
       await refresh.reread();
     },
+    async holdReview(): Promise<void> {
+      await writeReview('unknown-call-reviews/hold', { text: null });
+    },
+    async releaseReviewHold(): Promise<void> {
+      await writeReview('unknown-call-reviews/release-hold', {});
+    },
     async requeueLine(): Promise<void> {
       const data = latestLine;
       const write = data?.write ?? null;
       if (data === null || write === null) throw new Error(writeTextOf(new Error('no requeue facts')));
-      let value: unknown;
+      const key = data.line.key.projectId + '|' + data.line.key.sessionId;
+      const inFlight = lineWrites.get(key);
+      if (inFlight !== undefined) return inFlight;
+      const pendingWrite = (async (): Promise<void> => {
+        let value: unknown;
+        try {
+          const reply = await client.write('tasks/requeue', data.scope, {
+            input: {
+              taskRef: write.taskRef, afterRunRef: write.afterRunRef,
+              reason: '在工作线页面重新入队',
+            },
+            meta: {
+              requestId: crypto.randomUUID(),
+              expected: [
+                { ref: write.goalRef, revision: write.goalRevision },
+                { ref: write.afterRunRef, revision: write.runRevision },
+              ],
+            },
+          });
+          value = committedRouteValue(reply, 'tasks/requeue');
+        } catch (error) {
+          throw new Error(writeTextOf(error));
+        }
+        requeuedOrThrow(value);
+        await refresh.reread();
+      })();
+      lineWrites.set(key, pendingWrite);
       try {
-        const reply = await client.write('tasks/requeue', data.scope, {
-          input: {
-            taskRef: write.taskRef, afterRunRef: write.afterRunRef,
-            reason: '在工作线页面重新入队',
-          },
-          meta: {
-            requestId: crypto.randomUUID(),
-            expected: [
-              { ref: write.goalRef, revision: write.goalRevision },
-              { ref: write.afterRunRef, revision: write.runRevision },
-            ],
-          },
-        });
-        value = committedRouteValue(reply, 'tasks/requeue');
-      } catch (error) {
-        throw new Error(writeTextOf(error));
+        await pendingWrite;
+      } finally {
+        lineWrites.delete(key);
       }
-      requeuedOrThrow(value);
-      await refresh.reread();
     },
     async controlChain(kind: 'pause' | 'resume' | 'cancel'): Promise<void> {
       const data = latestChain;
@@ -1696,7 +1987,7 @@ export async function bootBoardPage(): Promise<void> {
       await refresh.reread();
     },
     async saveSettings(route: string, input: unknown): Promise<{ notEffective: boolean }> {
-      let saved: SettingsData;
+      let saved: SettingsSnapshotData;
       const projectId = latestSettings?.projectId ?? '';
       try {
         saved = await saveSettings(client, route, input, projectId);
@@ -1714,13 +2005,64 @@ export async function bootBoardPage(): Promise<void> {
         if (text === null) logReadError(error);
         throw new Error(text ?? '没有保存成功，可以重试');
       }
-      const data = { ...saved, projectName: latestSettings?.projectName ?? '', projectId };
+      /* 7D2 G: the answer carries the snapshot subset only; the four project reads
+         (`scope`, `rules`, `roleLimits`, `knowledgeGit`) are kept from the page's
+         last read, so a settings write never blanks those blocks. Only a page that
+         already published a read can reach a settings control. */
+      const data: SettingsData = {
+        ...latestSettings!, ...saved, projectName: latestSettings?.projectName ?? '', projectId,
+      };
       latestSettings = data;
       settingsDataVersion += 1;
       view.updateProps({
         ...defaults, actions, data, dataVersion: settingsDataVersion, readState: { status: 'ready' },
       });
       return { notEffective: false };
+    },
+    async saveRoleLimits(change: {
+      running?: Partial<Record<RoleLineDutyV1, number>>;
+      open?: Partial<Record<RoleLineDutyV1, number>>;
+    }): Promise<void> {
+      /* The page draws the block and its 保存 only from a successful read, so the
+         range and the revision are there whenever the button is clickable. */
+      const settings = latestSettings!;
+      const scope = settings.scope!;
+      const limits = settings.roleLimits!;
+      await projectWrite('projects/role-limits/set', () => client.post('projects/role-limits/set', scope, {
+        commandId: crypto.randomUUID(),
+        expectedRevision: limits.revision,
+        ...change,
+      }));
+    },
+    async changeRuleExpiry(ruleId: string, date: string | null): Promise<void> {
+      /* The page draws only rows of `latestSettings.rules.active`, so the row and
+         the scope are there whenever its button is clickable. */
+      const settings = latestSettings!;
+      const scope = settings.scope!;
+      const rules = settings.rules!;
+      const row = rules.active.find((rule) => rule.ruleId === ruleId)!;
+      await projectWrite('autonomy-rules/update', () => client.write('autonomy-rules/update', scope, {
+        input: {
+          ruleId, expectedRevision: row.revision, expectedSetRevision: rules.setRevision,
+          expiresAt: date === null ? null : ruleExpiresAtOf(date),
+        },
+        /* The route only checks that `expected` is an array; the owner guards the
+           versions in `input` (`autonomy-rule-service.ts:203-208`). */
+        meta: { requestId: crypto.randomUUID(), expected: [] },
+      }));
+    },
+    async revokeRule(ruleId: string): Promise<void> {
+      const settings = latestSettings!;
+      const scope = settings.scope!;
+      const rules = settings.rules!;
+      const row = rules.active.find((rule) => rule.ruleId === ruleId)!;
+      await projectWrite('autonomy-rules/revoke', () => client.write('autonomy-rules/revoke', scope, {
+        input: { ruleId, expectedRevision: row.revision, expectedSetRevision: rules.setRevision },
+        meta: { requestId: crypto.randomUUID(), expected: [] },
+      }));
+    },
+    rereadSettings(): void {
+      void refresh.reread();
     },
   };
   /**
@@ -1757,7 +2099,8 @@ export async function bootBoardPage(): Promise<void> {
     }, LIVE_RUN_REREAD_MS);
   };
   if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
-    window.addEventListener('pagehide', stopLiveRunTimer, { once: true });
+    /* 5.5-10: a document that goes away also drops this page's last resume. */
+    window.addEventListener('pagehide', () => { lastResume = null; stopLiveRunTimer(); }, { once: true });
   }
   const sources: RefreshSources<unknown> = {
     read: async () => await reader(client, goalId, demand),
@@ -1782,6 +2125,8 @@ export async function bootBoardPage(): Promise<void> {
         if (boardName === 'Decide') {
           latestDecide = snapshot.data as DecideData | null;
           latestDecideScope = latestDecide?.scope ?? null;
+          latestLine = latestDecide?.line && latestDecide.scope
+            ? { scope: latestDecide.scope, line: latestDecide.line.line, write: latestDecide.line.write, review: null } : null;
         }
         if (boardName === 'ArchOverview') latestArch = snapshot.data as ArchOverviewData | null;
         /* MainData is flat `NavData &` extras, so the card writes use this
@@ -1795,10 +2140,12 @@ export async function bootBoardPage(): Promise<void> {
         if (boardName === 'Settings') latestSettings = snapshot.data as SettingsData | null;
         if (boardName === 'Member') {
           const member = snapshot.data as MemberData | null;
-          latestLine = member?.line ? { scope: member.scope, line: member.line, write: member.write } : null;
+          latestLine = member?.line
+            ? { scope: member.scope, line: member.line, write: member.write, review: null } : null;
         }
         if (boardName === 'Main') {
-          latestLine = main?.line && main.scope ? { scope: main.scope, line: main.line.line, write: main.line.write } : null;
+          latestLine = main?.line && main.scope
+            ? { scope: main.scope, line: main.line.line, write: main.line.write, review: main.line.review } : null;
         }
         if (boardName === 'Done') latestDelivery = (snapshot.data as DoneData | null)?.deliveryWrite ?? null;
       }
@@ -2121,7 +2468,9 @@ type BoardReader<T> = (
 ) => Promise<RefreshRead<T>>;
 
 /** The Settings page reads the snapshot once and takes the project name from
- * the same first bootstrap the page's link came with. */
+ * the same first bootstrap the page's link came with. The four project reads
+ * after it are secondary: each failure only leaves its own block null (or the
+ * names unread) and its block's 重试 rereads the whole page. */
 async function readSettingsBoard(
   client: ReturnType<typeof createHostClient>, goalId: string | null,
 ): Promise<RefreshRead<SettingsData>> {
@@ -2131,9 +2480,179 @@ async function readSettingsBoard(
    * row the structural switches read (`saved[current] ?? defaults`). */
   const found = goalId === null ? null : await taskMapScope(client, boot.workspaces, goalId);
   const projectId = found?.scope.projectId ?? boot.workspaces[0]?.scope.projectId ?? '';
+  /* 7D2 G: the write range. With a Goal it is the Goal's workspace; without one
+     it is this project's first bootstrap workspace. No project open leaves it
+     null, and the two project blocks say nothing is open. */
+  const scope = found?.scope ?? boot.workspaces.find((workspace) => workspace.scope.projectId === projectId)?.scope ?? null;
   const data = await readSettings(client, goalId, projectId);
   const name = boot.workspaces.find((workspace) => workspace.scope.projectId === projectId)?.name ?? '';
-  return { data: { ...data, projectName: name, projectId }, cursor: boot.changesHead ?? null };
+  const base: SettingsData = {
+    ...data, projectName: name, projectId, scope, rules: null, roleLimits: null, knowledgeGit: {},
+  };
+  if (scope === null) return { data: base, cursor: boot.changesHead ?? null };
+  const workspaces = boot.workspaces.filter((workspace) => workspace.scope.projectId === projectId);
+  /* The three reads do not depend on each other: one round trip, each failure
+     still only emptying its own block. */
+  const [rules, roleLimits, knowledgeGit] = await Promise.all([
+    readSettingsRules(client, projectId, scope, workspaces),
+    readSettingsRoleLimits(client, projectId, scope),
+    /* J: the same workspaces the block draws (the snapshot's rows), not the bootstrap's. */
+    readSettingsKnowledgeGit(client, data.workspaces),
+  ]);
+  return { data: { ...base, rules, roleLimits, knowledgeGit }, cursor: boot.changesHead ?? null };
+}
+
+type SettingsGoalListRead = {
+  goals: Array<{ ref: { goalId: string }; ordinal: number | null; objective: string }>;
+};
+type SettingsRoleLimitsRead = { revision: number; running: Record<RoleLineDutyV1, number>; open: Record<RoleLineDutyV1, number> };
+type SettingsAllocationRead = { duties: Record<RoleLineDutyV1, { holders: readonly unknown[] }> };
+type SettingsMessageRead = {
+  createdAt?: unknown;
+  decision?: { source?: unknown };
+  response?: { decision?: { source?: unknown } } | null;
+};
+type SettingsCardRead = { subject?: { kind?: unknown; goalRef?: { goalId?: unknown } } };
+
+/** One rule's source card: the answer message's `createdAt` and the card's
+ *  subject. Any failed read is the caller's `logReadError`, which falls back to
+ *  “你答卡时存的” for that rule only (`messages/read` and `decisions/card`). */
+async function settingsRuleAnswerOf(
+  client: ReturnType<typeof createHostClient>, ref: unknown,
+): Promise<SettingsRuleAnswer> {
+  const messageRef = asRecord(ref);
+  const scope = {
+    projectId: asText(messageRef.projectId), workspaceId: asText(messageRef.workspaceId),
+  };
+  const message = readyRouteValue<SettingsMessageRead>(
+    await client.post('messages/read', scope, ref), 'messages/read',
+  );
+  const at = asText(message.createdAt);
+  if (at === '') throw new Error('the answer message has no createdAt');
+  /* The answer's own slot is the canonical source; a synthetic answer records it
+     on the message's `decision` metadata (`contracts/core/session-message.ts:79-98`). */
+  const source = asRecord(message.response).decision !== undefined
+    ? asRecord(asRecord(message.response).decision).source
+    : asRecord(message.decision).source;
+  const card = readyRouteValue<SettingsCardRead>(
+    await client.post('decisions/card', scope, { source }), 'decisions/card',
+  );
+  const subject = asRecord(card.subject);
+  const kind = asText(subject.kind);
+  if (kind === 'goal') {
+    return { at, scope: 'goal', goalId: asText(asRecord(subject.goalRef).goalId) };
+  }
+  if (kind !== 'project') throw new Error('the answer card has no subject');
+  return { at, scope: 'project', goalId: null };
+}
+
+/** `autonomy-rules`, the Goal names it may need, and each rule's source card. */
+async function readSettingsRules(
+  client: ReturnType<typeof createHostClient>, projectId: string, scope: CoreScope,
+  workspaces: BootstrapReply['workspaces'],
+): Promise<SettingsRules | null> {
+  let view: SettingsRuleView;
+  try {
+    view = readyRouteValue<SettingsRuleView>(
+      await client.post('autonomy-rules', scope, { projectRef: { projectId } }), 'autonomy-rules',
+    );
+  } catch (error) {
+    logReadError(error);
+    return null;
+  }
+  /* The Goal names and the per-rule source cards do not depend on each other:
+     both groups start here and are awaited together. A failed `goals/list` only
+     leaves its own Goal names unread, and a failed source read only leaves that
+     rule's answer missing. */
+  const goalsRead = !view.rules.some((rule) => rule.scope.some((item) => item.kind === 'goal'))
+    ? Promise.resolve(null)
+    : (async (): Promise<Record<string, SettingsGoalName>> => {
+      const goals: Record<string, SettingsGoalName> = {};
+      /* `goals/list` reads one workspace; Goals live per workspace, so read this
+         project's each and merge by goalId, like `readArchOverview`'s per-workspace loop.
+         A failed workspace only leaves its own Goal names unread. */
+      const lists = await Promise.all(workspaces.map(async (workspace) => {
+        try {
+          return readyRouteValue<SettingsGoalListRead>(
+            await client.post('goals/list', workspace.scope, { workspace: workspace.scope }), 'goals/list',
+          ).goals;
+        } catch (error) {
+          logReadError(error);
+          return [];
+        }
+      }));
+      for (const list of lists) {
+        for (const goal of list) {
+          goals[goal.ref.goalId] = { ordinal: goal.ordinal, objective: goal.objective };
+        }
+      }
+      return goals;
+    })();
+  const answersRead = (async (): Promise<Record<string, SettingsRuleAnswer>> => {
+    const answers: Record<string, SettingsRuleAnswer> = {};
+    await Promise.all(view.rules.map(async (rule) => {
+      /* Only an active rule's source is drawn; a revoked row keeps its scope only. */
+      if (rule.state !== 'active' || rule.approvedFrom === null) return;
+      try {
+        answers[rule.ref.ruleId] = await settingsRuleAnswerOf(client, rule.approvedFrom.answerMessageRef);
+      } catch (error) {
+        logReadError(error);
+      }
+    }));
+    return answers;
+  })();
+  const [goals, answers] = await Promise.all([goalsRead, answersRead]);
+  return settingsRulesOf(view, goals, answers);
+}
+
+/** `projects/role-limits` plus the allocation read; a failed allocation only
+ *  leaves the “现在” column empty. */
+async function readSettingsRoleLimits(
+  client: ReturnType<typeof createHostClient>, projectId: string, scope: CoreScope,
+): Promise<SettingsRoleLimits | null> {
+  const [view, allocation] = await Promise.all([
+    (async (): Promise<SettingsRoleLimitsRead | null> => {
+      try {
+        return readyRouteValue<SettingsRoleLimitsRead>(
+          await client.post('projects/role-limits', scope, { projectRef: { projectId } }), 'projects/role-limits',
+        );
+      } catch (error) {
+        logReadError(error);
+        return null;
+      }
+    })(),
+    (async (): Promise<SettingsAllocationRead | null> => {
+      try {
+        return readyRouteValue<SettingsAllocationRead>(
+          await client.post('role-lines/allocation', scope, {}), 'role-lines/allocation',
+        );
+      } catch (error) {
+        logReadError(error);
+        return null;
+      }
+    })(),
+  ]);
+  return view === null ? null : settingsRoleLimitsOf(view, allocation);
+}
+
+/** One `knowledge/status` per workspace: ready is a git checkout, `unsupported`
+ *  is not a git repository, anything else is “unknown” (the page still draws
+ *  the checkbox and lets the Host decide). */
+async function readSettingsKnowledgeGit(
+  client: ReturnType<typeof createHostClient>, workspaces: ReadonlyArray<{ scope: CoreScope }>,
+): Promise<Record<string, boolean | null>> {
+  const entries = await Promise.all(workspaces.map(async (workspace): Promise<[string, boolean | null]> => {
+    const key = settingsScopeKeyOf(workspace.scope);
+    try {
+      readyRouteValue(await client.post('knowledge/status', workspace.scope, {}), 'knowledge/status');
+      return [key, true];
+    } catch (error) {
+      if (error instanceof RouteReadError && error.code === 'unsupported') return [key, false];
+      logReadError(error);
+      return [key, null];
+    }
+  }));
+  return Object.fromEntries(entries);
 }
 
 /** §2.11: one table, keyed by the served file name. TaskMap keeps its reader's
@@ -2356,10 +2875,19 @@ export async function readNav(
       phase = null;
     }
   }
-  return {
-    data: adaptNav({ goals, lines, display, queue, archived, detail, phase, tasks: phase }, selected, scope),
-    cursor,
-  };
+  const nav = adaptNav({ goals, lines, display, queue, archived, detail, phase, tasks: phase }, selected, scope);
+  for (const failure of nav.selectedDisplay?.facts.reentryFailures ?? []) {
+    if (failure.reason !== '') {
+      logNavReasonOnce('reentry:' + failure.runRef.runId + ':' + failure.reason, failure.reason);
+    }
+  }
+  /* 5.5-5: an unsupported control's own reason is English and stays in the log. */
+  for (const stop of nav.selectedDisplay?.facts.runStops ?? []) {
+    if (stop.stop.kind === 'unsupported' && stop.stop.reason !== '') {
+      logNavReasonOnce('unsupported:' + stop.runRef.runId + ':' + stop.stop.reason, stop.stop.reason);
+    }
+  }
+  return { data: nav, cursor };
 }
 
 /**
@@ -2376,6 +2904,7 @@ export async function readNav(
 export async function readDecisionQueue(
   client: ReturnType<typeof createHostClient>, scope: CoreScope, nav: NavData,
   demand: BoardReadDemand, workspaceRevision: number, readProposalFiles = false,
+  readCheckRows = false, readAnswerBody = false,
 ): Promise<DecideData> {
   const sections: Array<'waiting_answer' | 'notices' | 'answered_pending_application' | 'history'> =
     demand.decideDone === true ? ['answered_pending_application', 'history'] : ['waiting_answer', 'notices'];
@@ -2487,11 +3016,57 @@ export async function readDecisionQueue(
       tasks[id] = null;
     }
   }
+  /* Y3: the settings snapshot's checks, only for a Decide read with a Task-bearing
+     stop card (the facts' failed-check commands and the withdraw step need them).
+     A failed read is that block's one “命令暂时读不到”, logged and not thrown. */
+  let checkRows: Record<string, DecideCheckRow> | null | undefined;
+  if (readCheckRows) {
+    const cards = pages.flatMap((page) => page.waitingAnswer ?? [])
+      .filter((card) => card.source.kind === 'goal_cause' && taskTripleOf(card) !== null);
+    if (cards.length > 0) {
+      try {
+        const snapshot = readyRouteValue<SettingsSnapshot>(
+          await client.settings('snapshot', {}), 'settings/snapshot');
+        const adapted = adaptSettings(snapshot, '', scope.projectId);
+        const raw = snapshot.workspaces.flatMap((workspace) => workspace.checks ?? []);
+        checkRows = {};
+        for (const workspace of adapted.workspaces) {
+          for (const check of workspace.checks) {
+            const own = raw.find((entry) => entry.checkId === check.checkId);
+            checkRows[check.checkId] = { ...check, ...(own === undefined ? {} : { taskIds: own.taskIds }) };
+          }
+        }
+      } catch (error) {
+        if (error instanceof RouteReadError) {
+          logReadError(error);
+          checkRows = null;
+        } else {
+          throw error;
+        }
+      }
+    }
+  }
+  /* Y12: the selected answered card's body, read here so `adaptDecide` can turn
+     the canonical JSON into the person's line and the annotation rows. */
+  const answerBodies: Record<string, string> = {};
+  if (readAnswerBody && demand.decideAnswer !== null && demand.decideAnswer !== undefined) {
+    const card = pages.flatMap((page) => [
+      ...(page.waitingAnswer ?? []), ...(page.answeredPendingApplication ?? []), ...(page.history ?? []),
+    ]).find((entry) => entry.cardKey === demand.decideAnswer) ?? null;
+    const bodyRef = card?.answer?.bodyRef ?? null;
+    if (bodyRef !== null && bodyRef !== undefined) {
+      const material = readyRouteValue<{ body?: unknown }>(await client.post('materials/open', scope,
+        { ref: bodyRef, usage: 'historical_explanation' }), 'materials/open');
+      answerBodies[demand.decideAnswer] = asText(material.body);
+    }
+  }
   return adaptDecide({
     nav, scope, workspaceRevision, queue: pages, tasks, selectedGoalId: nav.selectedGoalId,
     ...(proposalFiles === undefined ? {} : { proposalFiles }),
     ...(noticeFacts === undefined ? {} : { noticeFacts }),
     ...(workspaceNames === undefined ? {} : { workspaceNames }),
+    ...(checkRows === undefined ? {} : { checkRows }),
+    ...(Object.keys(answerBodies).length === 0 ? {} : { answerBodies }),
   }, {
     tab: demand.decideDone === true ? 'done' : 'open',
     goalFilter: demand.decideGoal ?? null,
@@ -2526,25 +3101,74 @@ export async function readDecide(
      empty rail. */
   const navRead = await readNav(client, goalId, demand, boot, false);
   if (navRead.data === null) return { data: null, cursor };
-  const queue = await readDecisionQueue(client, scope, navRead.data, demand,
-    registration.workspace.revision, true);
+  /* The page's goal filter follows the URL's Goal on the first read; a later
+     readMore that clears it passes `decideGoal: null` explicitly. */
+  const queueDemand: BoardReadDemand = demand.decideGoal === undefined && goalId !== null
+    ? { ...demand, decideGoal: goalId } : demand;
+  const queue = await readDecisionQueue(client, scope, navRead.data, queueDemand,
+    registration.workspace.revision, true, true, true);
   /* §2.2 step 8: a card-bearing selected Goal hands its own `tasks/query`
      completion revision to the navigation segment; no separate read. A
      `not_found` read is still a read and keeps the original 0. */
   if (goalId !== null && queue.taskGoalIds.includes(goalId)) {
     navRead.data.phaseRevision = completionRevisionOf(queue.plans[goalId]);
   }
-  if (demand.decideAnswer !== null && demand.decideAnswer !== undefined) {
-    const row = queue.sections.flatMap((section) => section.rows).concat(queue.history)
-      .find((entry) => entry.key === demand.decideAnswer) ?? null;
-    const bodyRef = row?.card?.answer?.bodyRef ?? null;
-    if (bodyRef !== null) {
-      const material = readyRouteValue<{ body?: unknown }>(await client.post('materials/open', scope,
-        { ref: bodyRef, usage: 'historical_explanation' }), 'materials/open');
-      queue.answerBodies[demand.decideAnswer] = asText(material.body);
+  /* Z1: one `tasks/query` per Goal per read, shared by the right panel and the
+     open line. A Goal with a card already read its graph in `readDecisionQueue`. */
+  const taskGraphs: Record<string, unknown | null> = {};
+  const graphOf = async (goal: string | null): Promise<TaskGraph | null> => {
+    if (goal === null) return null;
+    if (Object.prototype.hasOwnProperty.call(taskGraphs, goal)) return taskGraphs[goal] as TaskGraph | null;
+    let graph: TaskGraph | null;
+    if (queue.taskGoalIds.includes(goal)) {
+      graph = (queue.plans[goal] ?? null) as TaskGraph | null;
+    } else {
+      try {
+        graph = readyRouteValue<TaskGraph>(await client.post('tasks/query', scope, {
+          goalRef: goalRefIn(scope.projectId, goal),
+        }), 'tasks/query');
+      } catch (error) {
+        if (!(error instanceof RouteReadError)) throw error;
+        if (error.code !== 'not_found') logReadError(error);
+        graph = null;
+      }
+    }
+    taskGraphs[goal] = graph;
+    return graph;
+  };
+  /* Z1: the right panel reads only its open tab; other tabs (and a closed panel)
+     leave `aux` null. */
+  let aux: AuxPanelData | null = null;
+  if (demand.auxTab === 'task' || demand.auxTab === 'arch') {
+    const goal = demand.mapGoal ?? navRead.data.selectedGoalId;
+    const tasks = await graphOf(goal);
+    aux = await readAuxPanel(client, scope, { ...navRead.data, selectedGoalId: goal, tasks }, {
+      auxTab: demand.auxTab, auxPath: null, detailTaskId: demand.detailTaskId ?? null,
+      workOnly: demand.workOnly === true,
+    }, { allowed: false, runs: {} });
+  }
+  /* Z5: the open line's record, through the same read and projection Member uses.
+     A failed line read is that view's page text; every other failure fails the read. */
+  let line: { line: MemberLine; write: MemberWriteBasis | null } | null = null;
+  let lineError: string | null = null;
+  if (demand.lineKey !== null && demand.lineKey !== undefined
+    && navRead.data.detail !== null && navRead.data.detail.kind === 'line') {
+    const lineGoal = taskOfLine(navRead.data.detail.row)?.goalId ?? null;
+    const lineTasks = lineGoal === null ? null : await graphOf(lineGoal);
+    try {
+      const source = await readLineFacts(client, scope, demand.lineKey, navRead.data.detail,
+        { ...navRead.data, tasks: lineTasks }, { record: false, taskGraphRead: true });
+      const memberLine = adaptMemberLine(source, navRead.data.detail);
+      const write = writeBasisOf(navRead.data, memberLine, source.execution, source.taskGraph);
+      line = { line: memberLine, write };
+    } catch (error) {
+      if (!(error instanceof RouteReadError)) throw error;
+      logReadError(error);
+      line = null;
+      lineError = pageTextOf(error);
     }
   }
-  return { data: queue, cursor };
+  return { data: { ...queue, aux, line, lineError }, cursor };
 }
 
 /**
@@ -2583,12 +3207,18 @@ export async function consultationQueryRefsForUi(messageRef: SessionMessageRef):
  * and body, the current Run's `executions/read` + `controls/read` +
  * `executions/brief`, the shown copies' Query/answer, and (only when the line
  * serves another Goal) that Goal's `tasks/query`. `history`/`files`/`hover`/
- * `write` stay the wrapper's.
+ * `write` stay the wrapper's. `record: false` is the Decide line view: it reads
+ * only the executions page, the current Run and its control, and skips the
+ * messages/copies/participation pages, the brief and the drawn run steps.
+ * `taskGraphRead: true` says the caller already put the line Goal's graph (a
+ * `not_found` included) into `nav.tasks`, so no supplement is read here.
  */
 export async function readLineFacts(
   client: ReturnType<typeof createHostClient>, scope: CoreScope, key: LineKey,
   detail: WorkLineDetailV1, nav: NavData,
+  options: { record?: boolean; taskGraphRead?: boolean } = {},
 ): Promise<MemberSource> {
+  const record = options.record !== false;
   let executions: LineExecutionItemV1[] = [];
   let messages: LineMessageStateV1[] = [];
   const messageViews: SessionMessageReadV1[] = [];
@@ -2604,11 +3234,14 @@ export async function readLineFacts(
     }), 'lines/page');
   const executionPage = await pageOf('executions');
   executions = executionPage.section === 'executions' ? executionPage.items : [];
-  const messagePage = await pageOf('messages');
-  messages = messagePage.section === 'messages' ? messagePage.items : [];
-  const copyPage = await pageOf('copies');
-  const copyItems = copyPage.section === 'copies' ? copyPage.items : [];
-  await pageOf('participation');
+  let copyItems: MemberCopySource['item'][] = [];
+  if (record) {
+    const messagePage = await pageOf('messages');
+    messages = messagePage.section === 'messages' ? messagePage.items : [];
+    const copyPage = await pageOf('copies');
+    copyItems = copyPage.section === 'copies' ? copyPage.items : [];
+    await pageOf('participation');
+  }
   for (const item of messages) {
     const view = readyRouteValue<SessionMessageReadV1>(
       await client.post('messages/view', scope, item.messageRef), 'messages/view');
@@ -2657,25 +3290,29 @@ export async function readLineFacts(
     controls = readyRouteValue<ControlIntentSnapshotV1>(
       await client.post('controls/read', scope, intentRef), 'controls/read');
   }
-  if (execution !== null && execution.run.requeueRef !== undefined) {
+  if (record && execution !== null && execution.run.requeueRef !== undefined) {
     brief = readyRouteValue<{ brief: ContinuationBriefV1; digest: string } | null>(
       await client.post('executions/brief', scope, { runRef: execution.run.ref }), 'executions/brief');
   }
   /* §2.4 step 6: a line may own a task of another Goal; its own graph is read
      once, never the selected Goal's graph. */
-  const lineTask = taskOfLine(detail.row);
-  if (lineTask !== null && lineTask.goalId !== (nav.selectedGoalId ?? '')) {
-    try {
-      taskGraph = readyRouteValue<TaskGraph>(
-        await client.post('tasks/query', scope, { goalRef: goalRefIn(scope.projectId, lineTask.goalId) }), 'tasks/query');
-    } catch (error) {
-      if (!(error instanceof RouteReadError) || error.code !== 'not_found') throw error;
-      taskGraph = null;
+  if (options.taskGraphRead !== true) {
+    const lineTask = taskOfLine(detail.row);
+    if (lineTask !== null && lineTask.goalId !== (nav.selectedGoalId ?? '')) {
+      try {
+        taskGraph = readyRouteValue<TaskGraph>(
+          await client.post('tasks/query', scope, { goalRef: goalRefIn(scope.projectId, lineTask.goalId) }), 'tasks/query');
+      } catch (error) {
+        if (!(error instanceof RouteReadError) || error.code !== 'not_found') throw error;
+        taskGraph = null;
+      }
     }
   }
   /* The line's own Goal graph rides as `nav.tasks` too, as `readMember` gave
      its adapter before the extraction (the selected Goal's when they match). */
-  const runStepsByRun = await readDrawnRunSteps(client, scope, nav, key, executions, execution);
+  const runStepsByRun = record
+    ? await readDrawnRunSteps(client, scope, nav, key, executions, execution)
+    : new Map<string, MainRunSteps>();
   return {
     scope, nav: { ...nav, tasks: taskGraph }, line: detail, ownKey: key,
     executions, messages, messageViews, messageBodies, copies, controls, brief,
@@ -3141,8 +3778,14 @@ export async function readAuxPanel(
       let detail: TaskMapNodeDetailData | null = null;
       if (demand.detailTaskId !== null && goal !== null && nav.tasks !== null) {
         const node = goalTreeNodeOf(tree, demand.detailTaskId);
-        detail = await readNodeDetail(client, scope, goalRefIn(scope.projectId, goal.goalId),
-          nav.tasks, demand.detailTaskId, node?.st ?? '', '');
+        try {
+          detail = await readNodeDetail(client, scope, goalRefIn(scope.projectId, goal.goalId),
+            nav.tasks, demand.detailTaskId, node?.st ?? '', '');
+        } catch (error) {
+          if (!(error instanceof RouteReadError)) throw error;
+          logReadError(error);
+          detail = null;
+        }
       }
       const det = detail !== null && tree !== null
         ? auxTaskDetailOf(detail, tree, (id) => crumbPathOf(tree, id))
@@ -3280,24 +3923,19 @@ function crumbPathOf(tree: GoalsTaskNode, id: string): Array<{ id: string; name:
 }
 
 /**
- * §2.3: the Main read. The chrome is `readNav`'s one read (so `lines/list`,
- * `bootstrap` and the selected Goal's `tasks/query` are not read twice); the
- * conversation follows `mainPages`, the cards are the shared
- * `readDecisionQueue`, and the 轨迹 tab adds the one `sessions/history` read.
- * A failed queue read hides the cards only; every other failure fails the read.
- */
-/**
  * §2.3 steps 2–5: the one centre read Main and Plan share. The conversation
  * follows `mainPages` (a missing Goal keeps the pages read so far), the cards
  * are the shared queue (a failed queue read hides them only), the Workspace pin
  * is read only when a 请知悉 row is drawn (and only when the caller asks for
  * notice tokens), and the 轨迹 tab adds the one `sessions/history` read.
  */
+type MainPageReadWithCards = MainPageRead & { cards?: DecisionCardV1[] };
+
 export async function readMainThread(
   client: ReturnType<typeof createHostClient>, nav: NavData, demand: BoardReadDemand,
   options: { noticeTokens?: boolean } = {},
 ): Promise<{
-  pages: MainPageRead[]; decisions: DecideData | null;
+  pages: MainPageReadWithCards[]; decisions: DecideData | null;
   older: MainPageCursorV1 | null; track: MainTrackRow[] | null;
 }> {
   const scope = nav.scope;
@@ -3305,7 +3943,7 @@ export async function readMainThread(
   /* §2.3 step 2: first page at `cursor: null`, then each page's `next`; a
      missing Goal (only with a Goal selected) keeps the pages read so far. */
   let cursor: MainPageCursorV1 | null = null;
-  const pages: MainPageRead[] = [];
+  const pages: MainPageReadWithCards[] = [];
   const want = Math.max(1, demand.mainPages ?? 1);
   for (let index = 0; index < want; index += 1) {
     try {
@@ -3405,6 +4043,53 @@ export async function readMainThread(
   return { pages, decisions, older: cursor, track };
 }
 
+/** K3 L7: the line's own Task row review, from the graph this read already
+ * carries. `unreadable` and an absent key are both "no button". */
+function reviewOfTaskGraph(taskGraph: TaskGraph | null, line: MemberLine): MainLineRecord['review'] {
+  const taskRef = line.taskRef;
+  if (taskGraph === null || taskRef === null) return null;
+  const row = taskGraph.tasks.find((task) => task.ref.projectId === taskRef.projectId
+    && task.ref.goalId === taskRef.goalId && task.ref.taskId === taskRef.taskId);
+  const review = row?.unknownCallReview;
+  if (review === undefined || review.status === 'unreadable') return null;
+  return { ref: review.ref, revision: review.revision, status: review.status, held: review.hold === 'held' };
+}
+
+/**
+ * L2/D100-1/D107-2: each drawn message's closed fact. A transferred or copied
+ * message names its other line through one `messages/view` read; a failed read
+ * says 另一条线 and never fails the page. Only messages that carry one of the
+ * three fields cost a read.
+ */
+async function readClosedByMessage(
+  client: ReturnType<typeof createHostClient>, scope: CoreScope,
+  views: readonly SessionMessageReadV1[], nav: NavData,
+): Promise<Record<string, string>> {
+  const closed: Record<string, string> = {};
+  const lineNameOfMessageRef = async (ref: SessionMessageRef): Promise<string> => {
+    try {
+      const view = readyRouteValue<SessionMessageReadV1>(
+        await client.post('messages/view', scope, ref), 'messages/view');
+      const name = lineNameOfSession(nav.lines, sessionRefAtEdge(view.message.recipient));
+      return name === '' ? '另一条线' : name;
+    } catch (error) {
+      logReadError(error);
+      return '另一条线';
+    }
+  };
+  for (const view of views) {
+    const message = view.message;
+    if (message.withdrawnAt !== null) {
+      closed[message.ref.messageId] = '消息已撤回';
+    } else if (message.transferredTo !== null) {
+      closed[message.ref.messageId] = '已转交给 ' + await lineNameOfMessageRef(message.transferredTo);
+    } else if (message.originalRef !== null) {
+      closed[message.ref.messageId] = '转自 ' + await lineNameOfMessageRef(message.originalRef) + ' 的一条消息';
+    }
+  }
+  return closed;
+}
+
 /**
  * §2.3: the Main read. The chrome is `readNav`'s one read (so `lines/list`,
  * `bootstrap` and the selected Goal's `tasks/query` are not read twice); the
@@ -3444,16 +4129,18 @@ export async function readMain(
        Run's own saved snapshot names. `readLineFacts` read them all (and cached
        each once), so this line view adds no second read and no guessed scope. */
     runStepViews.push(...source.runStepsByRun.values());
+    const closedByMessage = await readClosedByMessage(client, scope, source.messageViews, nav);
     const rec = lvRecordOf({
       executions: source.executions, messages: source.messages, messageViews: source.messageViews,
       bodies: source.messageBodies, copies: source.copies, line: memberLine,
-      runStepsByRun: source.runStepsByRun,
+      runStepsByRun: source.runStepsByRun, closedByMessage,
     });
     line = {
       line: memberLine,
       rec,
       rich: { reply: '', liveStep: null, page: memberLine.task !== null ? 'chain' : 'member' },
       write,
+      review: reviewOfTaskGraph(source.taskGraph, memberLine),
     };
   }
   await readRunningCommandSteps(client, scope, runStepViews);
@@ -3492,8 +4179,44 @@ export async function readMain(
       if (!(error instanceof RouteReadError) || error.code !== 'not_found') throw error;
     }
   }
+  const retry = lastResume !== null && lastResume.goalId === nav.selectedGoalId
+    && (nav.selectedDisplay?.facts.reentryFailures.length ?? 0) > 0;
+  /* M2: one expanded answered card's body, read once; a failed read is that
+     card's one “暂时读不到” line, never the page's error. */
+  const cardAnswers: Record<string, string | null> = {};
+  if (demand.mainCardAnswer !== null && demand.mainCardAnswer !== undefined) {
+    const card = (pages[0]?.cards ?? []).find((entry) => entry.cardKey === demand.mainCardAnswer) ?? null;
+    const bodyRef = card?.answer?.bodyRef ?? null;
+    if (bodyRef !== null) {
+      try {
+        const material = readyRouteValue<{ body?: unknown }>(await client.post('materials/open', scope,
+          { ref: bodyRef, usage: 'historical_explanation' }), 'materials/open');
+        cardAnswers[demand.mainCardAnswer] = asText(material.body);
+      } catch (error) {
+        logReadError(error);
+        cardAnswers[demand.mainCardAnswer] = null;
+      }
+    }
+  }
+  /* M4: one expanded check notice's settings snapshot; a failed read is that
+     fold's one “设置暂时读不到”, never the page's error. */
+  let noticeSnapshot: unknown = null;
+  let noticeSnapshotError = false;
+  if (demand.mainNoticeOpen !== null && demand.mainNoticeOpen !== undefined) {
+    const notice = (pages[0]?.notices ?? []).find((entry) => entry.itemKey === demand.mainNoticeOpen) ?? null;
+    if (notice !== null) {
+      try {
+        noticeSnapshot = readyRouteValue<unknown>(await client.settings('snapshot', {}), 'settings/snapshot');
+      } catch (error) {
+        logReadError(error);
+        noticeSnapshotError = true;
+      }
+    }
+  }
   const data: MainData = adaptMain({
-    nav, pages, decisions, older: cursor, track, line, aux, requestFeedback,
+    nav, pages, decisions, older: cursor, track, line, aux, requestFeedback, retry,
+    cardAnswers, noticeSnapshot, noticeSnapshotError,
+    settingsHref: settingsHrefOf('Main', location.search),
   });
   return { data, cursor: navRead.cursor };
 }
@@ -4149,6 +4872,93 @@ function writeTextOf(error: unknown): string {
 
 /** 表一 6: the Host publishes these reasons on a settings write; the page shows one
  *  fixed Chinese sentence each, never the Host's own words. */
+/** Y6 (b): the not-written refusals of the three rework writes. The owner's
+ * reasons are matched by substring in this order (the outcome phrase wins over
+ * the generic `reconcile` one); an unknown reason falls back to `writeTextOf`. */
+function reworkWriteTextOf(error: unknown): string {
+  if (!(error instanceof RouteReadError)) return writeTextOf(error);
+  const { code, reason } = error;
+  if (code === 'busy' && reason.startsWith('finalize_first:')) return '这一轮检查还没结束，等平台结束这一轮再试。';
+  if (code === 'busy' && (reason.includes('resume the Goal first') || reason.includes('Goal is not active'))) {
+    return '目标已暂停，先在主对话的目标栏点继续，再试。';
+  }
+  if (code === 'busy' && reason.includes('outcome is not known')) return '这次执行结果未知，先核对它。';
+  if (code === 'busy' && reason.includes('has not ended')) return '这次执行还没结束，先停下它再试。';
+  if (code === 'busy' && reason.includes('reconcile')) return '这次执行还没对完账，等平台对完再试。';
+  if (code === 'busy' && reason.includes('yielded wait is paused')) return '让出的等待已暂停，先继续或取消它。';
+  if (code === 'revision_conflict' && reason.includes('a TaskRequeue covers')) {
+    return '这次执行已经重新入队，新的执行在接着做。';
+  }
+  if (code === 'revision_conflict') return '这个任务刚变过（别处又检查或重新入队了一次），等页面刷新后再看。';
+  if (code === 'dependency_blocked' && reason.startsWith('round_chain_limit:')) {
+    return '检查轮次已到上限，不能再重新检查；要改计划。';
+  }
+  if (code === 'incomplete') return '这个任务的检查链读不通（旧数据），没有自动出口；要改计划。';
+  if (code === 'invalid' && reason.includes('clean PASS')) return '这一轮已经通过，不用再检查。';
+  return writeTextOf(error);
+}
+
+/** Y6 (c): the plan writes' refusals (defer/cancel/restore/repair and adoption). */
+function planWriteTextOf(error: unknown): string {
+  if (!(error instanceof RouteReadError)) return writeTextOf(error);
+  const { code, reason } = error;
+  if (code === 'busy' && reason === 'stopping_affected_work') return WRITE_ERROR_TEXT['busy:stopping_affected_work']!;
+  if (code === 'busy' && reason.includes('still has an unfinished execution')) {
+    return '这个任务还有一次执行没结束，等它停下再点一次。';
+  }
+  if (code === 'busy' && reason.includes('resolve the unknown outcome of run')) {
+    return '有一次执行结果未知，先到“需要你决定”里核对它，再点一次。';
+  }
+  if (code === 'busy' && reason.includes(': reconcile run')) {
+    return '有一次执行还没对完账，等平台对完再点一次。';
+  }
+  if (code === 'busy' && reason.includes('cancel or resume the yielded wait')) {
+    return '有一次让出的等待还挂着，先在那条工作线上继续或取消它，再点一次。';
+  }
+  if (code === 'busy' && reason.includes('still holds its TaskLease')) {
+    return '任务还占着执行租约，等它释放再点一次。';
+  }
+  if (code === 'invalid' && reason.includes('the disposition of a satisfied task is final')) {
+    return '这个任务已经满足，处置不能再改。';
+  }
+  if (code === 'invalid' && reason.includes('no longer has a valid active required carrier')) {
+    return '它是这项要求唯一的承担者。延后或取消前要先加一个新的承担者：在主对话里请参谋改计划。';
+  }
+  if (code === 'invalid' && reason.includes('source gate task')) return '验收不能改。';
+  if (code === 'revision_conflict' && reason.includes('is no longer a future task')) {
+    return '这个任务已经跑过，只能改处置；要换做法，在主对话里请参谋加一个替代任务。';
+  }
+  if (code === 'revision_conflict') return '计划刚变过，等页面刷新后再点一次。';
+  return writeTextOf(error);
+}
+
+/** Y6 (d): attesting an unknown outcome. */
+function attestWriteTextOf(error: unknown): string {
+  if (!(error instanceof RouteReadError)) return writeTextOf(error);
+  const { code, reason } = error;
+  if (code === 'busy' && reason.includes('does not hold the Host instance lease')) {
+    return '这台 Host 没有执行租约，只有持有租约的 Host 能认定。';
+  }
+  if (code === 'busy' && reason.includes('has no unknown outcome to attest')) {
+    return '这次执行的结果已经知道了，不用再认定。';
+  }
+  if (code === 'unavailable') return '暂时读不到执行记录，稍后重试。';
+  if (code === 'revision_conflict') return '这次执行刚变过，等页面刷新后再看。';
+  return writeTextOf(error);
+}
+
+/** Y6 (e): the card writes' own translations (answer and mark-as-seen). */
+function cardWriteTextOf(error: unknown): string {
+  if (error instanceof RouteReadError && error.code === 'revision_conflict') {
+    return '这张卡依据的事实刚变过，等页面刷新后再看一次。';
+  }
+  if (error instanceof RouteReadError && error.code === 'invalid'
+    && error.reason.includes('names neither a stored option nor the explicit other selection')) {
+    return '这张卡要选一项；只想说话，点‘问秘书’';
+  }
+  return writeTextOf(error);
+}
+
 const SETTINGS_WRITE_REASON_TEXT: Record<string, string> = {
   'commandsAllowed requires writeAllowed': '跑命令要先允许改文件',
   'the Host does not publish the workspace access switch': '这个工作区的权限由启动配置决定，这里改不了',
@@ -4161,10 +4971,45 @@ function settingsWriteTextOf(route: string, error: unknown): string | null {
   const code = error instanceof RouteReadError ? error.code : '';
   const reason = error instanceof RouteReadError ? error.reason : '';
   if (route === 'checks/withdraw' && /[\u4e00-\u9fff]/.test(reason)) return reason;
+  /* E 第 3 件：固定工作区的两种 Host 原因用 `ACCESS_FIXED_TEXT` 的同一句，不再另抄。 */
+  if (route === 'workspaces/access' && code === 'unsupported') {
+    if (reason === "the start-up runtime configuration fixes this workspace's access") {
+      return ACCESS_FIXED_TEXT.startup_binding;
+    }
+    if (reason === "a programmatic runtime fixes this workspace's access") {
+      return ACCESS_FIXED_TEXT.programmatic_runtime;
+    }
+  }
+  /* F：超过本机内存、进程数越界都交给 Host 判，按它的原因开头给中文句。 */
+  if (route === 'resource-caps/save' && code === 'invalid') {
+    if (reason.startsWith('memoryMaxMiB')) return '内存超出这台机器能设的范围';
+    if (reason.startsWith('tasksMax')) return '进程数超出这台机器能设的范围';
+  }
+  if (route === 'knowledge-local' && code === 'unsupported'
+    && reason === 'the checkout is not a git repository') {
+    return '不在 git 仓库里，没有这一项。';
+  }
+  if (route === 'knowledge-local' && code === 'unavailable'
+    && reason === 'the checkout of the workspace could not be read') {
+    return '读不到这个工作区的检出，可以重试';
+  }
   const known = SETTINGS_WRITE_REASON_TEXT[reason];
   if (known !== undefined) return known;
-  if (route === 'command-review/save' && code === 'invalid') return '要填正整数分钟，或者留空用默认';
+  if (route === 'command-review/save' && code === 'invalid') return '要 1 或更大的整数分钟；清空就回默认';
   return null;
+}
+
+/** 7D2 K: the two project writes' own failure text. A stale write already reread
+ *  the page (`projectWrite`); everything else keeps `writeTextOf`. */
+function projectWriteTextOf(route: string, error: unknown): string {
+  const code = error instanceof RouteReadError ? error.code : '';
+  if (code === 'revision_conflict') {
+    return route === 'projects/role-limits/set'
+      ? '工作线上限刚被别处改过，已经重读，请再改一次。'
+      : '这条规则刚被别处改过，已经重读，请再点一次。';
+  }
+  if (code === 'not_found' && route.startsWith('autonomy-rules/')) return '这条规则已经不在了。';
+  return writeTextOf(error);
 }
 
 /** 命令页两个写口（`runCommand`、`stopCommand`）的失败文字：`unsupported` 是“这台 Host 跑不了命令”，
@@ -4173,6 +5018,51 @@ function commandWriteTextOf(error: unknown): string {
   return error instanceof RouteReadError && error.code === 'unsupported'
     ? '这台 Host 现在跑不了命令（命令沙箱不可用，或 Host 正在关闭）。'
     : writeTextOf(error);
+}
+
+/** 5.5-2: the resume receipt's submitted Runs are read once each for their
+ * `controls/read` observation. A queued or failed read leaves no entry, so the
+ * report keeps the table's 已送去恢复 row. */
+async function readEnteredResumes(
+  client: ReturnType<typeof createHostClient>, scope: CoreScope, outcome: GoalControlOutcomeReadV1,
+): Promise<Map<string, ControlIntentSnapshotV1>> {
+  const entered = new Map<string, ControlIntentSnapshotV1>();
+  for (const run of outcome.fanOut.runs) {
+    if (run.outcome !== 'submitted' && run.outcome !== 'already_submitted') continue;
+    if (run.intentRef === null) continue;
+    try {
+      const snapshot = readyRouteValue<ControlIntentSnapshotV1>(
+        await client.post('controls/read', scope, run.intentRef),
+        'controls/read');
+      entered.set(run.runRef.runId, snapshot);
+    } catch (error) {
+      logReadError(error);
+    }
+  }
+  return entered;
+}
+
+/** 5.5-3/5.5-11: the Goal control's own refusals. The three `busy` reasons are
+ * the state machine's exact text (`goal-machine.ts:578`, `:592`, `:593`). */
+function goalControlTextOf(error: unknown): string {
+  if (error instanceof RouteReadError) {
+    if (error.code === 'busy') {
+      if (error.reason === 'the Goal is already paused') return '目标已经暂停了。';
+      if (error.reason === 'the Goal is not paused') return '目标没有暂停，不用继续。';
+      if (error.reason === 'the Goal is already cancelled') return '目标已经取消了。';
+    }
+    if (error.code === 'revision_conflict') return '目标刚变过，页面已经重读，再点一次。';
+  }
+  return writeTextOf(error);
+}
+
+/** K3 L7: the unknown-call review's refusals; everything else keeps `writeTextOf`. */
+function reviewWriteTextOf(error: unknown): string {
+  if (error instanceof RouteReadError) {
+    if (error.code === 'busy' && error.reason === '已经在等你处理') return '这项任务已经暂停了，你在处理。';
+    if (error.code === 'revision_conflict') return '这条核对记录刚变过，等页面刷新后再点一次。';
+  }
+  return writeTextOf(error);
 }
 
 /** K7: the delivery card's own translations; every other failure keeps `writeTextOf`. */
@@ -4201,8 +5091,9 @@ function stopWriteTextOf(error: unknown): string {
 function requeuedOrThrow(value: unknown): void {
   const outcome = asRecord(value);
   if (outcome.kind === 'refused') {
-    const reason = asText(asRecord(outcome.refusal).reason);
-    throw new Error(reason === '' ? '重新入队被拒绝。' : '重新入队被拒绝：' + reason);
+    /* Lead ruling 1: the line view and Chain refuse with the same sentence as
+       the Decide card; one table, `reworkRefusalTextOf`. */
+    throw new Error(reworkRefusalTextOf('requeue', outcome.refusal));
   }
   if (outcome.kind !== 'requeued') throw new Error(writeTextOf(new Error('tasks/requeue returned no outcome')));
 }
@@ -4272,6 +5163,15 @@ function pageTextOf(error: unknown): string {
 function logReadError(error: unknown): void {
   if (error instanceof RouteReadError) console.error(error.route, error.code, error.reason);
   else console.error(error);
+}
+
+/* `readNav` runs on every refresh, so the same English reason is written
+   once per Run and reason, never once per refresh. */
+const loggedNavReasons = new Set<string>();
+function logNavReasonOnce(key: string, reason: string): void {
+  if (loggedNavReasons.has(key)) return;
+  loggedNavReasons.add(key);
+  logReadError(new Error(reason));
 }
 
 function hoistHelmet(html: string): void {
