@@ -47,6 +47,7 @@ export const orNull = promise => promise.catch(error => {
  * evidence stays an `Abort` with its own code.
  */
 export function broken(ctx, text, check) {
+  if (check === null) return new Abort('not-run', text); // A prerequisite stopped before any check ran.
   const rec = ctx.report.current;
   const target = check ?? rec?.planned.find(entry => !rec.results.has(entry.id))?.id;
   if (rec !== null && target !== undefined) rec.fail(target, `the platform did not do it: ${text}`);
@@ -245,9 +246,14 @@ export async function waitFor(ctx, what, read, done, { timeoutMs, everyMs = 10_0
   }
 }
 
-/** The person approves: the option whose effect is `apply`, else the first option. */
+/**
+ * The person approves: the option whose effect is `apply`, else the first option. An `action_release` card (P2: an
+ * agent's dispatch or stop request) has both options with effect `apply` (`action-request-card.ts:61-62`), so its
+ * approval is named explicitly (`ACTION_RELEASE_OPTIONS.approve`, `goal-decisions.ts:170`), never by option order.
+ */
 export const approve = card => {
-  const option = card.options.find(entry => entry.effect === 'apply') ?? card.options[0];
+  const option = card.source?.kind === 'action_release' ? card.options.find(entry => entry.id === 'approve')
+    : card.options.find(entry => entry.effect === 'apply') ?? card.options[0];
   return option === undefined ? null : { kind: 'option', optionId: option.id };
 };
 
@@ -325,6 +331,22 @@ function noteUnreadable(rec, queue) {
   rec.note(`决定队列暂时读不到：${group}（${unreadable.map(entry => entry.reason ?? '').join('、')}）`);
 }
 
+function applyCandidate(project, goalPin, proposalPin) {
+  return project.host.client.write('plans/apply', project.scope, {
+    proposalRef: proposalPin.ref, expectedProposalRevision: proposalPin.revision, decisionRefs: [],
+  }, [goalPin]);
+}
+
+async function adoptCandidateCard(ctx, project, card, rec, check) {
+  const goal = card.source.pins.find(pin => pin.ref.aggregateType === 'Goal');
+  const proposal = card.source.pins.find(pin => pin.ref.aggregateType === 'PlanProposal');
+  const reply = await applyCandidate(project, goal, proposal);
+  if (reply.code === 'revision_conflict' || reply.code === 'busy') return false;
+  if (committed(reply) === null) throw broken(ctx, `plans/apply ${proposal.ref.proposalId}: ${said(reply)}`, check);
+  rec?.note(`人采用了候选 ${proposal.ref.proposalId}（版本 ${proposal.revision}）。`);
+  return true;
+}
+
 /**
  * Wait for the Goal to reach one of `until` (default: the terminal phases), answering waiting cards the way
  * `answer(card)` says (default: approve). `onPoll(display)` lets a scenario read what it watches meanwhile. The wait
@@ -334,21 +356,35 @@ function noteUnreadable(rec, queue) {
  * 正常返回，display 多一个 `stoppedFor`；不传的调用方行为不变。
  */
 export async function waitGoal(ctx, project, goalRef, { until = TERMINAL, timeoutMs, answer = approve, onPoll, rec = null, check,
-  committedAnswers = [], returnOnDecide = false }) {
+  committedAnswers = [], returnOnDecide = false, adoptCandidates = false }) {
   const answered = new Set();
   // 已调过“重新入队”的返工确认卡：每张只调一次，被拒也不再调。
   const requeued = new Set();
   const quiet = { seen: null, since: Date.now() };
   let ended = null;
   let stoppedFor = null;
+  // P6 裁定 Q2：人已答、等提问的 agent 调 record_decision_application 的 message 卡（角色 skill 没教这个工具），
+  // 记下见过的最多张数，作为 skill 缺口的证据。
+  const awaitingAgent = new Set();
   const display = await waitFor(ctx, `${goalRef.goalId} to reach ${until.join('/')}`, async () => {
     const display = ready(await project.host.client.read('goals/display', project.scope, { goalRef }));
     const queue = ready(await project.host.client.read('decisions/queue', project.scope, { workspace: project.scope, goalRef,
       sections: ['waiting_answer', 'answered_pending_application'], page: { limit: 50 } }));
     noteUnreadable(rec, queue);
     // The cards the person still has in hand: answered and not yet applied, or waiting and taken by `answer`.
-    let open = queue?.answeredPendingApplication?.length ?? 0;
+    // P6 #9 / 裁定 Q2: a `message` card the person answered stays `answered_pending_application` until the asking agent
+    // records its application (`decision-read-model.ts:2649-2656`, `decision-service.ts:645-651`); the person's part is
+    // done, so it is not in hand.
+    const pending = queue?.answeredPendingApplication ?? [];
+    for (const card of pending.filter(entry => entry.source.kind === 'message')) awaitingAgent.add(card.cardKey);
+    let open = pending.filter(card => card.source.kind !== 'message').length;
     for (const card of queue?.waitingAnswer ?? []) {
+      if (adoptCandidates && card.source.kind === 'candidate' && card.actions.includes('adopt')) {
+        open += 1;
+        // Adoption moves the Goal's plan pointer. Read the queue again before acting on another candidate.
+        if (await adoptCandidateCard(ctx, project, card, rec, check)) break;
+        continue;
+      }
       if (answered.has(card.cardKey)) { open += 1; continue; }
       const selection = answer(card);
       if (selection === null) {
@@ -377,7 +413,11 @@ export async function waitGoal(ctx, project, goalRef, { until = TERMINAL, timeou
     ended = early !== null && stoppedFor === null ? early.text : null;
     return display;
   }, display => stoppedFor !== null || (display !== null && until.includes(display.display.phase)),
-  { timeoutMs, check, ended: () => ended });
+  { timeoutMs, check, ended: () => ended }).finally(() => {
+    if (awaitingAgent.size > 0) {
+      rec?.note(`${goalRef.goalId}: 人已答、等 agent 记落实（record_decision_application）的 message 卡 ${awaitingAgent.size} 张（不算人手上的卡，P6 Q2；skill 缺口的证据）`);
+    }
+  });
   return returnOnDecide ? { ...display, stoppedFor } : display;
 }
 
@@ -410,6 +450,15 @@ async function endedEarly(ctx, project, goalRef, { display, queue, open, quiet }
   const idle = busy.queries === 0 && busy.runs === 0;
   if (phase === 'NEEDS_DECISION' && TASK_DECIDE_STOPS.has(cause?.code) && open === 0) {
     return quietFor >= DECIDE_GRACE_MS && idle ? { decide: true, text: `the platform stopped: ${cause.code} on ${cause.taskId}` } : null;
+  }
+  // P6 #8 / 裁定 Q1: a Task whose claim is held (an agent's `hold_claim`, or the scribe's stop) leaves the Goal waiting
+  // without the NEEDS_DECISION headline (`workflow.ts:2457-2461`, `task-gate.ts:735-737`); `scribe_stop` never expires
+  // by itself. Two quiet minutes with nothing in flight and no card in hand: the platform stopped, with its own reason.
+  // The driver never releases the hold for the person. `claim_hold_stop_pending` is left out: its `action_release`
+  // card is in the queue and `approve` answers it.
+  if (quietFor >= DECIDE_GRACE_MS && idle && open === 0) {
+    const waiting = ready(await project.host.client.read('workflow/driver-read', project.scope, { goalRef }));
+    if (/^(claim_hold_held|scribe_stop_held)/.test(waiting?.reason ?? '')) return { decide: true, text: `the platform stopped: ${waiting.reason}` };
   }
   if (quietFor < STALL_MS) return null;
   if (!idle) return null;
@@ -499,22 +548,36 @@ export async function coldStart(ctx, project, text, rec) {
   const requestRoot = submitted.requestRoot;
   rec.link('session', submitted.secretary);
   let view = await waitRequest(ctx, project, requestRoot);
+  // C-216（P6 单跑 11-25）：初始协调轮可以先交问题（`submit_initial_questions`，回答 kind 为 needs_decision，
+  // 同时带目标卡草稿，`answer-tools.ts:119`、`:382-388`）；adopt 拒收这种回答（`initialization-adoption-service.ts:285-289`）。
+  // 人的入口是在同一请求上续问作答（`answerPlanQuestions` 的固定答复），不是确认这一轮的草稿。
+  const planReady = entry => entry !== undefined && entry.goalCardDrafts.length > 0 && !askedQuestions(entry);
   for (let turn = 0; turn < 3; turn += 1) {
     const latest = view.rounds.at(-1);
-    if (latest.goalCardDrafts.length > 0) break;
+    if (planReady(latest)) break;
     if (latest.closeCode !== null && latest.closeCode !== undefined) {
       rec.failure = { failureClass: 'query_closed', source: 'model_service', kernelCode: latest.closeCode,
         occurredAt: latest.since ?? null, autoRetry: false, recoveryPath: 'follow-up request' };
     }
-    const next = latest.ideas.length >= 2
-      ? await project.host.client.command('requests/select-idea', project.scope, { commandId: newId('idea'), round: latest.ref, index: 0 })
-      : await submitRequest(project, '按你的判断直接给出目标卡和首个方案，不用再问我。', { continues: requestRoot });
+    let next;
+    if (askedQuestions(latest)) {
+      (rec.facts.userCommand ??= [text]).push(PLAN_QUESTIONS_ANSWER);
+      rec.note(`cold start: round ${latest.ref?.queryJobId ?? '-'} asked the person questions (needs_decision) instead of a plan; the person answered on the request`);
+      next = await submitRequest(project, PLAN_QUESTIONS_ANSWER, { continues: requestRoot });
+    } else {
+      next = latest.ideas.length >= 2
+        ? await project.host.client.command('requests/select-idea', project.scope, { commandId: newId('idea'), round: latest.ref, index: 0 })
+        : await submitRequest(project, '按你的判断直接给出目标卡和首个方案，不用再问我。', { continues: requestRoot });
+    }
     if (next?.status !== 'queued') throw broken(ctx, `request follow-up: ${said(next)}`);
     view = await waitRequest(ctx, project, requestRoot);
   }
-  const round = [...view.rounds].reverse().find(entry => entry.goalCardDrafts.length > 0);
-  if (round === undefined) {
-    throw broken(ctx, `the secretary gave no Goal card draft after three rounds (closes: ${view.rounds.map(entry => entry.closeCode ?? 'ok').join(', ')})`);
+  // `goals/confirm-draft` takes only the latest answered round (`goal-confirm.ts:33-35`), and a questions round's draft
+  // can never be adopted: the round must be the latest answered one and carry a plan.
+  const round = latestAnswered(view);
+  if (!planReady(round)) {
+    throw broken(ctx, `the secretary gave no Goal card draft with a plan after three rounds (closes: ${view.rounds.map(entry => entry.closeCode ?? 'ok').join(', ')}; last answered round ${
+      round === undefined ? 'none' : askedQuestions(round) ? 'asked questions' : 'had no draft'})`);
   }
   const { draft, binding, goalsBeforeConfirm } = await confirmCard(ctx, project, round, rec);
   const adopted = await adoptBinding(ctx, project, binding);
@@ -660,9 +723,7 @@ export async function newGoalInProject(ctx, project, requestRoot, rec, check, ma
     { check });
   const goal = ready(await project.host.client.read('goals/read', project.scope, goalRef));
   if (goal === null) throw broken(ctx, `goals/read of ${goalRef.goalId} did not answer before plans/apply`, check);
-  const applied = await project.host.client.write('plans/apply', project.scope,
-    { proposalRef: candidate.head.ref, expectedProposalRevision: candidate.head.revision, decisionRefs: [] },
-    [{ ref: goalRef, revision: goal.goal.revision }]);
+  const applied = await applyCandidate(project, { ref: goalRef, revision: goal.goal.revision }, candidate.head);
   const plan = committed(applied);
   if (plan === null) throw broken(ctx, `plans/apply of ${goalRef.goalId}'s request candidate: ${said(applied)}`, check);
   rec.link('plan', plan.ref, plan.revision);
@@ -1025,6 +1086,63 @@ export async function lines(project, gaps = null) {
 }
 
 export const textOf = value => JSON.stringify(value ?? null);
+
+// ---------------------------------------------------------------------------- P2 messages and the task card (P6)
+
+/**
+ * The person's direct intervention on a line, the UI's own request body (`boot.ts:1583-1597`): `messages/send` with
+ * `entry: 'person_intervention'` and `needsReply: true`, no `intent` (P2 refuses it, `message-payload.ts:95-96`), no
+ * `wake`. Only a stored `person_intervention` claims, plans or opens a new-Goal request (`mailbox-send.ts:575-576`,
+ * `intervention.ts:245-247`). `ok` only for a committed write whose envelope `sendStatus` (beside `value`,
+ * `communication-contracts.ts:340-342`) is `sent`; `said` is the platform's own words otherwise.
+ */
+export async function interveneLine(project, lineKey, text, { goalRef = null } = {}) {
+  const reply = await project.host.client.write('messages/send', project.scope,
+    { recipient: lineKey, text, needsReply: true, entry: 'person_intervention', ...(goalRef === null ? {} : { goalRef }) }, []);
+  const value = committed(reply);
+  const sendStatus = reply?.sendStatus ?? null;
+  return { ok: value !== null && sendStatus === 'sent', value, sendStatus,
+    said: `messages/send: ${said(reply)}${sendStatus === null ? '' : ` (sendStatus ${sendStatus})`}` };
+}
+
+/** `messages/view` (`core-routes.ts:723`, `mailbox.ts:222-229`): `{message, delivery, disposition}`, or null. */
+export async function messageView(project, ref) {
+  return ready(await project.host.client.read('messages/view', project.scope, ref));
+}
+
+/** One part's text of a message (`messages/body`, `core-routes.ts:719`, `mailbox.ts:242-248`); inbox items carry only a bodyRef. */
+export async function messageBody(project, ref, part = 'message') {
+  return ready(await project.host.client.read('messages/body', project.scope, { messageRef: ref, part }))?.text ?? null;
+}
+
+/**
+ * The task card the person sees (`graph/detail` summary of a task node, `core-routes.ts:856`; `work-line.ts:373-452`):
+ * `holds[]`, `holdRelease`, `dispatch` (`request`, `claimableNow`, …) and `stop` (`request`, `steps`). Without `planRef`
+ * the Goal's current plan is read first. Null when either read does not answer.
+ */
+export async function taskCard(project, goalRef, taskId, planRef = null) {
+  let plan = planRef;
+  if (plan === null) plan = ready(await project.host.client.read('tasks/query', project.scope, { goalRef }))?.plan?.ref ?? null;
+  if (plan === null) return null;
+  return ready(await project.host.client.read('graph/detail', project.scope, { goalRef,
+    node: { kind: 'task', ref: { projectId: goalRef.projectId, goalId: goalRef.goalId, taskId }, planRef: plan },
+    section: 'summary', page: { afterCursor: null, limit: 1 } }))?.task ?? null;
+}
+
+/**
+ * The saved message's own ref inside a tool result (`{aggregateType:'SessionMessage', projectId, workspaceId,
+ * messageId}`, `session-message.ts:29-34`: no sessionId), or null. lead 11-25 (P6 run): a follow-up's result also
+ * carries the message it follows (`followupOf`), found first by a plain walk, so the record's own `ref` is taken by
+ * position first, and the walk skips the refs the call's arguments name (`followupOf`, a replied `messageRef`).
+ */
+const isMessageRef = node => node?.aggregateType === 'SessionMessage' && typeof node.messageId === 'string';
+export const messageRefOf = result => {
+  for (const value of result?.values ?? []) {
+    for (const own of [value?.message?.ref, value?.value?.message?.ref, value?.value?.ref, value?.ref]) if (isMessageRef(own)) return own;
+  }
+  const named = new Set([result?.args?.followupOf?.messageId, result?.args?.messageRef?.messageId].filter(id => typeof id === 'string'));
+  return findAll(result?.values ?? [], isMessageRef).find(node => !named.has(node.messageId)) ?? null;
+};
 
 /** The end state of one Goal (spec §5.6 "终态"). */
 export async function finalState(project, goalRef) {

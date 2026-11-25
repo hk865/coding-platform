@@ -11,7 +11,7 @@
     "from": null,
     "to": null
   },
-  "scenarios": ["A1", "B1", "E05", "E06", "E08", "E09", "E12", "iteration", "intervention", "waiting", "attached", "B06", "compaction"],
+  "scenarios": ["A1", "B1", "E05", "E06", "E08", "E09", "E12", "iteration", "intervention", "waiting", "attached", "B06", "E08b", "compaction"],
   "autonomy": {
     "E05": "after_plan_confirmation",
     "E06": "after_plan_confirmation",

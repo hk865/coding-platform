@@ -2,7 +2,7 @@
 // only; restarts while a Run works and while the Goal is paused; the predecessor archived, history still readable
 // (draft §1.2; MVP-BEHAVIOR.md:358; slice-9-SPEC.md:661, :687). The person never restates the task after the handoff.
 import { newId, ready } from '../lib/http.mjs';
-import { answerCard, approve, broken, chooseModel, driverStart, executions, lines, newGoalInProject, orNull, runHistory,
+import { answerCard, approve, broken, chooseModel, driverStart, executions, interveneLine, lines, newGoalInProject, orNull, runHistory,
   sessionHistory, sessionTurns, sleep, submitRequest, textOf, turnsOf, waitFor, waitGoal, waitingCards } from '../lib/flows.mjs';
 import { Abort } from '../lib/report.mjs';
 
@@ -91,38 +91,100 @@ async function run(ctx, rec) {
   `重启前 Run ${first.run.ref.runId} → ${firstRun?.run.outcome}；继续的 Run ${resumed?.run.ref.runId ?? '无'} 在 ${resumed?.outbox?.claim?.sessionRef?.sessionId ?? '-'}（原 ${firstSession?.sessionId}）`);
 
   // 2. The person asks the working line to hand off; the model's `hand_off` raises a card the person approves.
+  // `hand_off` exists only inside a Work Run (`handoff-tools.ts:88-89`). P6 ruling Q12: the executions are read once
+  // before the person writes; a line with no running Run gets no request and the handoff is `not-run`, never waited for.
   const workLine = (await lines(project)).find(row => row.key.sessionId === (resumed ?? first).outbox?.claim?.sessionRef?.sessionId);
   if (workLine === undefined) throw broken(ctx, 'lines/list shows no row for the working Session');
-  const sent = await project.host.client.write('messages/send', project.scope,
-    { recipient: workLine.key, text: HANDOFF, intent: 'action_request', needsReply: true }, []);
-  rec.link('message', sent?.value?.ref ?? null, sent?.value?.revision ?? null);
-  // Under `after_plan_confirmation` a short-term line's handoff is an automatic notice, not a card
-  // (`decision-policy.ts:120-121`); a `handoff_approval` card that does appear gets the person's approval.
+  const liveOnLine = (await executions(project, goalRef)).find(item => item.run.status === 'running'
+    && item.outbox?.claim?.sessionRef?.sessionId === workLine.key.sessionId) ?? null;
+  let chain = null;
   let approved = 0;
-  const chain = await waitFor(ctx, 'a successor on the line', async () => {
-    for (const card of await waitingCards(project)) {
-      if (card.source.kind !== 'handoff_approval') continue;
-      if (await answerCard(ctx, project, card, { kind: 'option', optionId: 'approve' }, '', rec)) approved += 1;
-    }
-    return (await lines(project)).find(row => row.key.sessionId !== workLine.key.sessionId
-      && row.chainSessions?.some(entry => (entry.sessionId ?? entry.ref?.sessionId) === workLine.key.sessionId)) ?? null;
-  }, row => row !== null, { timeoutMs: 40 * MINUTE });
-  rec.check('handoff', chain !== null, `前任 ${workLine.key.sessionId} → 接任 ${chain.key.sessionId}（批准的交接卡 ${approved} 张）`);
-  rec.link('session', chain.key);
+  if (liveOnLine === null) {
+    rec.uncover('handoff', 'not-run', `发换手请求前读 executions：工作线 ${workLine.key.sessionId} 上没有在跑的 Work Run（hand_off 只在 Work Run 里能用，handoff-tools.ts:88-89），换手没有发生的机会，不发也不等（P6 裁定 Q12）`);
+  } else {
+    // P6 #1: the UI's direct intervention (`entry: 'person_intervention'`, no `intent`); a refusal or a send that did
+    // not go out is the platform's answer on `handoff`.
+    const sent = await interveneLine(project, workLine.key, HANDOFF);
+    if (!sent.ok) throw broken(ctx, sent.said, 'handoff');
+    rec.link('message', sent.value.ref, sent.value.revision ?? null);
+    rec.note(`换手请求发给 ${workLine.key.sessionId}（在跑 Run ${liveOnLine.run.ref.runId}）：${sent.said}`);
+    // Under `after_plan_confirmation` a short-term line's handoff is an automatic notice, not a card
+    // (`decision-policy.ts:120-121`); a `handoff_approval` card that does appear gets the person's approval.
+    chain = await waitFor(ctx, 'a successor on the line', async () => {
+      for (const card of await waitingCards(project)) {
+        if (card.source.kind !== 'handoff_approval') continue;
+        if (await answerCard(ctx, project, card, { kind: 'option', optionId: 'approve' }, '', rec)) approved += 1;
+      }
+      // P6 diagnosis 2 #6: a handoff successor is not a continuation, so it never enters `chainSessions`; the line list
+      // marks it `handoff_from` (`contracts/work-line.ts:61`). Either one names the predecessor.
+      const named = ref => (ref?.sessionId ?? ref?.ref?.sessionId) === workLine.key.sessionId;
+      return (await lines(project)).find(row => row.key.sessionId !== workLine.key.sessionId
+        && ([...(row.status?.markers ?? []), ...(row.markers ?? [])].some(marker => marker?.kind === 'handoff_from'
+          && (named(marker.from) || named(marker.fromLine)))
+          || row.chainSessions?.some(named))) ?? null;
+    }, row => row !== null, { timeoutMs: 40 * MINUTE, check: 'handoff' });
+    rec.check('handoff', chain !== null, `前任 ${workLine.key.sessionId} → 接任 ${chain.key.sessionId}（批准的交接卡 ${approved} 张）`);
+    rec.link('session', chain.key);
+  }
 
-  // 3. Pause, restart while paused (C-151), resume.
+  // 3. Pause, restart while paused (C-151), resume. P6 #21: the wait judges `restart-paused` itself. Ruling Q13: the
+  // driver does not press "advance" again for the person; a Goal that does not go on is judged as it is, citing the
+  // known gap, and the checks after it are still read.
   const pausedAnswer = await pause(ctx, project, goalRef, 'pause');
   rec.note(`pause: ${pausedAnswer?.status} ${pausedAnswer?.code ?? ''}`);
   await sleep(20_000);
   await restart(ctx, project, rec, 'Goal paused', 'restart-paused');
   const pausedShown = ready(await project.host.client.read('goals/display', project.scope, { goalRef }));
   const resume = await pause(ctx, project, goalRef, 'resume');
-  const done = await waitGoal(ctx, project, goalRef, { timeoutMs: 120 * MINUTE, rec, answer: card => (card.source.kind === 'handoff_approval' ? null : approve(card)) });
-  rec.check('restart-paused', pausedShown?.display?.phase === 'PAUSED' && resume?.status === 'committed' && done.display.phase === 'COMPLETED',
-    `重启后 ${pausedShown?.display?.phase}/${pausedShown?.display?.row}；恢复 ${resume?.status}；最后 ${done.display.phase}`);
+  const done = await orNull(waitGoal(ctx, project, goalRef, { timeoutMs: 120 * MINUTE, rec, check: 'restart-paused',
+    answer: card => (card.source.kind === 'handoff_approval' ? null : approve(card)) }));
+  const pausedOk = pausedShown?.display?.phase === 'PAUSED' && resume?.status === 'committed' && done?.display?.phase === 'COMPLETED';
+  rec.check('restart-paused', pausedOk,
+    `重启后 ${pausedShown?.display?.phase}/${pausedShown?.display?.row}；恢复 ${resume?.status}；最后 ${done?.display?.phase ?? '没等到完成（原因见 fail 的那条）'}${pausedOk ? ''
+      : '；已知缺口 STATUS.md:89：暂停的目标跨过重启后被恢复，目标循环不会自己重新起来（P2 之前就有）；驱动不替人再按推进（P6 裁定 Q13）'}`);
 
   // 4. What the successor actually received, judged by turn identity (lead ruling 11-14 #9): only its turns' input,
   // never a tool result it read or an answer it wrote; the reason is the predecessor's own `hand_off` argument.
+  const runs = await executions(project, goalRef);
+  if (chain === null) {
+    for (const id of ['successor-input', 'no-restatement', 'excluded-path', 'history-continuity', 'wake']) {
+      rec.uncover(id, 'not-run', '没有换手（见 handoff），没有接任线可判');
+    }
+  } else await judgeSuccessor(ctx, project, rec, { chain, workLine, runs, approved });
+  rec.uncover('successor-frontier', 'entry-missing', '前任的义务/前沿没有一份可逐字比对的公开原文（hand_off 只给 reason 和 understanding 注记引用），不判通过');
+  const byTask = new Map();
+  for (const item of runs) byTask.set(item.run.task.taskId, [...(byTask.get(item.run.task.taskId) ?? []), item]);
+  const repeated = [...byTask.values()].find(list => list.length > 1);
+  if (repeated === undefined) rec.uncover('same-task-new-run', 'not-run', '这次没有出现同一 Task 的第二个 Run');
+  else {
+    const brief = ready(await project.host.client.read('executions/brief', project.scope, { runRef: repeated.at(-1).run.ref }));
+    rec.check('same-task-new-run', brief !== null, `Task ${repeated[0].run.task.taskId}：${repeated.length} 个 Run；接续说明 ${brief === null ? '无' : 'digest ' + brief.digest}`);
+  }
+
+  // 5. Archive the predecessor (no tasks left: plain archive-line with no choices), then read its history. A Goal that
+  // did not complete may still hold work on that line: no archive then (an archive refused for that is no finding).
+  if (done?.display?.phase !== 'COMPLETED') {
+    rec.uncover('archive', 'not-run', `目标没有完成（${done?.display?.phase ?? '没等到'}），前任线上可能还有未完成任务，不归档`);
+    rec.uncover('hand-or-drop', 'not-run', '目标没有完成，没有归档');
+    ctx.shared.e06 = { project, goalRef, predecessor: workLine.key, successor: chain?.key ?? null };
+    return;
+  }
+  const record = ready(await project.host.client.read('sessions/read', project.scope, workLine.key));
+  if (record === null) throw broken(ctx, 'sessions/read of the predecessor failed');
+  const archived = await project.host.client.write('sessions/archive-line', project.scope,
+    { sessionRef: workLine.key, reason: 'G6 E06: 换手后归档前任', tasks: [], wait: null },
+    [{ ref: { aggregateType: 'Session', ...workLine.key }, revision: record.record.revision }]);
+  const after = await sessionHistory(project, workLine.key);
+  const firstHistory = ready(await project.host.client.read('executions/history', project.scope, { runRef: first.run.ref, afterCursor: null, limit: 50 }));
+  rec.check('archive', archived?.status === 'ready' && archived.value?.state === 'archived' && after.length > 0 && firstHistory !== null,
+    `archive-line ${archived?.status} ${archived?.value?.state ?? archived?.code ?? ''}；归档后 sessions/history ${after.length} 条，executions/history ${firstHistory === null ? '读不到' : '可读'}`);
+  // The predecessor's work was done before the archive (no Task to hand or drop), so C-223's choice never happened.
+  rec.uncover('hand-or-drop', 'not-run', '归档时前任线上没有未完成任务（tasks: []），没有实际发生“交给/放下”');
+  ctx.shared.e06 = { project, goalRef, predecessor: workLine.key, successor: chain?.key ?? null };
+}
+
+/** Section 4 of E06 when a successor exists: the successor's actual input and work, judged by turn identity. */
+async function judgeSuccessor(ctx, project, rec, { chain, workLine, runs, approved }) {
   const successorTurns = await sessionTurns(project, chain.key);
   const successorInput = successorTurns.map(turn => turn.input).join('\n');
   const predecessorTurns = await sessionTurns(project, workLine.key);
@@ -137,9 +199,7 @@ async function run(ctx, rec) {
     rec.check('successor-input', hasGoal && successorInput.includes(reason),
       `接任者 turn 输入（${successorTurns.length} 轮）含目标词 ${objectiveWords.join('/')}：${hasGoal}；含 hand_off 理由原文「${reason}」：${successorInput.includes(reason)}`);
   }
-  rec.uncover('successor-frontier', 'entry-missing', '前任的义务/前沿没有一份可逐字比对的公开原文（hand_off 只给 reason 和 understanding 注记引用），不判通过');
   rec.pass('no-restatement', '驱动在换手批准之后没有再给这条线发任何消息（http.jsonl 可核）');
-  const runs = await executions(project, goalRef);
   // Avoided = no successful tool result of the successor's Runs changed a path under the excluded folder.
   const touched = [];
   for (const item of runs.filter(entry => entry.outbox?.claim?.sessionRef?.sessionId === chain.key.sessionId)) {
@@ -148,14 +208,6 @@ async function run(ctx, rec) {
   }
   rec.check('excluded-path', successorInput.includes(EXCLUDED) && touched.length === 0,
     `接任者 turn 输入提到 ${EXCLUDED}：${successorInput.includes(EXCLUDED)}；成功写过它的 Run：${touched.join(', ') || '无'}`);
-  const byTask = new Map();
-  for (const item of runs) byTask.set(item.run.task.taskId, [...(byTask.get(item.run.task.taskId) ?? []), item]);
-  const repeated = [...byTask.values()].find(list => list.length > 1);
-  if (repeated === undefined) rec.uncover('same-task-new-run', 'not-run', '这次没有出现同一 Task 的第二个 Run');
-  else {
-    const brief = ready(await project.host.client.read('executions/brief', project.scope, { runRef: repeated.at(-1).run.ref }));
-    rec.check('same-task-new-run', brief !== null, `Task ${repeated[0].run.task.taskId}：${repeated.length} 个 Run；接续说明 ${brief === null ? '无' : 'digest ' + brief.digest}`);
-  }
   // Necessary prior text: the predecessor's last final answer, quoted into a later turn's input of the successor.
   const lastFinal = predecessorTurns.map(turn => turn.final).filter(text => text !== null).at(-1) ?? null;
   const quote = lastFinal === null ? null : lastFinal.trim().slice(0, 40);
@@ -164,19 +216,6 @@ async function run(ctx, rec) {
   rec.check('wake', runs.some(item => item.outbox?.claim?.sessionRef?.sessionId === chain.key.sessionId),
     `交接（批准的卡 ${approved} 张）之后接任线上有 Run：后继真的启动`);
 
-  // 5. Archive the predecessor (no tasks left: plain archive-line with no choices), then read its history.
-  const record = ready(await project.host.client.read('sessions/read', project.scope, workLine.key));
-  if (record === null) throw broken(ctx, 'sessions/read of the predecessor failed');
-  const archived = await project.host.client.write('sessions/archive-line', project.scope,
-    { sessionRef: workLine.key, reason: 'G6 E06: 换手后归档前任', tasks: [], wait: null },
-    [{ ref: { aggregateType: 'Session', ...workLine.key }, revision: record.record.revision }]);
-  const after = await sessionHistory(project, workLine.key);
-  const firstHistory = ready(await project.host.client.read('executions/history', project.scope, { runRef: first.run.ref, afterCursor: null, limit: 50 }));
-  rec.check('archive', archived?.status === 'ready' && archived.value?.state === 'archived' && after.length > 0 && firstHistory !== null,
-    `archive-line ${archived?.status} ${archived?.value?.state ?? archived?.code ?? ''}；归档后 sessions/history ${after.length} 条，executions/history ${firstHistory === null ? '读不到' : '可读'}`);
-  // The predecessor's work was done before the archive (no Task to hand or drop), so C-223's choice never happened.
-  rec.uncover('hand-or-drop', 'not-run', '归档时前任线上没有未完成任务（tasks: []），没有实际发生“交给/放下”');
-  ctx.shared.e06 = { project, goalRef, predecessor: workLine.key, successor: chain.key };
 }
 
 export default { ...def, run };

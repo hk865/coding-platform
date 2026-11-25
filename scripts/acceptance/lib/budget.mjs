@@ -23,7 +23,9 @@ const keyOf = value => JSON.stringify(value);
 /** The meter's key of one project scope (`inFlight({ scopes })` takes these). */
 export const scopeKey = scope => `${scope.projectId}/${scope.workspaceId}`;
 const sessionRefOf = ref => ({ projectId: ref.projectId, sessionId: ref.sessionId });
-const zero = () => ({ input: 0, output: 0, cached: 0, queryRequests: 0, unbilled: 0, bounded: 0, runs: 0, runsWithoutUsage: 0 });
+// `reportedInput` (P6, design-frozen.md:838 "实报输入 token"): the input of counted items whose usage the platform
+// reported, i.e. neither a reservation upper bound (`bounded`) nor an unbilled 0 / cut part (`unbilled`).
+const zero = () => ({ input: 0, output: 0, cached: 0, reportedInput: 0, queryRequests: 0, unbilled: 0, bounded: 0, runs: 0, runsWithoutUsage: 0 });
 
 /** A stop from the budget: `total` or `scenario` cap crossed, or `meter` (the reading is incomplete). */
 export class BudgetStop extends Abort {
@@ -224,6 +226,7 @@ export class Budget {
     totals.input += item.input ?? 0;
     totals.output += item.output ?? 0;
     totals.cached += item.cached ?? 0;
+    if (!item.bounded && !item.unbilled) totals.reportedInput += item.input ?? 0;
     if (item.kind === 'query') {
       totals.queryRequests += 1;
       if (item.unbilled) { totals.unbilled += 1; this.report.note(`${unit}: request ${item.detail.requestId} counted as unbilled 0 (${item.detail.unbilled})`); }
@@ -362,7 +365,11 @@ export class Budget {
       '已知缺口：Work Run 的压缩摘要请求在另一个 Kernel Session 里跑，不在 `activity/runs` 里，计量少算了它们；驱动不读数据库补数（lead 裁定 11-14 #3）。400M/50M 上限远高于预期用量，这是记下的缺口，不是阻断。',
       `最后一次完整读数时在途：Query ${inFlight.queries}，Work Run ${inFlight.runs}（Work Run 的用量要等 Run 结束才在 \`activity/runs\` 出现，所以超限后的停止点是第一次能看到超出的读数）。`,
       ...(this.stop?.cap === 'meter' ? [`计量不可用：${this.stop.message}`] : []),
-      ...[...this.units.entries()].map(([unit, item]) => `${unit}：用量 ${item.input + item.output}（输入 ${item.input}，输出 ${item.output}，缓存命中 ${item.cached}；Query 请求 ${item.queryRequests}（其中按未计费 0 计的 ${item.unbilled}：provider 拒收，或驱动自己取消截断的请求；按预留上限计的 ${item.bounded}：Query 已关闭、用量未知），结束的 Run ${item.runs}）`),
+      // P6（design-frozen.md:838）：实报输入和超预算退出原因各单列一行。
+      `实报输入（平台报了用量的部分，不含按预留上限计的和未计费 0）：${used.reportedInput}；估算部分 ${used.input - used.reportedInput}。`,
+      `超预算退出：整轮 ${this.stop === null ? '没有' : `${this.stop.cap}：${this.stop.message}`}；按场景/格 ${
+        this.unitStops.size === 0 ? '没有' : [...this.unitStops.entries()].map(([unit, stop]) => `${unit}（${stop.message}）`).join('；')}。`,
+      ...[...this.units.entries()].map(([unit, item]) => `${unit}：用量 ${item.input + item.output}（输入 ${item.input}，输出 ${item.output}，缓存命中 ${item.cached}；Query 请求 ${item.queryRequests}（其中按未计费 0 计的 ${item.unbilled}：provider 拒收，或驱动自己取消截断的请求；按预留上限计的 ${item.bounded}：Query 已关闭、用量未知），结束的 Run ${item.runs}；实报输入 ${item.reportedInput}）`),
     ];
   }
 }

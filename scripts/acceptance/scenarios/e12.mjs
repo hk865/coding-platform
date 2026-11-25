@@ -1,12 +1,13 @@
 // E12: look through both graphs, history, messages and completion evidence; reads change nothing; then a normal
 // close, a new Host on the same ledger, and related new work through the old line (draft §1.5; slice-9-SPEC.md:664,
-// :690). New work is never `driver-start(oldGoalRef)`: a person's message to a COMPLETED Goal's line becomes the
-// Workflow's own `intervention_new_goal` request (`intervention.ts:169-176`), then card → confirm → select an idea →
-// the request's plan candidate → `plans/apply` (G6F F3: the project is initialized, so not `initialization/adopt`)
-// → `driver-start` of the new Goal.
+// :690). New work is never `driver-start(oldGoalRef)`: a person's direct intervention (the UI's `messages/send` with
+// `entry: 'person_intervention'`, P2) to a COMPLETED Goal's line becomes the Workflow's own `intervention_new_goal`
+// request (`intervention.ts:245-247`: only a stored person intervention opens it), then card → confirm → select an
+// idea → the request's plan candidate → `plans/apply` (G6F F3: the project is initialized, so not
+// `initialization/adopt`) → `driver-start` of the new Goal.
 import { newId, ready } from '../lib/http.mjs';
-import { broken, chooseModel, coldStart, driverStart, executions, lines, newGoalInProject, openProject, runHistory, sessionHistory,
-  sessionQueries, textOf, turnsOf, waitFor, waitGoal } from '../lib/flows.mjs';
+import { broken, chooseModel, coldStart, driverStart, executions, interveneLine, lines, newGoalInProject, openProject, runHistory,
+  sessionHistory, sessionQueries, textOf, turnsOf, waitFor, waitGoal } from '../lib/flows.mjs';
 
 const MINUTE = 60_000;
 const SEED = {
@@ -114,14 +115,15 @@ async function run(ctx, rec) {
   if (line === undefined) throw broken(ctx, 'lines/list shows no line for the old Goal', 'new-goal');
   const mainBefore = ready(await host.client.read('main/read', project.scope, { goalId: null, cursor: null }));
   const known = new Set((mainBefore?.requests ?? []).map(entry => JSON.stringify(entry.requestRoot)));
-  const sent = await host.client.write('messages/send', project.scope,
-    { recipient: line.key, text: FOLLOW, intent: 'action_request', needsReply: true }, []);
-  rec.link('message', sent?.value?.ref ?? null);
+  // P6 #2: the UI's direct intervention (no `intent`); a send that did not go out is the platform's answer on `new-goal`.
+  const sent = await interveneLine(project, line.key, FOLLOW);
+  if (!sent.ok) throw broken(ctx, sent.said, 'new-goal');
+  rec.link('message', sent.value.ref, sent.value.revision ?? null);
   rec.facts.userCommand.push(FOLLOW);
   const request = await waitFor(ctx, 'the intervention_new_goal request', async () => {
     const main = ready(await host.client.read('main/read', project.scope, { goalId: null, cursor: null }));
     return (main?.requests ?? []).find(entry => !known.has(JSON.stringify(entry.requestRoot))) ?? null;
-  }, value => value !== null, { timeoutMs: 20 * MINUTE });
+  }, value => value !== null, { timeoutMs: 20 * MINUTE, check: 'new-goal' });
   // One follow-up asking for the Goal card before judging (G6F F4, R3).
   const created = await newGoalInProject(ctx, project, request.requestRoot, rec, 'new-goal', 1);
   const newGoal = created.goalRef;

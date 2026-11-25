@@ -34,6 +34,25 @@ export function categoryOf(code, reason) {
   return RULE_BASIS.test(reason) ? '产品规则' : '无理由';
 }
 
+/**
+ * P6 (design-frozen.md:838; lead ruling Q10): the three wall kinds P6 counts, matched on the platform's own words;
+ * every other refusal keeps only its four-way category. `step` is the wall row's step (`tool <name> (call …)` for a
+ * tool refusal, `<route> <commandId>` for an HTTP one).
+ * - 派工版本拒绝: `dispatch_task` answered `revision_conflict`, "the dispatch basis moved" (`action-requests.ts:362`,
+ *   `dispatch-basis.ts:179`);
+ * - 问答轮发不出: the frozen `QUERY_WAIT_REFUSAL` text (`communication-tools.ts:170`);
+ * - 注记读口: `look_graph`/`find_graph` refused with a reason naming notes.
+ */
+export const P6_CLASSES = ['派工版本拒绝', '问答轮发不出', '注记读口'];
+export function p6ClassOf(step, code, reason) {
+  const tool = /^tool (\S+)/.exec(String(step ?? ''))?.[1] ?? null;
+  const text = String(reason ?? '');
+  if (tool === 'dispatch_task' && code === 'revision_conflict' && /dispatch basis moved/.test(text)) return '派工版本拒绝';
+  if (text.includes('问答轮不能选“发完等回复”')) return '问答轮发不出';
+  if ((tool === 'look_graph' || tool === 'find_graph') && /注记|\bnotes?\b/i.test(text)) return '注记读口';
+  return null;
+}
+
 export class Report {
   constructor(dir) {
     this.dir = dir;
@@ -48,11 +67,36 @@ export class Report {
     this.cells = {};
     this.attached = [];
     this.b06 = null;
+    /** P6 裁定 Q4：E08 的“方案确认后自动、sub 已在跑”变体，全部场景和 B06 之后跑，单列。 */
+    this.e08b = null;
     this.compaction = null;
     this.hosts = [];
     this.notes = [];
     this.budget = null;
     this.tokenNotes = [];
+    /** P6 accounting per unit: kind → identities seen (a re-scan of the same history never counts twice). */
+    this.p6 = new Map();
+  }
+
+  /** P6 (design-frozen.md:838): count one identity of `kind` (`modelCalls`, `wakeTurns`, `ackOnly`) for a unit. */
+  p6Count(unit, kind, key) {
+    // P6 diagnosis 2 #9/#31: E06 takes over E05's project, so its scan sees E05's histories again; an identity belongs
+    // to the first unit that counted it (each unit is scanned at its own end), never to two.
+    this.p6Seen ??= new Set();
+    if (this.p6Seen.has(`${kind}#${key}`)) return;
+    this.p6Seen.add(`${kind}#${key}`);
+    const counts = this.p6.get(unit) ?? { modelCalls: new Set(), wakeTurns: new Set(), ackOnly: new Set() };
+    this.p6.set(unit, counts);
+    counts[kind].add(key);
+  }
+
+  /** The P6 accounting lines (model calls from the histories, wake rounds that only acknowledged, ruling Q11). */
+  p6Lines() {
+    const total = kind => [...this.p6.values()].reduce((sum, counts) => sum + counts[kind].size, 0);
+    return [
+      `P6 记账：模型调用 ${total('modelCalls')} 次（公开原历史里 \`model.request_started\` 的条数，含 Work Run；压缩摘要的请求在另一个 Kernel Session 里，数不到，照旧记作缺口）；叫醒轮（intervention-planning）${total('wakeTurns')} 个，其中只回“收到”的 ${total('ackOnly')} 个（成功的工具调用只有读类和答复，且答复的都不是要回复的信，没交候选、没发信、没出卡；裁定 Q11、lead 11-25 #31，只计数不判；回复对象读不到的照旧计数，见其它记录）。`,
+      ...[...this.p6.entries()].map(([unit, counts]) => `${unit}：模型调用 ${counts.modelCalls.size}，叫醒轮 ${counts.wakeTurns.size}，只回收到 ${counts.ackOnly.size}`),
+    ];
   }
 
   http(entry) {
@@ -65,16 +109,18 @@ export class Report {
 
   /** One refusal, one row, recorded when it happens (never folded); an expected one is flagged `expected`. */
   wall(entry) {
-    this.walls.push({ at: entry.at, scenario: this.current?.id ?? '-', step: `${entry.route} ${entry.commandId ?? ''}`.trim(),
-      code: entry.code, reason: entry.reason ?? '', expected: entry.expected, category: categoryOf(entry.code, entry.reason), pkg: '待定' });
+    const step = `${entry.route} ${entry.commandId ?? ''}`.trim();
+    this.walls.push({ at: entry.at, scenario: this.current?.id ?? '-', step, code: entry.code, reason: entry.reason ?? '',
+      expected: entry.expected, category: categoryOf(entry.code, entry.reason), p6: p6ClassOf(step, entry.code, entry.reason), pkg: '待定' });
   }
 
   /** A tool refusal found in a public history (second review #15): one row per call identity, at its own time. */
   toolWall(unit, refusal) {
     if (this.toolWallKeys.has(refusal.key)) return;
     this.toolWallKeys.add(refusal.key);
-    this.walls.push({ at: refusal.at, scenario: unit, step: `tool ${refusal.tool ?? '?'} (call ${refusal.callId})`,
-      code: refusal.code ?? '-', reason: refusal.reason ?? '', expected: false, category: categoryOf(refusal.code, refusal.reason), pkg: '待定' });
+    const step = `tool ${refusal.tool ?? '?'} (call ${refusal.callId})`;
+    this.walls.push({ at: refusal.at, scenario: unit, step, code: refusal.code ?? '-', reason: refusal.reason ?? '', expected: false,
+      category: categoryOf(refusal.code, refusal.reason), p6: p6ClassOf(step, refusal.code, refusal.reason), pkg: '待定' });
   }
 
   modelCall(entry) {
@@ -127,13 +173,18 @@ export class Report {
       '## B06',
       '',
       ...cell('B06 关闭格', this.b06 ?? undefined),
+      '## E08b（P6：方案确认后自动、sub 已在跑）',
+      '',
+      ...cell('E08b', this.e08b ?? undefined),
       '## 撞墙表',
       '',
       `共 ${this.walls.length} 行（其中场景预期的拒绝 ${this.walls.filter(wall => wall.expected).length} 行），每次拒绝一行，原文见 \`checks/notes.md\`。`,
+      `P6 要记的三类（按原句匹配，裁定 Q10）：${P6_CLASSES.map(name => `${name} ${this.walls.filter(wall => wall.p6 === name).length} 次`).join('，')}。`,
       '',
       '## 预算',
       '',
       ...(this.budget === null ? ['没有用量记录。'] : this.budget.lines.map(line => `- ${line}`)),
+      ...this.p6Lines().map(line => `- ${line}`),
       '',
       '## 延迟探针（只记录）',
       '',
@@ -165,7 +216,7 @@ export class Report {
     ]);
     const cellText = text => String(text).replace(/\|/g, '\\|').replace(/\n/g, ' ');
     const walls = [...this.walls].sort((left, right) => String(left.at).localeCompare(String(right.at))).map(wall => `| ${wall.at} | ${wall.scenario} | ${cellText(wall.step)} | ${cellText(`${wall.code}: ${wall.reason}`)} | ${
-      wall.category} | ${wall.expected ? 'expected' : '-'} | ${wall.pkg} |`);
+      wall.category}${wall.p6 ? `（P6：${wall.p6}）` : ''} | ${wall.expected ? 'expected' : '-'} | ${wall.pkg} |`);
     const notes = [
       `# G6 notes ${meta.date}（运行号 ${meta.runId}）`,
       '',
@@ -186,9 +237,11 @@ export class Report {
       ...cell('压缩', this.compaction ?? undefined),
       ...this.attached.flatMap(item => cell(item.id, item)),
       ...cell('B06', this.b06 ?? undefined),
+      ...cell('E08b', this.e08b ?? undefined),
       '## 预算',
       '',
       ...(this.budget === null ? ['没有用量记录。'] : this.budget.lines.map(line => `- ${line}`)),
+      ...this.p6Lines().map(line => `- ${line}`),
       '',
       '## 延迟探针',
       '',

@@ -205,28 +205,45 @@ export function hostMessageId(
 }
 
 /**
+ * Split the `<goalId>:<subjectId>` part of a round head. Goal ids may contain
+ * colons (a confirmed draft's id is `goal-confirm:<command identity>`), so the
+ * colon count cannot find the boundary. A reader that has the stored message's
+ * Goal passes it and the boundary is exact; without it the subject (stage,
+ * task or Query id) is the last field (slice-PL-SPEC §5.2.2).
+ */
+function goalRoundIds(fields: readonly string[], messageGoalId?: string) {
+  const pair = fields.join(':');
+  const goalId = messageGoalId ?? fields.slice(0, -1).join(':');
+  const prefix = `${goalId}:`;
+  if (!nonEmpty(goalId) || !pair.startsWith(prefix)) return null;
+  const subjectId = pair.slice(prefix.length);
+  return nonEmpty(subjectId) ? { goalId, subjectId } : null;
+}
+
+/**
  * The head of a round from the text's FIRST line only. An unknown prefix (or a
  * line that is not the exact shape of a known one) is not an error: it reads
  * as an ordinary planning message and returns `null`.
+ * The fixed fields of a Goal round (revision, deviation cause) are read from
+ * the right, because the Goal id on the left may itself contain colons;
+ * `messageGoalId` is the stored message's Goal when the reader has it.
  */
-export function systemRoundOfText(text: string): SystemRoundHeadV1 | null {
+export function systemRoundOfText(text: string, messageGoalId?: string): SystemRoundHeadV1 | null {
   const firstLine = text.split('\n')[0] ?? '';
   const segments = firstLine.split(':');
   const [prefix] = segments;
   if (prefix === 'refine') {
-    if (segments.length !== 4) return null;
-    const [, goalId, stageOrTaskId, revision] = segments;
-    const planRevision = positivePlanRevisionOf(revision);
-    if (!nonEmpty(goalId) || !nonEmpty(stageOrTaskId) || planRevision === null) return null;
-    return { kind: 'refine', goalId, stageOrTaskId, planRevision };
+    const ids = goalRoundIds(segments.slice(1, -1), messageGoalId);
+    const planRevision = positivePlanRevisionOf(segments.at(-1));
+    if (ids === null || planRevision === null) return null;
+    return { kind: 'refine', goalId: ids.goalId, stageOrTaskId: ids.subjectId, planRevision };
   }
   if (prefix === 'deviation') {
-    if (segments.length !== 5) return null;
-    const [, goalId, taskId, cause, revision] = segments;
-    const planRevision = positivePlanRevisionOf(revision);
-    if (!nonEmpty(goalId) || !nonEmpty(taskId)
-      || !inList(cause, ['growth', 'lines', 'budget', 'stop']) || planRevision === null) return null;
-    return { kind: 'deviation', goalId, taskId, cause, planRevision };
+    const ids = goalRoundIds(segments.slice(1, -2), messageGoalId);
+    const cause = segments.at(-2);
+    const planRevision = positivePlanRevisionOf(segments.at(-1));
+    if (ids === null || planRevision === null || !inList(cause, ['growth', 'lines', 'budget', 'stop'])) return null;
+    return { kind: 'deviation', goalId: ids.goalId, taskId: ids.subjectId, cause, planRevision };
   }
   if (prefix === 'planreview' || prefix === 'planfix') {
     if (segments.length !== 3) return null;
@@ -236,10 +253,8 @@ export function systemRoundOfText(text: string): SystemRoundHeadV1 | null {
     return { kind: prefix, proposalId, proposalRevision };
   }
   if (prefix === 'planresume') {
-    if (segments.length !== 3) return null;
-    const [, goalId, queryJobId] = segments;
-    if (!nonEmpty(goalId) || !nonEmpty(queryJobId)) return null;
-    return { kind: 'planresume', goalId, queryJobId };
+    const ids = goalRoundIds(segments.slice(1), messageGoalId);
+    return ids === null ? null : { kind: 'planresume', goalId: ids.goalId, queryJobId: ids.subjectId };
   }
   if (prefix === 'execreview') {
     if (segments.length !== 2) return null;

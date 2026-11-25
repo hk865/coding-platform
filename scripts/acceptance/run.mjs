@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // G6 acceptance driver (slice 9 group 6): the one final real-model run of the eight scenarios, the two 131072
-// cells, the compaction scenario, the attached Goals (C-216, C-221, C-222) and the B06 cells, only through the
+// cells, the compaction scenario, the attached Goals (C-216, C-221, C-222), the B06 cells and E08b (P6), only through the
 // real CLI (`node dist/app/main.js <workbench-config.json>`) and HTTP.
 //   node scripts/acceptance/run.mjs <acceptance.config.json> [--only E05,A1,...] [--out <report dir>]
 // `--only` is for the lead's dry run of a small scenario; only the final full run counts (slice-9-SPEC.md:798).
@@ -11,7 +11,7 @@ import { release, type } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Budget, BudgetStop } from './lib/budget.mjs';
-import { broken, cancelItem, finalState, goalPhase, pauseGoal, projectSessions, Record, sessionHistory, sha256, sleep, TERMINAL,
+import { broken, cancelItem, finalState, goalPhase, messageView, pauseGoal, projectSessions, Record, sessionHistory, sessionQueries, sha256, sleep, TERMINAL,
   turnsOf } from './lib/flows.mjs';
 import { startHost, workbenchConfig } from './lib/host.mjs';
 import { Abort, Report } from './lib/report.mjs';
@@ -23,6 +23,7 @@ import compaction from './cells/compaction.mjs';
 import e05 from './scenarios/e05.mjs';
 import e06 from './scenarios/e06.mjs';
 import e08 from './scenarios/e08.mjs';
+import e08b from './scenarios/e08b.mjs';
 import e09 from './scenarios/e09.mjs';
 import e12 from './scenarios/e12.mjs';
 import intervention from './scenarios/int.mjs';
@@ -181,13 +182,60 @@ async function drain(ctx, goals, where, why, note) {
   return second.ok ? true : unsettled(ctx, `${why}: after the cancels, ${second.text}`, note);
 }
 
-/** Every tool refusal in the public histories of a unit's projects on open Hosts (second review #15). */
+/**
+ * P6 ruling Q11: the tools a wake round may call and still only "acknowledge" — the platform's read tools
+ * (`resources/prompts/platform/tools/`), the Kernel's own read tools, and the reply.
+ */
+const READ_OR_REPLY = new Set(['check_links', 'code_index', 'cpp_index', 'find_graph', 'list_files', 'look_graph', 'project_source',
+  'python_index', 'query_ready_tasks', 'query_task_graph', 'read_execution_history', 'read_requests', 'read_session_inbox',
+  'read_session_message', 'read_session_message_body', 'read_source', 'read_user_decision', 'run_readonly_command', 'search',
+  'source_excerpt', 'symbols', 'web_fetch', 'web_search', 'read', 'grep', 'glob', 'ls', 'find', 'respond_session_message']);
+
+/**
+ * Every tool refusal in the public histories of a unit's projects on open Hosts (second review #15), and on the same
+ * read the P6 accounting (design-frozen.md:838): each `model.request_started` (a model call; `compaction.mjs` reads it
+ * the same way) and each wake round — an `intervention-planning-` QueryJob (`query-job.ts:169-181`) — that only
+ * acknowledged (ruling Q11). Identities make a re-scan count nothing twice.
+ */
 async function collectToolWalls(ctx, rec, host = null) {
   for (const project of rec.projects) {
     if (ctx.hosts[project.host.name] !== project.host || (host !== null && project.host !== host)) continue;
     for (const sessionRef of await projectSessions(project)) {
-      for (const turn of turnsOf(await sessionHistory(project, sessionRef))) {
-        for (const refusal of turn.refusals) ctx.report.toolWall(rec.id, refusal);
+      const entries = await sessionHistory(project, sessionRef);
+      for (const entry of entries) {
+        let event = null;
+        try { event = JSON.parse(entry.body?.text ?? 'null')?.payload?.event ?? null; } catch { event = null; }
+        if (event?.type === 'model.request_started') {
+          ctx.report.p6Count(rec.id, 'modelCalls', `${sessionRef.sessionId}#${event.meta?.runId ?? '-'}#${event.payload?.requestId ?? entry.source?.position ?? '-'}`);
+        }
+      }
+      const turns = turnsOf(entries);
+      for (const turn of turns) for (const refusal of turn.refusals) ctx.report.toolWall(rec.id, refusal);
+      // lead 11-25 (P6 run counted 0, the ledger 13): a history turn carries the Kernel's run id (`krun-…`), never the
+      // QueryRun's. A wake round is a QueryJob whose id starts `intervention-planning-` (`query-job.ts:169-181`), read
+      // from the line's `sessions/queries`; its Kernel run (`executionState.entry.kernel.runId`) names its turns. It only
+      // acknowledged when its turns exist and every successful call in them is a read or the reply.
+      for (const snapshot of await sessionQueries(project, sessionRef)) {
+        const jobId = String(snapshot.ref?.queryJobId ?? '');
+        if (!jobId.startsWith('intervention-planning-')) continue;
+        const key = `${snapshot.ref.projectId}#${snapshot.ref.workspaceId}#${jobId}`;
+        ctx.report.p6Count(rec.id, 'wakeTurns', key);
+        const state = snapshot.run?.executionState;
+        const kernelRunId = state?.entry?.kernel?.runId ?? state?.history?.kernel?.runId ?? null;
+        const own = kernelRunId === null ? [] : turns.filter(turn => turn.runId === kernelRunId);
+        if (own.length === 0 || !own.every(turn => turn.results.every(result => READ_OR_REPLY.has(result.name)))) continue;
+        // lead 11-25 (#31): a reply that answers a message wanting one (`needsReply: true`, read through `messages/view`)
+        // is a real answer, so the round is not "only acknowledged"; one such reply clears the whole round. A replied
+        // message that cannot be read leaves the count as it was and is noted. The final text is never read.
+        let answered = false;
+        for (const result of own.flatMap(turn => turn.results).filter(item => item.name === 'respond_session_message')) {
+          const replied = result.args?.messageRef ?? null;
+          const view = replied === null ? null : await messageView(project, replied);
+          if (view === null) {
+            ctx.report.note(`${rec.id}: wake round ${jobId}: 回复对象读不到（${replied?.messageId ?? '参数里没有 messageRef'}），照旧计入“只回收到”`);
+          } else if (view.message?.needsReply === true) answered = true;
+        }
+        if (!answered) ctx.report.p6Count(rec.id, 'ackOnly', key);
       }
     }
   }
@@ -316,7 +364,7 @@ async function main() {
       report.cells[cell.id] = cellOut(cell, rec);
     }
     // The eight scenarios on W-accept, in the spec's order; then the attached Goals and the B06 cells.
-    const acceptNeeded = SCENARIOS.some(def => ctx.want(def.id)) || ctx.want('attached') || ctx.want('B06');
+    const acceptNeeded = SCENARIOS.some(def => ctx.want(def.id)) || ctx.want('attached') || ctx.want('B06') || ctx.want('E08b');
     if (acceptNeeded && ctx.stopAll === null) {
       try {
         await ctx.start('w-accept');
@@ -346,6 +394,12 @@ async function main() {
     if (ctx.want('B06')) {
       const { rec } = await runUnit(ctx, b06, rec => b06.run(ctx, rec));
       report.b06 = cellOut(b06, rec);
+    }
+    // P6 ruling Q4: E08's "after plan confirmation, sub already running" variant, after every scenario, under the same
+    // per-unit cap; its autonomy is fixed in its definition. Not a result.json row (the eight stay eight).
+    if (ctx.want('E08b')) {
+      const { rec } = await runUnit(ctx, e08b, rec => e08b.run(ctx, rec));
+      report.e08b = cellOut(e08b, rec);
     }
     if (ctx.hosts['w-accept']) await ctx.close('w-accept');
     if (ctx.want('compaction')) {

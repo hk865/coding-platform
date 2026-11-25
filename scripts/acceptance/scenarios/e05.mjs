@@ -139,22 +139,34 @@ async function run(ctx, rec) {
   rec.facts.userCommand.push('goals/create + plans/propose（两个任务：t-users、t-orders）');
   await proposeAndApply(ctx, project, goal.ref, draft(goalId, module.ref.moduleId), 'E05: 两个并行任务共用一条校验规则', rec,
     [testCheck(goalId, ['t-users', 't-orders', 'gate'])]);
+  // P6 diagnosis 2 #5: every pick basis the driver results show (`last.value.pick`), kept once each for line-choice.
+  const picks = [];
+  const keepPick = snapshot => {
+    const pick = snapshot?.last?.value?.pick ?? snapshot?.last?.pick ?? null;
+    if (pick !== null && typeof pick === 'object' && !picks.some(entry => JSON.stringify(entry) === JSON.stringify(pick))) picks.push(pick);
+  };
   for (const taskId of ['t-users', 't-orders']) {
     const started = await driverStart(ctx, project, goal.ref, { flowId: `e05-${taskId}`, taskId });
+    keepPick(started?.value);
     rec.note(`driver-start ${taskId}: ${started?.status} ${started?.value?.state ?? started?.code ?? ''}`);
   }
   // lead 11-17（G6 第六次之后）：只按任务启动时，两个任务做完后没人推进关口任务和目标完成（按任务的推进不跟进
   // 目标范围的选择）。像人那样再启动一次整个目标，由目标的决定循环接着推进；放在两次按任务启动之后，不影响两条并行。
   const goalStarted = await driverStart(ctx, project, goal.ref, { flowId: 'e05-goal' });
+  keepPick(goalStarted?.value);
   rec.note(`driver-start goal: ${goalStarted?.status} ${goalStarted?.value?.state ?? goalStarted?.code ?? ''}`);
 
   let planted = false;
   let gateSeen = null;
-  let released = null;
+  // P6 #22: after GL-1 a rework claim also passes the module overlap gate, so one run can meet a second gate. Each gate
+  // nobody satisfied for 10 minutes gets the person's release once (gate key → the release answer); a gate already
+  // satisfied answers `invalid` (`overlap-gates.ts:455-466`), so a gate with a release is never sent one.
+  const released = new Map();
   const firstSeen = new Map();
-  const display = await waitGoal(ctx, project, goal.ref, { timeoutMs: 150 * MINUTE, rec, returnOnDecide: true, onPoll: async () => {
+  const display = await waitGoal(ctx, project, goal.ref, { timeoutMs: 150 * MINUTE, rec, returnOnDecide: true, check: 'kept', onPoll: async () => {
     // Second review #6: plant only after both Tasks have really started (each has a Run with a start time), and count
     // it planted only when every save was taken.
+    keepPick(ready(await host.client.read('workflow/driver-read', project.scope, { goalRef: goal.ref })));
     const runs = await executions(project, goal.ref);
     const startedTasks = new Set(runs.filter(item => item.run.startedAt).map(item => item.run.task.taskId));
     if (!planted && startedTasks.has('t-users') && startedTasks.has('t-orders')) {
@@ -176,9 +188,11 @@ async function run(ctx, rec) {
       const key = JSON.stringify(gate.ref);
       if (!firstSeen.has(key)) firstSeen.set(key, Date.now());
       // The person releases a gate nobody satisfied for 10 minutes (the human release half of C1).
-      if (gate.release === null && released === null && Date.now() - firstSeen.get(key) > 10 * MINUTE) {
-        released = await host.client.read('goals/overlap-release', project.scope,
+      if (gate.release === null && !released.has(key) && Date.now() - firstSeen.get(key) > 10 * MINUTE) {
+        const answer = await host.client.read('goals/overlap-release', project.scope,
           { commandId: newId('release'), gate: gate.ref, revision: gate.revision, reason: 'G6 E05: 人放行，让两个任务并行' });
+        released.set(key, answer);
+        rec.note(`人放行重叠门 ${gate.moduleId}（等待 ${gate.waiting?.taskId ?? '-'}）：${answer?.status ?? 'no answer'} ${answer?.code ?? ''} ${answer?.reason ?? ''}`.trim());
       }
     }
   } });
@@ -205,7 +219,7 @@ async function run(ctx, rec) {
   if (pair !== null) rec.facts.overlapPair = [pair.users.run.ref, pair.orders.run.ref];
   if (gateSeen !== null) {
     rec.check('gate', gateSeen.moduleId === module.ref.moduleId && gateSeen.running.length > 0,
-      `门：module ${gateSeen.moduleId}，等待 ${gateSeen.waiting.taskId}，在跑 ${gateSeen.running.map(entry => `${entry.task.taskId}/${entry.run.runId}`).join(', ')}；放行 ${released === null ? '注记或未放行' : `人（${released.status}）`}`);
+      `门：module ${gateSeen.moduleId}，等待 ${gateSeen.waiting.taskId}，在跑 ${gateSeen.running.map(entry => `${entry.task.taskId}/${entry.run.runId}`).join(', ')}；放行 ${released.size === 0 ? '注记或未放行' : `人放行 ${released.size} 道（${[...released.values()].map(answer => answer?.status ?? 'no answer').join(', ')}）`}`);
   } else rec.fail('gate', '整个运行期间 goals/overlap-gates 没有出现带在跑 Run 的门');
   // `executions/read` has no `changedFiles` in this tree; `files/compare` against the initial commit gives the paths.
   const compared = ready(await host.client.read('files/compare', project.scope, {
@@ -261,7 +275,10 @@ async function run(ctx, rec) {
   rec.facts.checkRoundRef = reviewRound?.roundRef ?? null;
   const look = reviewRound === undefined ? null : ready(await host.client.read('graph/look', project.scope, { goalRef: goal.ref,
     target: { kind: 'node', node: { kind: 'round', ref: reviewRound.roundRef } }, relation: 'evidence', page: { afterCursor: null, limit: 20 } }));
-  const review = findAll(look, node => node.evidence?.source?.checkId === null && typeof node.evidence?.outcome === 'string')[0]?.evidence ?? null;
+  // P6 diagnosis 2 #4: a round's NodeCard carries `evidence` as an array (`graph-context-contracts.ts:80-81`); the review
+  // Evidence is the record itself (no `checkId`), found wherever it sits in the answer.
+  const review = findAll(look, node => node.source?.checkId === null && typeof node.outcome === 'string'
+    && typeof node.evidenceId === 'string')[0] ?? null;
   let answer = null;
   if (review !== null) {
     answer = review.summary?.text ?? '';
@@ -292,7 +309,18 @@ async function run(ctx, rec) {
   const extra = untracked.filter(path => !planned.includes(path) && !path.startsWith('.workbench/'));
   if (display.stoppedFor !== null) rec.uncover('temporary', 'not-run', `目标停下等人（${display.stoppedFor}），没走到这一步`);
   else rec.check('temporary', extra.length === 0, extra.length === 0 ? '没有计划外的未跟踪文件' : `计划外的未跟踪文件：${extra.join(', ')}`);
-  rec.uncover('line-choice', 'entry-missing', '公开读口不给派工时的候选线和六键排序依据（lines/list 只给结果），驱动看不到排除和排序本身');
+  // P6 diagnosis 2 #5: the pick basis is public — `workflow/driver-start` and `workflow/driver-read` return the last
+  // advancement result with its `pick` (`rank` of the six keys or `none`, `candidates`, `incomplete`;
+  // `contracts/pick-basis.ts:5-12`, `business/workflow/contracts.ts:317-324`), read while the Goal ran. The excluded
+  // lines themselves are not kept (MVP-BEHAVIOR.md:350), so only the basis is judged; nothing seen → not run.
+  const RANKS = ['responsible_task', 'responsible_module', 'same_goal_history', 'duty', 'latest_activity', 'session_key'];
+  const realPicks = picks.filter(pick => pick.rank !== 'none');
+  if (realPicks.length === 0) {
+    rec.uncover('line-choice', 'not-run', `运行中读到的派工依据 ${picks.length} 个，没有一个选中了线（rank 都是 none 或没读到）；候选线清单本来不另存（MVP-BEHAVIOR.md:350）`);
+  } else {
+    rec.check('line-choice', realPicks.every(pick => RANKS.includes(pick.rank) && Number.isInteger(pick.candidates) && pick.candidates >= 1
+      && Array.isArray(pick.incomplete)), `派工依据：${realPicks.map(pick => `${pick.rank}/候选 ${pick.candidates}/不全 ${pick.incomplete.join(',') || '无'}`).join('；')}（排除了哪些线不另存，MVP-BEHAVIOR.md:350）`);
+  }
   if (display.stoppedFor === null) ctx.shared.e05 = { project, goalRef: goal.ref, runs, module };
 }
 

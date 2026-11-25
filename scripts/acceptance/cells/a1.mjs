@@ -1,6 +1,6 @@
 // A1 (1M window → 131072): its own Host and ledger (WA), the binding arrives after the start through settings
 // (`models/save` → `models/select`), DeepSeek 1M only (`smoke-deepseek`, ruling 14:0x §9.6). The planning round is a
-// Host system `action_request` whose budget is `planningRoundRuntimeBudget` (`host.ts:3006-3015`,
+// Host `system_round` (P2, `host.ts:3333-3346`; it was an `action_request` message before) whose budget is `planningRoundRuntimeBudget` (`host.ts:3006-3015`,
 // `runtime-configuration.ts:135-142`). `goals/create` + `driver-start` alone never plans in this tree (no adopted Plan →
 // `waiting`, `workflow.ts:2697-2699`), so the cell adopts a stage-scoped `plan_only` placeholder (the shape of
 // `PL-forms-fixture.ts:402-411`); `select_work` then sends the `refine:` round to the Goal's adviser. Only request facts

@@ -23,6 +23,8 @@ function refsOf(body) {
   for (const key of ['ref', 'requestRoot', 'round', 'followupRound', 'secretary', 'operationRef', 'sendStatus']) {
     if (value?.[key] !== undefined) picked[key] = value[key];
   }
+  // `messages/send` puts `sendStatus` on the envelope beside `value` (`communication-contracts.ts:340-342`).
+  if (body.sendStatus !== undefined) picked.sendStatus = body.sendStatus;
   if (body.receipt?.plan !== undefined) picked.plan = body.receipt.plan;
   if (value?.binding?.goalRef !== undefined) picked.goalRef = value.binding.goalRef;
   if (value?.goal?.ref !== undefined) picked.goal = { ref: value.goal.ref, revision: value.goal.revision };

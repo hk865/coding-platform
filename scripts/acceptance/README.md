@@ -122,6 +122,34 @@ the window.
   basis: 协调 (busy, version, idempotency, stale source, capacity), 安全 (the reason names an irreversible, external or
   secret basis), 产品规则 (the reason names a rule), otherwise 无理由.
 
+### After the communication split (P2–GL; P6, lead rulings 11-25)
+
+- **Direct intervention.** The person's message to a line is the UI's own request (`flows.mjs` `interveneLine`):
+  `messages/send` with `entry: 'person_intervention'` and `needsReply: true`, no `intent` (refused since P2), no
+  `wake`; only a committed write with `sendStatus: 'sent'` counts, otherwise the step fails with the platform's words.
+  Messages are read through `messages/view` / `messages/body` (an inbox item carries only a bodyRef); the task card
+  through `graph/detail` (`taskCard`: holds, dispatch, stop steps). The driver never releases a claim hold for the
+  person (ruling Q1).
+- **Cold start questions (C-216).** An initial coordination round may answer with questions (`needs_decision`) plus a
+  card draft; `coldStart` answers on the same request (`PLAN_QUESTIONS_ANSWER`) and confirms only a round that carries a
+  plan.
+- **Goal waits, P2 additions.** `waitGoal` also ends two quiet minutes after the driver read says the claim is held
+  (`claim_hold_held` / `scribe_stop_held`, nothing in flight, no card in hand: `the platform stopped: <reason>`); a
+  `message` card the person answered and the asking agent has not recorded as applied is not in the person's hand
+  (the count is noted). `approve` picks an `action_release` card's `approve` option by id.
+- **Candidate adoption (P6H).** `waitGoal`'s `adoptCandidates` (only `int` passes it) acts on a candidate card that
+  offers `adopt` as the person would: `plans/apply` with the card's Goal and proposal pins; only a committed apply is
+  noted, `revision_conflict`/`busy` wait for the next poll, any other refusal ends the preparation. `broken(..., null)`
+  records a prerequisite stop as `not-run` without failing a check.
+- **E08b.** E08 under `after_plan_confirmation` with `sub` already running (ruling Q4): after every scenario and B06,
+  only when `E08b` is in the authorized `scenarios` list; reported in its own section, not a `result.json` row.
+- **P6 accounting.** The wall table also marks the three P6 kinds, matched on the platform's own words (ruling Q10):
+  派工版本拒绝 (`dispatch_task`, `revision_conflict`, "the dispatch basis moved"), 问答轮发不出 (`QUERY_WAIT_REFUSAL`),
+  注记读口 (`look_graph`/`find_graph` refused naming notes). The budget lines add the reported input (without
+  reservation bounds and unbilled zeros) and the over-budget stops; the report adds model calls (each
+  `model.request_started` in the public histories) and wake rounds (`intervention-planning-` turns) that only
+  acknowledged (ruling Q11: successful calls only read tools and the reply).
+
 ## Output (`docs/refactor/reviews/evidence/slice9-rerun-<date>/` unless `--out`)
 
 - `result.json` — the eight scenario rows, the spec's fields (`slice-9-SPEC.md:729-745`).
@@ -133,12 +161,12 @@ the window.
 
 | File | What |
 |---|---|
-| `run.mjs` | CLI: precheck, Hosts, the order (A1, B1, the eight, attached, B06, compaction), rows, report |
+| `run.mjs` | CLI: precheck, Hosts, the order (A1, B1, the eight, attached, B06, E08b, compaction), rows, report |
 | `lib/http.mjs` | the two prefixes, the token header, `graph_write` envelopes, the call log |
 | `lib/host.mjs` | start/close/restart a Host, the token read |
 | `lib/flows.mjs` | the person's shared steps (open project, provider, cold start, new Goal in an initialized project, explicit plan, cards, waits) and the scenario record |
 | `lib/budget.mjs` | the token meter and the caps |
 | `lib/lag.mjs` | the event-loop lag probe |
 | `lib/report.mjs` | result.json, README, checks/* and the seven reason codes |
-| `scenarios/*.mjs` | one module per scenario |
+| `scenarios/*.mjs` | one module per scenario (`e08b.mjs`: the P6 variant of E08) |
 | `cells/*.mjs` | A1, B1, compaction, the attached Goals, B06 |

@@ -262,20 +262,18 @@ export async function trustedSystemRoundOf(
   }
   const goalRef = message.goalRef;
   if (goalRef === null) return { status: 'ready', value: null };
-  const head = systemRoundOfText(text);
+  const head = systemRoundOfText(text, goalRef.goalId);
   if (head === null) return { status: 'ready', value: null };
 
   let round: SystemRoundV1;
   switch (head.kind) {
     case 'refine': {
-      if (head.goalId !== goalRef.goalId) return { status: 'ready', value: null };
       // The head carries no target kind; the target kind never changes the request id.
       round = { kind: 'refine', goalRef, target: { kind: 'stage', stageId: head.stageOrTaskId },
         planRevision: head.planRevision };
       break;
     }
     case 'deviation': {
-      if (head.goalId !== goalRef.goalId) return { status: 'ready', value: null };
       round = { kind: 'deviation', goalRef, taskId: head.taskId, cause: head.cause,
         planRevision: head.planRevision };
       break;
@@ -286,7 +284,7 @@ export async function trustedSystemRoundOf(
     }
     case 'planresume': {
       const original = planResumeOriginalQueryOfText(text);
-      if (original === null || head.goalId !== goalRef.goalId) return { status: 'ready', value: null };
+      if (original === null) return { status: 'ready', value: null };
       round = { kind: 'planresume', goalRef, queryJobId: head.queryJobId, originalMessageRef: original };
       break;
     }
