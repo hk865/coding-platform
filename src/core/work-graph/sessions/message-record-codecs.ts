@@ -24,7 +24,7 @@ import { canonicalJson, canonicalOf, type JsonValue } from '../../../contracts/f
 import { seqOfCommitCursor } from '../../../contracts/ledger.js';
 import { SYSTEM_ROUND_ACTOR } from '../../../contracts/plan-round.js';
 import { DecisionSubjectShape } from '../../../contracts/goal-decisions.js';
-import { MAX_AUTO_REWORK_LIMIT } from '../../../contracts/task-requeue.js';
+import { MAX_AUTO_REWORK_LIMIT, WORKFLOW_AUTOMATION_ACTOR } from '../../../contracts/task-requeue.js';
 import { defineShape, f, type InferShape } from '../../../contracts/data-format.js';
 import {
   QueryJobRefShape, QueryRunRefShape, RunRefShape, SessionMessageRefShape, TaskRequeueRefShape, TaskTripleShape,
@@ -143,6 +143,18 @@ export const SYSTEM_ROUND_MESSAGE_MAX_TEXT_BYTES = 64 * 1024;
  */
 export function isSystemRoundSender(sender: MessageSender | MessageQueryAnswerSender): boolean {
   return sender.kind === 'host' && sender.actor.kind === 'system' && sender.actor.id === SYSTEM_ROUND_ACTOR.id;
+}
+
+/**
+ * The Goal loop's member suggestion (`pick-suggest:`): the one platform letter that asks its recipient for an action a
+ * round may not hold, `create_member`. Its stored facts name it and no text is read: the Workflow automation sender
+ * (`workflow:auto-rework`), a reply asked for and the Task it is about. That sender's other letters, the plan reminder
+ * and the recipient copy, are `notify` and ask for no reply.
+ */
+export function isMemberSuggestionLetter(message: Pick<SessionMessage, 'sender' | 'needsReply' | 'taskRef'>): boolean {
+  const sender = message.sender;
+  return sender.kind === 'host' && sender.actor.kind === 'system' && sender.actor.id === WORKFLOW_AUTOMATION_ACTOR.id
+    && message.needsReply === true && message.taskRef !== null;
 }
 
 /**

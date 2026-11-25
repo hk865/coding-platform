@@ -33,9 +33,9 @@ import {
 import { checkBaselineNotStarted, checkBaselineOf, type CheckBaselineV1 } from '../../contracts/check-review.js';
 import type { ResourceCapSource } from '../../../vendor/coding-agent/dist/public-api.js';
 import { KNOWLEDGE_DIRECTORY } from '../../contracts/knowledge.js';
-import { ensureKnowledgeDirectory } from '../workspace/knowledge-exclude.js';
+import { ensureKnowledgeDirectory, withKnowledgeGitExcludes } from '../workspace/knowledge-exclude.js';
 import type { CommandSlots } from './command-slots.js';
-import { withCommandSandbox, type CommandToolchain } from './readonly-command-tool.js';
+import { withAgentCommandSandbox, withCommandSandbox, type CommandToolchain } from './readonly-command-tool.js';
 import type { WorkspaceHostBindings } from '../workspace/access.js';
 import type { WorkspaceRef } from '../../contracts/ledger.js';
 import type { AbandonCheckInput, EvidencePort } from '../work-graph/model/evidence-contracts.js';
@@ -190,10 +190,12 @@ export function createRegisteredCheckRunner(deps: RegisteredCheckRunnerDependenc
             return { ok: false, rejection: reject('unavailable', `making the knowledge directory failed: ${messageOf(error)}`) };
         }
         // The check runs in the workspace but may not write the platform's
-        // knowledge files (KLS-2: one writer). The probe and the real command
-        // share this one options object.
-        const sandboxOptions = withCommandSandbox({ readOnlyPaths: [KNOWLEDGE_DIRECTORY] },
+        // knowledge files (KLS-2: one writer), and its git does not see them while they are untracked. The probe and
+        // the real command share this one options object.
+        const sandbox = withAgentCommandSandbox({ readOnlyPaths: [KNOWLEDGE_DIRECTORY] },
             deps.toolchain === undefined ? undefined : { toolchain: deps.toolchain });
+        if (sandbox.status !== 'ready') return { ok: false, rejection: reject('unavailable', sandbox.reason) };
+        const sandboxOptions = sandbox.value;
         let workspace;
         try {
             workspace = await deps.kernel.WorkspaceSandbox.create(root, { deniedPrefixes: [...deniedPrefixes] });
@@ -237,7 +239,7 @@ export function createRegisteredCheckRunner(deps: RegisteredCheckRunnerDependenc
                 ...(deps.resourceCaps === undefined ? {} : { resourceCaps: deps.resourceCaps }),
             });
             const result = await sandbox.execute({
-                command: definition.command, cwd: definition.cwd,
+                command: withKnowledgeGitExcludes(definition.command), cwd: definition.cwd,
                 timeoutMs: definition.timeoutMs, outputLimitBytes: OUTPUT_LIMIT_BYTES,
                 signal: ctx.signal,
             });

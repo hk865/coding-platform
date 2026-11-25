@@ -19,7 +19,7 @@ import {
   type KnowledgeProblemKindV1, type KnowledgeProblemV1,
 } from '../../../contracts/knowledge.js';
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
-import { isSafeProjectPath } from '../../../contracts/workspace-path.js';
+import { isSafeCatalogPath } from '../../../contracts/workspace-path.js';
 import { messageOf } from '../../../contracts/error-message.js';
 import { hasOnlyKeys, isRecord, nonEmpty } from '../../../contracts/validation/common.js';
 import {
@@ -84,13 +84,6 @@ export function keysAre(value: Record<string, unknown>, required: readonly strin
   return hasOnlyKeys(value, [...required, ...optional]) && required.every(key => Object.hasOwn(value, key));
 }
 
-/**
- * A catalog path: the project-path rule (`isSafeProjectPath`) on the path without the one trailing `/` a catalog
- * path may carry (RW-13: `pathOwnershipOf` strips it), so `src/` reads back and `../outside` does not.
- */
-function isCatalogPath(path: string): boolean {
-  return isSafeProjectPath(path.endsWith('/') ? path.slice(0, -1) : path);
-}
 
 function stringList(value: unknown): string[] | null {
   return Array.isArray(value) && value.every(nonEmpty) ? [...value] : null;
@@ -107,13 +100,13 @@ export function moduleFileOf(path: string, bytes: Uint8Array): ModuleFileV1 | st
     return `${path}: id, name and responsibility must be non-empty strings`;
   }
   const paths = stringList(value['paths']);
-  if (paths === null || !paths.every(isCatalogPath)) return `${path}: paths must be project paths`;
+  if (paths === null || !paths.every(isSafeCatalogPath)) return `${path}: paths must be project paths`;
   const interfaces: ModuleFileV1['interfaces'] = [];
   if (!Array.isArray(value['interfaces'])) return `${path}: interfaces must be an array`;
   for (const entry of value['interfaces']) {
     const interfacePaths = isRecord(entry) ? stringList(entry['paths']) : null;
     if (!isRecord(entry) || !keysAre(entry, ['id', 'description', 'paths']) || !nonEmpty(entry['id'])
-      || !nonEmpty(entry['description']) || interfacePaths === null || !interfacePaths.every(isCatalogPath)) {
+      || !nonEmpty(entry['description']) || interfacePaths === null || !interfacePaths.every(isSafeCatalogPath)) {
       return `${path}: every interface carries exactly a non-empty id, description and project paths`;
     }
     interfaces.push({ id: entry['id'], description: entry['description'], paths: interfacePaths });
@@ -431,7 +424,7 @@ export function lineProblemsOf(input: {
  * modules (`moduleId` is the raw id written in the file) and its
  * `architecture.json`. `invalid` when a reference cannot be written in the
  * file frame, or a module or interface path is not one the read-back takes
- * (`isCatalogPath`, stack review 3). `current` is the line's `architecture.json`
+ * (`isSafeCatalogPath`, stack review 3). `current` is the line's `architecture.json`
  * now (null when none): R6, a second workspace's file may be another project's
  * main one, so the baseline it carries is written back as it is, never read
  * or changed.
@@ -446,7 +439,7 @@ export function architectureFilesOf(project: AdoptedArchitecture, baseline: Know
     const frameId = (id: string): string => fileModuleId(id, workspaceId, mainWorkspaceId);
     const framePath = (path: string): string => {
       const framed = fileProjectPath(path, workspaceId, mainWorkspaceId);
-      if (!isCatalogPath(framed)) throw new Error(`${path} is not a project path`);
+      if (!isSafeCatalogPath(framed)) throw new Error(`${path} is not a project path`);
       return framed;
     };
     const modules = project.modules.filter(module => own(module.ref.moduleId));

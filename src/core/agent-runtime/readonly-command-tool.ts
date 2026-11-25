@@ -20,6 +20,7 @@ import type {
 } from '../../../vendor/coding-agent/dist/public-api.js';
 import { COMMAND_NO_STOP_MS } from '../../contracts/resource-caps.js';
 import { KNOWLEDGE_DIRECTORY } from '../../contracts/knowledge.js';
+import { knowledgeGitExcludesMount } from '../workspace/knowledge-exclude.js';
 import { PLATFORM_PROMPT_PACK_V1 } from '../../contracts/prompts/platform-pack.generated.js';
 import type { ToolTextV1 } from '../../contracts/prompts/prompt-pack.js';
 import type { CommandSlots } from './command-slots.js';
@@ -119,8 +120,8 @@ export function readonlyCommandSandboxOptions(input: {
   executablePath?: string;
   resourceCaps?: ResourceCapSource;
   commandSandbox?: CommandSandboxAdditions;
-}): ReadonlyCommandSandboxOptions {
-  return withCommandSandbox({
+}): AgentCommandSandboxResult<ReadonlyCommandSandboxOptions> {
+  return withAgentCommandSandbox({
     workspaceMode: 'read_only' as const,
     ...(input.readOnlyPaths === undefined ? {}
       : { readOnlyPaths: input.readOnlyPaths.filter(path => path !== KNOWLEDGE_DIRECTORY) }),
@@ -140,19 +141,38 @@ export type CommandSandboxAdditions = { readonly toolchain: CommandToolchain; re
 
 /**
  * NET-B: the ONE merge of the Host's additions into a command sandbox's options (the Kernel shell, the read-only
- * command and its probe, the registered check, the workbench). A configured `executablePath` wins; the mounts are
- * added either way. No additions: the options as they were (no network, the Kernel's default PATH).
+ * command and its probe, the registered check, the workbench). A configured `executablePath` wins; the toolchain
+ * mounts follow the options' own. No additions: the options as they were (no network, the Kernel's default PATH).
  */
-export function withCommandSandbox<T extends { readonly executablePath?: string; readonly readOnlyPaths?: readonly string[] }>(
+export function withCommandSandbox<T extends { readonly executablePath?: string; readonly readOnlyPaths?: readonly string[];
+  readonly hostMounts?: readonly HostMount[] }>(
   options: T, additions: CommandSandboxAdditions | undefined,
 ): T & { hostMounts?: readonly HostMount[]; network?: NetworkProxySource } {
   if (additions === undefined) return options;
   return {
     ...options,
-    hostMounts: additions.toolchain.hostMounts,
+    hostMounts: [...(options.hostMounts ?? []), ...additions.toolchain.hostMounts],
     executablePath: options.executablePath ?? additions.toolchain.executablePath,
     ...(additions.network === undefined ? {} : { network: additions.network }),
   };
+}
+
+export type AgentCommandSandboxResult<T> = { status: 'ready'; value: T } | { status: 'unavailable'; reason: string };
+
+/**
+ * The command sandbox the platform starts for an agent or a check (a Work Run's Kernel shell, the read-only command
+ * and its probe, a registered check): `withCommandSandbox` with the platform's git excludes file mounted first
+ * (`knowledgeGitExcludesMount`), so git there does not see the untracked `.workbench/`. The person's workbench
+ * commands use `withCommandSandbox` alone and see it. A file that cannot be made is `unavailable` with its reason.
+ */
+export function withAgentCommandSandbox<T extends { readonly executablePath?: string; readonly readOnlyPaths?: readonly string[];
+  readonly hostMounts?: readonly HostMount[] }>(
+  options: T, additions: CommandSandboxAdditions | undefined,
+): AgentCommandSandboxResult<T & { hostMounts?: readonly HostMount[]; network?: NetworkProxySource }> {
+  const excludes = knowledgeGitExcludesMount();
+  if (excludes.status !== 'ready') return { status: 'unavailable', reason: excludes.reason };
+  return { status: 'ready',
+    value: withCommandSandbox({ ...options, hostMounts: [excludes.value, ...(options.hostMounts ?? [])] }, additions) };
 }
 
 type ReadonlyToolErrorCode = Exclude<Extract<ToolResult, { status: 'error' }>['error']['code'], 'timeout'>;
@@ -334,7 +354,9 @@ export function createReadonlyCommandTool(input: ReadonlyCommandToolInput): Tool
         // read-only mount/executable configuration instead of an optimistic
         // default. The same trusted workspace handle carries the denied
         // prefixes; the tool sets no custom protected paths or bwrapPath.
-        const sandboxOptions = readonlyCommandSandboxOptions(input);
+        const sandbox = readonlyCommandSandboxOptions(input);
+        if (sandbox.status !== 'ready') return boundResult(toolError(call.callId, 'sandbox_unavailable', sandbox.reason));
+        const sandboxOptions = sandbox.value;
         const profile = await ProcessSandbox.probe(input.workspaceRoot, input.workspace, sandboxOptions);
         const process = new ProcessSandbox(profile, input.workspaceRoot, input.workspace, sandboxOptions);
         result = await process.execute({

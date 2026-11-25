@@ -1,3 +1,5 @@
+import { declaredPathOf } from './path-ownership.js';
+
 /**
  * xws2p: the ONE project-path grammar shared by WorkGraph, the notes and the UI.
  *
@@ -54,6 +56,15 @@ export function isSafeProjectPath(value: unknown): value is string {
   if (id === null || id.length === 0) return false;
   // A bare prefix is the workspace root; a trailing `/` has an empty relative part and is refused.
   return parts.relative === null || isSafeWorkspaceRelativePath(parts.relative);
+}
+
+/**
+ * A catalog path: the project-path rule on the path without the one trailing `/` a catalog path may carry (RW-13,
+ * `declaredPathOf`), so `src/` passes and `../outside` does not. The knowledge files' read-back, the catalog
+ * revision's ops and the adoption take the same paths.
+ */
+export function isSafeCatalogPath(value: unknown): value is string {
+  return typeof value === 'string' && isSafeProjectPath(declaredPathOf(value));
 }
 
 /**

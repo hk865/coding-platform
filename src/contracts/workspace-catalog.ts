@@ -4,9 +4,11 @@
  * only the modules that declare a path in the requested workspace, strips the
  * prefix from those paths, and drops dependencies/containment whose ends are
  * gone. It lives in Contracts because WorkGraph and the UI task map share this
- * exact view and neither may import the other.
+ * exact view and neither may import the other. A path is read without the one trailing `/` a catalog path may carry
+ * (RW-13, `declaredPathOf`), so another workspace's root written `/@ws:<id>/` projects to that root like `/@ws:<id>`.
  */
 import type { AdoptedArchitecture, ModuleDefinition } from './architecture-catalog.js';
+import { declaredPathOf } from './path-ownership.js';
 import { splitWorkspacePath } from './workspace-path.js';
 
 function workspaceModuleKey(ref: ModuleDefinition['ref']): string {
@@ -20,7 +22,7 @@ export function catalogForWorkspace(catalog: AdoptedArchitecture, workspaceId: s
   for (const module of catalog.modules) {
     const paths: string[] = [];
     for (const path of module.paths) {
-      const parsed = splitWorkspacePath(path);
+      const parsed = splitWorkspacePath(declaredPathOf(path));
       if ((parsed.workspaceId ?? mainWorkspaceId) !== workspaceId) continue;
       paths.push(parsed.path);
     }
@@ -28,7 +30,7 @@ export function catalogForWorkspace(catalog: AdoptedArchitecture, workspaceId: s
     const interfaces = module.interfaces.map(iface => {
       const interfacePaths: string[] = [];
       for (const path of iface.paths) {
-        const parsed = splitWorkspacePath(path);
+        const parsed = splitWorkspacePath(declaredPathOf(path));
         if ((parsed.workspaceId ?? mainWorkspaceId) !== workspaceId) continue;
         interfacePaths.push(parsed.path);
       }

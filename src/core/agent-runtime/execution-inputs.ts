@@ -34,8 +34,11 @@ import {
 import type { DeliveryEligibilityFactsPort } from '../work-graph/model/session-facts-contracts.js';
 import type { SystemRoundSourceReadPort } from '../work-graph/model/communication-contracts.js';
 import type { OverlapNoteReadPort } from '../work-graph/queries/contracts.js';
-import { isSystemRoundSender, sessionMessageRefKey } from '../work-graph/sessions/message-record-codecs.js';
+import {
+  isMemberSuggestionLetter, isSystemRoundSender, sessionMessageRefKey,
+} from '../work-graph/sessions/message-record-codecs.js';
 import type { SESSION_MAILBOX_TOOL_NAMES } from './communication-tools.js';
+import { CREATE_MEMBER_TOOL_NAME } from './member-tools.js';
 import {
   deliveryEligibility, effectiveReplyHandler, isSecretaryRequestMessage, messageConsumptionProblem,
   messageFactsOfRecord, replyStillBoundToWait, waitFactsOfRecord,
@@ -294,6 +297,11 @@ export function createMailboxInputSupply(deps: MailboxInputSupplyDependencies): 
     // reply tool. A Query round frozen without that tool cannot answer one that asks for a reply, so it leaves it
     // queued for a round that can (the line's woken round, 2.3) instead of accepting it unanswerable.
     const queryRoundCannotReply = queryRound && !deps.toolNames.includes(RESPOND_SESSION_MESSAGE);
+    // Design 2.6, the same rule for an action: a platform letter that asks for an action goes only into a round that
+    // holds the action's tool. The member suggestion asks for `create_member`; a round frozen without it leaves the
+    // letter queued, neither delivered nor consumed, and when the round ends the default wake opens the line's next
+    // round on it (design 2.3; an adviser's planning round keeps `create_member`, 121-114).
+    const roundBuildsMembers = deps.toolNames.includes(CREATE_MEMBER_TOOL_NAME);
 
     // (a) The inbox is read once, to its end. A person's message is the Work
     //     execution's intervention input and comes before the continuation and
@@ -436,6 +444,7 @@ export function createMailboxInputSupply(deps: MailboxInputSupplyDependencies): 
         // agent's action request; that message waits for the line's next round.
         if (intervention && candidate.message.needsReply === true) continue;
         if (queryRoundCannotReply && candidate.message.needsReply === true) continue;
+        if (!roundBuildsMembers && isMemberSuggestionLetter(candidate.message)) continue;
         await readMessagePart(ctx, candidate.message, seen, results);
       }
     }

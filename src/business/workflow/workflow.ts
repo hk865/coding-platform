@@ -106,7 +106,7 @@ import {
   effectiveReplyHandler, isMessageAgentSender, messageFactsOfRecord, waitFactsOfRecord, waitStateOf,
   type DeliveryFactsV1, type DeliveryResponseWaitV1,
 } from '../../core/work-graph/state/message-machine.js';
-import { interventionPlanningQueryRefs } from '../../contracts/query-job.js';
+import { interventionPlanningQueryRefs, queryJobRefFor, type QueryRunRef } from '../../contracts/query-job.js';
 import { candidateReplyTargetOf, candidateSourceLineOf, hostContextIn, planSourceLineageOf, sentSystemRoundRef,
   trustedSystemRoundOf, type CandidateSourceIncompleteV1, type CandidateSourceLineDeps,
   type PlanSourceLineageDeps }
@@ -741,6 +741,9 @@ function readRejection(result: { status: 'not_found' } | { status: 'not_ready' }
  * §6.1.5's one candidate-wait basis: the same record kinds for every
  * candidate wait, so a wait and a card are registered by the same facts.
  */
+/** The member-creation wait's record kinds: the Goal loop's own `host_pick` request and a suggestion round's request. */
+const MEMBER_CREATION_WAIT_KINDS = ['Session', 'CoreOperation', 'SessionMessage', 'TaskRequeue', 'PlanRevision',
+  'Goal'] as const;
 const PLAN_CANDIDATE_WAIT_KINDS = ['PlanProposal', 'PlanRevision', 'SessionMessage', 'Session',
   'Run', 'TaskLease', 'VerificationRound', 'Evidence', 'TaskRequeue'] as const;
 function planWaitBasisOf(goal: GoalSnapshot, reasons: readonly string[]): GoalWaitBasisV1 {
@@ -2134,32 +2137,95 @@ export function createWorkflow(deps: WorkflowDependencies & {
     return read.status === 'ready' ? { session: read.value, copy: null } : readRejection(read);
   }
   type SuggestionSend = { toolName: 'send_session_message'; arguments: unknown; requestId: string };
+  type HostPickOperation = Extract<WorkflowOperation, { kind: 'host_pick_member' }>;
+  /** `hostPick` is the no-adviser branch's member request, also the fallback after a suggestion's round ended. */
   type SuggestionStep =
-    | { operation: WorkflowOperation; send: SuggestionSend | null }
+    | { operation: WorkflowOperation; send: SuggestionSend | null; hostPick: HostPickOperation }
     | { rejection: CoreRejection };
   async function suggestStep(owned: Owned, goal: GoalSnapshot, task: RuntimeTask,
     planRef: PlanRevisionRef): Promise<SuggestionStep> {
     const taskRef: TaskTriple = { projectId: owned.projectId, goalId: goal.ref.goalId, taskId: task.taskId };
     const text = `Task ${task.taskId} has no suitable member; create one executor line for this task (projectId ${owned.projectId}, goalId ${goal.ref.goalId}).`;
     const commandId = `pick-suggest:${task.taskId}:${planRef.planId}`;
+    const hostPick: HostPickOperation = { kind: 'host_pick_member', request: {
+      commandId, caller: { kind: 'host_pick' }, duty: 'executor',
+      scope: { kind: 'task', task: taskRef }, reason: text } };
     // The one adviser read (`adviserOf`); an unwired narrow double has no adviser to resolve.
     const adviser = await adviserOf(owned, goal, null);
     if ('status' in adviser) return { rejection: adviser };
     const recipient = adviser.session;
     if (recipient !== null) {
+      // The letter names its Task (`taskRef`): with the automation sender and the reply it asks for, that is the
+      // stored fact the input supply knows it by (`isMemberSuggestionLetter`), so only a round that holds
+      // `create_member` takes it.
       const request = {
         input: {
           recipient: { projectId: recipient.projectId, sessionId: recipient.sessionId },
-          text, needsReply: true, goalRef: goal.ref,
+          text, needsReply: true, goalRef: goal.ref, taskRef: { ...taskRef },
         },
         meta: { requestId: commandId, expected: [] },
       };
       return { operation: { kind: 'suggest_member', request },
-        send: { toolName: 'send_session_message', arguments: request.input, requestId: commandId } };
+        send: { toolName: 'send_session_message', arguments: request.input, requestId: commandId }, hostPick };
     }
-    return { operation: { kind: 'host_pick_member', request: {
-      commandId, caller: { kind: 'host_pick' }, duty: 'executor',
-      scope: { kind: 'task', task: taskRef }, reason: text } }, send: null };
+    return { operation: hostPick, send: null, hostPick };
+  }
+
+  /**
+   * The round of its line that took the member suggestion `requestId`, once that round has ended; `null` before. Taken
+   * is the Kernel's acceptance of its `message` part (a running round that held `create_member` took it at a safe
+   * point) or the line's own woken round on it (the intervention Query keyed by the letter, in the Goal's workspace);
+   * ended is that Run `ended`, or that Query no longer pending or running. A letter not sent, not taken yet or still in
+   * its round is `null`; so is a composition without the sent-message read or the Query owner, which keeps the
+   * committed suggestion's wait. A failed read is its rejection.
+   */
+  async function endedSuggestionRound(owned: Owned, requestId: string):
+  Promise<{ run: RunRef | QueryRunRef } | null | CoreRejection> {
+    const readSent = deps.messages?.readHostSendMessageRef;
+    const consult = deps.consultations;
+    if (readSent === undefined || consult === undefined) return null;
+    const sent = await readSent(automationContext(owned),
+      { requestId, scope: { projectId: owned.projectId, workspaceId: owned.workspaceId } });
+    if (sent.status === 'not_found') return null;
+    if (sent.status !== 'ready') return readRejection(sent);
+    const message = await consult.messages.readMessage(ownedInWorkspace(owned, sent.value.workspaceId).ctx, sent.value);
+    if (message.status !== 'ready') return readRejection(message);
+    const accepted = (message.value.acceptedInputs ?? []).find(entry => entry.part === 'message');
+    if (accepted !== undefined) {
+      const execution = accepted.executionRef;
+      if (execution.aggregateType === 'Run') {
+        const run = await deps.executions.readExecution(owned.ctx, execution, { scope: 'project' });
+        if (run.status !== 'ready') return readRejection(run);
+        return run.value.run.status === 'ended' ? { run: execution } : null;
+      }
+      const query = await consult.queries.readQueryJob(owned.ctx,
+        queryJobRefFor(execution.projectId, execution.workspaceId, execution.queryJobId), { scope: 'project' });
+      if (query.status !== 'ready') return readRejection(query);
+      return reviewQueryEnded(query.value.job.job) ? { run: execution } : null;
+    }
+    const woken = interventionPlanningQueryRefs(sent.value, owned.workspaceId);
+    const read = await consult.queries.readQueryJob(owned.ctx, woken.queryJobRef);
+    if (read.status === 'not_found') return null;
+    if (read.status !== 'ready') return readRejection(read);
+    return reviewQueryEnded(read.value.job.job) ? { run: woken.queryRunRef } : null;
+  }
+
+  /**
+   * Whether the round that took the member suggestion already asked for this Task's member itself: a request of that
+   * round built a line, is still on its way (accepted or creating, a capacity wait included) or has a card that waits
+   * for the person or that the person rejected. The loop then does not ask the person again, and a request waiting for
+   * capacity is not doubled. A request refused for any other reason, or a card gone stale, asked nothing that still
+   * stands. A composition without the read asks nothing more than before. A failed read is its rejection.
+   */
+  async function suggestionRoundAskedForMember(owned: Owned, goal: GoalSnapshot, task: RuntimeTask,
+    run: RunRef | QueryRunRef): Promise<boolean | CoreRejection> {
+    const read = deps.members?.readRoundMemberRequests;
+    if (read === undefined) return false;
+    const requests = await read(automationContext(owned), { goalRef: goal.ref, run,
+      task: { projectId: owned.projectId, goalId: goal.ref.goalId, taskId: task.taskId } });
+    if (requests.status !== 'ready') return readRejection(requests);
+    return requests.value.some(request => request.stage !== 'stale'
+      && (request.stage !== 'rejected' || request.answer === 'reject'));
   }
 
   /**
@@ -2991,34 +3057,51 @@ export function createWorkflow(deps: WorkflowDependencies & {
           }
           const suggestion = await suggestStep(owned, goal, task, graph.plan.ref);
           if ('rejection' in suggestion) return suggestion.rejection;
-          if (suggestion.send === null && suggestion.operation.kind === 'host_pick_member') {
+          let operation = suggestion.operation;
+          if (suggestion.send !== null) {
+            if (await readHostSendReceipt(automationContext(owned), suggestion.send,
+              { projectId: owned.projectId, workspaceId: owned.workspaceId }) !== 'committed') {
+              return advancing(null, makePerform(base, operation), null, decision.pick);
+            }
+            // The suggestion is sent. Once a round of its line took it and that round ended with still no qualified
+            // line, the Task does not wait on it for ever: it takes the no-adviser branch's member request (the same
+            // command identity), which asks the person once. Until then the repeated pass performs no step.
+            const ended = await endedSuggestionRound(owned, suggestion.send.requestId);
+            if (ended !== null && 'status' in ended) return ended;
+            if (ended === null) {
+              const basis = goalWaitBasisOf(goal, ['suggestion_committed'], ['Session', 'CoreOperation']);
+              if (base.taskId !== null) {
+                return waiting(null, 'suggestion_committed: the repeated pass performs no step', undefined, basis);
+              }
+              rememberWaiting('suggestion_committed: the repeated pass performs no step', basis);
+              continue;
+            }
+            // That round's own member request stands: the person is not asked again and no second line is built.
+            const asked = await suggestionRoundAskedForMember(owned, goal, task, ended.run);
+            if (asked !== true && asked !== false) return asked;
+            if (asked) {
+              const basis = goalWaitBasisOf(goal, ['member_creation_pending'], MEMBER_CREATION_WAIT_KINDS);
+              const reason = 'member_creation: the suggestion round asked for this member; no second request';
+              if (base.taskId !== null) return waiting(null, reason, undefined, basis);
+              rememberWaiting(reason, basis);
+              continue;
+            }
+            operation = suggestion.hostPick;
+          }
+          if (operation.kind === 'host_pick_member') {
             // An existing operation, in any stage, performs no step; the task waits.
             const commit = deps.members === undefined ? { status: 'missing' as const }
               : await deps.members.readMemberRequestCommit(automationContext(owned),
-                { commandId: suggestion.operation.request.commandId });
+                { commandId: operation.request.commandId });
             if (commit.status === 'unavailable') return rejection('unavailable', commit.reason);
             if (commit.status === 'committed') {
-              const basis = goalWaitBasisOf(goal, ['member_creation_pending'],
-                ['Session', 'CoreOperation', 'SessionMessage', 'TaskRequeue', 'PlanRevision', 'Goal']);
+              const basis = goalWaitBasisOf(goal, ['member_creation_pending'], MEMBER_CREATION_WAIT_KINDS);
               if (base.taskId !== null) return waiting(null, 'member_creation: no step', undefined, basis);
               rememberWaiting('member_creation: no step', basis);
               continue;
             }
-            return advancing(null, makePerform(base, suggestion.operation), null, decision.pick);
           }
-          if (suggestion.send === null) {
-            return advancing(null, makePerform(base, suggestion.operation), null, decision.pick);
-          }
-          if (await readHostSendReceipt(automationContext(owned), suggestion.send,
-            { projectId: owned.projectId, workspaceId: owned.workspaceId }) === 'committed') {
-            const basis = goalWaitBasisOf(goal, ['suggestion_committed'], ['Session', 'CoreOperation']);
-            if (base.taskId !== null) {
-              return waiting(null, 'suggestion_committed: the repeated pass performs no step', undefined, basis);
-            }
-            rememberWaiting('suggestion_committed: the repeated pass performs no step', basis);
-            continue;
-          }
-          return advancing(null, makePerform(base, suggestion.operation), null, decision.pick);
+          return advancing(null, makePerform(base, operation), null, decision.pick);
         }
         case 'claim': {
           const sessionRef: SessionRef = { projectId: owned.projectId,

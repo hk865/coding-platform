@@ -11,11 +11,13 @@
  * that fails leaves the old file as it was.
  *
  * The knowledge directory itself is made here too, by the one function the Host, the Work Run start and the workbench
- * commands all call.
+ * commands all call, and so is the git excludes file the platform's agent and check command sandboxes mount
+ * (`knowledgeGitExcludesMount`).
  */
 import { randomUUID } from 'node:crypto';
-import { mkdirSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { tmpdir, userInfo } from 'node:os';
 import { dirname, join } from 'node:path';
 import { messageOf } from '../../contracts/error-message.js';
 import { KNOWLEDGE_DIRECTORY } from '../../contracts/knowledge.js';
@@ -81,6 +83,90 @@ export async function applyKnowledgeExclude(commonDir: string, localOnly: boolea
   } catch (error) {
     return { status: 'rejected', code: 'unavailable', reason: `${path} could not be updated: ${messageOf(error)}` };
   }
+}
+
+/**
+ * git's default excludes path inside a platform command sandbox. The Kernel sandbox clears the environment and sets
+ * HOME=/home/agent with no XDG_CONFIG_HOME, on a fresh root that takes only /usr, /bin, /lib and /lib64 from the Host:
+ * with no `core.excludesFile` set git reads `$HOME/.config/git/ignore`, and nothing of the Host's git configuration is
+ * there to be replaced.
+ */
+const SANDBOX_GIT_EXCLUDES_PATH = '/home/agent/.config/git/ignore';
+/** The file this process last checked; it is checked again only when it is gone. */
+let checkedGitExcludes: string | null = null;
+
+/**
+ * Git in a command sandbox the platform starts for an agent or a check (a registered check, the read-only command, a
+ * Work Run's Kernel shell) does not see the platform's untracked knowledge directory. The platform writes `.workbench/`
+ * when a Plan is adopted and the person commits it through `knowledge/commit`; until then a check that asks
+ * `git status` whether only its own file changed would always fail on it, and an executor's `git add -A` would stage
+ * it. The person's own workbench commands do not mount it: the person sees `.workbench/` there in order to commit it.
+ *
+ * One read-only file outside every workspace, holding the knowledge directory line, is mounted at git's default
+ * excludes path. No file of the user's repository is written (`.git/info/exclude` stays the person's "stay local"
+ * choice) and no user setting is replaced: a `core.excludesFile` in the repository's own `.git/config` still wins over
+ * the default path. Excludes hide only untracked files, so a committed `.workbench/` shows as before.
+ *
+ * There is one such file for the user the Host runs as, at a fixed place in the temporary directory
+ * (`workbench-git-excludes-<uid>/ignore`): every Host of that user mounts the same file, a Host that restarts finds it
+ * and none is left behind per process. Its directory must be this user's own and closed to others, because whatever
+ * the file says git leaves out of a check's view (safety); one that is not is `unavailable` and never used. A file
+ * that is missing or changed is written again whole (a temporary file renamed over it). A file that cannot be made is
+ * `unavailable` with the reason, which the check or command that asked reports.
+ */
+export function knowledgeGitExcludesMount():
+  WorkspaceResult<{ readonly source: string; readonly target: string; readonly writable: false }> {
+  const unavailable = (reason: string) => ({ status: 'rejected' as const, code: 'unavailable' as const,
+    reason: `the platform's git excludes file for the command sandbox is unavailable: ${reason}` });
+  try {
+    if (checkedGitExcludes === null || !existsSync(checkedGitExcludes)) {
+      const uid = typeof process.getuid === 'function' ? process.getuid() : null;
+      const directory = join(tmpdir(), `workbench-git-excludes-${uid === null ? userInfo().username : String(uid)}`);
+      try { mkdirSync(directory, { mode: 0o700 }); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; }
+      const owner = lstatSync(directory);
+      if (!owner.isDirectory() || (uid !== null && (owner.uid !== uid || (owner.mode & 0o077) !== 0))) {
+        return unavailable(`${directory} is not a directory only this user can use`);
+      }
+      const file = join(directory, 'ignore');
+      const current = existsSync(file) && lstatSync(file).isFile() ? readFileSync(file, 'utf8') : null;
+      if (current !== `${EXCLUDED}\n`) {
+        const temporary = join(directory, `.ignore.${randomUUID()}.tmp`);
+        writeFileSync(temporary, `${EXCLUDED}\n`, { mode: 0o444 });
+        renameSync(temporary, file);
+      }
+      checkedGitExcludes = file;
+    }
+    return { status: 'ready', value: { source: checkedGitExcludes, target: SANDBOX_GIT_EXCLUDES_PATH, writable: false } };
+  } catch (error) {
+    return unavailable(messageOf(error));
+  }
+}
+
+/**
+ * The one shell prelude a registered check's command runs first (the platform builds that command line), for a
+ * repository whose own `.git/config` sets `core.excludesFile`: that setting wins over git's default excludes path, so
+ * the mounted file alone would not apply there. The prelude writes, in the sandbox's own `/tmp`, the person's file as
+ * git reads it (`~/` from HOME, a relative path from the top of the working tree) followed by the knowledge directory
+ * line, and points `core.excludesFile` at it for this one command (`GIT_CONFIG_COUNT`): the person's patterns keep
+ * applying and nothing outside the sandbox changes. Without such a setting it does nothing and the mounted default file
+ * applies. It prints nothing, sets no exit status for the command and writes nowhere but the sandbox's `/tmp`. The
+ * read-only command and a Work Run's Kernel shell run the agent's own command line, so there only the mounted default
+ * file applies.
+ */
+const KNOWLEDGE_GIT_EXCLUDES_PRELUDE = [
+  'if __wb_x=$(git config --get core.excludesFile 2>/dev/null) && [ -n "$__wb_x" ]; then',
+  '  case "$__wb_x" in /*) ;; "~/"*) __wb_x="$HOME/${__wb_x#"~/"}" ;; '
+    + '*) __wb_x="$(git rev-parse --show-toplevel 2>/dev/null)/$__wb_x" ;; esac',
+  `  if { cat -- "$__wb_x" 2>/dev/null; printf '\\n%s\\n' '${EXCLUDED}'; } 2>/dev/null >/tmp/.workbench-git-excludes; then`,
+  '    export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.excludesFile GIT_CONFIG_VALUE_0=/tmp/.workbench-git-excludes',
+  '  fi',
+  'fi',
+].join('\n');
+
+/** A registered check's command with the knowledge excludes prelude in front (`KNOWLEDGE_GIT_EXCLUDES_PRELUDE`). */
+export function withKnowledgeGitExcludes(command: string): string {
+  return `${KNOWLEDGE_GIT_EXCLUDES_PRELUDE}\n${command}`;
 }
 
 /** Makes `<root>/.workbench/`; an existing one (a workspace-local project store's `.gitignore` included) is left as

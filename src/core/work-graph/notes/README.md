@@ -64,8 +64,8 @@
 | `relationNeedsKey`、`referenceFieldsOf`、`partFieldsOf`、`literalInScope` | `src/core/work-graph/notes/link-evidence.ts:240`、`src/core/work-graph/notes/link-evidence.ts:240`、`src/core/work-graph/notes/link-evidence.ts:240`、`src/core/work-graph/notes/link-evidence.ts:240` | 关系要不要 key（injects、callback 不要）；一条证据按角色要引用的定义（L3a 的表）；再加上关系要 key、key 是符号时的 `'key'`（一条证据要查的全部引用）；字面 key 在范围里逐行找得到 | 写入闸门和读时第一档共用；不要另写 |
 | `checkLinkDraft` | `src/core/work-graph/notes/link-evidence.ts:303`（`checkLinkDraft`）、`src/core/work-graph/notes/link-evidence.ts:303`（`endpointIdentityOf`）、`src/core/work-graph/notes/link-evidence.ts:47`（`moduleOfFile`）、`src/core/work-graph/notes/link-evidence.ts:61`（`evidenceScopeOf`）、`src/core/work-graph/notes/link-evidence.ts:76`（`literalKeyProblem`）、`src/core/work-graph/notes/link-evidence.ts:89`（`evidenceRoleProblem`） | 一条联系的一张结果表：包含判定不查找；按字段顺序解析端与符号 key、按下标解析证据 `symbolRequest`，都在各自的 TS/JS 单文件里找（一次写每个路径只读一次工作树）；存 `raw_bytes` 摘要、扫字面 key；要引用的定义一次交第二档（`verify`，`priority: 'write'`，一组），第二档分析的文件摘要和这次读到的不同时那一部分记 `analyzer_unavailable`；`analysisConfig` 存第二档用的配置，第二档失败时按 `TYPESCRIPT_CONFIG_FILES` 在工作树找；成功返回解析后的锚点、`LinkPayloadV1` 与 warnings，退回带 `evidenceIndexes`/`symbolCandidates` | `writeNote` 在锚点第 1–3 类之后、依据文件之前调用；不要另写符号解析、包含、范围或摘要规则 |
 | `topicKeyOf` | `src/core/work-graph/notes/note-anchors.ts:130` | 主题归一化：NFC、空白折叠、ASCII 小写 | 主题比较/查重 |
-| `isSafeWorkspaceRelativePath`、`isSafeProjectPath` | `src/contracts/workspace-path.ts:21`、`:47` | 工作区相对路径与带 `/@ws:` 的项目路径语法（唯一正本） | file 锚点/路径输入 |
-| `normalizeProjectPath` | `src/contracts/workspace-path.ts:91` | 项目路径归一化（id 先解码再规范编码，相对部分去前导 `./`）；`normalizePath` 只用于工作区相对路径 | 锚点 key、查重、写回 |
+| `isSafeWorkspaceRelativePath`、`isSafeProjectPath` | `src/contracts/workspace-path.ts:23`、`:47` | 工作区相对路径与带 `/@ws:` 的项目路径语法（唯一正本） | file 锚点/路径输入 |
+| `normalizeProjectPath` | `src/contracts/workspace-path.ts:102` | 项目路径归一化（id 先解码再规范编码，相对部分去前导 `./`）；`normalizePath` 只用于工作区相对路径 | 锚点 key、查重、写回 |
 | `signatureDigestOf` | `src/core/work-graph/notes/note-anchors.ts:288` | 把 symbol 命中文本的空白折叠成一个空格后 sha256 | symbol 热度的稳定摘要 |
 | `symbolRangeText` | `src/core/work-graph/notes/note-anchors.ts:293` | 一基 UTF-16 行/列切片（结束列不含） | 从文件文字取 symbol 名字那一段（写时定位和读时重查共用） |
 | `pickSymbol` | `src/core/work-graph/notes/note-anchors.ts:311` | 泛型：一个 `symbolRequest` 在一个文件的条目（TS 导航项或 Python/C++ 单文件查的符号）里按名字挑，带 `range` 时也比名字行；一个 → 定位（名字行、解码文字的 sha256、签名摘要）和挑中的条目原样，没有 → `unresolved`，多个 → `ambiguous`（按起始行、列排的候选） | 写时的符号定位，各语言共用；不要另写匹配 |
@@ -81,7 +81,7 @@
 | `anchorSlots` | `src/core/work-graph/notes/note-related-scope.ts:91` | 把 head 的五个可空锚点槽收成非空数组 | 遍历 head 锚点时 |
 | `readAllRecords` | `src/core/work-graph/notes/note-base-reader.ts:25` | 把一个 lookup index 分页读到尾，任一分页失败即整体失败 | 需要完整等值集合时；`src/core/work-graph/notes/note-read-model.ts:82` 转出 |
 | `mapStoreFailure` | `src/core/work-graph/notes/store-failures.ts:9` | 注记读/写共用的 store 失败映射 | 把 StoreFailure 转 NoteErrorCode 时；`src/core/work-graph/notes/note-read-model.ts:83` 转出 |
-| `pathOwnershipOf` | `src/contracts/path-ownership.ts:36` | 路径所有权：最长合法段匹配，返回 owner/tie/none；`note-path-ownership.ts` 只是转出 | file 锚点归属；不要另写路径匹配 |
+| `pathOwnershipOf` | `src/contracts/path-ownership.ts:45` | 路径所有权：最长合法段匹配，返回 owner/tie/none；`note-path-ownership.ts` 只是转出 | file 锚点归属；不要另写路径匹配 |
 
 ## 内部用
 

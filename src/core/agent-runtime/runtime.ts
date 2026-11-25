@@ -593,7 +593,8 @@ function createReviewCapability(
         ...(deps.resourceCaps === undefined ? {} : { resourceCaps: deps.resourceCaps }),
         ...(deps.commandSandbox === undefined ? {} : { commandSandbox: { toolchain: deps.commandSandbox.toolchain } }),
       });
-      const profile = await ProcessSandbox.probe(resolved.value.root, handle, options);
+      if (options.status !== 'ready') return unavailable(options.reason);
+      const profile = await ProcessSandbox.probe(resolved.value.root, handle, options.value);
       if (!profile.available) return unavailable(profile.reason ?? 'the read-only sandbox is unavailable');
       return { status: 'available' };
     } catch (error) {

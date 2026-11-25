@@ -832,8 +832,13 @@ export function validateFutureObligationCoverage(input: {
           && task.requirementLevel === 'required' && (task.taskKind === 'work' || task.taskKind === 'gate');
       });
       if (!hasRequiredCarrier) {
+        // 121-111: the refusal names its way out. Cancelling or replacing the last carrier is allowed once the
+        // obligation names, in the same candidate, the Task that takes it over.
         issues.push(planValidationError(`obligations[${obligation.obligationId}].taskIds`, 'obligation_task_mapping',
-          `required obligation ${obligation.obligationId} no longer has a valid active required carrier`));
+          `required obligation ${obligation.obligationId} no longer has a valid active required carrier: keep one `
+          + 'of its Tasks active; to cancel or replace the last one, add the Task that takes it over (an active, '
+          + `required work or gate Task, such as the replacement) to ${obligation.obligationId}.taskIds in the same `
+          + 'candidate'));
       }
     }
   }

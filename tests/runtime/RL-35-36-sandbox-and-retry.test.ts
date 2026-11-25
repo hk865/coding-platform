@@ -166,7 +166,9 @@ it('RL-36 a launch failure records the check as not_started with one execute', a
   const report = await platform.materials.openArtifact(fixture.ctx, { ref: reportRef, usage: 'historical_explanation' });
   if (report.status !== 'ready') throw new Error('RL-36 report read failed');
   expect(JSON.parse(report.value.body)).toMatchObject({ observation: { kind: 'not_started', reason: 'launch_failed' } });
-  expect(rlSandbox.commands).toEqual([fixture.passCheck.command]);
+  // The platform runs a registered check's command after its git excludes prelude, so the command is the tail.
+  expect(rlSandbox.commands).toHaveLength(1);
+  expect(rlSandbox.commands[0]?.endsWith(`\n${fixture.passCheck.command}`)).toBe(true);
 });
 
 it('RL-36 a launch failure saves a workbench error with one execute', async () => {

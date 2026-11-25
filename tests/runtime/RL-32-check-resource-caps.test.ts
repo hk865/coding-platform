@@ -83,7 +83,9 @@ it('RL-32 (a) a cap-hit execution copies the resourceCaps report into the observ
   const { fixture, platform } = await platformWithCheck();
   const observation = await readObservation(fixture, platform, fixture.passCheck.checkId);
   expect(observation).toMatchObject({ kind: 'executed', exitCode: 137, resourceCaps: APPLIED_MEMORY_HIT });
-  expect(rlSandbox.commands).toEqual([fixture.passCheck.command]);
+  // The platform runs a registered check's command after its git excludes prelude, so the command is the tail.
+  expect(rlSandbox.commands).toHaveLength(1);
+  expect(rlSandbox.commands[0]?.endsWith(`\n${fixture.passCheck.command}`)).toBe(true);
 });
 
 it('RL-32 (a) the finished check is a failure in the committed round', async () => {
@@ -131,5 +133,7 @@ it('RL-32 (b) a launch_failed double is a not_started observation and execute ru
   const { fixture, platform } = await platformWithCheck();
   const observation = await readObservation(fixture, platform, fixture.passCheck.checkId);
   expect(observation).toMatchObject({ kind: 'not_started', reason: 'launch_failed' });
-  expect(rlSandbox.commands).toEqual([fixture.passCheck.command]);
+  // The platform runs a registered check's command after its git excludes prelude, so the command is the tail.
+  expect(rlSandbox.commands).toHaveLength(1);
+  expect(rlSandbox.commands[0]?.endsWith(`\n${fixture.passCheck.command}`)).toBe(true);
 });

@@ -16,6 +16,16 @@
 // `core/work-graph/notes/note-path-ownership.ts` re-export this exact function;
 // there is no second implementation.
 
+/**
+ * RW-13: a declared path (a catalog module or interface path, an ownership candidate) may carry one trailing `/`; it
+ * names the same file or directory as the path without it (`test/` is `test`, `./` is the root `.`). The one strip the
+ * ownership match, the module-segment measure, the knowledge files' path check, the workspace projection
+ * (`catalogForWorkspace`) and the capture's mapping list (`mappingsOf`) share.
+ */
+export function declaredPathOf(path: string): string {
+  return path.endsWith('/') ? path.slice(0, -1) : path;
+}
+
 export type PathOwnershipV1<T> =
   | { status: 'owner'; owner: T; prefix: string }
   | { status: 'none' }
@@ -42,7 +52,7 @@ export function pathOwnershipOf<T>(path: string,
     let matched = -1;
     let matchedPrefix = '';
     for (const raw of candidate.paths) {
-      const stripped = raw.endsWith('/') ? raw.slice(0, -1) : raw;
+      const stripped = declaredPathOf(raw);
       if (stripped.length === 0) continue;
       let length: number;
       if (stripped === '.') {
@@ -71,7 +81,7 @@ function fileDirectorySegments(filePath: string): string[] {
 
 /** The segments of a candidate module path; `.` declares no directory segment. */
 function modulePathSegments(modulePath: string): string[] {
-  const stripped = modulePath.endsWith('/') ? modulePath.slice(0, -1) : modulePath;
+  const stripped = declaredPathOf(modulePath);
   if (stripped.length === 0 || stripped === '.') return [];
   return stripped.split('/').filter(segment => segment.length > 0);
 }

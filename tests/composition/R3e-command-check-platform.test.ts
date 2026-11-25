@@ -117,7 +117,8 @@ it('executes the fixed commands through the real sandbox and admits mechanical E
 
   // The persisted observation must equal the REAL ProcessSandbox result field by
   // field; effects must actually exist (no `not.toBeNull` on an optional field).
-  const realExecution = processSpy.executions.find(entry => entry.command === fixture.passCheck.command);
+  // The platform runs a registered check's command after its git excludes prelude, so the command is the tail.
+  const realExecution = processSpy.executions.find(entry => entry.command.endsWith(`\n${fixture.passCheck.command}`));
   if (realExecution === undefined) throw Error('no real execution was recorded for the pass check');
   const real = realExecution.result as RealExecutionResult;
   const observation = body.observation;

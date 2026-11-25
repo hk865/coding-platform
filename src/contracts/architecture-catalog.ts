@@ -16,7 +16,7 @@ import type { ArchitectureSourceMapping } from './architecture-source.js';
 import type { ModuleRef } from './core/identity.js';
 import { canonicalJson } from './fingerprint.js';
 import type { ArchitectureBaselinePin, ArchitectureBaselineRevisionRef } from './governance.js';
-import { pathOwnershipOf } from './path-ownership.js';
+import { declaredPathOf, pathOwnershipOf } from './path-ownership.js';
 
 /** One formal module with its responsibility, path mapping and interfaces. */
 export type ModuleDefinition = {
@@ -78,12 +78,17 @@ export type ArchitectureCatalogPinV1 = {
   baseline: ArchitectureBaselinePin;
 };
 
-/** The module half of `mappingsOf`: each formal module to its declared paths. */
+/**
+ * The module half of `mappingsOf`: each formal module to its declared paths. A catalog path may carry one trailing `/`
+ * (RW-13); a mapping carries the path without it (`declaredPathOf`), because the source capture takes only bare paths.
+ * The catalog keeps the paths as adopted (its adoption fingerprint is over them), so the strip is done here, where the
+ * paths are read into mappings, for a catalog stored before this rule as well as a new one.
+ */
 export function moduleMappingsOf(catalog: AdoptedArchitecture): ArchitectureSourceMapping[] {
   return catalog.modules.map(module => ({
     id: module.ref.moduleId,
     kind: 'module' as const,
-    paths: module.paths,
+    paths: module.paths.map(declaredPathOf),
   }));
 }
 
@@ -100,7 +105,8 @@ export function mappingsOf(catalog: AdoptedArchitecture): ArchitectureSourceMapp
     ...moduleMappingsOf(catalog),
     ...catalog.modules.flatMap(module => module.interfaces
       .filter(entry => entry.paths.length > 0)
-      .map(entry => ({ id: canonicalJson([module.ref.moduleId, entry.id]), kind: 'interface' as const, paths: entry.paths }))),
+      .map(entry => ({ id: canonicalJson([module.ref.moduleId, entry.id]), kind: 'interface' as const,
+        paths: entry.paths.map(declaredPathOf) }))),
   ];
 }
 

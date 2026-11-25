@@ -185,7 +185,9 @@ it('AGTP-6 a registered check probes with the exact options it executes with', a
       checkId: fixture.passCheck.checkId }, meta: { requestId: 'agtp-6-probe-options',
       expected: [{ ref: opened.value.ref, revision: opened.value.revision }] } });
     if (ran.status !== 'ready') throw new Error(`AGTP-6 run failed: ${JSON.stringify(ran)}`);
-    const expected = [{ readOnlyPaths: ['.workbench'] }];
+    // Every command sandbox also mounts the platform's git excludes file at git's default excludes path.
+    const expected = [{ readOnlyPaths: ['.workbench'], hostMounts: [
+      { source: expect.any(String), target: '/home/agent/.config/git/ignore', writable: false }] }];
     expect(probes).toEqual(expected);
     expect(executions).toEqual(expected);
   } finally { await fixture.close(); }

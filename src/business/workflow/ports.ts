@@ -348,8 +348,9 @@ export type WorkflowDependencies = {
   pick?: PickReadsV1;
   /** N's module-overlap gate owner: the open/note steps and the gate read. */
   overlap?: OverlapGatePort;
-  /** M's member request seam (the no-adviser `host_pick` step and its item-5 commit read). */
-  members?: Pick<MemberRequestPortV1, 'requestMember' | 'readMemberRequestCommit'>;
+  /** M's member request seam (the no-adviser `host_pick` step, its item-5 commit read, and the read of the member
+   *  requests a suggestion's round made before the loop asks the person itself). */
+  members?: Pick<MemberRequestPortV1, 'requestMember' | 'readMemberRequestCommit' | 'readRoundMemberRequests'>;
   /** M's pending `member_creation` cards for the Task block source; the composition adapts
    *  `readPendingMemberCards` into this one shape. */
   pendingMemberCreations?: PendingCardsPort;

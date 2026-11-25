@@ -27,7 +27,8 @@ import { rejected, rejectedWithCurrent } from '../../../contracts/core/rejection
 import type { CoreError, CoreRejection, ReadResult, WriteResult } from '../../../contracts/core/results.js';
 import { CORE_ERRORS } from '../../../contracts/core/results.js';
 import type { DecisionApplicationReceiptV1, SessionMessageRef } from '../../../contracts/core/session-message.js';
-import type { TaskTriple } from '../../../contracts/dispatch.js';
+import type { RunRef, TaskTriple } from '../../../contracts/dispatch.js';
+import type { QueryRunRef } from '../../../contracts/query-job.js';
 import type { DecisionSourceV1 } from '../../../contracts/goal-decisions.js';
 import { decisionSourceKey } from '../../../contracts/goal-decisions.js';
 import type { GoalRef, GoalSnapshot } from '../../../contracts/ledger.js';
@@ -97,6 +98,13 @@ export type MemberRequestResultV1 =
 
 export type PendingMemberCardV1 = { task: TaskTriple; operation: OperationRef; source: DecisionSourceV1 };
 
+/** One member request a round made for a Task: its stage and the person's answer on its card (`null` without one). */
+export type RoundMemberRequestV1 = {
+  operation: OperationRef;
+  stage: MemberCreateActionV1['progress']['stage'];
+  answer: 'approve' | 'reject' | null;
+};
+
 export interface MemberRequestPortV1 {
   requestMember(ctx: CoreCallContext, input: MemberRequestInputV1): Promise<MemberRequestResultV1>;
   resumePendingMemberCreations(ctx: CoreCallContext): Promise<ReadResult<{
@@ -107,6 +115,9 @@ export interface MemberRequestPortV1 {
     Promise<ReadResult<readonly PendingMemberCardV1[]>>;
   readMemberRequestCommit(ctx: CoreCallContext, input: { commandId: string }):
     Promise<{ status: 'committed' } | { status: 'missing' } | { status: 'unavailable'; reason: string }>;
+  /** The member requests that one round (`run`, a Work Run or a Query round) made for `task` of `goalRef`. */
+  readRoundMemberRequests(ctx: CoreCallContext, input: { goalRef: GoalRef; task: TaskTriple; run: RunRef | QueryRunRef }):
+    Promise<ReadResult<readonly RoundMemberRequestV1[]>>;
 }
 
 export type MemberDecisionInputV1 = {
@@ -1422,6 +1433,36 @@ export function createMemberService(deps: MemberServiceDependenciesV1): MemberSe
     return { status: 'ready', value: cards };
   }
 
+  /**
+   * The member requests one round made for one Task: every member operation of the Goal whose caller ran in `run` (a
+   * Work Run, a secretary request round or an adviser planning round; `host_pick` has no round) and whose scope is
+   * `task`, with its stage and the person's card answer. The Goal loop reads it before it asks the person itself after
+   * a member suggestion's round ended. A failed read is its rejection.
+   */
+  async function readRoundMemberRequests(ctx: CoreCallContext,
+    input: { goalRef: GoalRef; task: TaskTriple; run: RunRef | QueryRunRef }):
+    Promise<ReadResult<readonly RoundMemberRequestV1[]>> {
+    const scopeError = memberScopeProblem(ctx);
+    if (scopeError !== null) return scopeError;
+    if (input.goalRef.projectId !== ctx.projectId) {
+      return rejected('invalid', 'readRoundMemberRequests requires a Goal of the bound project');
+    }
+    const found = await lookupMemberOperations(ctx, input.goalRef);
+    if (found.status === 'rejected') return found;
+    const runKey = canonicalJson(input.run as unknown as JsonValue);
+    const requests: RoundMemberRequestV1[] = [];
+    for (const record of found.records) {
+      const caller = record.action.input.caller;
+      const task = record.action.input.scope.task;
+      if (caller.kind === 'host_pick' || canonicalJson(caller.run as unknown as JsonValue) !== runKey) continue;
+      if (task.projectId !== input.task.projectId || task.goalId !== input.task.goalId
+        || task.taskId !== input.task.taskId) continue;
+      requests.push({ operation: structuredClone(record.ref), stage: record.action.progress.stage,
+        answer: record.action.progress.decision?.answer ?? null });
+    }
+    return { status: 'ready', value: requests };
+  }
+
   async function readMemberRequestCommit(ctx: CoreCallContext, input: { commandId: string }):
     Promise<{ status: 'committed' } | { status: 'missing' } | { status: 'unavailable'; reason: string }> {
     const identityKey = commandIdentity({
@@ -1494,7 +1535,8 @@ export function createMemberService(deps: MemberServiceDependenciesV1): MemberSe
   };
 
   return {
-    request: { requestMember, resumePendingMemberCreations, readPendingMemberCards, readMemberRequestCommit },
+    request: { requestMember, resumePendingMemberCreations, readPendingMemberCards, readMemberRequestCommit,
+      readRoundMemberRequests },
     decision: { applyMemberDecision },
     lookupToolCommit,
   };

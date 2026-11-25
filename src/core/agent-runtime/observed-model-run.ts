@@ -22,7 +22,7 @@ import { PROJECT_STORE_PREFIX } from '../../core/workspace/denied-prefixes.js';
 import { KNOWLEDGE_DIRECTORY } from '../../contracts/knowledge.js';
 import type { RuntimeSourceCaptureAccess, RuntimeSourceCaptureFactory } from './source-tool-ports.js';
 import { assembleObservedExtensions, kernelEnabledToolNames } from './tool-group-assembly.js';
-import { withCommandSandbox, type CommandSandboxAdditions } from './readonly-command-tool.js';
+import { withAgentCommandSandbox, withCommandSandbox, type CommandSandboxAdditions } from './readonly-command-tool.js';
 
 /** The internal result of the ONE existing finally cleanup. It is a local
  * proof for the Trusted Host's live handle, never a public control ack. */
@@ -391,6 +391,18 @@ export async function runObservedModel(o: ObservedModelRunOptions) {
       extensionNames: extensions.names,
     });
     const needsExploration = hasRead;
+    // L13: the resource-cap source is merged in at this last hop only; the Kernel reads `current()` once per command,
+    // so a settings change reached the holder is used by the next command of this same Run. A Run that may run
+    // `shell` also mounts the platform's git excludes file (`withAgentCommandSandbox`); a file that cannot be made is
+    // this Run's `unavailable`, before the Kernel starts.
+    const sandboxOptions = o.resourceCaps === undefined
+      ? o.processSandboxOptions : { ...o.processSandboxOptions, resourceCaps: o.resourceCaps };
+    let processSandboxOptions = withCommandSandbox(sandboxOptions, o.commandSandbox);
+    if (allowed.includes('shell')) {
+      const agentSandbox = withAgentCommandSandbox(sandboxOptions, o.commandSandbox);
+      if (agentSandbox.status !== 'ready') throw new RuntimeModelCallRejected('unavailable', agentSandbox.reason);
+      processSandboxOptions = agentSandbox.value;
+    }
     let result!: Awaited<ReturnType<typeof o.kernel.runCodingAgent>>;
     try {
       result = await o.kernel.runCodingAgent({
@@ -473,12 +485,7 @@ export async function runObservedModel(o: ObservedModelRunOptions) {
         // `.GIT/hooks/...` is the same directory; the sandbox compares without case.
         workspaceOptions: { deniedPrefixes: [...new Set([...o.deniedPrefixes, PROJECT_STORE_PREFIX])],
           writeDeniedPrefixes: [KNOWLEDGE_DIRECTORY, '.git'] },
-        // L13: the resource-cap source is merged in at this last hop only; the
-        // Kernel reads `current()` once per command, so a settings change reached
-        // the holder is used by the next command of this same Run.
-        processSandboxOptions: withCommandSandbox(o.resourceCaps === undefined
-          ? o.processSandboxOptions
-          : { ...o.processSandboxOptions, resourceCaps: o.resourceCaps }, o.commandSandbox),
+        processSandboxOptions,
         limits: kernelRunLimits(o.budget, o.taskBudget, o.now),
         approvalRequester: new o.kernel.StaticApprovalRequester({ decision: 'allow_once', reason: o.readOnly ? 'explicit_read_only_role_work' : 'explicit_gui_task_in_isolated_workspace' }),
         observerEventSinks: [{ sinkId: 'platform-live-events', delivery: 'best_effort', publish: async (event: AgentEvent) => {
