@@ -4217,6 +4217,10 @@
               - E08b 改措辞；
               - waiting 的 `second-expiry`、`supply-order` 和重启注记。
               DSH 施工后 Codex Sol 审出 5 条必须改，DSH 返工中。
+              - **11-26 补记：已落地 `f6cbf62e`（WSL 标签 `main-f6cbf62e` = `a5a1b9df`）。**
+                - 过程：Sol 审、复审、快核各一次；DSH 返工两轮；剩两处由 Opus 修，一处是 old-evidence 按每次领取的时间选最新一轮，一处是 second-expiry 的漏读和接续线。
+                - Sol 用 E08 的诊断证据推了一遍，现在的驱动会判 `versions=pass`、`switch=fail`、`old-evidence=fail`，和诊断的期望一致。
+                - 只改 `scripts/acceptance`。构建、typecheck、架构检查、kernel 补丁检查、`node --check` 都过；没有测试引用驱动，所以没跑全量。
             - **模型的缺口（并进 skill 缺口清单，另包）。**
               - 每段一条阶段 gate，本来就是规则，模型没照做；
               - 提示词缺一条：阶段 gate 只覆盖同段的 stage/module 级工作（E12 的 g2 覆盖为空）；
