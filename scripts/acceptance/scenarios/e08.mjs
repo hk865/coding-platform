@@ -48,9 +48,9 @@ const sameJson = (left, right) => JSON.stringify(left ?? null) === JSON.stringif
 /** The first plan's Task whose id or title names `word` (sub, mul, div). */
 export const taskNamed = (tasks, word) => tasks.find(task => new RegExp(word, 'i').test(`${task.ref.taskId} ${task.definition?.title ?? ''}`));
 
-/** Runs of one Task, every status. */
-export async function runsOf(project, goalRef, taskId) {
-  return (await executions(project, goalRef)).filter(item => item.run.task.taskId === taskId);
+/** Runs of one Task, every status. A read that does not answer is named in `gaps`. */
+export async function runsOf(project, goalRef, taskId, gaps = null) {
+  return (await executions(project, goalRef, gaps)).filter(item => item.run.task.taskId === taskId);
 }
 
 /**
@@ -159,6 +159,43 @@ export function cancelRecordText(record, adoptedPlan) {
   return { ok, text };
 }
 
+/**
+ * After the Goal wait, judge the adopted div Task's own post-change rounds. The newest Run with a round (by claim
+ * time, `taskRounds`) decides; an unreadable run list or round is `env-unavailable` and never falls back to an older
+ * round. A missing round is `not-run` while the Goal still waits and `fail` once it completed. Read the round by
+ * `roundRef` so its version is the round's own adopted Plan, not the Run's Plan.
+ */
+async function judgeOldEvidence(project, goalRef, adoptedPlan, div, completed, rec) {
+  const gaps = [];
+  const [latest] = await taskRounds(project, goalRef, div.ref.taskId, gaps, { latest: true });
+  if (gaps.length > 0) {
+    rec.uncover('old-evidence', 'env-unavailable', gaps.join('；'));
+    return;
+  }
+  if (latest === undefined) {
+    if (completed) rec.fail('old-evidence', 'Goal 已完成，div 没有检查轮');
+    else rec.uncover('old-evidence', 'not-run', 'Goal 等待结束时 div 还没有检查轮');
+    return;
+  }
+
+  const head = ready(await project.host.client.read('verification/round', project.scope, { roundRef: latest.head.roundRef }));
+  if (head === null) {
+    rec.uncover('old-evidence', 'env-unavailable', '按 roundRef 读不到 div 的检查轮');
+    return;
+  }
+  rec.link('evidence', head.roundRef, head.revision);
+  const required = head.delivery.requirements.filter(entry => entry.requirementLevel === 'required');
+  const states = required.map(entry => `${entry.obligationId}/${entry.requirementId}:${entry.state}`).join('；');
+  const note = `div Run ${head.subjectRunRef.runId}；检查轮计划 ${head.planRef.planId}；采用 ${adoptedPlan.planId}；${states || '没有必需要求'}`;
+  if (!sameJson(latest.item.run.planRef, adoptedPlan) || !sameJson(head.planRef, adoptedPlan)
+    || required.length === 0 || required.some(entry => ['fail', 'missing', 'inconclusive'].includes(entry.state))) {
+    rec.fail('old-evidence', note);
+  } else if (required.some(entry => entry.state === 'pending')) {
+    if (completed) rec.fail('old-evidence', `Goal 已完成，div 的必需要求仍未结算；${note}`);
+    else rec.uncover('old-evidence', 'not-run', note);
+  } else rec.pass('old-evidence', note);
+}
+
 async function run(ctx, rec) {
   const host = ctx.hosts['w-accept'];
   const project = await openProject(ctx, host, 'e08', SEED);
@@ -204,8 +241,7 @@ async function run(ctx, rec) {
   rec.note(`first plan ${started.plan?.planId}: sub = ${subId ?? '无'}，mul = ${mulId ?? '无'}`);
 
   // P6 裁定 Q3: the change goes in while mul works and sub is not claimed yet (sub really claimable, another piece of
-  // work moving). Under every_step a step may wait for the person's card: the person answers while waiting. If sub is
-  // claimed first, the hold branch is recorded `uncovered` and the scenario goes on.
+  // work moving). Under every_step a step may wait for the person's card: the person answers while waiting.
   const answeredFirst = new Set();
   const moment = await waitFor(ctx, 'mul running while sub is not claimed yet', async () => {
     for (const card of await waitingCards(project, goalRef, rec)) {
@@ -218,16 +254,39 @@ async function run(ctx, rec) {
     return { total: runs.length, mul: mulId === null ? [] : of(mulId), sub: subId === null ? [] : of(subId) };
   }, value => subId === null || mulId === null ? value.total > 0 : value.sub.length > 0 || value.mul.length > 0,
   { timeoutMs: 40 * MINUTE, check: 'hold-before-adopt' });
-  const subClaimedFirst = subId !== null && moment.sub.length > 0;
   const subCardAtChange = subId === null ? null : await taskCard(project, goalRef, subId);
-  const subRuns0 = moment.sub.length;
-  rec.facts.changeMoment = { mulRuns: moment.mul.length, subRuns: subRuns0, claimableNow: subCardAtChange?.dispatch?.claimableNow ?? null };
-  rec.note(`提交改需求时：mul ${moment.mul.length} 个 Run（${moment.mul.map(item => item.run.status).join(',') || '-'}），sub ${subRuns0} 个 Run；sub 的 dispatch.claimableNow ${
+  rec.note(`提交前最近一次轮询：mul ${moment.mul.length} 个 Run（${moment.mul.map(item => item.run.status).join(',') || '-'}），sub ${moment.sub.length} 个 Run；sub 的 dispatch.claimableNow ${
     subCardAtChange === null ? '读不到' : String(subCardAtChange.dispatch?.claimableNow)}`);
 
+  const submittedAt = Date.now();
   const change = await submitRequest(project, CHANGE, { goalId: goalRef.goalId });
   if (change?.status !== 'queued') throw broken(ctx, `requests/submit with goalId: ${change?.code} ${change?.reason}`);
   rec.facts.userCommand.push(CHANGE);
+  // A Run of sub already existed when the change went in, so the secretary cannot place its "not yet started" hold
+  // any more. The Outbox keeps each Run's own claim while a later Run may hold the Task's lease: a Run seen before
+  // the submission is part of the baseline, and so is any other claim strictly earlier than the sending.
+  const claimsBeforeSubmit = new Map(moment.sub.map(({ run, outbox }) =>
+    [run.ref.runId, Date.parse(outbox.claim.claimedAt)]));
+  const claimReadGaps = [];
+  const subAtSubmit = subId === null ? [] : await runsOf(project, goalRef, subId, claimReadGaps);
+  let sameMillisecondClaim = false;
+  for (const { run, outbox } of subAtSubmit) {
+    const claimedAt = Date.parse(outbox.claim.claimedAt);
+    if (claimedAt < submittedAt) claimsBeforeSubmit.set(run.ref.runId, claimedAt);
+    if (claimedAt === submittedAt) sameMillisecondClaim = true;
+  }
+  const subRuns0 = claimsBeforeSubmit.size;
+  if (subId === null) rec.uncover('hold-before-adopt', 'not-run', '首版计划里认不出 sub 任务');
+  else if (subRuns0 > 0) {
+    const seconds = ((submittedAt - Math.min(...claimsBeforeSubmit.values())) / 1000).toFixed(3);
+    rec.uncover('hold-before-adopt', 'not-run', `sub 在提交改需求前 ${seconds} s 被领（提交时至少已有 ${subRuns0} 个 Run）`);
+  } else if (sameMillisecondClaim) {
+    rec.uncover('hold-before-adopt', 'not-run', 'sub 领取与提交同毫秒，未能确认提交时尚可暂缓');
+  } else if (claimReadGaps.length > 0) {
+    rec.uncover('hold-before-adopt', 'env-unavailable', claimReadGaps.join('；'));
+  }
+  rec.facts.changeMoment = { mulRuns: moment.mul.length, subRuns: subRuns0, claimableNow: subCardAtChange?.dispatch?.claimableNow ?? null };
+
   const changeView = await waitRequest(ctx, project, change.requestRoot, 40 * MINUTE);
   // The person's decision on the change starts with an idea (G6F F2): the first one of the round that gave ideas.
   const ideasRound = changeView.rounds.at(-1);
@@ -252,13 +311,12 @@ async function run(ctx, rec) {
 
   // hold-before-adopt (P6 observation, read only): before the person adopts, sub carries the secretary's own hold
   // (`hold_claim`, `skill-platform-secretary.txt:27`), held and not expired (`work-line.ts:373-404`), and no new Run.
-  if (subId === null) rec.uncover('hold-before-adopt', 'not-run', '首版计划里认不出 sub 任务');
-  else if (subClaimedFirst) {
-    rec.uncover('hold-before-adopt', 'not-run', `sub 在 mul 之前先被领了（提交改需求时 sub 已有 ${subRuns0} 个 Run），“sub 可领、没开工时暂缓”这一支没走到`);
-  } else {
+  if (!rec.results.has('hold-before-adopt')) {
     const card = await taskCard(project, goalRef, subId);
-    const subRunsNow = (await runsOf(project, goalRef, subId)).length;
+    const claimReadGaps = [];
+    const subRunsNow = (await runsOf(project, goalRef, subId, claimReadGaps)).length;
     if (card === null) rec.uncover('hold-before-adopt', 'env-unavailable', 'graph/detail 读不到 sub 的任务卡');
+    else if (claimReadGaps.length > 0) rec.uncover('hold-before-adopt', 'env-unavailable', claimReadGaps.join('；'));
     else {
       const holds = card.holds ?? [];
       const secretaryHold = holds.find(hold => hold.state === 'held' && hold.expired !== true && hold.placedBy?.kind === 'agent'
@@ -277,74 +335,75 @@ async function run(ctx, rec) {
   if (applied?.status !== 'committed') throw broken(ctx, `plans/apply of the change: ${applied?.code} ${applied?.reason}`, 'versions');
   const adoptedPlan = applied.value.ref;
   if (busy.length > 0) rec.note(`采用前平台停了受影响的 Run（busy ${busy.length} 次：${busy.map(entry => entry.reason).join('；')}）`);
-  // The Goal must not complete while the replacing div Task is missing or unsatisfied (second review #7).
+  // Judge `versions` first, while the adoption receipt is fresh. A failed read is an environment gap;
+  // only a list that was read but has fewer than two versions is a missing version.
+  const versionsBody = await host.client.read('plans/versions', project.scope, { goalId: goalRef.goalId, limit: 50, cursor: null });
+  const versions = ready(versionsBody);
+  if (versions === null) rec.uncover('versions', 'env-unavailable', `plans/versions 读不到：${versionsBody?.status ?? 'no answer'} ${versionsBody?.code ?? ''}`);
+  else rec.check('versions', versions.items.length >= 2,
+    `plans/versions ${versions.items.length} 版；改目标的候选由人 plans/apply（${applied.status}，采用 ${JSON.stringify(adoptedPlan)}）`);
+  // Judge the switch on the adopted version itself, before later Runs change the active graph. A read failure is not
+  // an empty graph, and a `superseded` record must name div as the replacement.
+  const adoptedInput = { goalRef, planRef: adoptedPlan };
+  let adoptedBody = await host.client.read('tasks/query', project.scope, adoptedInput);
+  let adoptedGraph = ready(adoptedBody);
+  const adoptedTasks = adoptedGraph?.tasks ?? [];
+  const divAtAdoption = taskNamed(adoptedTasks, 'div');
+  if (adoptedGraph === null) {
+    const note = `tasks/query ${adoptedPlan.planId}：${adoptedBody?.status ?? 'no answer'} ${adoptedBody?.code ?? ''}`;
+    rec.uncover('switch', 'env-unavailable', note);
+  } else {
+    const sub = adoptedTasks.find(task => task.ref.taskId === subId);
+    const mul = adoptedTasks.find(task => task.ref.taskId === mulId);
+    const entry = adoptedGraph.plan.dispositionRecord?.entries.find(row => row.taskId === subId);
+    const replacement = entry?.replacedByTaskId;
+    const switched = entry !== undefined && sameJson(entry.setIn, adoptedPlan) && entry.actor.kind === 'human'
+      && ((sub?.disposition === 'cancelled' && entry.to === 'cancelled')
+        || (sub?.disposition === 'superseded' && entry.to === 'superseded' && replacement === divAtAdoption?.ref.taskId));
+    rec.check('switch', divAtAdoption !== undefined && mul?.disposition === 'active' && switched,
+      `div ${divAtAdoption?.ref.taskId ?? '无'}；sub ${sub?.disposition ?? '无'}；mul ${mul?.disposition ?? '无'}；记录 ${entry?.to ?? '无'}；接替 ${replacement ?? '无'}；版本 ${entry?.setIn.planId ?? '无'}；采用者 ${entry?.actor.kind ?? '无'}`);
+  }
+  // 每步确认和返工由 Goal 等待处理。`check: null` 只让这个等待不把停因记成某条判据的 fail（平台合法停下由 `stoppedFor`
+  // 说明）；各判据仍按上面的采用版本和 finally 里的检查轮读法判，等待停下也读取已经落下的验收证据。
   let completedWhileDivOpen = false;
-  const done = await waitGoal(ctx, project, goalRef, { timeoutMs: 150 * MINUTE, rec, answer: approve, onPoll: async display => {
-    const tasks = ready(await host.client.read('tasks/query', project.scope, { goalRef }))?.tasks ?? [];
-    const div = tasks.find(task => /div/i.test(`${task.ref.taskId} ${task.definition?.title ?? ''}`));
-    if (display?.display?.phase === 'COMPLETED' && (div === undefined || div.effectivePhase !== 'satisfied')) completedWhileDivOpen = true;
-  } });
-  const versions = ready(await host.client.read('plans/versions', project.scope, { goalId: goalRef.goalId, limit: 50, cursor: null }));
-  rec.check('versions', (versions?.items?.length ?? 0) >= 2 && applied.status === 'committed',
-    `plans/versions ${versions?.items?.length ?? 0} 版；改目标的候选由人 plans/apply（${applied.status}，采用 ${JSON.stringify(adoptedPlan)}）`);
-  const graph = ready(await host.client.read('tasks/query', project.scope, { goalRef }));
-  const tasks = graph?.tasks ?? [];
-  const div = taskNamed(tasks, 'div');
-  const sub = subId === null ? taskNamed(tasks, 'sub') : tasks.find(task => task.ref.taskId === subId);
-  const mul = mulId === null ? taskNamed(tasks, 'mul') : tasks.find(task => task.ref.taskId === mulId);
-  // P6: who adopted, which version, sub really cancelled — from the adopted version's own disposition record.
-  const record = subId === null ? { readable: true, entry: null, proposal: null } : await dispositionOf(project, goalRef, adoptedPlan, subId);
-  const cancelled = cancelRecordText(record, adoptedPlan);
-  rec.check('switch', div !== undefined && (sub === undefined || sub.disposition !== 'active') && mul?.effectivePhase === 'satisfied' && cancelled.ok,
-    `div ${div?.effectivePhase ?? '无'}；sub ${sub === undefined ? '不在新计划' : sub.disposition}；mul ${mul?.effectivePhase ?? '无'}；sub 的取消：${cancelled.text}`);
-  // Second review #7: each new required requirement → the checks that cover it → the rounds those checks belong to →
-  // each round judged a div Run (its subjectRunRef) under the adopted change version (or the active Plan after it,
-  // never the first version). A requirement with no covering check, or any other link missing, is not a pass.
-  if (div === undefined) rec.fail('old-evidence', 'div 不在新计划里');
-  else {
-    const chains = await taskRounds(project, goalRef, div.ref.taskId);
-    const divRuns = new Set(chains.map(entry => JSON.stringify(entry.item.run.ref)));
-    const rounds = new Map(chains.flatMap(entry => entry.rounds).map(round => [JSON.stringify(round.roundRef), round]));
-    const plans = new Set([JSON.stringify(adoptedPlan), ...(JSON.stringify(graph?.plan?.ref) === JSON.stringify(started.plan) ? [] : [JSON.stringify(graph?.plan?.ref)])]);
-    const head = chains.map(entry => entry.head).filter(Boolean).at(-1) ?? null;
-    if (head === null) rec.fail('old-evidence', `div 的 ${chains.length} 个 Run 都没有检查轮`);
-    else {
-      rec.link('evidence', head.roundRef, head.revision);
-      const required = head.delivery.requirements.filter(entry => entry.requirementLevel === 'required');
-      // Quick check #7, requirement by kind: a reviewer requirement is answered by the formal review Evidence of the
-      // round itself (no checks), so its link is that round: a div Run under the adopted version; any other kind needs
-      // its own covering checks, each on a div round under the adopted version. Not satisfied → fail; a link that
-      // cannot be read → uncovered; a link that points elsewhere → fail.
-      const headLinked = divRuns.has(JSON.stringify(head.subjectRunRef)) && plans.has(JSON.stringify(head.planRef));
-      const verdicts = required.map(entry => {
-        const name = `${entry.obligationTitle}/${entry.requirementId}(${entry.kind}):${entry.state}`;
-        if (entry.state !== 'pass') return { verdict: 'fail', text: `${name} 没有满足` };
-        if (entry.kind === 'reviewer') {
-          return { verdict: headLinked ? 'pass' : 'fail', text: `${name}，由本轮正式审阅回答（轮判 ${head.subjectRunRef.runId}，计划 ${head.planRef.planId}）` };
-        }
-        if (entry.checks.length === 0) return { verdict: 'uncovered', text: `${name}，公开读口没有覆盖它的检查，接不上证据` };
-        const covering = entry.checks.map(check => rounds.get(JSON.stringify(check.roundRef)) ?? null);
-        if (covering.some(round => round === null)) return { verdict: 'fail', text: `${name}，覆盖它的检查不在 div 自己的轮里` };
-        const linked = covering.every(round => divRuns.has(JSON.stringify(round.subjectRunRef)) && plans.has(JSON.stringify(round.planRef)));
-        return { verdict: linked ? 'pass' : 'fail', text: `${name}，覆盖${covering.map(round => `（#${round.chain.ordinal} 判 ${round.subjectRunRef.runId}，计划 ${round.planRef.planId}）`).join('')}` };
-      });
-      const text = `采用版本 ${adoptedPlan.planId}；div 必需要求 ${required.length} 条：${verdicts.map(entry => entry.text).join('；') || '无'}`;
-      if (required.length === 0) rec.fail('old-evidence', `${text}（div 没有必需要求）`);
-      else if (verdicts.some(entry => entry.verdict === 'fail')) rec.fail('old-evidence', text);
-      else if (verdicts.some(entry => entry.verdict === 'uncovered')) rec.uncover('old-evidence', 'entry-missing', text);
-      else rec.pass('old-evidence', text);
+  let done;
+  try {
+    done = await waitGoal(ctx, project, goalRef, { timeoutMs: 150 * MINUTE, rec, answer: approve,
+      returnOnDecide: true, check: null, onPoll: async display => {
+        if (display?.display?.phase !== 'COMPLETED') return;
+        const tasks = ready(await host.client.read('tasks/query', project.scope, { goalRef }))?.tasks ?? [];
+        if (taskNamed(tasks, 'div')?.effectivePhase !== 'satisfied') completedWhileDivOpen = true;
+      } });
+  } finally {
+    if (adoptedGraph === null) {
+      adoptedBody = await host.client.read('tasks/query', project.scope, adoptedInput);
+      adoptedGraph = ready(adoptedBody);
+    }
+    const div = taskNamed(adoptedGraph?.tasks ?? [], 'div');
+    const completed = done?.display.phase === 'COMPLETED';
+    if (adoptedGraph === null) {
+      rec.uncover('old-evidence', 'env-unavailable', `tasks/query ${adoptedPlan.planId}：${adoptedBody?.status ?? 'no answer'} ${adoptedBody?.code ?? ''}`);
+    } else if (div !== undefined) {
+      await judgeOldEvidence(project, goalRef, adoptedPlan, div, completed, rec);
+    } else if (completed) {
+      rec.fail('old-evidence', 'Goal 已完成，采用版没有 div 检查轮');
+    } else {
+      rec.uncover('old-evidence', 'not-run', 'Goal 等待结束时，采用版没有 div 可检查');
     }
   }
   // lead 11-18：采用的改目标版本里没有被拿掉的必需任务时，这条判据没有对象，记 not-run，不空过。
-  const adoptedBody = await host.client.read('tasks/query', project.scope, { goalRef, planRef: adoptedPlan });
-  const adoptedGraph = ready(adoptedBody);
+  const finalTasks = ready(await host.client.read('tasks/query', project.scope, { goalRef }))?.tasks ?? [];
   const removed = (adoptedGraph?.tasks ?? []).filter(task => task.definition?.taskKind === 'work'
     && task.definition?.requirementLevel === 'required' && ['cancelled', 'superseded'].includes(task.disposition));
-  if (adoptedGraph === null) rec.uncover('required-cancel', 'env-unavailable', `tasks/query ${adoptedPlan.planId}：${adoptedBody?.status ?? 'no answer'} ${adoptedBody?.code ?? ''}`);
+  const finalDiv = taskNamed(finalTasks, 'div');
+  const finalSub = subId === null ? taskNamed(finalTasks, 'sub') : finalTasks.find(task => task.ref.taskId === subId);
+  if (done.stoppedFor !== null) {
+    rec.uncover('required-cancel', 'not-run', `平台停在等人（${done.stoppedFor}），Goal 没有 COMPLETED；div 满足前不完成这一条没有对象`);
+  } else if (adoptedGraph === null) rec.uncover('required-cancel', 'env-unavailable', `tasks/query ${adoptedPlan.planId}：${adoptedBody?.status ?? 'no answer'} ${adoptedBody?.code ?? ''}`);
   else if (removed.length === 0) {
-    rec.uncover('required-cancel', 'not-run', `采用的版本 ${adoptedPlan.planId} 里没有被取消或接替的必需任务（sub ${sub === undefined ? '不在' : sub.disposition}），这条判据没有对象`);
-  } else rec.check('required-cancel', div !== undefined && div.effectivePhase === 'satisfied' && !completedWhileDivOpen && done.display.phase === 'COMPLETED',
-    `被拿掉的必需任务 ${removed.map(task => task.ref.taskId).join(', ')}；最后 ${done.display.phase}；div ${div?.effectivePhase ?? '不存在'}；div 缺失或没满足时出现过 COMPLETED：${completedWhileDivOpen}`);
+    rec.uncover('required-cancel', 'not-run', `采用的版本 ${adoptedPlan.planId} 里没有被取消或接替的必需任务（sub ${finalSub === undefined ? '不在' : finalSub.disposition}），这条判据没有对象`);
+  } else rec.check('required-cancel', finalDiv !== undefined && finalDiv.effectivePhase === 'satisfied' && !completedWhileDivOpen && done.display.phase === 'COMPLETED',
+    `被拿掉的必需任务 ${removed.map(task => task.ref.taskId).join(', ')}；最后 ${done.display.phase}；div ${finalDiv?.effectivePhase ?? '不存在'}；div 缺失或没满足时出现过 COMPLETED：${completedWhileDivOpen}`);
 }
 
 export default { ...def, run };

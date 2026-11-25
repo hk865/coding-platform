@@ -407,7 +407,7 @@ export async function waitGoal(ctx, project, goalRef, { until = TERMINAL, timeou
     }
     if (rec?.autonomy === 'every_step') await reviewNodes(project, goalRef, rec);
     if (onPoll !== undefined) await onPoll(display);
-    const early = await endedEarly(ctx, project, goalRef, { display, queue, open, quiet });
+    const early = await endedEarly(ctx, project, goalRef, { display, queue, open, quiet, rec });
     // lead 11-18（G6 第十一次）：停因跟着返回值走，场景不用再读一次。
     if (early?.decide && returnOnDecide) stoppedFor = early.text;
     ended = early !== null && stoppedFor === null ? early.text : null;
@@ -422,6 +422,64 @@ export async function waitGoal(ctx, project, goalRef, { until = TERMINAL, timeou
 }
 
 /**
+ * The Workflow's two "a check is still executing" reasons: the Goal selection keeps the chain head (`workflow.ts:1687`),
+ * and the Task lane that just ran the check stops with the short form (`workflow.ts:4499`).
+ */
+const EXECUTING_CHECK_REASONS = new Set([
+  'the verification round chain head has an executing check; not advancing',
+  'the round has an executing check; not advancing',
+]);
+
+/**
+ * The Task whose check is executing. The snapshot names its own Task when it is a Task lane; the Goal snapshot's
+ * `siblings` name every Task lane and its own reason (`collaboration-driver.ts:453-460`), and the last step receipt
+ * is the round the lane just ran. The Goal's selection result may have no receipt, so fall back to the public round
+ * read and an executing check; a read failure leaves the Task unlocated rather than picking another lane.
+ */
+async function executingCheckTaskId(project, goalRef, snapshot) {
+  if (snapshot.taskId !== null) return snapshot.taskId;
+  const roundRef = snapshot.last?.value?.receipt?.result?.value?.ref;
+  if (roundRef?.aggregateType === 'VerificationRound') return roundRef.taskId;
+  const lanes = snapshot.siblings.filter(lane => EXECUTING_CHECK_REASONS.has(lane.reason));
+  if (lanes.length === 1) return lanes[0].taskId;
+
+  const graph = ready(await project.host.client.read('tasks/query', project.scope, { goalRef }));
+  const taskIds = [];
+  for (const task of graph?.tasks ?? []) {
+    const input = task.definition.taskKind === 'gate' ? { taskRef: task.ref }
+      : task.execution === null ? null : { subjectRunRef: task.execution };
+    if (input === null) continue;
+    const body = await project.host.client.read('verification/round', project.scope, input, { expect: ['not_found'] });
+    if (body?.status === 'not_found') continue;
+    const head = ready(body);
+    if (head === null) return null;
+    if (head.checks.some(check => check.phase === 'executing')) taskIds.push(task.ref.taskId);
+  }
+  return taskIds.length === 1 ? taskIds[0] : null;
+}
+
+/**
+ * When a stall is the executing-check window, keep the task lane's `current`, `last.value.receipt` and `reason` in the
+ * notes. Evidence only, and only for E05: the stall still fails the wait's check.
+ */
+async function noteExecutingCheck(project, goalRef, snapshot, rec) {
+  if (rec?.id !== 'E05' || !EXECUTING_CHECK_REASONS.has(snapshot?.reason)) return;
+  const taskId = await executingCheckTaskId(project, goalRef, snapshot);
+  if (taskId === null) {
+    rec.note(`E05 检查停窗：未定位到唯一的任务（${snapshot.reason}）`);
+    return;
+  }
+  const body = await project.host.client.read('workflow/driver-read', project.scope, { goalRef, taskId });
+  const lane = ready(body);
+  if (lane === null) {
+    rec.note(`E05 检查停窗（taskId ${taskId}）：workflow/driver-read ${said(body)}`);
+    return;
+  }
+  rec.note(`E05 检查停窗（taskId ${taskId}）：current=${textOf(lane.current)}；last.value.receipt=${
+    textOf(lane.last?.value?.receipt)}；reason=${lane.reason}`);
+}
+
+/**
  * G7 W3: the reason a Goal wait ends before its deadline, or null. Judged like a wait that ran out (G6F R1: the
  * complete record proves the step was not reached; the checks after it are `uncovered (not-run)`). A poll whose
  * display or queue did not answer is no evidence either way.
@@ -433,7 +491,7 @@ export async function waitGoal(ctx, project, goalRef, { until = TERMINAL, timeou
  *     Work Run in flight in the project. The display's `sourceCursor` is the ledger-wide watermark (any commit in the
  *     project moves it), so it is not compared. The reason names the last phase, cause and driver wait reason seen.
  */
-async function endedEarly(ctx, project, goalRef, { display, queue, open, quiet }) {
+async function endedEarly(ctx, project, goalRef, { display, queue, open, quiet, rec }) {
   // 121-146：有卡的来源暂时读不到时，队列不是全貌，和“队列没答”一样不算证据。
   if (display === null || queue === null || unreadableSources(queue).length > 0) return null;
   const { phase, cause } = display.display;
@@ -463,6 +521,7 @@ async function endedEarly(ctx, project, goalRef, { display, queue, open, quiet }
   if (quietFor < STALL_MS) return null;
   if (!idle) return null;
   const driver = ready(await project.host.client.read('workflow/driver-read', project.scope, { goalRef }));
+  await noteExecutingCheck(project, goalRef, driver, rec);
   return { decide: false, text: `stalled: no change for ${Math.floor((Date.now() - quiet.since) / MINUTE)} min, nothing in flight (last seen: goal phase ${
     phase}, cause ${cause?.code ?? 'none'}; driver ${driver?.state ?? 'unread'}, wait reason ${driver?.reason ?? 'none'})` };
 }
@@ -884,13 +943,20 @@ export async function sessionHistory(project, sessionRef, gaps = null) {
   return items;
 }
 
-/** A Run's saved graph history (`executions/history`, the same Kernel entries as `sessions/history`), every page. */
-export async function runHistory(project, runRef) {
+/**
+ * A Run's saved graph history (`executions/history`, the same Kernel entries as `sessions/history`), every page; a
+ * page that does not answer ends the read and, given `gaps`, is named there.
+ */
+export async function runHistory(project, runRef, gaps = null) {
   const items = [];
   let afterCursor = null;
   do {
-    const page = ready(await project.host.client.read('executions/history', project.scope, { runRef, afterCursor, limit: 200 }));
-    if (page === null) break;
+    const body = await project.host.client.read('executions/history', project.scope, { runRef, afterCursor, limit: 200 });
+    const page = ready(body);
+    if (page === null) {
+      gaps?.push(`executions/history ${runRef.runId}: ${said(body)}`);
+      break;
+    }
     items.push(...page.items);
     afterCursor = page.nextCursor ?? null;
   } while (afterCursor !== null);
@@ -914,6 +980,7 @@ const partsText = value => (typeof value === 'string' ? value : Array.isArray(va
  * Raw history entries split by turn identity (Kernel `runId` + `turnId`, `kernel-turn-facts.ts:40-84`), so each
  * criterion is judged only on the part it is about (lead ruling 11-14 #9):
  * - `input`: what the turn actually received (`turn.started` user message, `run.input_accepted` / `run.yielded`);
+ * - `accepted`: the `run.input_accepted` items in acceptance order, each with its `sourceRef` (P6HD waiting `supply-order`);
  * - `calls`: the model's tool calls with their arguments and, once settled, their status;
  * - `results`: the successful tool results only (`tool.completed`, output text and `effects.changedPaths`);
  * - `final`: the final assistant message named by `run.completed` (null when the turn did not complete).
@@ -922,7 +989,7 @@ export function turnsOf(entries) {
   const turns = new Map();
   const turn = (runId, turnId) => {
     const key = `${runId}#${turnId}`;
-    if (!turns.has(key)) turns.set(key, { runId, turnId, input: [], calls: new Map(), results: [], refusals: [], messages: new Map(), final: null, finalId: null });
+    if (!turns.has(key)) turns.set(key, { runId, turnId, input: [], accepted: [], calls: new Map(), results: [], refusals: [], messages: new Map(), final: null, finalId: null });
     return turns.get(key);
   };
   for (const entry of entries) {
@@ -935,7 +1002,11 @@ export function turnsOf(entries) {
       const event = record.payload?.event;
       if (event?.meta === undefined) continue;
       const current = turn(event.meta.runId, event.meta.turnId);
-      if ((event.type === 'run.input_accepted' || event.type === 'run.yielded') && typeof event.payload?.input?.text === 'string') {
+      if (event.type === 'run.input_accepted') {
+        const input = event.payload?.input;
+        if (typeof input?.text === 'string') current.input.push(input.text);
+        current.accepted.push({ text: typeof input?.text === 'string' ? input.text : '', sourceRef: input?.sourceRef ?? null });
+      } else if (event.type === 'run.yielded' && typeof event.payload?.input?.text === 'string') {
         current.input.push(event.payload.input.text);
       } else if (event.type === 'assistant.message_completed') {
         current.messages.set(event.payload.message.messageId, partsText(event.payload.message.content));
@@ -1030,15 +1101,39 @@ export async function pauseGoal(project, goalRef, why) {
 /**
  * Every check round of one work Task, read the way the product requires (second review #1): a work chain is read by
  * its subject Run (`verification-round-read.ts:405-410`), one chain per Run; each round of each chain comes with the
- * Run it judged. Newest Run last.
+ * Run it judged. Newest Run last. A read that is not `not_found` is named in `gaps`.
+ * With `latest`, return at most one entry: the newest Run that has a round, with that chain's head and no earlier
+ * detail. Newest is by each Run's own claim time (`startedAt` stays null until the Run enters), and within one
+ * millisecond by its entry cursor. Any read gap returns nothing, so a caller cannot fall back to an older Run.
  */
-export async function taskRounds(project, goalRef, taskId) {
-  const runs = (await executions(project, goalRef)).filter(item => item.run.task.taskId === taskId)
-    .sort((left, right) => Date.parse(left.run.startedAt) - Date.parse(right.run.startedAt));
+export async function taskRounds(project, goalRef, taskId, gaps = null, { latest = false } = {}) {
+  const runs = (await executions(project, goalRef, gaps)).filter(item => item.run.task.taskId === taskId);
+  if (latest) {
+    if (gaps?.length > 0) return [];
+    const newestFirst = runs.sort((left, right) =>
+      Date.parse(right.outbox.claim.claimedAt) - Date.parse(left.outbox.claim.claimedAt)
+      || (right.run.startedSince ?? '').localeCompare(left.run.startedSince ?? ''));
+    for (const item of newestFirst) {
+      const body = await project.host.client.read('verification/round', project.scope, { subjectRunRef: item.run.ref }, { expect: ['not_found'] });
+      const head = ready(body);
+      if (head !== null) return [{ item, head, rounds: [] }];
+      if (body?.status !== 'not_found') {
+        gaps?.push(`verification/round ${item.run.ref.runId}: ${said(body)}`);
+        return [];
+      }
+    }
+    return [];
+  }
+  runs.sort((left, right) => Date.parse(left.run.startedAt) - Date.parse(right.run.startedAt));
   const out = [];
   for (const item of runs) {
-    const head = ready(await project.host.client.read('verification/round', project.scope, { subjectRunRef: item.run.ref }, { expect: ['not_found'] }));
-    if (head === null) { out.push({ item, head: null, rounds: [] }); continue; }
+    const body = await project.host.client.read('verification/round', project.scope, { subjectRunRef: item.run.ref }, { expect: ['not_found'] });
+    const head = ready(body);
+    if (head === null) {
+      if (body?.status !== 'not_found') gaps?.push(`verification/round ${item.run.ref.runId}: ${said(body)}`);
+      out.push({ item, head: null, rounds: [] });
+      continue;
+    }
     const rounds = [];
     for (const entry of head.chain.rounds) {
       const round = JSON.stringify(entry.roundRef) === JSON.stringify(head.roundRef) ? head
@@ -1065,12 +1160,16 @@ export function findAll(value, test) {
 }
 
 
-export async function executions(project, goalRef) {
+export async function executions(project, goalRef, gaps = null) {
   const items = [];
   let afterCursor = null;
   do {
-    const page = ready(await project.host.client.read('executions/list', project.scope, { goalRef, page: { afterCursor, limit: 100 } }));
-    if (page === null) break;
+    const body = await project.host.client.read('executions/list', project.scope, { goalRef, page: { afterCursor, limit: 100 } });
+    const page = ready(body);
+    if (page === null) {
+      gaps?.push(`executions/list: ${said(body)}`);
+      break;
+    }
     items.push(...page.items);
     afterCursor = page.nextCursor ?? null;
   } while (afterCursor !== null);

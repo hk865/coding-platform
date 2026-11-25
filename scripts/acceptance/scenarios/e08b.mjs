@@ -119,7 +119,7 @@ async function run(ctx, rec) {
     const seen = `任务卡 stop.steps：${steps.join(' → ') || '无'}；叫停请求 ${stopRequest === null ? '无' : stopRequest.state}；sub 的 Run ${
       runEnd === null ? '还在跑' : `${runEnd.outcome ?? '-'} @ ${runEnd.at}`}`;
     for (const id of ['stop-delivered', 'safe-point-end', 'adopt-after-end']) {
-      rec.uncover(id, 'not-run', `改需求没有写出候选（见 notes），没有发生采用，这一支没走到；${seen}`);
+      rec.uncover(id, 'not-run', `没有读到可采用的候选。问题或探针不构成候选，没有发生采用，这一支没走到；${seen}`);
     }
     return;
   }

@@ -94,17 +94,25 @@ async function waitsOf(project, sessionRef) {
   return ready(await project.host.client.read('sessions/facts', project.scope, sessionRef))?.waits ?? [];
 }
 
-async function message(project, ref) {
-  return ready(await project.host.client.read('messages/read', project.scope, ref));
+/** The saved message, or null; given `gaps`, a read that does not answer is named there. */
+async function message(project, ref, gaps = null) {
+  const body = await project.host.client.read('messages/read', project.scope, ref);
+  const value = ready(body);
+  if (value === null) gaps?.push(`messages/read ${ref.messageId}: ${body?.status ?? 'no answer'} ${body?.code ?? ''}`);
+  return value;
 }
 
+/** The expiry acceptance that consumed the wait, or undefined; it names the Run that received it (`mailbox.ts:112`). */
+const expiryConsumerOf = value =>
+  value?.acceptedInputs?.find(entry => entry.part === 'expiry' && entry.consumesWait === true);
+
 /**
- * When the expiry itself consumed the wait (its `expiry` acceptance with `consumesWait`), or null. P6 diagnosis 2 #28:
- * a reply after `expiredAt` but before the expiry was consumed is still the formal reply and consumes the wait
- * (`STATE-MACHINES-SPEC.md:3650`); only a reply after the expiry's own consuming acceptance is late.
+ * When the expiry itself consumed the wait, or null. P6 diagnosis 2 #28: a reply after `expiredAt` but before the
+ * expiry was consumed is still the formal reply and consumes the wait (`STATE-MACHINES-SPEC.md:3650`); only a reply
+ * after the expiry's own consuming acceptance is late.
  */
 const expiryConsumedAt = latest => {
-  const entry = (latest?.acceptedInputs ?? []).find(item => item.part === 'expiry' && item.consumesWait === true);
+  const entry = expiryConsumerOf(latest);
   return entry === undefined ? null : Date.parse(entry.acceptedAt);
 };
 
@@ -130,23 +138,29 @@ const settledWait = value => (value?.acceptedInputs ?? []).some(entry => entry.c
 /**
  * The member's sent messages (refs from its successful `send_session_message` results) with their arguments and the
  * line that sent each (P6 #15). P6 diagnosis 2 #29: `members` is every line that ran t-wait (a restart can continue it
- * on a new Session), so the sends of the continuation line are seen too.
+ * on a new Session), so the sends of the continuation line are seen too. Given `gaps`, a history page that does not
+ * answer is named there.
  */
-async function memberSends(project, members) {
+async function memberSends(project, members, gaps = null) {
   const out = [];
   for (const line of members) {
-    out.push(...(await sessionTurns(project, line)).flatMap(turn => turn.results).filter(result => result.name === 'send_session_message')
+    out.push(...(await sessionTurns(project, line, gaps)).flatMap(turn => turn.results).filter(result => result.name === 'send_session_message')
       .map(result => ({ args: result.args, ref: messageRefOf(result), line }))
       .filter(entry => entry.ref !== null));
   }
   return out;
 }
 
-/** The turn inputs of every member line, joined (the "第 2 次到期" text can reach a continuation line). */
-async function memberInputs(project, members) {
-  const texts = [];
-  for (const line of members) texts.push(...(await sessionTurns(project, line)).map(turn => turn.input));
-  return texts.join('\n');
+/**
+ * The accepted expiry input of the message that expired, read from the Run its acceptance names: that Run may be on
+ * a continuation line the member list has not caught yet.
+ */
+async function readExpiryInput(project, runRef, messageRef) {
+  const gaps = [];
+  const accepted = turnsOf(await runHistory(project, runRef, gaps)).flatMap(turn => turn.accepted).find(({ sourceRef }) =>
+    sourceRef?.kind === 'SessionMessage' && sourceRef.part === 'expiry'
+    && sourceRef.messageRef.messageId === messageRef.messageId);
+  return accepted === undefined ? { text: '', gaps } : { text: accepted.text, gaps: [] };
 }
 
 /** Bodies of host notices already read, by messageId: a notice's text never changes. */
@@ -192,13 +206,14 @@ async function followChain(ctx, project, { memberLines, first, goalRef, windowEn
   let taskDoneAt = null;
   for (;;) {
     await ctx.budget.tick();
-    const members = await memberLines();
-    const sends = await memberSends(project, members);
+    // A read gap in this poll (member list, a line's history, a message) leaves the chain unknown.
+    const gaps = [];
+    const sends = await memberSends(project, await memberLines(gaps), gaps);
     // lead 11-25 (P6 run: the chain read [647b, 647b]): one entry per message id, the first question never twice.
     const followups = sends.filter(entry => entry.args?.followupOf?.messageId === first.messageRef.messageId).map(entry => entry.ref);
     const chainRefs = [...new Map([first.messageRef, ...followups].map(ref => [ref.messageId, ref])).values()];
     const chain = [];
-    for (const ref of chainRefs) chain.push(await message(project, ref));
+    for (const ref of chainRefs) chain.push(await message(project, ref, gaps));
     const expired = chain.filter(value => value?.expiredAt != null).length;
     const late = lateReplyOf(chain[0]);
     const saved = lateSaved(chain[0]);
@@ -207,18 +222,26 @@ async function followChain(ctx, project, { memberLines, first, goalRef, windowEn
     const task = (ready(await project.host.client.read('tasks/query', project.scope, { goalRef }))?.tasks ?? []).find(entry => entry.ref.taskId === 't-wait');
     const taskOpen = task === undefined || (task.disposition === 'active' && task.effectivePhase !== 'satisfied');
     const over = !taskOpen && chain.every(settledWait);
-    // Quick check #12: a second expiry is an event only with what follows it: its own expiry acceptance on that
-    // message and the member's next actual input saying "第 2 次到期". Until then the chain is not done.
-    const second = chain.filter(value => value?.expiredAt != null)[1] ?? null;
-    const secondAccepted = second !== null && (second.acceptedInputs ?? []).some(entry => entry.consumesWait === true && entry.part === 'expiry');
-    const secondSaid = second !== null && /第\s*2\s*次到期/.test(await memberInputs(project, members));
+    // A direct follow-up gets expiry count 2 when its parent has an expiry record. A second expiry is an event only
+    // with what follows it: its own expiry acceptance and the accepted input saying "第 2 次到期" in its first line, the
+    // platform's notice (`wait-expiry-delivery.txt`; the question quoted below it may repeat the words). Until then the
+    // chain is not done. A reply may be written before its expiry, so a message may have no `expiredAt` at all.
+    const secondConsumer = chain[1]?.acceptedInputs?.find(entry => entry.consumesWait === true);
+    const expiryIndex = chain[0]?.expiredAt == null ? -1
+      : chain.findIndex((value, index) => index > 0 && expiryConsumerOf(value) !== undefined);
+    const secondAccepted = expiryIndex !== -1;
+    const expiryInput = secondAccepted
+      ? await readExpiryInput(project, expiryConsumerOf(chain[expiryIndex]).executionRef, chainRefs[expiryIndex])
+      : null;
+    const secondSaid = expiryInput !== null && /第\s*2\s*次到期/.test(expiryInput.text.split('\n', 1)[0]);
     // 任务一旦不再开着就记下时刻；之后又开着（例如返工）就清掉重计。
     taskDoneAt = taskOpen ? null : taskDoneAt ?? Date.now();
     const now = Date.now();
     const ended = secondAccepted && secondSaid && (late !== undefined || saved || answeredFirst) ? 'events' : over ? 'chain-over'
       : taskDoneAt !== null && now - taskDoneAt > TASK_DONE_GRACE_MS ? 'task-done'
       : now > capAt ? 'cap' : now > windowEnd ? 'window' : null;
-    if (ended !== null) return { chain, chainRefs, expired, late, saved, answeredFirst, ended, task, secondAccepted, secondSaid };
+    if (ended !== null) return { chain, chainRefs, expired, late, saved, answeredFirst, ended, task,
+      secondAccepted, secondConsumer, secondSaid, expiryInput, gaps };
     await sleep(15_000);
   }
 }
@@ -249,9 +272,9 @@ async function run(ctx, rec) {
   const member = { projectId: work.outbox.claim.sessionRef.projectId, sessionId: work.outbox.claim.sessionRef.sessionId };
   // P6 diagnosis 2 #29: after the restart t-wait can go on in a continuation Session (crash → requeue → new line);
   // every line that ran t-wait is the member from then on, the first one first and the newest last.
-  const memberLines = async () => {
+  const memberLines = async (gaps = null) => {
     const lines = new Map([[member.sessionId, member]]);
-    const runs = (await executions(project, goal.ref)).filter(item => item.run.task.taskId === 't-wait' && claimSession(item) !== null)
+    const runs = (await executions(project, goal.ref, gaps)).filter(item => item.run.task.taskId === 't-wait' && claimSession(item) !== null)
       .sort((left, right) => (Date.parse(left.run.startedAt ?? '') || 0) - (Date.parse(right.run.startedAt ?? '') || 0));
     for (const item of runs) {
       const ref = item.outbox.claim.sessionRef;
@@ -350,8 +373,15 @@ async function run(ctx, rec) {
   // (the 2-minute deadline must fall while the Host is down), so the Runs alive at the close are recorded and the
   // continuation half of restart-kept reads as not reached when one was.
   const liveAtClose = (await executions(project, goal.ref)).filter(item => item.run.task.taskId === 't-wait' && item.run.status !== 'ended')
-    .map(item => item.run.ref.runId);
-  if (liveAtClose.length > 0) rec.note(`关 Host 时 t-wait 的 Run 仍在跑（${liveAtClose.join(', ')}）：重启后它记中断、按普通重新入队接着做，不是等待的接续`);
+    .map(item => ({ runId: item.run.ref.runId, status: item.run.status }));
+  const startingAtClose = liveAtClose.filter(item => item.status === 'starting').map(item => item.runId);
+  const runningAtClose = liveAtClose.filter(item => item.status === 'running').map(item => item.runId);
+  if (startingAtClose.length > 0) {
+    rec.note(`关 Host 时 t-wait 的 Run 在 starting（${startingAtClose.join(', ')}）：已领取、未进入，重启后同一次领取续驱（W-01..W-03），不是等待的接续`);
+  }
+  if (runningAtClose.length > 0) {
+    rec.note(`关 Host 时 t-wait 的 Run 在 running（${runningAtClose.join(', ')}）：重启后记中断、按普通重新入队接着做，不是等待的接续`);
+  }
   // Normal close right away, down past the deadline, a new Host on the same ledger: the one checked close path.
   const closing = await ctx.close('w-accept', { restart: true, downUntil: Date.parse(wait.deadline) + MINUTE, check: 'restart-kept' });
   project.host = closing.host;
@@ -399,7 +429,7 @@ async function run(ctx, rec) {
     const nextText = `${keptText}；消费它的接受 ${consumer === null ? '无' : `${consumer.part} → ${consumer.executionRef?.aggregateType} ${consumer.executionRef?.runId ?? ''}`}；接续的 Run ${
       next?.run.ref.runId ?? '-'} consumedWait ${used?.kind ?? '-'}，messageRef ${used?.messageRef?.messageId ?? '-'}，originalRun ${used?.originalRun?.runId ?? '-'}（原 ${yieldRunId}），在 ${claimSession(next) ?? '-'}（成员 ${member.sessionId}）`;
     if (consumer === null && liveAtClose.length > 0) {
-      rec.uncover('restart-kept', 'not-run', `${nextText}：关 Host 时 Run ${liveAtClose.join(', ')} 仍在跑，重启是中断后的普通重新入队，不是等待的接续；这一半没走到`);
+      rec.uncover('restart-kept', 'not-run', `${nextText}：关 Host 时未结束的 Run ${liveAtClose.map(item => `${item.runId}(${item.status})`).join(', ')}；这一半没走到`);
     } else if (consumer === null) rec.uncover('restart-kept', 'not-run', `${nextText}：还没有一个执行接受消费这条等待，接续这一半没走到`);
     else if (used?.kind === 'intervention') rec.uncover('restart-kept', 'not-run', `${nextText}：等待在插话开的 Run 里被接受，接续不是新领的 Run`);
     else {
@@ -415,9 +445,16 @@ async function run(ctx, rec) {
     : chain.ended === 'task-done' ? ['env-unavailable',
       `t-wait 已做完（${chain.task?.effectivePhase ?? '-'}），又等了 ${TASK_DONE_GRACE_MS / MINUTE} 分钟，链上 ${chain.chain.filter(value => !settledWait(value)).length} 条等待还没了结`]
     : ['env-unavailable', `等待链已结束（t-wait ${chain.task?.effectivePhase ?? '-'}，链上 ${chain.chain.length} 条等待都已了结）`];
-  // "第 2 次到期" is rendered into the member's actual input: judged on its turn input (#9).
-  if (chain.expired >= 2 && chain.secondAccepted) {
-    rec.check('second-expiry', chain.secondSaid, `同一追问链实际到期 ${chain.expired} 次，第二次已由 expiry 接受；成员之后的 turn 输入写“第 2 次到期”：${chain.secondSaid}`);
+  // "第 2 次到期" is rendered into the member's accepted input: judged on the expiry acceptance itself. When none was
+  // found, a chain read with gaps may have missed it, so the gaps decide before the reply branch.
+  if (chain.secondAccepted && chain.expiryInput.gaps.length > 0) {
+    rec.uncover('second-expiry', 'env-unavailable', chain.expiryInput.gaps.join('；'));
+  } else if (chain.secondAccepted) {
+    rec.check('second-expiry', chain.secondSaid, `追问链的第二次到期已由 expiry 接受；该次输入首行写“第 2 次到期”：${chain.secondSaid}`);
+  } else if (chain.gaps.length > 0) {
+    rec.uncover('second-expiry', 'env-unavailable', chain.gaps.join('；'));
+  } else if (chain.secondConsumer?.part === 'response') {
+    rec.uncover('second-expiry', 'not-run', `第二封等待已由回复消费（${chain.secondConsumer.acceptedAt}），回复胜过到期（STATE-MACHINES-SPEC.md:3650）`);
   } else if (chain.expired >= 2) {
     rec.uncover('second-expiry', why[0], `${why[1]}；第二次到期已记下，但它的 expiry 接受和后继输入还没出现`);
   } else rec.uncover('second-expiry', why[0], `${why[1]}；同一追问链实际到期 ${chain.expired} 次（没有时钟缝，不伪造）`);
@@ -532,17 +569,24 @@ async function run(ctx, rec) {
       }
     }
   }
-  // P6 diagnosis 2 #30: no public read gives the supply order item by item (none is added); the member turns'
-  // "已接受的输入" sections are copied into the notes as side evidence, not judged.
+  // P6HD (diagnosis row 14): the public read already gives the acceptance order (`run.input_accepted` with its
+  // `sourceRef` and text, `flows.mjs` `turnsOf`); copy it in order, per Run and turn, keeping the source ref. Whether
+  // acceptance order equals supply order has no written basis, so this is a note and `not-run`, never a pass. Only an
+  // unreadable order is `entry-missing`.
   const supplied = [];
   for (const line of await memberLines()) {
     for (const turn of await sessionTurns(project, line)) {
-      const at = turn.input.indexOf('已接受的输入');
-      if (at >= 0) supplied.push(`${line.sessionId}/${turn.turnId}: ${turn.input.slice(at, at + 400).replace(/s+/g, ' ')}`);
+      for (const entry of turn.accepted) {
+        const ref = entry.sourceRef;
+        supplied.push(`${turn.runId}/${turn.turnId}: ${ref?.kind ?? '-'}/${ref?.part ?? '-'} ${ref?.messageRef?.messageId ?? '-'} ${
+          entry.text.replace(/\s+/g, ' ').slice(0, 120)}`);
+      }
     }
   }
-  if (supplied.length > 0) rec.note(`供给顺序旁证（turn 输入里“已接受的输入”一段，不作判据）：${supplied.slice(-3).join(' ｜ ')}`);
-  rec.uncover('supply-order', 'entry-missing', '供给顺序只在 Kernel 的一次输入里，公开读口不给逐项来源顺序');
+  if (supplied.length > 0) {
+    rec.note(`供给顺序旁证（run.input_accepted 的接受顺序，不作判据）：${supplied.join(' ｜ ')}`);
+    rec.uncover('supply-order', 'not-run', `公开读口给出 ${supplied.length} 项接受顺序（见 notes），但“接受顺序等于供给顺序”没有书面依据，不判 pass`);
+  } else rec.uncover('supply-order', 'entry-missing', '成员线的 turn 历史里读不到任何 run.input_accepted，接受顺序无从读');
   rec.note(`等待链 ${chain.chainRefs.map(ref => ref.messageId).join(' → ')}；结束方式 ${chain.ended}`);
 
   // Lead ruling Q7, the last step (second review #16: both sides). Re-read the member's waits, take one still open,

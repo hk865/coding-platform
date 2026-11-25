@@ -72,9 +72,15 @@ the window.
   `send_session_message` with `waitAfterSend` (a Query round is refused that combination). The chain is followed until
   each event came, the chain is over (its Task done, every wait settled), or the window ends.
   11-18 补：整条链最多等 60 分钟；任务做完以后再等 10 分钟，链还没了结就结束（第十次曾一直等到窗口结束）。
-  两种结束都记成未覆盖，不算通过。
+  两种结束都记成未覆盖，不算通过。`second-expiry` 认追问上消费等待的 expiry 接受：按这条接受记下的 Run 读它的历史
+  （接续线可能还没进成员线列表；读失败记 `env-unavailable`），只看该次输入的首行，也就是平台的到期提示，
+  原问题里引用的同样字样不算；没找到这样的接受时，追问链（成员线、线的历史、追问消息）有一处读失败就记
+  `env-unavailable`，先于下面的回复分支。
+  第二封等待的回复在它的到期被接受之前到达、此后也没有别的追问实际发生第二次到期时，
+  按回复胜过到期（`STATE-MACHINES-SPEC.md:3650`）记 `not-run`，不记 `env-unavailable`；供给顺序只把 `run.input_accepted` 的接受顺序写进 notes，只有连这个顺序都读不到才记
+  `entry-missing`；重启前仍在的 Run 按 `starting`（已领取、未进入，同一次领取续驱）和 `running`（记中断、普通重新入队）分开写。
 - **11-18 驱动修正（G6 第十一次）。** 平台停下等人时，场景记下停因，其余不依赖目标完成的判据照常判（`waitGoal` 的
-  `returnOnDecide`，只有 E05、E09、int 传）。B06 等轮时替人批 `member_creation` 建线卡；轮定下后暂停，并像人一样取消
+  `returnOnDecide`，E05、E09、int、E08 传）。B06 等轮时替人批 `member_creation` 建线卡；轮定下后暂停，并像人一样取消
   在途的 Run。waiting 成员的 Run 已结束、结局不是 yielded、又没开等待，这个任务没有别的在途 Run、第一个 Run 结束满
   2 分钟就收，写出它 `send_session_message` 的拒绝原文。
 - **Lag probe.** `lib/lag.mjs` is preloaded into each Host (`NODE_OPTIONS=--import`), samples
@@ -105,8 +111,21 @@ the window.
   (above the waiting scenario's 30-minute wait plus a heartbeat) and the meter's last complete reading has nothing in
   flight in the project (`stalled: …`, with the last phase, cause and driver wait reason). "Public" is the Goal's
   display without its `sourceCursor` (the ledger-wide watermark that any commit in the project moves) and its cards.
-  例外（11-18）：E05、E09、int 传 `returnOnDecide`，(a) 时平台停下等人照常返回、记下停因，各判据照常判，不记成超时。
+  例外（11-18）：E05、E09、int、E08 传 `returnOnDecide`，(a) 时平台停下等人照常返回、记下停因，各判据照常判，不记成超时。
+  E08 在改需求采用后把 `versions`、`switch` 当场判掉。
+  E05 的停住在检查执行窗口时，先用驱动读快照自己的 `taskId`；其次是快照 `last.value.receipt` 的结果为检查轮时用它的 `taskId`；
+  再没有就看 `siblings` 里唯一一条检查停因的任务；还定位不到就用现有检查轮读口（gate 用 `taskRef`，work 用 `subjectRunRef`）找唯一一个执行中的任务（有读失败就不定位），
+  再用该 `taskId` 读一次 `workflow/driver-read`，把 `current`、`last.value.receipt`、`reason` 写进 notes（只给 E05 写）；判法仍是停住记 fail。
 - **返工确认卡（lead 11-17，E08）。** “每步确认”下自动返工要人确认的卡（`automation_confirmation_required`）没有选项，`waitGoal` 照界面点一次“重新入队”（`tasks/requeue`，`requeueCard`）；每张卡只点一次，被拒记一行 note。
+- **E08 改需求（P6HD）。** 提交改需求时 sub 已有 Run，立即把 `hold-before-adopt` 记 `not-run` 并写明 sub 早于提交多少秒被领；
+  领取时刻取每个 Run 的 `outbox.claim.claimedAt`，提交前已观测到的 Run 直接计入基线，其余只有严格早于发送的领取才计入；
+  同毫秒不判先后并写明原因，领取读失败记 `env-unavailable`。
+  采用后先判 `versions`（列表读失败记 `env-unavailable`，读到了但不足两版才 fail），再用采用版本的 `tasks/query` 当场判 `switch`
+  （div 出现、sub cancelled/superseded、mul 仍 active、采用版本的处置记录；superseded 的 `replacedByTaskId` 必须指向 div；
+  采用版读失败记 `env-unavailable`，收尾再读一次，`required-cancel` 仍取证）；`old-evidence` 等 Goal 等待收尾后用采用时的 div 任务读它的检查轮
+  （最新的 Run 按各自领取的 `outbox.claim.claimedAt` 定，同一毫秒按进入游标 `startedSince`；按 `roundRef` 核采用版本；
+  Run 列表或最新一轮读失败记 `env-unavailable`，不选轮、不退到更早的轮；Goal 完成但没有轮记 fail，还没轮记 not-run；
+  Goal 完成但必需要求仍 pending 记 fail）；合法的 `no_new_basis` 停止不再被记成某条判据的 fail。
 - **等在途的查询（lead 11-17，G6 第六次之后）。** 查询还在跑、它的某个请求用量暂时未知时，计量只是暂停：场景的等待和收尾原地每 20 秒读一次，等查询结束、暂停解除；30 分钟还没结束，才成为整轮的停止（`budget.mjs` 的 `#waitHeld`）。
 - **Verdicts.** Three words only: a failed check → `fail`; none failed but one not run → `uncovered` with one of the
   seven reason codes; all ran and passed → `pass`. An existing capability that ran and did the wrong thing, or did not
