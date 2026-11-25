@@ -593,8 +593,15 @@ export type SystemRoundHeadV1 =
   | { kind: 'planreview'; proposalId: string; proposalRevision: number }
   | { kind: 'planfix'; proposalId: string; proposalRevision: number }
   | { kind: 'planresume'; goalId: string; queryJobId: string };
-export function systemRoundOfText(text: string): SystemRoundHeadV1 | null;
+export function systemRoundOfText(text: string, messageGoalId?: string): SystemRoundHeadV1 | null;
 ```
+
+**goalId 可以带冒号（决定 121-169）。** 确认草稿生成的 goalId 形如 `goal-confirm:goal.confirmDraft:<hash>`。所以 `refine:`、`deviation:`、`planresume:` 的首行不能按冒号个数读，规则如下：
+- 固定的尾段（版本号、偏差原因）从右边取；
+- 读者手里有这封消息的 Goal 时，传 `messageGoalId`，左边界按它定；
+- 没有时，Goal 和段号（或任务号、Query 号）的分界取最后一个冒号。
+
+已落库的首行文本不改，旧格式照旧能读。
 
 `systemRoundOfText` 只解析首行的段，不还原成完整的 `SystemRoundV1`：`refine:` 的第三段可能是段号，也可能是目标级占位任务的 taskId，读侧没有足够事实区分，也不需要在读取侧区分；`planOnIdleLine` 只用 `head.kind` 选 base/收尾。审阅轮准备阶段用同一解析取 `planreview:` 的 `proposalId`/`proposalRevision`（6.3.2），也只用于候选身份，不用于工具选择。
 

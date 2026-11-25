@@ -4181,6 +4181,55 @@
               - 计划里的 `scope.targets[].revision` 不再当 pin 用，字段先留（存下的计划要能读），进清理清单。
               - `IMPLEMENTED-CAPABILITIES.md:351` 和几处测试、规格注释里指向 `workflow.ts` 的行号已偏，进清理清单。
             - **下一步。** P6 第二次补跑：平台 `d5c975eb` 加驱动到 `4ba69b4e`，八个主场景加 E08b，总量上限 3.6 亿，窗口到 23:30。
+          - **121-169 11-25：P6 第二次补跑 1 过、4 败、3 未覆盖；P6H 落地（`291ec4ad`，WSL 标签 `main-291ec4ad` = `090ab20b`，叠在 P6G 落地树上）。**
+            - **补跑。**
+              - 时间和环境：16:34–20:29，平台 P6G 加驱动六个提交。
+              - 结果：1 过（iteration）、4 败（E05、E08、E12、intervention）、3 未覆盖（E06、E09、waiting）；E08b 未覆盖。
+              - 用量：1,664 万。模型调用 347 次，叫醒轮 13 个。
+              - 证据在 `reviews/evidence/slice9-p6r2-2026-11-25/`，前两次 P6 的证据也一并补进了 `slice9-p6-2026-11-25/` 和 `slice9-p6r-2026-11-25/`。
+            - **诊断。** 两份 DSH 只读诊断（`p6-diagnosis-3.md` 管 intervention，`p6-diagnosis-4.md` 管其余），加两份 Astra 只读核对（`astra-intervention.md`、`astra-e05.md`），都在证据目录里。
+              - 判给平台：一处 d628（见下）。
+              - 判给驱动：intervention 一处，其余 10 处。
+              - 判给模型：5 处，另加 intervention 的计划缺阶段 gate。
+              - 这次补跑里，P6G 改过的代码一段都没执行到。waiting 重启时那个 Run 还在 `starting`，走的是同一次领取续驱，不是崩溃重排队。所以 P6G 的“接续线读等待信”仍没有真实证据。
+            - **intervention 停住。** 第一个目标的唯一任务做完后，Goal 卡在 `BLOCKED / no_dispatchable_work`，一停 32 分钟。三层原因：
+              - **驱动（直接原因）：** 参谋中途提的第二份计划是候选。这次没有审阅线，平台照 `slice-PL-SPEC.md:342` 把它转成候选卡（只有“采用、放弃、答复”，没有选项）。驱动只会点带选项的卡，从不调 `plans/apply`。
+              - **模型：** 计划分了两段，却没有每段写一条阶段 gate（`MVP-BEHAVIOR.md:100`）。Goal gate 依赖必需的 `plan_only` 占位，任务做完后找不到可推进的 gate。
+              - **平台 d628：** 确认草稿生成的 goalId 自带冒号（`goal-confirm:goal.confirmDraft:<hash>`）。`systemRoundOfText` 按冒号段数读 refine、deviation、planresume 三种系统轮的首行，这类 Goal 的系统轮一律认不出，被同线已在跑的 Query 当普通输入收下（违反 `slice-PL-SPEC.md` §5.2.2）。这不是 P6G 带进来的。
+            - **P6H 的改法。**
+              - 平台：`systemRoundOfText` 改成固定尾段（版本、偏差原因）从右取。读者手里有消息的 Goal 时，按它定左边界；`plan-lineage` 传入消息的 Goal。旧格式照旧能读，已落库的文本不改。`execution-inputs` 的供给判断不用改，解析对了自然就对。
+              - 驱动：`waitGoal` 新增 `adoptCandidates`，只在 int 的第一个目标打开。遇到只有“采用”的候选卡，就像人一样经 `plans/apply` 采用，并记一条 note。前置阶段停下时用 `broken(ctx, text, null)` 记 not-run，不再把失败栽到还没执行的判据上。
+              - 驱动另有 P6 第二轮诊断后的六个提交，随本包一起落地。
+            - **E05 停住。**
+              - 现象：种子检查 `c-readme` 只记了开始（`VerificationCheckBegun`），之后 100 分钟没有结果，直到重启对账才记成 interrupted。E05 主场景没开始，E06 跟着没跑。
+              - Astra 核对：排除了“四个命令槽被占满”，因为同一 Host 上 E08、E09 的检查之后都跑完了。只能缩小到“检查调用已返回或抛错，留下 executing”，具体是哪一支说不清。
+              - lead 裁定：不改平台，也不改 VD-10；驱动在这种停住时读检查所属任务的 `workflow/driver-read`，把回执和理由写进 notes，下一次补跑按证据再定。Astra 提的备选是：重试用尽后中断，原因记 `result_not_recorded`。
+              - Astra 还指出一处理论漏槽：`check-execution.ts` 拿到命令槽后先调 `deps.now()` 才进 `try`。生产时钟不会抛，按“不为不可能的情况加防御”不修，进清理清单。
+            - **过程。**
+              - 用户建议让 Astra 修或检查。Codex 只读（决定 77），所以 Astra 出核对和手写 diff，DSH 照 diff 施工；另一个 DSH 只按测试行独立写测试，看不到 diff。
+              - lead 想直接改 WSL 树时被编辑钩子拦下（`\\wsl.localhost` 路径被当成项目配置），没有绕。
+              - 测试 5 行，起点 4 红 1 绿。绿的那一行守“转发的副本仍是普通信件”，防止修过头。
+              - 叠树全量 1,806 个文件 17,392 项，只红 PL-41 (c)；规模批 15/44 过。PL-41 (c) 单跑：叠树 7 次红 4 次，起点 4 次红 2 次，红在同一处时序竞争（测试读快照时执行者正好收下回复），不是本包带进来的，留在偶发红名单。
+            - **规模。** 生产代码 +33/−20，测试 +300；驱动随包 21 个文件里的其余部分。
+            - **驱动第二轮（不在本包）。** 第三轮诊断判给驱动的 8 条，lead 已裁定：
+              - E05 停住时取证；
+              - E08 先判 `versions`，合法的 `no_new_basis` 不记 fail；`switch`、`old-evidence` 用现成数据判，`hold-before-adopt` 用领取时间判；
+              - E08b 改措辞；
+              - waiting 的 `second-expiry`、`supply-order` 和重启注记。
+              DSH 施工后 Codex Sol 审出 5 条必须改，DSH 返工中。
+            - **模型的缺口（并进 skill 缺口清单，另包）。**
+              - 每段一条阶段 gate，本来就是规则，模型没照做；
+              - 提示词缺一条：阶段 gate 只覆盖同段的 stage/module 级工作（E12 的 g2 覆盖为空）；
+              - E08 的候选没撤 `task-sub`；
+              - E08b 改需求交成了问题，4 次 `submit_plan_round` 失败；
+              - E09 计划没让“上报 → 参谋解释 → 人决定”这条链留住 Goal。
+            - **延后（Astra 盘点时顺带指出，没有踩到）。**
+              - `scr:`、`cmdstop:` 首行里的 projectId 若带冒号会读错；
+              - attention-observer 取边的端点时截在第一个冒号；
+              - 冷启动探索 Query 的后缀剪法；
+              - 注记锚点按 `/` 拆；
+              - 界面里按 `#`、`|` 拆编号。
+            - **下一步。** 驱动第二轮返工落地后再补跑一次，要用户另给窗口（11-25 的窗口到 23:30 为止）。界面第 5 批开工。
 
 **2026-10-07 更正（简化删除，决定 34）：** 下文“历史施工记录”里有一句：“独立 Reviewer 仍需正式 ReviewWork/结果与材料授权生产者”。材料授权的写入方（`grant-service.ts`）从没有生产调用方，已按决定 34 删除，以后不会有这个“材料授权生产者”。独立审阅者要读别人的材料，以后另想办法。原句按历史保留。
 
