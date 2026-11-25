@@ -820,7 +820,7 @@ Task 没有可写的存储 phase（D-1）。`effectivePhase` 是对 Run（含控
 
 - **TD-1 投影原因码统一（已由 lead 采纳，L-8）**：`phaseCause.code` 使用下表 `TaskPhaseCauseCode`，§9 的轮次投影原因按此命名。INCONCLUSIVE 轮次（含遗留的 PASS 带 gaps）的唯一原因码是 `round_inconclusive`；brief §2a 示例中的旧原因名不再使用。
 - **TD-2 重入队必须让旧证据退出完成折叠（lead 决定 L-3：存储；C5 后改为整条链的累积 id）**：`TaskRequeue.supersededEvidenceIds` 在重入队提交时一次写定，之后不变（显式、不可变，完成时少一次读取）。取值是 afterRun 轮次链头的累积证据 id `chainEvidenceIds(head)` = `head.chain.supersededEvidenceIds ∪ ids(head.evidenceRefs)`，即该 Run 每一个轮次（根轮次和全部后继轮次）的证据；没有轮次时为 `[]`。只取链头自己的 `evidenceRefs` 不够：同一 Run 较早轮次的阻塞证据会继续挡住完成（lead 合并裁定（2026-10-03））。`completeTask` 在折叠前排除集合 S = 该 Task 全部 TaskRequeue 的 `supersededEvidenceIds` 的并集 ∪ 完成所用轮次的 `chain.supersededEvidenceIds`（后继轮次已在自己的记录里写定其前驱的证据，§9 VR-14）。§9 VD-5、VR-09 读取这些存储的列表，不再由 `afterRoundRef` 推导；brief D-3 的记录形状据此增加该字段。理由与完成侧规则见 4.3 末“缺口”。TD-2 随 C1 的重入队（§15 5.4）实施，链证据部分随 C5（§15 5.9）实施。
-- **TD-3 领取显式携带 `requeueRef`**（D-3 的领取侧，随 C1）：重入队后的领取必须在输入中带 `requeueRef`，与 `consumedWait` 互斥。新 Run 和新 Attempt 记录这个引用，把新 Attempt 链接到原失败和改变依据（ORCHESTRATION §9 `:414`）。
+- **TD-3 领取显式携带 `requeueRef`**（D-3 的领取侧，随 C1）：重入队后的领取必须在输入中带 `requeueRef`，与 `consumedWait` 互斥（2026-11-25 P6G 改，决定 121-168：只和 intervention 的 `consumedWait` 互斥；崩溃重排队可以同时带 `wait_reply` 或 `expiry` 的 `consumedWait`，即这个任务上一次 yield 时的等待，前提是它已答或已到期、回复处理权没被转走、没被转寄，且这条线上没有更早的同任务未消费等待）。新 Run 和新 Attempt 记录这个引用，把新 Attempt 链接到原失败和改变依据（ORCHESTRATION §9 `:414`）。
 - **TD-4 已有执行痕迹的 Task 可改 disposition（U-12 → C7，已定）**：TASK-19 放宽 W16 的“无任何痕迹”限制，只放宽处置，不放宽执行定义。规则如下：
   - 新的增量类别 `dispositionOnlyTaskIds`：冻结定义中只有 `disposition`、`replacedByTaskId` 不同，其余（含 `carriedObligations`）都相同，用 `executionDefinitionsAgree` 判定（§3）。只改处置的任务按 source 定义写入、只替换这两个字段，有效 basis 继承不变，所以旧 Run、Attempt、轮次、证据、TaskRequeue 都留在这个 Task 上，§13 的键也不变（处置变化不是新依据）。
   - 采纳新的不可变 PlanRevision（只追加，不改写），编译器写入并逐版继承 `PlanRevisionSnapshot.dispositionRecord`（每个 Task 最近一次处置变化 `TaskDispositionChangeV1`）；`TaskRow.dispositionChange` 从读取所选计划的这条记录取值，不遍历历史。
@@ -895,7 +895,7 @@ Task 没有可写的存储 phase（D-1）。`effectivePhase` 是对 Run（含控
 - `TaskRequeueSnapshotV1`，拟放在 `src/contracts/task-requeue.ts`。另需两处注册：
   - `TaskRequeueRef` 加入 `AggregateRef` 联合（`src/contracts/ledger.ts:46`），这样它才能作为 VersionPin 使用；
   - schema `TaskRequeue@1` 随 `TASK_CLAIM_RECORD_SCHEMAS` 注册（`claim-record-codecs.ts:309-312`）。
-- `ClaimTaskInput.requeueRef?`（`claim-contracts.ts:20-34`），与 `consumedWait?` 互斥。
+- `ClaimTaskInput.requeueRef?`（`claim-contracts.ts:20-34`），与 intervention 的 `consumedWait?` 互斥；可与 `wait_reply`/`expiry` 同时出现（P6G，决定 121-168，见 TD-3）。
 - `RunSnapshot.requeueRef?`（`src/contracts/dispatch.ts:146-192`，与 `consumedWait?` 同位，只由 TASK-03 写入）；Run codec（`record-readers.ts:251-334`）接受该可选字段。
 - `TaskAttemptSnapshot.requeueRef?`（`dispatch.ts:365-376`）；Attempt codec（`claim-record-codecs.ts:158-195`）接受该可选字段。
 - `CanonicalTaskState.phaseCause`（`plan-readers.ts:726-733`）；`TaskRow.phaseCause` 与 `TaskRow.requeueRef`（`plan-contracts.ts:77`）。都只读。
@@ -1125,7 +1125,7 @@ Task 没有可写的存储 phase（D-1）。`effectivePhase` 是对 Run（含控
 
 **`claimTask` 的改动（D-3）**
 
-- **输入。** `ClaimTaskInput` 增加 `requeueRef?`（`claim-contracts.ts:20-34`），与 `consumedWait` 互斥，并计入指纹。
+- **输入。** `ClaimTaskInput` 增加 `requeueRef?`（`claim-contracts.ts:20-34`），与 intervention 的 `consumedWait` 互斥（可与 `wait_reply`/`expiry` 同时出现，P6G，决定 121-168），并计入指纹。
 - **领取判定。** `claim-service.ts:639-641` 改为：
   - 当 `taskHasRun` 为真时，只有 `requeueRef` 指向覆盖选定 Run 的 TaskRequeue 才放行；
   - 否则保持原来的 `busy` 文本。
@@ -3438,7 +3438,7 @@ type MessageGuardContext = {
   inputAccepted: null | {                              // 只用于 MSG-07/08
     observerOwnsExecution: boolean;                    // work_run 只能确认自己的 Run；Host 恒为 true
     kernelMatches: boolean;                            // 等于执行记录中固定的 Kernel 身份
-    executionSessionMatches: boolean;                  // part=message：收件人；part=response：原发信 Session
+    executionSessionMatches: boolean;                  // part=message：收件人；part=response：原发信 Session，或执行绑定了这条等待的同任务接续线（P6G）
     inputIdTakenByOtherEvent: boolean;
   };
   consumedWait: MessageWaitFactsV1 | null;   // 只用于 MSG-10；三臂见 §10.7（state/message-machine.ts:1208-1212）
@@ -3502,7 +3502,7 @@ type MessageGuardContext = {
 | MSG-05 | `read` | `message_responded`（work_run） | 同 MSG-04 | `responded` | 同 MSG-04（`readAt` 保持原值） | 同 MSG-04 | M3 | 已有 `mailbox-service.ts:1691-1697` |
 | MSG-06 | `pending` 或 `read` | `message_responded`（query_run，由 Host 关联正式 Answer） | Host principal；咨询绑定与本消息、原收件人及 derivation 来源一致；QueryJob 为 answered 且列有该 Answer；QueryRun 已 settled 且 outcome 为 answered；作答 Session 是领取 Session；正文有界 | `responded` | `response{sender: query_run, generation}`；正文沿用 Answer 的原始来源；`readAt ??=`；只守卫消息版本钉 | 同身份重放（`:1838-1840`）；与 MSG-04/05 抢同一单槽时先到者胜 | M3、§0.1 A′ | 已有 `mailbox-service.ts:1726-1880` |
 | MSG-07 | 任一 s | `input_accepted`（part=message \| response \| expiry） | principal 为 work_run（只能确认自己的 Run）或 Host；Kernel 身份等于执行记录中持久的身份；该 inputId 尚未被接受；执行 Session：part=message 是收件人，part=response 是有效回复处理者（`replyHandler`，否则原 work_run/secretary_round 发信 Session），part=expiry 是让出等待的 work_run 发信 Session | s（不变），part=message 另写交付事实 | 向 `acceptedInputs` 追加一条，rev+1；事件 `SessionMessageInputAccepted`；按读取到的 revision 守卫消息；part=message 同提交写 `delivery:'delivered'`、`deliveryEvidence`；part=response/expiry 若是对这条消息的接续接受，条目记 `consumesWait:true` 并取 `wait-consumed:<消息键>` claim（owner 为空，nextOwner 为 inputId） | 身份键为 (messageRef, part, executionRef, kernel)，与观察者是谁无关（`:1996-1998`），重复即重放；claim 已被占用时仍记接受，条目 `consumesWait:false`，不取 claim | M3、§0.2 | 已有 `mailbox-service.ts:3692-3825` |
-| MSG-08 | `responded` | `input_accepted`（part=response） | 同 MSG-07，但要求 `response≠null`，原发信人为 work_run 或 secretary_round，且执行 Session 是有效回复处理者（转移后为接手 Session） | `responded` | 同 MSG-07（包括消费领取） | 同 MSG-07 | M3（回复关联原请求） | 已有 `mailbox-service.ts:3792-3825` |
+| MSG-08 | `responded` | `input_accepted`（part=response） | 同 MSG-07，但要求 `response≠null`，原发信人为 work_run 或 secretary_round，且执行 Session 是有效回复处理者（转移后为接手 Session）；或者回复处理权没被转走，执行 Session 在同一任务的接续链上，且这次执行绑定了这条等待（崩溃重排队带等待，P6G，决定 121-168） | `responded` | 同 MSG-07（包括消费领取） | 同 MSG-07 | M3（回复关联原请求） | 已有 `mailbox-service.ts:3792-3825` |
 | MSG-09 | 任一 s | `consultation_derived` | Host principal；derivation 为对象，形状由 codec 在提交时校验；此前没有 derivation；恰好一个版本钉 | s（不变） | 写 `consultationDerivation`，rev+1；事件 `SessionMessageConsultationDerived`；只守卫消息版本钉 | 同身份重放（`:1912-1914`）；先写者胜 | §0.1 A′ | 已有 `mailbox-service.ts:1885-1942` |
 | MSG-10 | 任一 s（`pending`/`read`/`responded`） | `task_claimed`（接续领取读取等待是否满足） | 先过消费规则（撤回 `invalid`、未释放 `busy`）；再按 `consumedWait.kind`：`wait_reply` 要求 `responded` 且 `response≠null`、`response.bodyRef` 等于 `consumedWait.responseRef`、同一工作区；`expiry` 要求 `expiredAt` 已设、`response==null`（有回复时 `busy/reply_present`）；`intervention` 直接满足。已消费的等待一律 `busy` | s（只读；`wait_reply`/`expiry` 都是 `responded`，`intervention` 不变） | 领取提交守卫消息 revision；回复后再追加 `acceptedInputs` 会让并发领取得到 CAS 冲突 | 随领取回执重放 | M3（推进适用等待） | 已有 `claim-service.ts:1178-1210`、`state/message-machine.ts:1091-1131` |
 | MSG-11 | 任一 s（`pending`/`read`/`responded`），消息存在 | `message_expired` | owner 的 `decideExpiry` 已判：已释放、`waitAfterSend` 的 `inquiry`、`deadline` 已过、等待 `open`、`expiredAt=null`；机器只要求消息存在且尚未到期 | s（不变），`expiredAt` 写入，rev+1 | 写 `expiredAt`；事件 `SessionMessageExpired`；只守卫消息 revision；不取 `wait-consumed` claim | 同命令身份（消息 ref）重放得到原回执；已到期 → `invalid`，owner 在提交前按 `not_open` 跳过 | W-01…W-03、§10.7 | 已有 `message-expiry.ts:55-106`、`state/message-machine.ts:1591-1602` |
