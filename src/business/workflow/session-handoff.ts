@@ -120,7 +120,8 @@ export function createSecretaryHandoffWorkflow(deps: HandoffCompositeDependencie
 
   /**
    * One child call for a saved arm. A refusal is recorded once on its item when it differs from the stored mark by
-   * stage, code or reason (`at` is not part of the rule); the child's own answer is always returned.
+   * stage, code or reason (`at` is not part of the rule), with the child's structured `scopeOwned` field passed on as
+   * the mark's `scopeOwned`; the child's own answer is always returned.
    */
   async function callAndRecord(ctx: CoreCallContext, principal: NonNullable<ReturnType<typeof savedHostPrincipal>>,
     record: SessionOperationRecordOf<HandoffActionV1>,
@@ -137,7 +138,8 @@ export function createSecretaryHandoffWorkflow(deps: HandoffCompositeDependencie
     if (!unchanged) {
       await deps.handoff.advanceHandoff(ctx, { kind: 'refusal', operation: record.ref as OperationRef,
         expectedRevision: record.revision, commandId: write.commandId,
-        refusal: { code: called.code, reason: called.reason } });
+        refusal: { code: called.code, reason: called.reason,
+          ...(called.scopeOwned === undefined ? {} : { scopeOwned: true as const }) } });
       await progressOf(ctx, record.ref as OperationRef);
     }
     return called;

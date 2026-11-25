@@ -47,9 +47,10 @@ export type HandoffAdvanceInputV1 =
   /** Replay: return the receipt of the write this exact commandId made (or its saved input, for a before-write). */
   | { kind: 'replay'; operation: OperationRef; commandId: string }
   /** Refusal: the child of the before write `commandId` refused (any code, `unavailable` included). Records the
-   *  stage-level mark with the child's code and reason as `lastRefusal`, then stops (`stop: 'refused'`, `next: null`). */
+   *  stage-level mark with the child's code and reason as `lastRefusal`, then stops (`stop: 'refused'`, `next: null`).
+   *  `scopeOwned` passes on the child's structured `scopeOwned` field: the transfer stage keeps that refusal as it is. */
   | { kind: 'refusal'; operation: OperationRef; expectedRevision: number; commandId: string;
-      refusal: { code: CoreRejection['code']; reason: string } };
+      refusal: { code: CoreRejection['code']; reason: string; scopeOwned?: true } };
 export type HandoffWriteV1 = {
   /** The frozen `commandId` of this write, the replay key. */
   commandId: string; stage: HandoffStageV1; item: string; phase: 'before' | 'after';

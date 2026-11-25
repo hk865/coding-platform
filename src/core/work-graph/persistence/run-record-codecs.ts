@@ -151,7 +151,8 @@ function runContinuationShapeProblem(value: unknown, ref: RunRef, task: unknown)
 
 /**
  * Optional `requeueRef` (TASK-03): the TaskRequeue of this Run's own Task that
- * covers an earlier Run. It never coexists with `consumedWait`.
+ * covers an earlier Run. Beside it a `consumedWait` is only the Task's yielded
+ * wait the requeue carried (a saved reply or an expiry), never an intervention.
  */
 function runRequeueRefProblem(value: unknown, ref: RunRef, task: UnknownRecord, consumedWait: unknown): string | null {
   if (value === undefined) return null;
@@ -163,7 +164,9 @@ function runRequeueRefProblem(value: unknown, ref: RunRef, task: UnknownRecord, 
     return 'the requeueRef does not belong to the Run Task';
   }
   if (requeueRef['afterRunId'] === ref.runId) return 'a Run cannot continue its own requeue';
-  if (consumedWait !== undefined) return 'a requeued Run cannot also consume a wait';
+  if (isJsonObject(consumedWait) && consumedWait['kind'] === 'intervention') {
+    return 'a requeued Run cannot consume an intervention';
+  }
   return null;
 }
 

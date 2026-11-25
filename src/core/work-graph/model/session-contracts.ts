@@ -189,3 +189,52 @@ export interface RoleLineAllocationReadPort {
   readRoleLineAllocation(ctx: CoreCallContext, input: Record<string, never>):
     Promise<ReadResult<RoleLineAllocationReportV1>>;
 }
+
+/**
+ * One hop of a Task's continuation chain: the line a `continuation` Session continues for exactly `task`; `null` for
+ * any other provenance or another Task.
+ */
+export function sameTaskPredecessorOf(provenance: SessionProvenanceV1 | null, task: TaskTriple): SessionRef | null {
+  if (provenance === null || provenance.kind !== 'continuation') return null;
+  const own = provenance.task;
+  if (own.projectId !== task.projectId || own.goalId !== task.goalId || own.taskId !== task.taskId) return null;
+  return { projectId: provenance.from.projectId, sessionId: provenance.from.sessionId };
+}
+
+/**
+ * The one continuation-chain rule: `line` (whose recorded provenance is `provenance`), then each line it continues for
+ * `task` through same-Task hops (`sameTaskPredecessorOf`), newest first. A line that continues a Task after a crash
+ * reads the wait letters its predecessor lines sent, and the requeue claim carrying that Task's yielded wait may run
+ * there; the mailbox read right, the claim owner and the Workflow ask this one rule. Further provenances come from
+ * `provenanceOf`; a provenance is fixed when the Session is created and names a Session created before it, so a hop
+ * needs no commit guard and the walk ends. A hop that cannot be read ends the chain with `'unreadable'`, never a
+ * shorter chain. The walk is lazy: a caller that has its answer reads no further hop.
+ */
+export async function* sameTaskChainOf(
+  line: SessionRef, provenance: SessionProvenanceV1, task: TaskTriple,
+  provenanceOf: (ref: SessionRef) => Promise<SessionProvenanceV1 | 'unreadable'>,
+): AsyncGenerator<SessionRef | 'unreadable'> {
+  yield { projectId: line.projectId, sessionId: line.sessionId };
+  let next = sameTaskPredecessorOf(provenance, task);
+  while (next !== null) {
+    yield next;
+    const read = await provenanceOf(next);
+    if (read === 'unreadable') {
+      yield read;
+      return;
+    }
+    next = sameTaskPredecessorOf(read, task);
+  }
+}
+
+/** `line` is `origin` or continues it for `task` (`sameTaskChainOf`); a hop that fails before `origin` is `unreadable`. */
+export async function continuesTaskLine(
+  line: SessionRef, provenance: SessionProvenanceV1, origin: SessionRef, task: TaskTriple,
+  provenanceOf: (ref: SessionRef) => Promise<SessionProvenanceV1 | 'unreadable'>,
+): Promise<boolean | 'unreadable'> {
+  for await (const hop of sameTaskChainOf(line, provenance, task, provenanceOf)) {
+    if (hop === 'unreadable') return hop;
+    if (hop.projectId === origin.projectId && hop.sessionId === origin.sessionId) return true;
+  }
+  return false;
+}

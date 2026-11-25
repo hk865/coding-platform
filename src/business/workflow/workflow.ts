@@ -40,7 +40,7 @@ import { goalDecisionBasis } from '../../core/work-graph/tasks/goal-basis.js';
 import { actionRequestAnswerFacts } from '../../core/work-graph/tasks/action-request-answer.js';
 import type { CreateSessionRequest } from '../../core/agent-runtime/session-operations.js';
 import type { PrepareTaskExecutionRequest, StartTaskExecutionRequest } from '../../core/agent-runtime/execution-contracts.js';
-import type { ClaimTaskInput, RequeueTaskInput } from '../../core/work-graph/model/claim-contracts.js';
+import { lastYieldedRunOf, type ClaimTaskInput, type RequeueTaskInput } from '../../core/work-graph/model/claim-contracts.js';
 import type { ActionRequestRef } from '../../contracts/action-request.js';
 import type { ActionRequestSnapshotV1 } from '../../core/work-graph/state/action-request.js';
 import type { TaskGraph, TaskRow } from '../../core/work-graph/model/plan-contracts.js';
@@ -48,7 +48,7 @@ import type { ResponsibilityRecipientInputV1 } from '../../core/work-graph/tasks
 import type { GraphWrite } from '../../core/work-graph/model/task-contracts.js';
 import type { GoalDecisionCauseReadV1, TaskClaimJudgmentV1 } from '../../core/work-graph/model/decision-contracts.js';
 import type { TaskClaimTargetBlockerV1 } from '../../contracts/work-line.js';
-import type { SessionCard } from '../../core/work-graph/model/session-contracts.js';
+import { continuesTaskLine, sameTaskChainOf, type SessionCard } from '../../core/work-graph/model/session-contracts.js';
 import { runUnresolvedBlocker } from '../../core/work-graph/state/run-machine.js';
 import { lastHolderOf } from '../../core/work-graph/state/unknown-call-review.js';
 import { sessionMessageRefKey } from '../../core/work-graph/sessions/message-record-codecs.js';
@@ -1418,7 +1418,7 @@ export function createWorkflow(deps: WorkflowDependencies & {
     return { rejection: rejection('unavailable', 'the Goal workspace record is not readable') };
   }
 
-  const { chooseSession, responsibleSessionFor, chooseExcluded, resolveRecipient } = createSessionChooser(deps);
+  const { chooseSession, responsibleSessionFor, chooseExcluded, reusable, resolveRecipient } = createSessionChooser(deps);
 
   /**
    * K slice L7: has this line already started its fallback? A continuation
@@ -1479,11 +1479,13 @@ export function createWorkflow(deps: WorkflowDependencies & {
       workspacePin.pin,
       { ref: sessionAggregateRef(owned.projectId, sessionId), revision: sessionRevision },
     ];
+    // A requeue claim carries the Task's last yielded wait its continuation found (`claimContinuation`).
+    const wait = consumedWait ?? requeue?.consumedWait;
     const input: ClaimTaskInput = {
       goalRef: base.goalRef, planRef, taskId: task.taskId, sessionRef,
       // TASK-03: a requeue that pins a budget is claimed with exactly that budget (§4.3: `budget ?? binding.budget`).
       roleBinding: binding.roleBinding, budget: review?.budget ?? requeue?.budget ?? binding.budget,
-      ...(consumedWait === undefined ? {} : { consumedWait }),
+      ...(wait === undefined ? {} : { consumedWait: wait }),
       // TASK-03 (D-3): a requeued Task is claimed only with the TaskRequeue covering its selected Run.
       ...(requeue === undefined ? {} : { requeueRef: requeue.requeueRef }),
       // K3 TASK-03r (L10): a review claim names the record, its read revision and the phase; the owner
@@ -1526,12 +1528,23 @@ export function createWorkflow(deps: WorkflowDependencies & {
     return { claim: result.value };
   }
 
-  /** Read the exact prior yielded Run continuation and its saved reply ref. */
+  /**
+   * Read the exact prior yielded Run continuation and its saved reply ref; `sessionRef` in `workspaceId` is the line
+   * that sent the wait. A wait that could not be read is marked `unreadable`. A `requeue` carries the wait from its
+   * root message alone, which the claim names and the Runtime supplies the reply from: a forwarded root carries nothing
+   * at once, before any tail is read (a tail in another workspace is not readable from the line's context); nor does a
+   * wait whose reply handler moved to another Session (that handler alone consumes it); and only an `answered` or
+   * `expired` wait state (`waitStateOf`) is carried, never a consumed, withdrawn or cancelled one. Such a refusal is a
+   * `waiting` without `unreadable`: the requeue then carries nothing. The ordinary continuation reads the live tail.
+   */
   async function readContinuation(
-    owned: Owned, priorRunRef: RunRef,
-  ): Promise<{ value: ConsumedWaitV1; sessionRef: SessionRef } | { waiting: string } | { rejection: CoreRejection }> {
+    owned: Owned, priorRunRef: RunRef, forRequeue = false,
+  ): Promise<{ value: ConsumedWaitV1; sessionRef: SessionRef; workspaceId: string }
+    | { waiting: string; unreadable?: true }> {
     const priorRead = await deps.executions.readExecution(owned.ctx, priorRunRef);
-    if (priorRead.status !== 'ready') return { waiting: receiptReason(priorRead, 'the prior yielded Run is not readable') };
+    if (priorRead.status !== 'ready') {
+      return { waiting: receiptReason(priorRead, 'the prior yielded Run is not readable'), unreadable: true };
+    }
     const continuation = priorRead.value.run.continuation;
     if (priorRead.value.run.outcome !== 'yielded' || continuation === undefined) return { waiting: 'the prior Run has no durable yielded continuation binding' };
     if (priorRead.value.run.controlState?.desiredState === 'paused' || priorRead.value.run.controlState?.desiredState === 'cancelled') {
@@ -1547,18 +1560,30 @@ export function createWorkflow(deps: WorkflowDependencies & {
       : { ...owned.ctx, workspaceId: lineWorkspaceId,
         materialReader: { ...hostReader, workspaceId: lineWorkspaceId } };
     const rootRead = await messages.readMessage(lineCtx, continuation.messageRef);
-    if (rootRead.status !== 'ready') return { waiting: receiptReason(rootRead, 'the continuation wait message is not readable') };
-    const chain = await liveWaitMessage((ref) => messages.readMessage(lineCtx, ref), rootRead.value);
-    if (chain.status !== 'ready') return { waiting: receiptReason(chain, 'the continuation wait message is not readable') };
-    const message = chain.tail;
-    // The saved reply wins over an expired deadline (one state rule, message-machine.ts:1138).
+    if (rootRead.status !== 'ready') {
+      return { waiting: receiptReason(rootRead, 'the continuation wait message is not readable'), unreadable: true };
+    }
+    let message = rootRead.value;
+    if (forRequeue) {
+      if (message.transferredTo !== null) return { waiting: 'a forwarded wait is not carried by the requeue' };
+      if ((message.replyHandler ?? null) !== null) return { waiting: 'the wait reply handler moved to another Session' };
+      const state = waitStateOf(message, waitFactsOfRecord(message)).state;
+      if (state !== 'answered' && state !== 'expired') return { waiting: `the wait is ${state}` };
+    } else {
+      const chain = await liveWaitMessage((ref) => messages.readMessage(lineCtx, ref), message);
+      if (chain.status !== 'ready') {
+        return { waiting: receiptReason(chain, 'the continuation wait message is not readable'), unreadable: true };
+      }
+      message = chain.tail;
+    }
+    // The saved reply wins over an expired deadline (the one wait state rule, `waitStateOf`).
     if (message.status === 'responded' && message.response !== null) {
-      return { sessionRef: structuredClone(continuation.sessionRef), value: {
+      return { sessionRef: structuredClone(continuation.sessionRef), workspaceId: lineWorkspaceId, value: {
         kind: 'wait_reply', originalRun: priorRunRef, messageRef: continuation.messageRef,
         responseRef: structuredClone(message.response.bodyRef) } };
     }
     if (message.expiredAt !== null) {
-      return { sessionRef: structuredClone(continuation.sessionRef), value: {
+      return { sessionRef: structuredClone(continuation.sessionRef), workspaceId: lineWorkspaceId, value: {
         kind: 'expiry', originalRun: priorRunRef, messageRef: continuation.messageRef,
         expiryInputId: deriveSessionInputId(continuation.messageRef, 'expiry') } };
     }
@@ -1900,21 +1925,115 @@ export function createWorkflow(deps: WorkflowDependencies & {
     if (afterRun.status !== 'ready') return waiting(null, receiptReason(afterRun, 'the afterRun is not readable'));
     const workspaceId = goal.workspaceRef.workspaceId;
     const claimSession = await deps.sessions.readSession(owned.ctx, afterRun.value.outbox.claim.sessionRef, 'project');
+    const taskRef: TaskTriple = row.ref;
+    /**
+     * The requeue carries the Task's last yielded Work wait, so a crash requeue does not lose a reply that was saved
+     * meanwhile. Only the wait of the Task's last yield before the requeue counts (`lastYieldedRunOf` from the afterRun,
+     * the basis the claim owner checks too), never an older one. It is carried when `readContinuation` carries it for a
+     * requeue, the claiming line continues its sending line S for this Task, and S holds no earlier unconsumed wait of
+     * this Task: waits on one line are consumed in order, so while S's oldest unconsumed Work wait (its Session facts'
+     * `wait`) is another wait of this Task, the requeue carries nothing, on a reused line, a new one and the close
+     * fallback's alike. `heldByClaimLine` says the claim line is S and its oldest unconsumed Work wait is exactly the
+     * carried one, the one wait the claim owner's dispatch exception admits on a waiting line (S1-DISPATCH-02).
+     * `claimLine` is the Session that will claim, or `null` for a new Session continuing the afterRun's claim line L.
+     * L, or a new Session continuing it, continues S when S is L or L continues S for this Task (`continuesTaskLine`,
+     * read only up to S). Another claim line whose chain shares no line with L's chain is unrelated by immutable
+     * provenance alone, so it claims with the plain requeue before any Run or wait is read; one that shares a line
+     * continues S when S is on its chain. Without the Session facts seam the wait order cannot be read and nothing is
+     * carried. Anything else that carries nothing is today's requeue claim; a Session, Run or line facts read that
+     * fails waits rather than claim without the reply.
+     */
+    const carryWait = async (claimLine: SessionCard['record'] | null):
+    Promise<{ requeue: WorkflowSessionRequeue | undefined; heldByClaimLine?: true } | { waiting: string }> => {
+      const sessionFacts = deps.sessionFacts;
+      if (requeue === undefined || sessionFacts === undefined) return { requeue };
+      const provenanceOf = async (ref: SessionRef): Promise<SessionProvenanceV1 | 'unreadable'> => {
+        const read = await deps.sessions.readSession(owned.ctx, ref, 'project');
+        return read.status === 'ready' ? read.value.record.provenance : 'unreadable';
+      };
+      const chainOf = async (line: SessionRef, provenance?: SessionProvenanceV1): Promise<SessionRef[] | 'unreadable'> => {
+        const own = provenance ?? await provenanceOf(line);
+        if (own === 'unreadable') return own;
+        const lines: SessionRef[] = [];
+        for await (const hop of sameTaskChainOf(line, own, taskRef, provenanceOf)) {
+          if (hop === 'unreadable') return hop;
+          lines.push(hop);
+        }
+        return lines;
+      };
+      const onChain = (chain: readonly SessionRef[], ref: SessionRef): boolean =>
+        chain.some((line) => line.projectId === ref.projectId && line.sessionId === ref.sessionId);
+      const unreadableLine = { waiting: 'a Session on the requeue claim line chain is not readable' };
+      const lineRef: SessionRef = { projectId: afterRun.value.outbox.claim.sessionRef.projectId,
+        sessionId: afterRun.value.outbox.claim.sessionRef.sessionId };
+      let otherChain: SessionRef[] | null = null;
+      if (claimLine !== null && !onChain([lineRef], claimLine.ref)) {
+        const claimChain = await chainOf(claimLine.ref, claimLine.provenance);
+        if (claimChain === 'unreadable') return unreadableLine;
+        const lineChain = await chainOf(lineRef);
+        if (lineChain === 'unreadable') return unreadableLine;
+        if (!lineChain.some((line) => onChain(claimChain, line))) return { requeue };
+        otherChain = claimChain;
+      }
+      const last = await lastYieldedRunOf(afterRunRef, async (ref) => {
+        const read = await deps.executions.readExecution(owned.ctx, ref);
+        return read.status === 'ready' ? read.value.run : 'unreadable';
+      });
+      if (last === 'unreadable') return { waiting: 'a Run of the Task before the requeue is not readable' };
+      if (last === null) return { requeue };
+      const yielded = await readContinuation(owned, last.ref, true);
+      // An unreadable wait waits; an open, paused, cancelled or otherwise uncarried one carries nothing.
+      if ('waiting' in yielded) return yielded.unreadable === true ? { waiting: yielded.waiting } : { requeue };
+      const sender = yielded.sessionRef;
+      let continues: boolean | 'unreadable';
+      if (otherChain !== null) continues = onChain(otherChain, sender);
+      else if (onChain([lineRef], sender)) continues = true;
+      else {
+        const own = claimLine === null ? await provenanceOf(lineRef) : claimLine.provenance;
+        continues = own === 'unreadable' ? own : await continuesTaskLine(lineRef, own, sender, taskRef, provenanceOf);
+      }
+      if (continues === 'unreadable') return unreadableLine;
+      if (!continues) return { requeue };
+      // Rule W: the sending line's facts are in its own workspace.
+      const factsCtx = yielded.workspaceId === owned.ctx.workspaceId
+        ? owned.ctx : { ...owned.ctx, workspaceId: yielded.workspaceId };
+      const facts = await sessionFacts.readSessionFacts(factsCtx, sender);
+      if (facts.status !== 'ready') return { waiting: receiptReason(facts, 'the requeue wait line facts are not readable') };
+      const oldest = facts.value.wait;
+      const oldestIsCarried = oldest !== null && sameCanonical(oldest.runRef, last.ref);
+      if (oldest !== null && !oldestIsCarried && sameCanonical(oldest.task, taskRef)) return { requeue };
+      const carried = { requeue: { ...requeue, consumedWait: yielded.value } };
+      return oldestIsCarried && claimLine !== null && onChain([sender], claimLine.ref)
+        ? { ...carried, heldByClaimLine: true } : carried;
+    };
     // E16 (§4.1 S:799, rule 7): the continuation of a requeued Task follows the
     // same destination-first order as `chooseSession` — an open responsible link
     // of a transfer destination wins — and a source that is excluded (an archive
     // request, a wait, a readonly copy) is never retried; it goes through the
     // ordinary selection instead.
     const transferred = await responsibleSessionFor(owned, goal, binding, row.ref);
-    const taskRef: TaskTriple = row.ref;
     let chosen: SessionChoice;
+    // B19 (reuse the fitting member first): a claim Session excluded only because it still holds this Task's own yielded
+    // wait is that wait's line. When the requeue carries exactly that wait (`heldByClaimLine`), it reuses the line
+    // instead of moving the Task off it; the claim owner's dispatch exception admits only that wait.
+    let ownWait: { requeue: WorkflowSessionRequeue | undefined } | null = null;
     if (transferred !== null) {
       chosen = { kind: 'reuse', card: transferred };
     } else if (claimSession.status === 'ready') {
       const card = claimSession.value;
       const record = card.record;
       const excluded = await chooseExcluded(owned, card);
-      if (roleReusable(card, workspaceId, binding, { scope: 'project' }) && !excluded) {
+      const roleOk = roleReusable(card, workspaceId, binding, { scope: 'project' });
+      if (roleOk && excluded) {
+        const verdict = await reusable(owned.ctx, { workspaceId: record.workspaceId, sessionRole: binding.sessionRole,
+          card });
+        if (!verdict.reusable && verdict.because === 'waiting') {
+          const carried = await carryWait(record);
+          if ('waiting' in carried) return waiting(null, carried.waiting);
+          if (carried.heldByClaimLine === true) ownWait = carried;
+        }
+      }
+      if (roleOk && (!excluded || ownWait !== null)) {
         chosen = { kind: 'reuse', card };
       } else if (excluded || record.lifecycle === 'archived'
         || !sameCanonical(record.role, binding.sessionRole)
@@ -1931,8 +2050,13 @@ export function createWorkflow(deps: WorkflowDependencies & {
         if (turnClosureOf(deps.runtime) === undefined || await hasContinuationForTask(owned, claimSessionRef, taskRef)) {
           chosen = { kind: 'create' };
         } else {
+          // The close's definite-failure fallback creates a Session continuing this line, which carries the wait
+          // (`fallbackAfterClose` drops it when the new Session has no continuation provenance).
+          const carried = await carryWait(null);
+          if ('waiting' in carried) return waiting(null, carried.waiting);
           return advancing(null, makePerform(base, closeOpenTurnStep(
-            claimSessionRef, afterRunRef, requeue?.requeueRef ?? null, taskRef, planRef, continuation)));
+            claimSessionRef, afterRunRef, requeue?.requeueRef ?? null, taskRef, planRef,
+            { ...continuation, ...(carried.requeue === undefined ? {} : { requeue: carried.requeue }) })));
         }
       } else if (record.occupancy !== null) {
         return { kind: 'line_busy', reason: `the continuation Session ${record.ref.sessionId} is occupied` };
@@ -1951,6 +2075,9 @@ export function createWorkflow(deps: WorkflowDependencies & {
     if (chosen.kind === 'waiting') return waiting(null, chosen.reason);
     if (chosen.kind === 'create') {
       const provenance = continuationProvenanceFor(claimSession, workspaceId, binding, taskRef);
+      // Only a new Session that continues the afterRun's line carries its wait.
+      const carried = provenance === null ? { requeue } : await carryWait(null);
+      if ('waiting' in carried) return waiting(null, carried.waiting);
       return advancing(null, makePerform(base, createSessionStep(base, {
         workspace: { projectId: owned.projectId, workspaceId },
         role: binding.sessionRole, recommendedRefs: [],
@@ -1958,18 +2085,20 @@ export function createWorkflow(deps: WorkflowDependencies & {
         ...(provenance === null ? {} : { provenance }),
         // KLS-3b: the Task's Session works on its Goal's line (kls-design §2.3.4).
         ...(goal.lineRef === null ? {} : { lineFolder: goal.lineRef.folder }),
-      }, taskRef, planRef, requeue, review)));
+      }, taskRef, planRef, carried.requeue, review)));
     }
+    const carried = ownWait ?? await carryWait(chosen.card.record);
+    if ('waiting' in carried) return waiting(null, carried.waiting);
     // E15 (W1-HO-04, §4.4.7, L17): a reused Session that continues exactly this
     // Task from a predecessor still open and unarchived re-derives the same
     // handover step from durable facts BEFORE the claim pin is computed. The
     // crash between `create_session` and its handover therefore recovers here,
     // and the (live, idle) predecessor can still be archived in one composition.
-    const recovered = await recoveryHandoverStep(owned, base, chosen.card, taskRef, planRef, requeue, review);
+    const recovered = await recoveryHandoverStep(owned, base, chosen.card, taskRef, planRef, carried.requeue, review);
     if (recovered !== null) return advancing(null, makePerform(base, recovered));
     const sessionRef: SessionRef = { projectId: owned.projectId, sessionId: chosen.card.record.ref.sessionId };
     const built = await buildClaimOperation(owned, base, goal, planRef, task, binding,
-      sessionRef.sessionId, chosen.card.record.revision, true, undefined, requeue, review, servedRequest);
+      sessionRef.sessionId, chosen.card.record.revision, true, undefined, carried.requeue, review, servedRequest);
     if ('rejection' in built) return built.rejection;
     return advancing(null, makePerform({ ...base, sessionHint: sessionRef }, built.operation));
   }
@@ -2822,7 +2951,6 @@ export function createWorkflow(deps: WorkflowDependencies & {
         priorRunRef = wait.runRef;
       }
       const continuation = await readContinuation(owned, priorRunRef);
-      if ('rejection' in continuation) return { kind: 'rejection', rejection: continuation.rejection };
       if ('waiting' in continuation) {
         return { kind: 'waiting', reason: continuation.waiting,
           basis: goalWaitBasisOf(goal, ['wait_reply'], ['SessionMessage', 'Run', 'TaskLease']),
@@ -4027,6 +4155,10 @@ export function createWorkflow(deps: WorkflowDependencies & {
     }
     const claimSession = await deps.sessions.readSession(owned.ctx, operation.request.sessionRef);
     const provenance = continuationProvenanceFor(claimSession, workspaceId, binding, operation.taskRef);
+    // Only a new Session continuing the afterRun's line carries the requeue's wait: the claim owner admits that wait
+    // only on the line's continuation chain, so a Session without that provenance claims without it.
+    const requeue = operation.requeue === undefined || provenance !== null ? operation.requeue
+      : { requeueRef: operation.requeue.requeueRef, budget: operation.requeue.budget };
     const goalLine = goalRead.value.goal.lineRef;
     return advancing(receipt, makePerform(base, createSessionStep(base, {
       workspace: { projectId: owned.projectId, workspaceId },
@@ -4034,7 +4166,7 @@ export function createWorkflow(deps: WorkflowDependencies & {
       initialLinks: [{ target: { kind: 'task', ref: operation.taskRef }, relation: 'responsible' }],
       ...(provenance === null ? {} : { provenance }),
       ...(goalLine === null ? {} : { lineFolder: goalLine.folder }),
-    }, operation.taskRef, operation.planRef, operation.requeue, operation.review)));
+    }, operation.taskRef, operation.planRef, requeue, operation.review)));
   }
 
   /**
@@ -4265,28 +4397,31 @@ export function createWorkflow(deps: WorkflowDependencies & {
       case 'claim_task': {
         const result = await deps.claims.claimTask(owned.ctx, operation.request);
         const receipt: WorkflowStepReceipt = { kind: 'claim_task', result };
-        if (result.status !== 'committed' && result.code === 'revision_conflict') {
-          // A record the claim pins moved after the selection read it (a link or a transfer of the Session, a Goal
-          // or Workspace write): select once more on what is there now. A second conflict waits on any record kind a
-          // claim pins, which the Host's wait registry wakes this Goal on (the moving write may predate this step's
-          // read cursor, so only the re-selection sees the first one).
+        if (result.status !== 'committed' && (result.code === 'revision_conflict' || result.code === 'busy')) {
+          // The claim's facts changed after the selection read them, so the step selects once more on what is there
+          // now:
+          // - `revision_conflict`: a record the claim pins moved (a link or a transfer of the Session, a Goal or
+          //   Workspace write);
+          // - `busy`: another claim occupied the chosen line in between (two selections read the same idle line
+          //   before either claim committed), or a hold or stop appeared (2.5). The re-read sees the occupancy, so the
+          //   re-selection takes a free line or, with none, the same member suggestion or host pick as a line found
+          //   occupied at the selection (B19); a hold makes it wait or go on with another Task.
+          // One re-selection, never a loop. A second refusal waits on any record kind a claim pins or a release or
+          // approval writes, which the Host's wait registry wakes this Goal on (the moving write may predate this
+          // step's read cursor, so only the re-selection sees the first one).
           if (claimRetried) {
             return waiting(receipt, result.reason, undefined,
               goalWaitBasisOf({ ref: base.goalRef }, ['claim_conflict'], CLAIM_CONFLICT_WAIT_KINDS));
           }
           const again = await selectNext(owned, base);
-          const next = again.status === 'ready' ? again.value.next : null;
+          if (again.status !== 'ready') return again;
+          const next = again.value.next;
           if (next === null || next.kind !== 'perform' || next.operation.kind !== 'claim_task') return again;
-          return await performStep(owned, { ...base, sessionHint: next.sessionHint }, next.operation, true);
+          // The claim the re-selection chose answers with that selection's pick basis (LR7C-09: a picker ran here).
+          const claimed = await performStep(owned, { ...base, sessionHint: next.sessionHint }, next.operation, true);
+          return claimed.status === 'ready' ? { ...claimed, value: { ...claimed.value, pick: again.value.pick } } : claimed;
         }
-        if (result.status !== 'committed') {
-          // 2.5: a hold or stop that appeared between the selection's read and this commit is the same `busy`;
-          // its wait names the kinds the release/approval writes, so the driver registers the wake-up.
-          return result.code === 'busy'
-            ? waiting(receipt, result.reason, undefined,
-              goalWaitBasisOf({ ref: base.goalRef }, ['claim_conflict'], CLAIM_CONFLICT_WAIT_KINDS))
-            : waiting(receipt, result.reason);
-        }
+        if (result.status !== 'committed') return waiting(receipt, result.reason);
         const claim = result.value;
         const nextBase: Base = { ...base, sessionHint: claim.sessionRef };
         return advancing(receipt, makePerform(nextBase, { kind: 'prepare', request: prepareStep(nextBase, claim.runRef) }));

@@ -24,7 +24,7 @@
 | `materialOwnerFromOrigin` | `src/core/work-graph/materials/applicability.ts:85` | 从 raw origin 取记录下来的 Run/QueryRun owner，或 null | 判断材料归属 |
 | `createMaterialRecordReaders` | `src/core/work-graph/materials/record-readers.ts:135` | 用注入的 `readMany` 实现 `MaterialAuthorityReads.load`；miss 与失败分开 | composition 提供材料权威读 |
 | `materialRecordSchemas` | `src/core/work-graph/materials/record-readers.ts:95` | Goal schema 加 Run/QueryRun 的完整记录 schema 集 | 注册后端 schema；不要另加一套 |
-| `validateQueryRunSnapshot` | `src/core/work-graph/persistence/run-record-codecs.ts:340` | 唯一的 `QueryRunSnapshot@1` 校验；queries 复用它 | 解码/校验 QueryRun 记录 |
+| `validateQueryRunSnapshot` | `src/core/work-graph/persistence/run-record-codecs.ts:346` | 唯一的 `QueryRunSnapshot@1` 校验；queries 复用它 | 解码/校验 QueryRun 记录 |
 | `executionRequestProfileProblem` | `src/core/work-graph/persistence/run-record-codecs.ts:298` | 执行状态必填的 `requestProfile`：null 或完整 profile（profileId、runtimeBudget、budget、consumerId） | QueryRun 记录与执行事件共用的唯一校验 |
 | `executionPreparedProblem` | `src/core/work-graph/persistence/run-record-codecs.ts:329` | 执行状态必填的 `prepared`：null 或带必填 `requestEffectiveGoalId`（null 或非空）的绑定 | QueryRun 记录与执行事件共用的唯一校验 |
 | `QUERY_RUN_RECORD_SCHEMA` | `src/core/work-graph/materials/record-readers.ts:76` | `QueryRunSnapshot@1` 的唯一 schema 注册 owner | 注册 QueryRun schema |

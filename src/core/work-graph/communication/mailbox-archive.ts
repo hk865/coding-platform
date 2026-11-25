@@ -186,7 +186,7 @@ async function loadStoredArchiveRequest(mailbox: MailboxContext, owned: Owned, s
 }
 
 /** The exact original wait Run and its CAS revision from one read window. */
-async function readWaitRun(mailbox: MailboxContext, owned: Owned, runRef: RunRef): Promise<WaitRunRead> {
+export async function readWaitRun(mailbox: MailboxContext, owned: Owned, runRef: RunRef): Promise<WaitRunRead> {
   const refKey = canonicalOf(runRef);
   if (refKey === null) return { ok: false, rejection: reject('invalid', 'archive_input_invalid: the wait RunRef is not canonicalizable JSON') };
   const read = await readBatch(mailbox.records, [refKey]);

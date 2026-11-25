@@ -16,8 +16,8 @@
  * Cell 2: `e38-r` ['src/e38-a.ts'] and `e38-r2` ['src/e38-c.ts'] both run; `e38-w2` ['src/e38-a.ts'] opens the gate
  * and the gate's basis names only `e38-r` (the rule's conflict set, not every running Task of the module).
  * E05 一格（G6 第六次）：两个任务都列 `src/rules.js`、共用一条线，只按任务各调一次 `workflow/driver-start`。两条看守同时
- * 选中这条空闲线，后认领的被拒（`busy`："the target Session is already occupied"，Workflow 回不带叫醒依据的等待）。
- * 输掉认领的看守要交回目标、被下一次提交叫醒、重选，这时另一个任务在跑，它就开重叠门。
+ * 选中这条空闲线时，后认领的被拒（`busy`："the target Session is already occupied"），同一步重读重挑；这时另一个任务
+ * 在跑，它就开重叠门。
  */
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
@@ -261,10 +261,8 @@ describe('E38-R9: the module-overlap gate narrows on plannedFiles', () => {
   });
 
   it('E05: two Task starts on one shared line — the watch that lost the claim comes back and opens the gate', async () => {
-    /* Named mutation: 看守把不带依据的等待停在 `waiting`、不登记叫醒（改前的 runLane）——输掉认领的看守再也不选，
-       门一直不出现：门的 `waitFor` 超时。两条看守并发选择，后一条的选择读在先一条认领提交之后时，它直接走到门，
-       不经过被拒的认领：改前的 runLane 在本地 5 次里红 4 次。Workflow 的认领口在组合里是展开的副本，测试挂不上，
-       没法把这个先后钉死。改后哪种先后都开门。 */
+    /* 两条看守并发选择这条线，哪种先后，最后都开同模块门（门的 `waitFor`）。后一条的选择读在先一条认领提交之后时，
+       它直接走到门；在那之前时，它的认领被拒 `busy`，同一步重挑后走到门。 */
     const target = await openS7C1World({ adviser: false });
     const { goal, line } = await openGoal(target, 'e38-e05', {
       'e05-users': ['src/rules.js', 'src/users.js'], 'e05-orders': ['src/rules.js', 'src/orders.js'] }, true);

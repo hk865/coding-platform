@@ -19,7 +19,9 @@ import { messageOf } from '../../../contracts/error-message.js';
 import { decisionSourceKey } from '../../../contracts/goal-decisions.js';
 import { HAND_OFF_TOOL_NAME, type HandoffApprovalV1, type HandoffToolFragmentV1,
   type HandoffTriggerV1 } from '../../../contracts/handoff.js';
-import type { RoleConfigurationRef, SessionRef, VersionPin, WorkspaceScope } from '../../../contracts/core/identity.js';
+import type {
+  ExecutionRef, RoleConfigurationRef, SessionRef, VersionPin, WorkspaceScope,
+} from '../../../contracts/core/identity.js';
 import type { SessionWorkLink } from '../../../contracts/core/session.js';
 import type { OperationRef } from '../../../contracts/core/operations.js';
 import { rejected, rejectedWithCurrent } from '../../../contracts/core/rejections.js';
@@ -84,8 +86,8 @@ import {
   type SecretaryArchiveAdmissionFactsV1,
 } from '../state/session-handoff.js';
 import {
-  CORE_OPERATION_BY_WORKSPACE_PHASE_LOOKUP, decodeSessionOperationRecord, encodeSessionOperationRecord, operationRefKey,
-  plainSessionRefKey, secretaryArchiveRecordedCodec, sessionHandoffRecordedCodec,
+  CORE_OPERATION_BY_WORKSPACE_PHASE_LOOKUP, decodeSessionOperationRecord, decodeSessionWorkLink, encodeSessionOperationRecord,
+  operationRefKey, plainSessionRefKey, secretaryArchiveRecordedCodec, sessionHandoffRecordedCodec,
   workHandoffBriefCodec, handoffBriefRecordedCodec,
 } from './session-record-codecs.js';
 import { readHandoffFence, secretaryHandoffClaimKey } from './session-handoff-fence.js';
@@ -848,6 +850,9 @@ export function createSessionHandoffAdvanceService(deps: SessionHandoffAdvanceDe
         if (typeof code !== 'string' || typeof reason !== 'string') {
           return rejected('invalid', 'the refusal input carries no code and reason');
         }
+        // A child refusal that carried the structured `scopeOwned` field keeps that mark on the record (absent is
+        // false), so the transfer stage tells a held scope from a moved pin without reading the reason text.
+        const scopeOwned = isRecord(refusal) && refusal['scopeOwned'] === true;
         const parsed = parseCommandId(input.commandId, operation, HANDOFF_STAGES);
         if (parsed === null || parsed.phase !== 'before') {
           return rejected('invalid', 'the refusal names no handoff before write');
@@ -873,7 +878,7 @@ export function createSessionHandoffAdvanceService(deps: SessionHandoffAdvanceDe
           generation: action.progress.advanceGeneration, guardRevision: input.expectedRevision, fingerprintInput,
           savedInput: null, receipt: null,
           progress: { ...action.progress, lastRefusal: { stage: parsed.stage, code: code as CoreRejection['code'],
-            reason, at: deps.now() } },
+            reason, at: deps.now(), ...(scopeOwned ? { scopeOwned: true as const } : {}) } },
           phaseValue: 'running', guards: [], claims: [], next: null, stop: 'refused', refusal: true });
       }
       if (record.revision !== input.expectedRevision) {
@@ -883,6 +888,16 @@ export function createSessionHandoffAdvanceService(deps: SessionHandoffAdvanceDe
       // rebuilding one would replay a command the operation did not make.
       const reached = handoffReachedInputProblem(action);
       if (reached !== null) return rejected('invalid', reached);
+      // The transfer stage reads its first unfinished item's receipt with the item's saved original input before any
+      // read of the source Session: a committed child's `after` needs only that input and the receipt cursor (it is
+      // written even while the source writes), so a source read that fails never hides it. Only a confirmed
+      // `not_found` goes on to the source read below.
+      const unfinished = action.progress.stage === 'transfer' ? unfinishedTransferOf() : null;
+      if (unfinished !== null && unfinished.saved !== null) {
+        const receipt = await deps.transfers.readTransferReceipt(savedCtx, unfinished.saved);
+        if (receipt.status === 'committed') return transferAfter(unfinished, unfinished.saved, receipt.cursor);
+        if (receipt.code !== 'not_found') return receipt;
+      }
       // The source's own role facts decide the secretary steps; its target's shape, the trigger and the saved
       // coverage never are that evidence.
       const sourceCard = await deps.operations.readSession(savedCtx, source);
@@ -905,8 +920,9 @@ export function createSessionHandoffAdvanceService(deps: SessionHandoffAdvanceDe
        * links are the scope this operation moves. The assigned tasks are excluded because moving each of them is
        * this operation's own exit; a link closes through its transfer's receipt, never through this check.
        */
-      function residualOf(links: readonly SessionWorkLink[]): 'task' | 'work' | 'scope' | false {
-        return residualResponsibilityOf(links, action.input.assignments.flatMap(entry => entry.tasks), sourceDuty);
+      function residualOf(links: readonly SessionWorkLink[], duty: PlatformDutyV1 | 'unknown'):
+        'task' | 'work' | 'scope' | false {
+        return residualResponsibilityOf(links, action.input.assignments.flatMap(entry => entry.tasks), duty);
       }
 
       /** One parent write through the shared executor; only the stage's decision and fragment live here. */
@@ -1046,7 +1062,7 @@ export function createSessionHandoffAdvanceService(deps: SessionHandoffAdvanceDe
        */
       function afterSuccessors(assignments: typeof action.progress.assignments): HandoffStageV1 {
         if (assignments.some(entry => entry.transfers.length > 0)) return 'transfer';
-        return residualOf(sourceLinks) === false
+        return residualOf(sourceLinks, sourceDuty) === false
           ? (secretary ? 'routing' : 'archive') : 'transfer';
       }
 
@@ -1345,81 +1361,148 @@ export function createSessionHandoffAdvanceService(deps: SessionHandoffAdvanceDe
         return rejected('invalid', 'the successor stage has no unfinished assignment');
       }
 
+      /**
+       * The transfer stage's first unfinished item: a named Task of an assignment with a successor or, once every such
+       * Task has its receipt, an entry of the saved scope plan. `saved` is the item's saved original input (null before
+       * its first before write); `received` is the progress with the item's receipt saved.
+       */
+      type UnfinishedTransfer = {
+        item: string; index: number; target: SavedTransferInputV1['target']; saved: SavedTransferInputV1 | null;
+        received: (cursor: CommitCursor) => HandoffProgress;
+      } & ({ kind: 'task'; taskIndex: number; assignment: HandoffProgress['assignments'][number]; to: SessionRef }
+        | { kind: 'scope' });
+
+      /** The {@link UnfinishedTransfer} in the one order the transfer stage walks: every Task first, then the scope. */
+      function unfinishedTransferOf(): UnfinishedTransfer | null {
+        for (const [index, assignment] of action.progress.assignments.entries()) {
+          const to = assignment.successor;
+          if (to === null) continue;
+          for (const [taskIndex, transfer] of assignment.transfers.entries()) {
+            if (transfer.receipt !== null) continue;
+            const target = { kind: 'task' as const, ref: transfer.task };
+            return { kind: 'task', item: `transfer:${index}:${taskIndex}`, index, taskIndex, assignment, to, target,
+              saved: transfer.input === null ? null
+                : { requestId: transfer.input.requestId, from: transfer.input.from, to: transfer.input.to, target,
+                  expected: transfer.input.expected },
+              received: cursor => {
+                const transfers = assignment.transfers.map((entry, position) => position === taskIndex
+                  ? { ...entry, receipt: { cursor } } : entry);
+                return { ...action.progress, assignments: action.progress.assignments.map((entry, position) =>
+                  position === index ? { ...entry, transfers } : entry) };
+              } };
+          }
+        }
+        const scope = action.progress.scope;
+        if (scope === null) return null;
+        for (const [index, entry] of scope.entries.entries()) {
+          if (entry.receipt !== null) continue;
+          return { kind: 'scope', item: `scope:${index}`, index, target: entry.target,
+            saved: entry.input === null ? null
+              : { requestId: entry.input.requestId, from: entry.input.from, to: entry.input.to,
+                target: entry.input.target, expected: entry.input.expected },
+            received: cursor => ({ ...action.progress, scope: { ...scope, entries: scope.entries.map(
+              (candidate, position) => position === index ? { ...candidate, receipt: { cursor } } : candidate) } }) };
+        }
+        return null;
+      }
+
+      /**
+       * A committed transfer item's `after`: its receipt cursor saved under its saved original input, with nothing else
+       * read. Only the Task item whose receipt completes every named Task transfer reads the source, to pick the next
+       * step as every transfer exit does: a residual stays in `transfer` for the stage's partial stop, otherwise
+       * routing for a secretary and archive for everyone else. A source or duty read that fails there keeps
+       * `transfer`, whose no-unfinished-transfer arm picks the exit once the source reads, so a failed source read
+       * never hides a committed receipt.
+       */
+      async function transferAfter(pending: UnfinishedTransfer, original: SavedTransferInputV1, cursor: CommitCursor):
+        Promise<HandoffAdvanceResultV1> {
+        const progress = pending.received(cursor);
+        let next: HandoffStageV1 = 'transfer';
+        if (pending.kind === 'task'
+          && progress.assignments.every(entry => entry.transfers.every(each => each.receipt !== null))) {
+          const card = await deps.operations.readSession(savedCtx, source);
+          const cardDuty = card.status === 'ready' ? await deps.duty(card.value.record.role, savedCtx) : null;
+          if (card.status === 'ready' && cardDuty?.status === 'ready') {
+            next = residualOf(card.value.links, cardDuty.value) === false
+              ? (isSecretaryDuty(cardDuty.value) ? 'routing' : 'archive') : 'transfer';
+          }
+        }
+        const arm: HandoffSavedInputV1 = { kind: 'transfer', ...original };
+        return commitWrite({ stage: 'transfer', item: pending.item, phase: 'after',
+          generation: action.progress.advanceGeneration,
+          fingerprintInput: { savedInput: arm, receipt: { cursor } } as unknown as JsonValue,
+          savedInput: arm, receipt: { cursor },
+          progress: { ...progress, stage: next }, phaseValue: 'running',
+          guards: [], claims: [], next, stop: 'advanced' });
+      }
+
       // ---- transfer --------------------------------------------------------- //
       if (stage === 'transfer') {
         const successorIndex = action.progress.assignments.findIndex(entry => entry.successor !== null);
         const successor = successorIndex < 0 ? null : action.progress.assignments[successorIndex]!.successor;
         if (successor === null) return rejected('invalid', 'the transfer stage has no successor');
-        for (const [index, assignment] of action.progress.assignments.entries()) {
-          if (assignment.successor === null) continue;
-          for (const [taskIndex, transfer] of assignment.transfers.entries()) {
-            if (transfer.receipt !== null) continue;
-            if (transfer.input === null) {
-              const toCard = await deps.operations.readSession(savedCtx, assignment.successor);
-              if (toCard.status !== 'ready') return toCard.status === 'rejected' ? toCard
-                : unavailable('the transfer destination Session read is not ready');
-              const target = { kind: 'task' as const, ref: transfer.task };
-              const linkRefs = [responsibleLinkRef(source, target),
-                responsibleLinkRef(assignment.successor, target)];
-              const linkKeys = linkRefs.map(ref => canonicalKey(ref));
-              let links;
-              try {
-                links = await deps.records.readMany(linkKeys);
-              } catch (error) {
-                return unavailable(`the transfer link pins could not be read: ${messageOf(error)}`);
-              }
-              if (links.status !== 'ready') return storeFailureToRejection(links);
-              const expected = { fromSession: sourceCard.value.record.revision,
-                toSession: toCard.value.record.revision, sourceLink: revisionOf(links.value.records, linkKeys[0]!),
-                destinationLink: revisionOf(links.value.records, linkKeys[1]!) };
-              const requestId = `${operation.operationId}:transfer:${index}:${taskIndex}`;
-              const arm: HandoffSavedInputV1 = { kind: 'transfer', requestId, from: source, to: assignment.successor,
-                target, expected };
-              const transfers = assignment.transfers.map((entry, position) => position === taskIndex
-                ? { ...entry, input: { requestId, from: source, to: assignment.successor!, expected } } : entry);
-              const assignments = action.progress.assignments.map((entry, position) => position === index
-                ? { ...entry, transfers } : entry);
-              return commitWrite({ stage: 'transfer', item: `transfer:${index}:${taskIndex}`, phase: 'before',
-                generation: action.progress.advanceGeneration,
-                fingerprintInput: arm as unknown as JsonValue, savedInput: arm, receipt: null,
-                progress: { ...action.progress, assignments }, phaseValue: 'running',
-                guards: [
-                  { refKey: plainSessionRefKey(source), expectedRevision: expected.fromSession },
-                  { refKey: plainSessionRefKey(assignment.successor), expectedRevision: expected.toSession },
-                  { refKey: linkKeys[0]!, expectedRevision: expected.sourceLink === 0 ? null : expected.sourceLink },
-                  { refKey: linkKeys[1]!, expectedRevision: expected.destinationLink === 0 ? null : expected.destinationLink },
-                ], claims: [], next: 'transfer', stop: 'advanced' });
+        // The transfer child's version-pin refusal (`revision_conflict`: its records moved after the before write, as
+        // the source writer's end or a later claim on either line moves them) is never resumed with the stale pins.
+        // The first unfinished item, the one that refusal names, reads its pins again in a new before write that
+        // raises the generation once; any other refusal resumes the saved arm. A `revision_conflict` recorded with the
+        // `scopeOwned` mark (another Session holds the scope) is kept as it is: none of its pins moved, and a re-pin
+        // would raise, clear and record the same refusal again on every drive, each write a wake of its own.
+        const repin = action.progress.lastRefusal?.stage === 'transfer'
+          && action.progress.lastRefusal.code === 'revision_conflict'
+          && action.progress.lastRefusal.scopeOwned !== true;
+        // A writer can start on the source after the wait (its Work claims stay open), and it moves the records the
+        // transfer pins: no unfinished item is committed while this drive's source read shows an execution.
+        const sourceWriting = sourceCard.value.record.occupancy?.kind === 'execution';
+        /**
+         * One unfinished item, a Task or a scope entry, whose saved original input's receipt the read before the source
+         * found not committed, or one with nothing saved yet. A writing source stops without a write. Otherwise the
+         * saved before write is returned for the composite to resume its child; only with nothing saved yet, or when
+         * the recorded refusal asks for a re-pin, does `before` read new pins for a new before write.
+         */
+        const transferItem = async (pending: UnfinishedTransfer, before: () => Promise<HandoffAdvanceResultV1>):
+          Promise<HandoffAdvanceResultV1> => {
+          if (sourceWriting) return stopOf('wait_writer', 'the source writer has not stopped');
+          return pending.saved !== null && !repin ? replayBefore('transfer', pending.item) : before();
+        };
+        if (unfinished !== null && unfinished.kind === 'task') {
+          const { item, index, taskIndex, assignment, to, target } = unfinished;
+          return transferItem(unfinished, async () => {
+            const toCard = await deps.operations.readSession(savedCtx, to);
+            if (toCard.status !== 'ready') return toCard.status === 'rejected' ? toCard
+              : unavailable('the transfer destination Session read is not ready');
+            const linkRefs = [responsibleLinkRef(source, target), responsibleLinkRef(to, target)];
+            const linkKeys = linkRefs.map(ref => canonicalKey(ref));
+            let links;
+            try {
+              links = await deps.records.readMany(linkKeys);
+            } catch (error) {
+              return unavailable(`the transfer link pins could not be read: ${messageOf(error)}`);
             }
-            const saved: SavedTransferInputV1 = { requestId: transfer.input.requestId, from: transfer.input.from,
-              to: transfer.input.to, target: { kind: 'task', ref: transfer.task }, expected: transfer.input.expected };
-            const read = await deps.transfers.readTransferReceipt(savedCtx, saved);
-            if (read.status === 'rejected' && read.code === 'not_found') {
-              // The transfer child has not committed: the saved before write is returned for the composite to resume.
-              return replayBefore('transfer', `transfer:${index}:${taskIndex}`);
-            }
-            if (read.status !== 'committed') return read;
+            if (links.status !== 'ready') return storeFailureToRejection(links);
+            const expected = { fromSession: sourceCard.value.record.revision,
+              toSession: toCard.value.record.revision, sourceLink: revisionOf(links.value.records, linkKeys[0]!),
+              destinationLink: revisionOf(links.value.records, linkKeys[1]!) };
+            const requestId = `${operation.operationId}:transfer:${index}:${taskIndex}`;
+            const arm: HandoffSavedInputV1 = { kind: 'transfer', requestId, from: source, to, target, expected };
             const transfers = assignment.transfers.map((entry, position) => position === taskIndex
-              ? { ...entry, receipt: { cursor: read.cursor } } : entry);
+              ? { ...entry, input: { requestId, from: source, to, expected } } : entry);
             const assignments = action.progress.assignments.map((entry, position) => position === index
               ? { ...entry, transfers } : entry);
-            const allTransferred = assignments.every(entry => entry.transfers.every(item => item.receipt !== null));
-            // With every named transfer committed, a residual stops before the stage's own exit; the transfer stage's
-            // no-unfinished-transfer arm records that stop in this same drive and, after the repair, the completion.
-            const residual = allTransferred ? residualOf(sourceLinks) : false;
-            const next: HandoffStageV1 = allTransferred && residual === false
-              ? (secretary ? 'routing' : 'archive') : 'transfer';
-            const arm: HandoffSavedInputV1 = { kind: 'transfer', ...saved };
-            return commitWrite({ stage: 'transfer', item: `transfer:${index}:${taskIndex}`, phase: 'after',
-              generation: action.progress.advanceGeneration,
-              fingerprintInput: { savedInput: arm, receipt: { cursor: read.cursor } } as unknown as JsonValue,
-              savedInput: arm, receipt: { cursor: read.cursor },
-              progress: { ...action.progress, stage: next, assignments }, phaseValue: 'running',
-              guards: [], claims: [], next, stop: 'advanced' });
-          }
+            return commitWrite({ stage: 'transfer', item, phase: 'before',
+              generation: action.progress.advanceGeneration, raises: repin,
+              fingerprintInput: arm as unknown as JsonValue, savedInput: arm, receipt: null,
+              progress: { ...action.progress, assignments }, phaseValue: 'running',
+              guards: [
+                { refKey: plainSessionRefKey(source), expectedRevision: expected.fromSession },
+                { refKey: plainSessionRefKey(to), expectedRevision: expected.toSession },
+                { refKey: linkKeys[0]!, expectedRevision: expected.sourceLink === 0 ? null : expected.sourceLink },
+                { refKey: linkKeys[1]!, expectedRevision: expected.destinationLink === 0 ? null : expected.destinationLink },
+              ], claims: [], next: 'transfer', stop: 'advanced' });
+          });
         }
         // The task sub-operations are done. A residual task/work link is the partial stop; the remaining scope
         // links each move in one sub-operation of this same stage, never in a new stage.
-        const residual = residualOf(sourceLinks);
+        const residual = residualOf(sourceLinks, sourceDuty);
         if (residual === 'task' || residual === 'work') return residualRefusalMark('transfer', action.progress);
         // A saved scope is resumed by its entries, never re-derived; the transfer exit below is shared with the
         // task transfers, so a resume reaches it once the entries' receipts are saved.
@@ -1441,35 +1524,48 @@ export function createSessionHandoffAdvanceService(deps: SessionHandoffAdvanceDe
               guards: [], claims: [], next: 'transfer', stop: 'advanced' });
           }
           const scope = action.progress.scope;
-          for (const [index, entry] of scope.entries.entries()) {
-            if (entry.receipt !== null) continue;
-            if (entry.input === null) {
-              // The before write reads only the destination link pin; the saved source pin comes from the plan.
+          if (unfinished !== null && unfinished.kind === 'scope') {
+            const { item, index, target } = unfinished;
+            return transferItem(unfinished, async () => {
+              // Every before write, the first one and a re-pin alike, reads both link pins now and guards with them,
+              // never with the plan's: the scope can be removed and added again after the plan, and a stale pin fails
+              // this parent write's own guard, where no child refusal would ever ask for a re-pin. The source must
+              // still hold the target (its responsible link open). A source that no longer does is refused
+              // `incomplete` with that target and writes nothing: a rejection, not a stop, so the composite answers
+              // with it instead of the progress read that still shows the last refusal; it is not a child's answer
+              // and is never recorded as one.
               const toCard = await deps.operations.readSession(savedCtx, successor);
               if (toCard.status !== 'ready') return toCard.status === 'rejected' ? toCard
                 : unavailable('the scope transfer destination Session read is not ready');
-              const sourceKey = canonicalKey(responsibleLinkRef(source, entry.target));
-              const destinationKey = canonicalKey(responsibleLinkRef(successor, entry.target));
+              const sourceKey = canonicalKey(responsibleLinkRef(source, target));
+              const destinationKey = canonicalKey(responsibleLinkRef(successor, target));
               let links;
               try {
-                links = await deps.records.readMany([destinationKey]);
+                links = await deps.records.readMany([sourceKey, destinationKey]);
               } catch (error) {
-                return unavailable(`the scope transfer destination link pin could not be read: ${messageOf(error)}`);
+                return unavailable(`the scope transfer link pins could not be read: ${messageOf(error)}`);
               }
               if (links.status !== 'ready') return storeFailureToRejection(links);
-              // Entries and targets are written together, so this entry's planned source pin is the target's.
+              const stored = links.value.records.find(candidate => candidate.refKey === sourceKey);
+              const held = stored === undefined ? null : decodeSessionWorkLink(stored);
+              if (held !== null && held.status !== 'decoded') {
+                return unavailable(`the scope transfer source link is damaged: ${held.reason}`);
+              }
+              if (held === null || held.value.until !== null) {
+                return rejected('incomplete', `the source no longer holds the scope ${canonicalKey(target)}`);
+              }
               const expected = { fromSession: sourceCard.value.record.revision,
-                toSession: toCard.value.record.revision, sourceLink: scope.targets[index]!.revision,
+                toSession: toCard.value.record.revision, sourceLink: revisionOf(links.value.records, sourceKey),
                 destinationLink: revisionOf(links.value.records, destinationKey) };
               // The successor segment is the real assignment index, never a literal 0.
               const requestId = `${operation.operationId}:transfer:${successorIndex}:scope:${index}`;
               const arm: HandoffSavedInputV1 = { kind: 'transfer', requestId, from: source, to: successor,
-                target: entry.target, expected };
+                target, expected };
               const entries = scope.entries.map((candidate, position) => position === index
-                ? { ...candidate, input: { requestId, from: source, to: successor, target: entry.target, expected } }
+                ? { ...candidate, input: { requestId, from: source, to: successor, target, expected } }
                 : candidate);
-              return commitWrite({ stage: 'transfer', item: `scope:${index}`, phase: 'before',
-                generation: action.progress.advanceGeneration,
+              return commitWrite({ stage: 'transfer', item, phase: 'before',
+                generation: action.progress.advanceGeneration, raises: repin,
                 fingerprintInput: arm as unknown as JsonValue, savedInput: arm, receipt: null,
                 progress: { ...action.progress, scope: { ...scope, entries } }, phaseValue: 'running',
                 guards: [
@@ -1478,24 +1574,7 @@ export function createSessionHandoffAdvanceService(deps: SessionHandoffAdvanceDe
                   { refKey: sourceKey, expectedRevision: expected.sourceLink },
                   { refKey: destinationKey, expectedRevision: expected.destinationLink === 0 ? null : expected.destinationLink },
                 ], claims: [], next: 'transfer', stop: 'advanced' });
-            }
-            const saved: SavedTransferInputV1 = { requestId: entry.input.requestId, from: entry.input.from,
-              to: entry.input.to, target: entry.input.target, expected: entry.input.expected };
-            const read = await deps.transfers.readTransferReceipt(savedCtx, saved);
-            if (read.status === 'rejected' && read.code === 'not_found') {
-              // The scope child has not committed: the saved before write is returned for the composite to resume.
-              return replayBefore('transfer', `scope:${index}`);
-            }
-            if (read.status !== 'committed') return read;
-            const entries = scope.entries.map((candidate, position) => position === index
-              ? { ...candidate, receipt: { cursor: read.cursor } } : candidate);
-            const arm: HandoffSavedInputV1 = { kind: 'transfer', ...saved };
-            return commitWrite({ stage: 'transfer', item: `scope:${index}`, phase: 'after',
-              generation: action.progress.advanceGeneration,
-              fingerprintInput: { savedInput: arm, receipt: { cursor: read.cursor } } as unknown as JsonValue,
-              savedInput: arm, receipt: { cursor: read.cursor },
-              progress: { ...action.progress, scope: { ...scope, entries } }, phaseValue: 'running',
-              guards: [], claims: [], next: 'transfer', stop: 'advanced' });
+            });
           }
         }
         // No residual: the stage's own exit. A resumed scope plan falls through to this same exit.
@@ -1608,7 +1687,7 @@ export function createSessionHandoffAdvanceService(deps: SessionHandoffAdvanceDe
         // The routing close is the last exit toward the archive. A responsibility added after the transfer exits (a
         // public link or transfer) stops the close here; the mark's fingerprint carries no horizon, so a later scan
         // replays it and the after token stays free for the one close after the repair.
-        if (residualOf(sourceLinks) !== false) {
+        if (residualOf(sourceLinks, sourceDuty) !== false) {
           return residualRefusalMark('routing', { ...action.progress,
             routing: { closed: false, horizon: action.progress.routing?.horizon ?? horizon, roots } });
         }
@@ -1836,27 +1915,25 @@ export function successorOf(action: HandoffActionV1): SessionRef | null {
 }
 
 /**
- * The source's writer state for the wait: a Session holding a QueryRun execution is not stopped (entered or unknown);
- * an idle Session with no QueryRun execution has stopped. The read uses only the public Session card, so `sessions`
- * keeps no edge to `queries`.
+ * The source's writer state for the wait: a Session holding an execution, a Work Run or a QueryRun alike, is not
+ * stopped (entered or unknown); an idle Session has stopped and its last execution is the stopped writer. A Work Run
+ * still writing on the source moves the records the transfer pins, so it is waited for like a QueryRun. The read uses
+ * only the public Session card, so `sessions` keeps no edge to `queries` or `tasks`.
  */
 async function latestEnteredRun(deps: Pick<SessionHandoffAdvanceDependencies, 'operations'>,
   ctx: CoreCallContext, source: SessionRef):
-  Promise<{ status: 'ready'; value: { ref: QueryRunRef; active: boolean } | null } | CoreRejection> {
+  Promise<{ status: 'ready'; value: { ref: ExecutionRef; active: boolean } | null } | CoreRejection> {
   const card = await deps.operations.readSession(ctx, source);
   if (card.status !== 'ready') {
     return card.status === 'rejected' ? card : rejected('unavailable', 'the source Session read is not ready');
   }
   const record = card.value.record;
   const occupancy = record.occupancy;
-  if (occupancy !== null && occupancy !== undefined && occupancy.kind === 'execution'
-    && occupancy.executionRef.aggregateType === 'QueryRun') {
+  if (occupancy !== null && occupancy !== undefined && occupancy.kind === 'execution') {
     return { status: 'ready', value: { ref: occupancy.executionRef, active: true } };
   }
   const last = record.lastExecutionRef;
-  if (last === null || last === undefined || last.aggregateType !== 'QueryRun') {
-    return { status: 'ready', value: null };
-  }
+  if (last === null || last === undefined) return { status: 'ready', value: null };
   return { status: 'ready', value: { ref: last, active: false } };
 }
 

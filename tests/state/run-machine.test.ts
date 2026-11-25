@@ -660,7 +660,8 @@ describe('RUN-02 / RUN-03 entry_authorized', () => {
         expect(answer(at(run, continuationBrief)), continuationBrief).toEqual({ reason: 'guard_failed', code: 'invalid' });
       }
     }
-    // A continuation claim (consumedWait, never with requeueRef, TD-3) enters only without a brief.
+    // A continuation claim (consumedWait without requeueRef) enters only without a brief; a requeue that carries the
+    // Task's yielded wait keeps its requeueRef and the requeue brief rule above.
     const continued: RunSnapshot = { ...CLAIMED, consumedWait };
     expect(at(continued, 'absent_ok').ok).toBe(true);
     for (const continuationBrief of ['bound', 'missing', 'unexpected', 'mismatch'] as const) {

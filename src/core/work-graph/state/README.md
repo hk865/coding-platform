@@ -51,7 +51,7 @@
 
 做 Run、Attempt/Lease/Outbox、Query 生命周期、活动替换与无进展判定的去这组。
 
-- `run-machine.ts` — Run 机器：status/outcome、V2 入口相位、控制指针；每次写入整条 Run。 Run 的 `control_submitted` 事件同样可带 `source`，`controlSubmissionRunEvent` 收可选第六参，RUN-12..15 把它传给 `controlSubmissionProblem`；`line-status.ts` 不传。
+- `run-machine.ts` — Run 机器：status/outcome、V2 入口相位、控制指针；每次写入整条 Run。 Run 的 `control_submitted` 事件同样可带 `source`，`controlSubmissionRunEvent` 收可选第六参，RUN-12..15 把它传给 `controlSubmissionProblem`；`line-status.ts` 不传。`claimBasisProblem` 的续作分支和带等待的重排队共用 `yieldedPriorProblem`（先前 yielded Run 的节点、绑定、指针和回复；重排队不判租约，租约归 requeue 自己的守卫）；`AttemptClaimBasis` 的 requeue 可带 `consumedWait`，`newRunRecord` 把它记进 Run。
 - `attempt-machine.ts` — TaskAttempt / TaskLease / DispatchOutboxEntry 三部机器与 Run 事件映射；与 Run 事件同一提交。outbox 记录 `DispatchOutboxRecord` 和 `DispatchStateV1` 的正本在 `contracts/execution-read.ts`，这里转出。
 - `query-run-recovery.ts` — QueryRun/QueryJob 生命周期构造与恢复：claimed/prepared/entering/entered/unknown/settled。
 - `running-admission.ts` — 运行中并发的纯规则：`runningGroupOf` 是五职责到四组的唯一映射（reviewer → executor，没有职责依据的 `unknown` 也按 executor 计）；`countsRunningAdmission`/`emptyRunningCounts`/`countRunningAdmission` 只算 entering/entered/unknown 且每个占用 Session 一次；`admitModelCall` 是唯一判定；不读存储、不保存计数。
@@ -135,13 +135,13 @@
 | `roleLineOperationRef`、`roleLineChildCommandId`、`roleLineStepTransition`、`START_LINES_PHASES`、`ROLE_LINE_CHANGE_SCOPE_PHASE` | `src/core/work-graph/state/role-line-operation.ts:12`、`:22`、`:27`、`:11`、`:12` | `role_line` 操作的身份、子创建命令号、唯一的步骤迁移表和两组阶段名 | `sessions/role-line-operations.ts` 写步骤、`sessions/session-directory.ts` 的准入写 `reserved`；不要另写步骤表 |
 | `newArchitectureCaptureRequestRecord` | `src/core/work-graph/state/architecture-capture.ts:37` | 建 status=requested 的捕获请求记录（revision/requestSeq 递增） | 接受一次自动捕获触发时 |
 | `architectureAutoCaptureState` | `src/core/work-graph/state/architecture-capture.ts:56` | 自动捕获的公开投影，pending 由 satisfiedRequestSeq 算出 | 判断是否该触发捕获 |
-| `attemptEventFromRunEvent` | `src/core/work-graph/state/attempt-machine.ts:211` | Run 事件映射为 Attempt 事件；null 表示三记录都不写 | Run 事件提交里同步 Attempt/Lease/Outbox |
-| `newTaskAttemptRecord` | `src/core/work-graph/state/attempt-machine.ts:250` | ATT-01 的 claimed@1，可带 requeueRef | claim 提交 |
-| `newTaskLeaseRecord` | `src/core/work-graph/state/attempt-machine.ts:257` | ATT-14 的 held@1，不靠 expiresAt 释放 | claim 提交 |
-| `newDispatchOutboxRecord` | `src/core/work-graph/state/attempt-machine.ts:265` | ATT-24 的 pending@1，保留不可变 claim | claim 提交 |
-| `transitionAttempt` | `src/core/work-graph/state/attempt-machine.ts:507` | TaskAttempt 的 ATT-01..13 迁移 | Run 事件同一提交 |
-| `transitionTaskLease` | `src/core/work-graph/state/attempt-machine.ts:691` | TaskLease 的持有/释放迁移 | release_lease、Attempt 结束时 |
-| `transitionDispatchOutbox` | `src/core/work-graph/state/attempt-machine.ts:792` | DispatchOutboxEntry 迁移 | Run 事件同一提交 |
+| `attemptEventFromRunEvent` | `src/core/work-graph/state/attempt-machine.ts:216` | Run 事件映射为 Attempt 事件；null 表示三记录都不写 | Run 事件提交里同步 Attempt/Lease/Outbox |
+| `newTaskAttemptRecord` | `src/core/work-graph/state/attempt-machine.ts:255` | ATT-01 的 claimed@1，可带 requeueRef | claim 提交 |
+| `newTaskLeaseRecord` | `src/core/work-graph/state/attempt-machine.ts:262` | ATT-14 的 held@1，不靠 expiresAt 释放 | claim 提交 |
+| `newDispatchOutboxRecord` | `src/core/work-graph/state/attempt-machine.ts:270` | ATT-24 的 pending@1，保留不可变 claim | claim 提交 |
+| `transitionAttempt` | `src/core/work-graph/state/attempt-machine.ts:512` | TaskAttempt 的 ATT-01..13 迁移 | Run 事件同一提交 |
+| `transitionTaskLease` | `src/core/work-graph/state/attempt-machine.ts:696` | TaskLease 的持有/释放迁移 | release_lease、Attempt 结束时 |
+| `transitionDispatchOutbox` | `src/core/work-graph/state/attempt-machine.ts:798` | DispatchOutboxEntry 迁移 | Run 事件同一提交 |
 | `commandSha256` | `src/core/work-graph/state/command-normalization.ts:34` | 命令摘要，走 contracts 的 sha256 | 记录/比较命令指纹 |
 | `parseShellActionsDetailed` | `src/core/work-graph/state/command-normalization.ts:522` | 解析一条命令里的 shell 动作，保留词边界 | 命令分类、重跑与审查 |
 | `commandRerunAdviserStageOf` | `src/core/work-graph/state/command-rerun-request.ts:95` | 新重跑请求谁先定：参谋、人，或没有参谋的人（121-110） | CRR owner 建请求前 |
@@ -247,15 +247,15 @@
 | `leaseReleasedForContinuation` | `src/core/work-graph/state/review-lease.ts:25` | 租约是否由 afterRun 或其复查轮释放 | 续作前置检查 |
 | `isUnenteredReviewRoundForCancellation` | `src/core/work-graph/state/review-lease.ts:41` | 可证明未进入 Kernel 的复查 Run | UR3h 取消判定 |
 | `reviewRoundEndedKnown` | `src/core/work-graph/state/review-lease.ts:63` | 复查 Run 是否已知结束 | 判断可续作 |
-| `newRunRecord` | `src/core/work-graph/state/run-machine.ts:860` | 建 Run 记录；`workspaceSnapshot.line` 取 claim 事件里 Goal 的线 | claim/开跑 |
-| `withBoundStart` | `src/core/work-graph/state/run-machine.ts:882` | 首次 entry 成功后把提交游标绑到返回的 Run；已有的值不替换 | entered/result 返回 Run 时 |
-| `transitionRun` | `src/core/work-graph/state/run-machine.ts:1400` | Run 主迁移，返回整条下一条 Run | 任何 Run 生命周期写入 |
+| `newRunRecord` | `src/core/work-graph/state/run-machine.ts:886` | 建 Run 记录；`workspaceSnapshot.line` 取 claim 事件里 Goal 的线 | claim/开跑 |
+| `withBoundStart` | `src/core/work-graph/state/run-machine.ts:909` | 首次 entry 成功后把提交游标绑到返回的 Run；已有的值不替换 | entered/result 返回 Run 时 |
+| `transitionRun` | `src/core/work-graph/state/run-machine.ts:1427` | Run 主迁移，返回整条下一条 Run | 任何 Run 生命周期写入 |
 | `runStateOf` | `src/core/work-graph/state/run-machine.ts:149` | Run 快照的机器状态 | Run 迁移前 |
 | `messageMachineStateOf` | `src/core/work-graph/state/message-machine.ts:367` | 消息记录的机器状态（带 `needsReply`，不再带 release/approval/pins）；缺失为 absent | 消息迁移前 |
 | `isPausedInterrupted` | `src/core/work-graph/state/run-machine.ts:209` | 是否 paused/interrupted 的结束 | 重排队与展示 |
 | `runUnresolvedBlocker` | `src/core/work-graph/state/run-machine.ts:223` | 未解决工具调用的阻塞原因 | 未知调用审查 |
-| `claimHoldGuard` | `src/core/work-graph/state/run-machine.ts:1133` | claim 时 Session/Lease 的持有检查 | claim 提交 |
-| `entryPermitGuard` | `src/core/work-graph/state/run-machine.ts:1228` | 进入许可与持久 claim 的一致性检查 | 进入 Kernel 前 |
+| `claimHoldGuard` | `src/core/work-graph/state/run-machine.ts:1160` | claim 时 Session/Lease 的持有检查 | claim 提交 |
+| `entryPermitGuard` | `src/core/work-graph/state/run-machine.ts:1255` | 进入许可与持久 claim 的一致性检查 | 进入 Kernel 前 |
 | `newSessionAnomalyAnchorRecord` | `src/core/work-graph/state/session-anomaly.ts:24` | 建异常锚点（每 Run 至多一个，不可变） | 发现异常时 |
 | `transitionSessionAnomaly` | `src/core/work-graph/state/session-anomaly.ts:27` | 异常锚点首次写入迁移 | 记录异常 |
 | `deriveSessionAnomalyView` | `src/core/work-graph/state/session-anomaly.ts:55` | 由锚点与后续事实派生异常视图 | 读异常 |

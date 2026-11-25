@@ -112,9 +112,14 @@ const SavedTransferInputField = f.object({
   expected: f.object({ fromSession: f.integer({ min: 0 }), toSession: f.integer({ min: 0 }),
     sourceLink: f.integer({ min: 0 }), destinationLink: f.integer({ min: 0 }) }),
 });
-/** The last refusal a step met, kept so the next advance can read why it stopped. */
+/**
+ * The last refusal a step met, kept so the next advance can read why it stopped. `scopeOwned` is set only by a
+ * handoff transfer child's refusal that carried the structured `CoreRejection.scopeOwned`; absent (every other
+ * refusal, and every record written before the mark) is false.
+ */
 const LastRefusalField = <const S extends readonly [string, ...string[]]>(stages: S) => f.nullable(f.object({
   stage: f.enumOf(stages), code: f.enumOf(CORE_ERRORS), reason: id, at: f.isoTime(),
+  scopeOwned: f.optional(f.literal(true)),
 }));
 
 /** No task in two assignments; an `existing` target is in the source's project and is not the source. */

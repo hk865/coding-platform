@@ -168,9 +168,19 @@ export function createMailboxInputSupply(deps: MailboxInputSupplyDependencies): 
     }
     return read.value !== null;
   };
-  const offerable = async (ctx: CoreCallContext, message: SessionMessage, part: 'message' | 'response'): Promise<boolean> => {
+  const offerable = async (ctx: CoreCallContext, message: SessionMessage, part: 'message' | 'response',
+    reader: SessionRef = sessionRef): Promise<boolean> => {
     const extra = await deliveryFactsOf(ctx, message);
-    return deliveryEligibility(consultationFacts(message, part, extra, sessionRef)).offerable;
+    return deliveryEligibility(consultationFacts(message, part, extra, reader)).offerable;
+  };
+  // A requeue on a line that continues the waiting one carries the Task's yielded Work wait; its claim admitted this
+  // Session on the sender's continuation chain, so the wait it bound reaches this execution as it would reach the
+  // sender's line. A wait whose reply handler was moved belongs to that handler alone.
+  const continuesBoundWait = (message: SessionMessage): boolean => {
+    const wait = deps.consumedWait;
+    return wait !== undefined && wait.kind !== 'intervention' && message.sender.kind === 'work_run'
+      && (message.replyHandler ?? null) === null
+      && sessionMessageRefKey(wait.messageRef) === sessionMessageRefKey(message.ref);
   };
   const readResponse = async (ctx: CoreCallContext, message: SessionMessage, seen: Set<string>,
     results: SuppliedInput[], ownSource: SessionMessage['ref'] | null): Promise<void> => {
@@ -186,15 +196,16 @@ export function createMailboxInputSupply(deps: MailboxInputSupplyDependencies): 
     // takes it. A consumed, expired or wait-less reply is an ordinary late
     // reply and is supplied by the renderer below.
     const handler = effectiveReplyHandler(message);
-    if (replyStillBoundToWait(message)
-      && (deps.consumedWait?.kind === 'intervention' || handler === null || !sameSession(handler, sessionRef))) return;
+    const continued = continuesBoundWait(message);
+    if (replyStillBoundToWait(message) && (deps.consumedWait?.kind === 'intervention' || handler === null
+      || (!sameSession(handler, sessionRef) && !continued))) return;
     // §2.5: the effective reply handler is the recorded `replyHandler` when set,
     // otherwise the original work_run sender. A transferred reply is supplied
     // only to the handler, never to the original sender (`readOutbox`).
     if (message.replyHandler != null && !sameSession(message.replyHandler.sessionRef, sessionRef)) return;
     const inputId = deriveInputId(message.ref, 'response');
     if (seen.has(inputId)) return;
-    if (!await offerable(ctx, message, 'response')) return;
+    if (!await offerable(ctx, message, 'response', continued && handler !== null ? handler : sessionRef)) return;
     // Design 2.3: a card answer reaches the line once. Once the card's own card-answer round (its deterministic
     // `decision_answer` Query) exists, that round took it and no later Work or Query round here is supplied it; a card
     // whose round is not created yet is still supplied (the acceptance commit guards that Query absent).
@@ -352,7 +363,7 @@ export function createMailboxInputSupply(deps: MailboxInputSupplyDependencies): 
         const read = await deps.messages.readMessage(ctx, wait.messageRef);
         if (read.status !== 'ready') throw new Error(`saved wait message unavailable: ${read.status}`);
         const handler = effectiveReplyHandler(read.value);
-        if (handler === null || !sameSession(handler, sessionRef))
+        if ((handler === null || !sameSession(handler, sessionRef)) && !continuesBoundWait(read.value))
           throw new Error('saved wait is not this Session\'s reply handler');
         await readResponse(ctx, read.value, seen, results, ownSource);
       } else if (wait.kind === 'expiry') {
@@ -361,7 +372,8 @@ export function createMailboxInputSupply(deps: MailboxInputSupplyDependencies): 
         // A withdrawn or unreleased wait supplies no expiry input; the execution
         // still reads its ordinary mail and control inputs.
         if (messageConsumptionProblem(messageFactsOfRecord(read.value)) === null) {
-          if (read.value.sender.kind !== 'work_run' || !sameSession(read.value.sender.sessionRef, sessionRef))
+          if (read.value.sender.kind !== 'work_run'
+            || (!sameSession(read.value.sender.sessionRef, sessionRef) && !continuesBoundWait(read.value)))
             throw new Error('saved wait is not this Session\'s work_run wait');
           const inputId = deriveInputId(read.value.ref, 'expiry');
           if (!seen.has(inputId)) {

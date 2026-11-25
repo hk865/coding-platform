@@ -502,7 +502,10 @@ export type RunClaimContext = {
    * `unreadable` refuses `unavailable` (L7 fail-closed). A review claim passes.
    */
   reviewBlocker?: 'pending' | 'held' | 'unreadable';
-  /** Continuation claim: the prior Run's facts, one arm per what the claim actually consumes. */
+  /**
+   * Continuation claim, or a requeue claim carrying a yielded wait: the prior Run's facts, one arm per what the claim
+   * actually consumes.
+   */
   prior: null | {
     kind: 'yielded';
     node: RunNode;
@@ -640,6 +643,29 @@ export function reviewBlockerProblem(blocker: 'pending' | 'held' | 'unreadable' 
 }
 
 /**
+ * The yielded prior a claim consumes: a Run of this Task that yielded with a formal continuation on this wait, bound
+ * to the claim's Session (`bindingProblem`), with no queued pause/cancel, and a consumable saved reply. `lease` adds
+ * the continuation's own rule that this prior released the lease; a requeue carrying the wait leaves the lease to
+ * its requeue guards. `undefined` is not read yet and holds, like every unread guard.
+ */
+function yieldedPriorProblem(prior: RunClaimContext['prior'] | undefined, lease: boolean): Rejected | null {
+  if (prior === undefined) return null;
+  if (prior === null) return reject('guard_failed', 'busy', 'the continuation prior Run is not a Run of this Task');
+  if (prior.kind !== 'yielded') return reject('guard_failed', 'busy', 'the continuation prior is not a yielded continuation');
+  if (prior.node !== 'YieldedWait') {
+    return reject('guard_failed', 'busy', 'the continuation prior Run did not yield with a formal continuation');
+  }
+  if (prior.bindingProblem !== null) return rejected(prior.bindingProblem);
+  // A queued wait-window pause/cancel survives the yield and holds the continuation.
+  if (prior.pointer === 'paused' || prior.pointer === 'cancelled') {
+    return reject('guard_failed', 'busy', `the prior yielded Run has a queued ${prior.pointer} control; the continuation is held`);
+  }
+  if (lease && !prior.leaseReleasedByPrior) return reject('guard_failed', 'busy', 'the continuation prior Run lease is not released by that Run');
+  if (prior.replyProblem !== null) return rejected(prior.replyProblem);
+  return null;
+}
+
+/**
  * RUN-01 and TASK-01..03 after each machine's own Session, Task, phase and
  * lease guards, in `claim-service.ts:510-666` order: the claim basis, then the
  * assignment, role and deadline admission. Both machines answer one claim
@@ -665,6 +691,12 @@ export function claimBasisProblem(
       // Run (P4) admits a new Attempt; the Run records its `requeueRef`.
       const problem = requeueClaimProblem(facts.requeue);
       if (problem !== null) return problem;
+      // A requeue that carries the Task's last yielded wait proves that wait's prior like a continuation, except
+      // the lease: the requeue's afterRun released it (ATT-16 above).
+      if (basis.consumedWait !== undefined) {
+        const carried = yieldedPriorProblem(facts.prior, false);
+        if (carried !== null) return carried;
+      }
       break;
     }
     case 'continuation': {
@@ -680,18 +712,8 @@ export function claimBasisProblem(
         if (prior.replyProblem !== null) return rejected(prior.replyProblem);
         break;
       }
-      if (prior === null) return reject('guard_failed', 'busy', 'the continuation prior Run is not a Run of this Task');
-      if (prior.kind !== 'yielded') return reject('guard_failed', 'busy', 'the continuation prior is not a yielded continuation');
-      if (prior.node !== 'YieldedWait') {
-        return reject('guard_failed', 'busy', 'the continuation prior Run did not yield with a formal continuation');
-      }
-      if (prior.bindingProblem !== null) return rejected(prior.bindingProblem);
-      // A queued wait-window pause/cancel survives the yield and holds the continuation.
-      if (prior.pointer === 'paused' || prior.pointer === 'cancelled') {
-        return reject('guard_failed', 'busy', `the prior yielded Run has a queued ${prior.pointer} control; the continuation is held`);
-      }
-      if (!prior.leaseReleasedByPrior) return reject('guard_failed', 'busy', 'the continuation prior Run lease is not released by that Run');
-      if (prior.replyProblem !== null) return rejected(prior.replyProblem);
+      const yielded = yieldedPriorProblem(prior, true);
+      if (yielded !== null) return yielded;
       break;
     }
     case 'review': {
@@ -858,7 +880,8 @@ export type NewRunInput = {
 /**
  * RUN-01: `starting@1` in `claim-service.ts:698-703` key order. A continuation
  * claim records its `consumedWait`; a requeue claim its `requeueRef` (TASK-03),
- * exclusive with `consumedWait`.
+ * and the yielded wait it carries as `consumedWait` (never an intervention), so
+ * the Runtime supplies that wait's reply or expiry like a continuation's.
  */
 export function newRunRecord(input: NewRunInput): RunSnapshot {
   const { claim, basis } = input;
@@ -870,6 +893,8 @@ export function newRunRecord(input: NewRunInput): RunSnapshot {
     lastRuntimeEventId: '', lastFactEventId: '', envelope: null, startedAt: null, startedSince: null, endedAt: null,
     previousRun: claim.previousRun,
     ...(basis.kind === 'continuation' ? { consumedWait: structuredClone(basis.consumedWait) } : {}),
+    ...(basis.kind === 'requeue' && basis.consumedWait !== undefined
+      ? { consumedWait: structuredClone(basis.consumedWait) } : {}),
     ...(basis.kind === 'requeue' ? { requeueRef: basis.requeueRef } : {}),
     ...(basis.kind === 'review' ? { purpose: { kind: 'unknown_call_review' as const,
       reviewRef: structuredClone(basis.reviewRef), phase: basis.phase, round: basis.round } } : {}),

@@ -1,13 +1,17 @@
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { SessionRef, WorkspaceScope } from '../../../contracts/core/identity.js';
 import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
+import type { SessionProvenanceV1 } from '../../../contracts/core/session.js';
 import type { CoreRejection, ReadResult } from '../../../contracts/core/results.js';
 import { rejectedWithCurrent as reject } from '../../../contracts/core/rejections.js';
 import { canonicalOf } from '../../../contracts/fingerprint.js';
 import { isRecord as isObject } from '../../../contracts/validation/common.js';
 import { deriveMessageDelivery, readNoAnswerClosingNotice } from '../model/communication-contracts.js';
 import type { SessionMessage, SessionMessageReadV1 } from '../model/communication-contracts.js';
+import { continuesTaskLine } from '../model/session-contracts.js';
 import { decodeStoredMessageBody, decodeStoredUserDecisionBody, isUserDecisionAnswerPart } from '../sessions/message-body-envelope.js';
+import { isWaitMessage } from '../state/message-machine.js';
+import { readWaitRun } from './mailbox-archive.js';
 import {
   internalHostContext, isUserRecipient, isolatedContext, loadMessage, mapReadResult, normalizeMessageRef,
   ownContext, recipientLineFacts, sameSessionRefAs, scopeOfMessageRef,
@@ -21,9 +25,10 @@ import type { MailboxContext, Owned, ReadRight, Unknown } from './mailbox-types.
 /**
  * The one single-message read right. Steps 1–4 establish a right without any
  * read; only a secretary-sent message with a request root and no established
- * right consults the request's owner. `ready(null)` and `not_found` add no
- * right; any other failure is `unavailable`; a failure never erases an
- * already established right.
+ * right consults the request's owner, and only a Work wait letter consults the
+ * reader's continuation chain (`continuationWaitRight`). `ready(null)` and
+ * `not_found` add no right; any other failure is `unavailable`; a failure never
+ * erases an already established right.
  */
 async function canReadMessage(mailbox: MailboxContext, owned: Owned, reader: SessionRef, message: SessionMessage): Promise<ReadRight> {
   const recipient = message.recipient;
@@ -46,6 +51,7 @@ async function canReadMessage(mailbox: MailboxContext, owned: Owned, reader: Ses
   // still use `ownsInbox`, i.e. the original recipient).
   const handler = message.replyHandler ?? null;
   if (handler !== null && sameSessionRefAs(handler.sessionRef, reader)) return { ok: true, allowed: true };
+  if (message.sender.kind === 'work_run') return continuationWaitRight(mailbox, owned, reader, message, message.sender);
   if (message.sender.kind !== 'secretary_round' || message.requestRoot === null) {
     return { ok: true, allowed: false };
   }
@@ -64,6 +70,44 @@ async function canReadMessage(mailbox: MailboxContext, owned: Owned, reader: Ses
   }
   if (owner.value === null) return { ok: true, allowed: false };
   return { ok: true, allowed: canonicalOf(owner.value) === canonicalOf(reader) };
+}
+
+/**
+ * A Session that continues a Task (its `continuation` provenance) reads the wait letters the same-Task predecessor
+ * lines sent: after a crash the requeue continues on a new line, and that line must read the question it still waits
+ * on instead of asking again. Only a Work wait letter whose sending Session lies on the reader's chain
+ * (`continuesTaskLine`, the Task the reader's provenance names) and whose Run is a Run of that Task; read only —
+ * acknowledge and respond keep `ownsInbox`. A read that fails (a Session hop, or the sender Run thrown, `unsupported`,
+ * `incomplete` or damaged) is `unavailable`, never an allowed or a denied read; only a sender Run that does not exist
+ * denies.
+ */
+async function continuationWaitRight(mailbox: MailboxContext, owned: Owned, reader: SessionRef,
+  message: SessionMessage, sender: Extract<SessionMessage['sender'], { kind: 'work_run' }>): Promise<ReadRight> {
+  if (!isWaitMessage(message)) return { ok: true, allowed: false };
+  const unreadable: ReadRight = { ok: false, rejection: reject('unavailable', 'the reader Session continuation chain could not be read') };
+  const ctx = internalHostContext(mailbox, owned);
+  const provenanceOf = async (ref: SessionRef): Promise<SessionProvenanceV1 | 'unreadable'> => {
+    try {
+      const read = await mailbox.deps.sessions.readSession(ctx, ref, 'project');
+      return read.status === 'ready' ? read.value.record.provenance : 'unreadable';
+    } catch {
+      return 'unreadable';
+    }
+  };
+  const own = await provenanceOf(reader);
+  if (own === 'unreadable') return unreadable;
+  if (own.kind !== 'continuation') return { ok: true, allowed: false };
+  const chain = await continuesTaskLine(reader, own, sender.sessionRef, own.task, provenanceOf);
+  if (chain === 'unreadable') return unreadable;
+  if (!chain) return { ok: true, allowed: false };
+  const run = await readWaitRun(mailbox, owned, sender.runRef).catch(() => null);
+  if (run === null || (!run.ok && run.rejection.code !== 'not_found')) {
+    return { ok: false, rejection: reject('unavailable', 'the wait letter sender Run could not be read') };
+  }
+  if (!run.ok) return { ok: true, allowed: false };
+  const task = run.run.task;
+  return { ok: true, allowed: task.projectId === own.task.projectId && task.goalId === own.task.goalId
+    && task.taskId === own.task.taskId };
 }
 
 export function ownsInbox(mailbox: MailboxContext, sessionRef: SessionRef, message: SessionMessage): boolean {

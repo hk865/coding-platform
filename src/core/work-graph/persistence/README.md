@@ -109,10 +109,10 @@
 | `PLAN_PROPOSAL_COMMIT_CURSOR_FIELDS` | `src/core/work-graph/persistence/plan-record-codecs.ts:90` | 候选记录的三个提交游标字段：`since` 由链首候选的创建提交绑定、替换候选复制；`createdSince` 由每份候选自己的创建提交绑定、替换候选不复制前任；`until` 只由采用提交绑定；PlanProposal schema 的 `commitCursorFields` 用它 | 注册或核对 PlanProposal schema 时；不要另列游标字段 |
 | `RUN_SNAPSHOT_SCHEMA_ID` | `src/core/work-graph/persistence/run-record-codecs.ts:27` | `RunSnapshot@1` 的 schema id；materials 注册读取它 | 注册或核对 Run 记录 schema 时 |
 | `QUERY_RUN_SNAPSHOT_SCHEMA_ID` | `src/core/work-graph/persistence/run-record-codecs.ts:28` | `QueryRunSnapshot@1` 的 schema id；materials 注册读取它 | 注册或核对 QueryRun 记录 schema 时 |
-| `validateRunSnapshot` | `src/core/work-graph/persistence/run-record-codecs.ts:197` | 唯一的 `RunSnapshot@1` 编码校验（含 `consumedWait` 三臂与 required `previousRun` 的链接检查）；不判断业务准入 | Run 记录读取/解码；不要再写一份 |
+| `validateRunSnapshot` | `src/core/work-graph/persistence/run-record-codecs.ts:200` | 唯一的 `RunSnapshot@1` 编码校验（含 `consumedWait` 三臂与 required `previousRun` 的链接检查；有 `requeueRef` 的 Run 只能带 `wait_reply`/`expiry` 的 `consumedWait`，不能带 `intervention`）；不判断业务准入 | Run 记录读取/解码；不要再写一份 |
 | `executionRequestProfileProblem` | `src/core/work-graph/persistence/run-record-codecs.ts:298` | 执行状态必填的 `requestProfile`：null 或完整 profile（profileId、runtimeBudget、budget、consumerId） | QueryRun 记录与执行事件共用的唯一校验 |
 | `executionPreparedProblem` | `src/core/work-graph/persistence/run-record-codecs.ts:329` | 执行状态必填的 `prepared`：null 或带必填 `requestEffectiveGoalId`（null 或非空）的绑定 | QueryRun 记录与执行事件共用的唯一校验 |
-| `validateQueryRunSnapshot` | `src/core/work-graph/persistence/run-record-codecs.ts:340` | 唯一的 `QueryRunSnapshot@1` 编码校验；queries 复用它 | 解码/校验 QueryRun 记录 |
+| `validateQueryRunSnapshot` | `src/core/work-graph/persistence/run-record-codecs.ts:346` | 唯一的 `QueryRunSnapshot@1` 编码校验；queries 复用它 | 解码/校验 QueryRun 记录 |
 | `decodeRun` | `src/core/work-graph/persistence/run-record-codecs.ts:408` | 唯一的 schema-checked `RunSnapshot` 解码及其 `Decoded` 类型；Session/邮箱/Task 读共用 | 需要解码 Run 快照时；不要另写宽松解析 |
 
 ## 内部用

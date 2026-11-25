@@ -112,7 +112,12 @@ export type AttemptClaimBasis =
   | { kind: 'continuation'; consumedWait: ConsumedWaitV1; previousRun: RunRef | null }
   | { kind: 'requeue'; requeueRef: TaskRequeueRef;
       /** K3 (U3, L10): the releasing Run and its purpose, read in the same window. */
-      leaseRelease?: { releasedBy: RunRef; releasedByPurpose: RunSnapshot['purpose'] | null } }
+      leaseRelease?: { releasedBy: RunRef; releasedByPurpose: RunSnapshot['purpose'] | null };
+      /**
+       * The Task's last yielded wait the requeue carries (a saved reply or an expiry) when it claims on the waiting
+       * line's continuation chain; the Run records it as `consumedWait`.
+       */
+      consumedWait?: Exclude<ConsumedWaitV1, { kind: 'intervention' }> }
   | { kind: 'review'; reviewRef: UnknownCallReviewRef; expectedRevision: number; phase: 'review' | 'proposal';
       /** The round number this claim opens (`rounds.length + 1`); the §2 basis
        *  omits it, but the Run's `purpose.round` needs a carrier (UNSPECIFIED). */

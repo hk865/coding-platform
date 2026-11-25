@@ -6,7 +6,7 @@ import type { AggregateRef, GoalRef } from '../../contracts/ledger.js';
 import type { ModuleOverlapGateRef } from '../../contracts/module-overlap-gate.js';
 import type { PlanRevisionRef, PlanRevisionSnapshot } from '../../contracts/plan.js';
 import type { QueryJobAnswerSnapshot, QueryJobIntentV1, QueryRunRef } from '../../contracts/query-job.js';
-import type { RoleBindingRefV1, RunRef, TaskBudgetV1, TaskTriple } from '../../contracts/dispatch.js';
+import type { ConsumedWaitV1, RoleBindingRefV1, RunRef, TaskBudgetV1, TaskTriple } from '../../contracts/dispatch.js';
 import type { UnknownCallReviewRef } from '../../contracts/unknown-call-review.js';
 import type { CommandRerunRequestRef } from '../../contracts/command-rerun-request.js';
 import type { ActionRequestRef } from '../../contracts/action-request.js';
@@ -207,7 +207,12 @@ export type WorkflowStepKind = keyof WorkflowCalls;
  * Session creation for a `claim_requeued` Task (spec §4 4.3, LA-1): the new
  * Session then claims with this requeue and budget.
  */
-export type WorkflowSessionRequeue = { requeueRef: TaskRequeueRef; budget: TaskBudgetV1 | null };
+export type WorkflowSessionRequeue = { requeueRef: TaskRequeueRef; budget: TaskBudgetV1 | null;
+  /**
+   * The Task's last yielded wait (a saved reply or a recorded expiry) the requeue claim carries when its Session
+   * continues the waiting line; absent when there is none or the claim Session is off that line's chain.
+   */
+  consumedWait?: ConsumedWaitV1 };
 
 /**
  * K3 (spec §2 L10/L12/L13): the review round a new Session is created for. It

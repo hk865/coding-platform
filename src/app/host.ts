@@ -1384,8 +1384,8 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       });
       startingRuns.set(ctx, runs);
     }
-    // The Goal's Runs held at the gate (`starting` + `authorized`); the smallest class wins. A person's rework
-    // (`requeueRef`) and an intervention claim with no prior Run are 2 (the lead's known corners).
+    // The Goal's Runs held at the gate (`starting` + `authorized`); the smallest class wins. Consuming a saved reply or
+    // expiry is 1 (a requeue carrying the Task's yielded wait too); other requeues and a first intervention are 2.
     let best: 0 | 1 | 2 = 2;
     for (const run of await runs) {
       if (run.ref.goalId !== call.goalRef.goalId || run.executionAuthorization?.phase !== 'authorized') continue;

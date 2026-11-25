@@ -11,7 +11,7 @@ import type { TaskClaim } from '../../../contracts/core/task-claim.js';
 import type { WriteResult, ReadResult } from '../../../contracts/core/results.js';
 import type { DelegatedWriteProvenanceV1 } from '../../../contracts/delegated-write.js';
 import type {
-  ConsumedWaitV1, RoleBindingRefV1, RunRef, TaskBudgetV1, TaskTriple,
+  ConsumedWaitV1, RoleBindingRefV1, RunRef, RunSnapshot, TaskBudgetV1, TaskTriple,
 } from '../../../contracts/dispatch.js';
 import type { GoalRef } from '../../../contracts/ledger.js';
 import type { DecisionChangeProofV1 } from '../../../contracts/goal-decisions.js';
@@ -42,16 +42,19 @@ export type ClaimTaskInput = {
   roleBinding: RoleBindingRefV1;
   budget: TaskBudgetV1;
   /**
-   * Present only for a continuation claim: the earlier yielded Run whose saved
+   * Present for a continuation claim: the earlier yielded Run whose saved
    * wait reply this new Attempt consumes. It is part of the claim fingerprint, so
    * a repeated wake request with the same pair replays instead of creating a
-   * second Attempt/Run.
+   * second Attempt/Run. Beside `requeueRef` it is the wait of the Task's last
+   * yield before the requeue (`lastYieldedRunOf`; `wait_reply` or `expiry`) the
+   * requeue carries onto the waiting line's continuation chain; that claim keeps
+   * the requeue's request identity.
    */
   consumedWait?: ConsumedWaitV1;
   /**
-   * Present only for a claim after a TaskRequeue (spec §4 TD-3, TASK-03);
-   * exclusive with `consumedWait` and part of the claim fingerprint. The new
-   * Attempt and Run record the same ref.
+   * Present only for a claim after a TaskRequeue (spec §4 TD-3, TASK-03); never
+   * with an `intervention` `consumedWait`, and part of the claim fingerprint. The
+   * new Attempt and Run record the same ref.
    */
   requeueRef?: TaskRequeueRef;
   /**
@@ -97,6 +100,25 @@ export type ClaimTaskInput = {
    */
   intervention?: { messageRef: SessionMessageRef };
 };
+/**
+ * The Task's last yield before a requeue: from `afterRun` (itself included) back over `previousRun` (A-07: the Run
+ * whose released lease the next claim took) to the first Run that ended `yielded` with a formal continuation. A
+ * requeue claim carries only that Run's wait, never an older one; the Workflow picks it and the claim owner checks it
+ * with this one rule. `previousRun` names an earlier Run of the same Task, so the walk ends. `null` when none of them
+ * yielded; a Run that cannot be read is `unreadable`, never skipped.
+ */
+export async function lastYieldedRunOf(
+  afterRun: RunRef, readRun: (ref: RunRef) => Promise<RunSnapshot | 'unreadable'>,
+): Promise<RunSnapshot | null | 'unreadable'> {
+  let next: RunRef | null = afterRun;
+  while (next !== null) {
+    const run = await readRun(next);
+    if (run === 'unreadable') return run;
+    if (run.outcome === 'yielded' && run.continuation !== undefined) return run;
+    next = run.previousRun;
+  }
+  return null;
+}
 /**
  * Owner request of `requeueTask` (spec §4.1). `reason` is non-empty and
  * bounded and never part of a rework key. `budget` is never supplied by an

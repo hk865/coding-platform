@@ -30,7 +30,7 @@
 import type { ActorRef, CommitCursor } from '../../../contracts/command-event.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { RoleConfigurationRef, SessionRef, SessionWorkLinkRef, VersionPin, WorkspaceScope } from '../../../contracts/core/identity.js';
-import type { SessionRecord, SessionWorkLink } from '../../../contracts/core/session.js';
+import type { SessionProvenanceV1, SessionRecord, SessionWorkLink } from '../../../contracts/core/session.js';
 import type { EffectWriteResultV1, SessionMessageRef } from '../../../contracts/core/session-message.js';
 import type { CoreRejection, ReadResult } from '../../../contracts/core/results.js';
 import type {
@@ -53,7 +53,8 @@ import type {
 import type { RecordLookupPort, RecordOrderedLookupPort } from '../../record-store/lookup-ports.js';
 import {
   decodeSessionRecord, decodeSessionWorkLink, encodePendingSessionWorkLink, encodeSessionRecord,
-  plainSessionRefToAggregate, sessionAggregateRefKey, sessionWorkLinkRefKey, type PendingSessionWorkLink,
+  plainSessionRefKey, plainSessionRefToAggregate, sessionAggregateRefKey, sessionWorkLinkRefKey,
+  type PendingSessionWorkLink,
 } from '../sessions/session-record-codecs.js';
 import {
   taskLeaseNodeOf, transitionAttempt, transitionDispatchOutbox, transitionTaskLease,
@@ -84,10 +85,12 @@ import {
   decodeUnknownCallReview, encodeUnknownCallReview, encodeUnknownCallReviewChangedEvent,
   unknownCallReviewRefKey, UNKNOWN_CALL_REVIEW_CHANGED_EVENT_TYPE, UNKNOWN_CALL_REVIEW_EVENT_SCHEMA_VERSION,
 } from './unknown-call-review-codecs.js';
-import type {
-  ClaimTaskInput, PlanSourceRootPort, TaskClaim, TaskClaimDependencies, TaskClaimPort,
+import {
+  lastYieldedRunOf,
+  type ClaimTaskInput, type PlanSourceRootPort, type TaskClaim, type TaskClaimDependencies, type TaskClaimPort,
 } from '../model/claim-contracts.js';
 import type { SessionFactsV1 } from '../model/session-facts-contracts.js';
+import { continuesTaskLine } from '../model/session-contracts.js';
 import type { GoalSettingsPort } from '../model/decision-contracts.js';
 import type { GraphWrite } from '../model/task-contracts.js';
 import { evaluateEligibility } from './eligibility.js';
@@ -101,6 +104,7 @@ import { goalStartPolicy } from '../state/goal-settings-machine.js';
 import type { SessionMessage } from '../model/communication-contracts.js';
 import { sessionMessageRefKey } from '../sessions/message-record-codecs.js';
 import { taskRequeueRefProblem } from '../persistence/rework-codecs.js';
+import { readOwnerRecord } from '../persistence/owner-record-read.js';
 import { pinsFromStoreCurrent } from '../persistence/read-result-failures.js';
 import { rejected, rejectedWithCurrent as reject } from '../../../contracts/core/rejections.js';
 import { isNonNeg as isSafeRevision, isPos as isPositiveBudget, isRecord, nonEmpty } from '../../../contracts/validation/common.js';
@@ -185,8 +189,9 @@ function rejectionOf(refusal: Refusal | null): CoreRejection | null {
 /**
  * S1-DISPATCH-01: the direct Work-claim Session exclusion. `facts` is the
  * trusted Session read (`tasks/session-facts.ts`; this service uses that
- * submodule directly, §0.2 L1) and `consumedWait` is the continuation wait the
- * claim names, or `null` for a first/requeue claim. The two only admit the exact
+ * submodule directly, §0.2 L1) and `consumedWait` is the wait the claim names (a
+ * continuation's, or the yielded wait a requeue carries), or `null` for a
+ * first/requeue claim without one. The two only admit the exact
  * same-Task/Run/message `consumedWait` exception; a copy provenance is
  * `forbidden`, a pending archive request or another wait is `busy`. Returns the
  * owner rejection, or `null` to admit. The machine decision itself is
@@ -242,10 +247,18 @@ function requestMarksOf(input: ClaimTaskInput): Record<string, unknown> {
   };
 }
 
-/** First claim, W2 continuation, a claim after a TaskRequeue (D-3, TASK-03) or a review claim (TASK-03r, L10). */
+/**
+ * First claim, W2 continuation, a claim after a TaskRequeue (D-3, TASK-03) or a review claim (TASK-03r, L10). A
+ * requeue claim that carries the Task's last yielded wait stays a requeue; the basis carries the wait.
+ */
 function claimBasisOf(input: ClaimTaskInput, review: UnknownCallReviewV1 | null): AttemptClaimBasis {
+  if (input.requeueRef !== undefined) {
+    const carried = input.consumedWait;
+    // `validateInputShape` refused a requeue that names an intervention before this basis is built.
+    if (carried?.kind === 'intervention') throw new Error('a requeue claim never carries an intervention');
+    return { kind: 'requeue', requeueRef: input.requeueRef, ...(carried === undefined ? {} : { consumedWait: carried }) };
+  }
   if (input.consumedWait !== undefined) return { kind: 'continuation', consumedWait: input.consumedWait, previousRun: null };
-  if (input.requeueRef !== undefined) return { kind: 'requeue', requeueRef: input.requeueRef };
   if (input.review !== undefined) {
     if (review === null) throw new Error('the review basis requires its record');
     return { kind: 'review', reviewRef: review.ref, expectedRevision: input.review.expectedRevision,
@@ -373,17 +386,25 @@ function structuralProblemOf(eligibility: TaskEligibility): CoreRejection | null
   }
 }
 
-/** The yielded continuation names this wait message, Task and Session. */
+/**
+ * The yielded continuation names this wait message, Task and Session. A requeue carrying the wait (`carried`) carries
+ * only the wait of the Task's last yield before the requeue (`lastYield`, `lastYieldedRunOf`) and may claim on a line
+ * that continues that Session for this Task (`continuesLine`, `continuesTaskLine`).
+ */
 function continuationBindingProblem(
   continuation: RunContinuationV1, consumedWait: ConsumedWaitV1, input: ClaimTaskInput,
+  carried: { lastYield: boolean; continuesLine: boolean } | null,
 ): CoreRejection | null {
+  if (carried !== null && !carried.lastYield) {
+    return busy('the carried wait is not the wait of the Task\'s last yield before the requeue');
+  }
   if (!sameRef(continuation.messageRef, consumedWait.messageRef)) {
     return busy('the continuation wait message does not match the yielded Run');
   }
   if (continuation.task.taskId !== input.taskId || continuation.task.goalId !== input.goalRef.goalId) {
     return forbidden('the continuation prior Run belongs to another Task');
   }
-  if (continuation.sessionRef.sessionId !== input.sessionRef.sessionId) {
+  if (continuation.sessionRef.sessionId !== input.sessionRef.sessionId && carried?.continuesLine !== true) {
     return forbidden('the continuation prior Run used another Session');
   }
   return null;
@@ -400,14 +421,15 @@ function continuationBindingProblem(
  */
 function continuationPrior(
   prior: RunSnapshot, lease: TaskLeaseSnapshot | null, consumedWait: ConsumedWaitV1, input: ClaimTaskInput,
-  previousRun: RunRef,
+  previousRun: RunRef | null, carried: { lastYield: boolean; continuesLine: boolean } | null,
 ): NonNullable<TaskClaimFacts['prior']> {
   return {
     kind: 'yielded',
     node: runControlNodeOf(prior),
     pointer: runStateOf(prior).pointer,
-    bindingProblem: prior.continuation === undefined ? null : continuationBindingProblem(prior.continuation, consumedWait, input),
-    leaseReleasedByPrior: lease !== null && taskLeaseNodeOf(lease) === 'released'
+    bindingProblem: prior.continuation === undefined ? null
+      : continuationBindingProblem(prior.continuation, consumedWait, input, carried),
+    leaseReleasedByPrior: previousRun !== null && lease !== null && taskLeaseNodeOf(lease) === 'released'
       && lease.holderRunId === previousRun.runId,
     replyProblem: null,
   };
@@ -595,8 +617,11 @@ function validateInputShape(input: ClaimTaskInput, scope: WorkspaceScope): CoreR
     if (problem !== null) return reject('invalid', problem);
   }
   if (input.requeueRef !== undefined) {
-    // TD-3: a requeue claim never consumes a wait, and names a TaskRequeue of this Task.
-    if (input.consumedWait !== undefined) return reject('invalid', 'requeueRef and consumedWait are exclusive');
+    // TD-3: a requeue claim names a TaskRequeue of this Task and never consumes an intervention. It may carry the
+    // Task's last yielded wait (a saved reply or an expiry), so a crash requeue does not lose that reply.
+    if (input.consumedWait?.kind === 'intervention') {
+      return reject('invalid', 'a requeue claim cannot consume an intervention');
+    }
     const requeueProblem = taskRequeueRefProblem(input.requeueRef, 'claimTask requeueRef');
     if (requeueProblem !== null) return reject('invalid', requeueProblem);
     if (input.requeueRef.projectId !== scope.projectId || input.requeueRef.goalId !== goalRef['goalId']
@@ -1148,6 +1173,13 @@ export function createTaskClaimService(deps: TaskClaimGoalSettingsDependencies):
     return { request: read.record };
   }
 
+  /** A Session's recorded provenance, for the continuation chain's hops; a failed or missing read is `unreadable`. */
+  async function sessionProvenanceOf(ref: SessionRef): Promise<SessionProvenanceV1 | 'unreadable'> {
+    const read = await readOwnerRecord({ store: records, refKey: plainSessionRefKey(ref),
+      decode: decodeSessionRecord, readError: (message) => unavailable(message) });
+    return read.ok ? read.value.provenance : 'unreadable';
+  }
+
   async function claimTask(ctx: CoreCallContext, request: GraphWrite<ClaimTaskInput>):
   Promise<EffectWriteResultV1<TaskClaim>> {
     const ownedCtx = ownCallContext(ctx);
@@ -1175,7 +1207,8 @@ export function createTaskClaimService(deps: TaskClaimGoalSettingsDependencies):
     // actor-independent, NOT by the caller's requestId or Host actor: a later
     // wake (even from another Host actor) must replay the original receipt
     // instead of claiming a second continuation Run.
-    const actorBound = input.consumedWait === undefined;
+    // A requeue claim that carries a yielded wait keeps the requeue's request identity (TASK-03).
+    const actorBound = input.consumedWait === undefined || input.requeueRef !== undefined;
     const { identityKey, fingerprint } = actorBound
       ? identityAndFingerprint(actor, scope, requestId, input, expected)
       : continuationIdentityAndFingerprint(scope, input, expected);
@@ -1236,7 +1269,7 @@ export function createTaskClaimService(deps: TaskClaimGoalSettingsDependencies):
       const formallyCompleted = phaseRead.snapshot !== null && predecessorRead.goal.activePlanRevision !== null
         && sameRef(phaseRead.snapshot.planRef, predecessorRead.goal.activePlanRevision);
       const policy = goalStartPolicy({
-        action: input.consumedWait === undefined ? 'claim' : 'continue_work',
+        action: basis.kind === 'continuation' ? 'continue_work' : 'claim',
         goal,
         predecessor: { exists: true, cancelled: predecessorRead.goal.desiredState === 'cancelled',
           formallyCompletedForActivePlan: formallyCompleted },
@@ -1251,7 +1284,8 @@ export function createTaskClaimService(deps: TaskClaimGoalSettingsDependencies):
       activePlanMatchesClaim: goal.activePlanRevision !== null
         && refKeyOf(goal.activePlanRevision) === refKeyOf(input.planRef),
       sessionProblem: null, structuralProblem: null, lease: { status: 'free' }, taskHasRun: false,
-      ...(basis.kind === 'continuation' ? {} : { prior: null }),
+      // A claim naming a wait (a continuation, or a requeue carrying one) reads its prior below.
+      ...(input.consumedWait !== undefined ? {} : { prior: null }),
       requeue: basis.kind === 'requeue' ? UNREAD_REQUEUE : null,
       review: basis.kind === 'review' && reviewRecord !== null ? unreadReview(reviewRecord.ref) : null,
       admission: null,
@@ -1376,7 +1410,7 @@ export function createTaskClaimService(deps: TaskClaimGoalSettingsDependencies):
     let previousRun: RunRef | null = null;
     let requeue: TaskClaimFacts['requeue'] = null;
     const consumedWait = input.consumedWait;
-    if (consumedWait !== undefined) {
+    if (consumedWait !== undefined && input.requeueRef === undefined) {
       releasedLease = facts.leasesByTaskId.get(input.taskId) ?? null;
       previousRun = releasedLease?.release?.runRef ?? null;
       if (previousRun === null) return reject('busy', 'the prior Run lease is not released by that Run');
@@ -1394,7 +1428,7 @@ export function createTaskClaimService(deps: TaskClaimGoalSettingsDependencies):
         const priorRun = (facts.runsByTaskId.get(input.taskId) ?? [])
           .find(run => sameRef(run.ref, consumedWait.originalRun));
         prior = priorRun === undefined ? null
-          : continuationPrior(priorRun, releasedLease, consumedWait, input, previousRun);
+          : continuationPrior(priorRun, releasedLease, consumedWait, input, previousRun, null);
       }
       basis = { kind: 'continuation', consumedWait, previousRun };
     }
@@ -1409,6 +1443,31 @@ export function createTaskClaimService(deps: TaskClaimGoalSettingsDependencies):
       // `claimBasisOf` built the basis before the requeue records were read.
       if (basis.kind === 'requeue' && requeue?.leaseRelease !== undefined) {
         basis = { ...basis, leaseRelease: requeue.leaseRelease };
+      }
+      // The requeue that carries the Task's last yielded wait proves its prior like a continuation (except the lease,
+      // which the afterRun released): the Task's last yield before the requeue (`lastYieldedRunOf` from the requeue's
+      // afterRun, the basis the Workflow read), whose continuation names the message, sent from the claim Session or a
+      // line the claim Session continues for this Task. The saved reply is read below (MSG-10). A requeue this window
+      // does not know is refused by its own guard first.
+      if (consumedWait !== undefined && consumedWait.kind !== 'intervention') {
+        const runs = facts.runsByTaskId.get(input.taskId) ?? [];
+        const priorRun = runs.find(run => sameRef(run.ref, consumedWait.originalRun));
+        const afterRunRef = requeue?.afterRunRef;
+        let lastYield = false;
+        let continuesLine = false;
+        if (priorRun?.continuation !== undefined && afterRunRef !== undefined) {
+          // This window read every Run of the Task, so a Run the walk names and the window lacks is damage.
+          const last = await lastYieldedRunOf(afterRunRef,
+            async (ref) => runs.find(run => sameRef(run.ref, ref)) ?? 'unreadable');
+          if (last === 'unreadable') return unavailable('a Run before the requeue is not among the Task\'s Runs');
+          lastYield = last !== null && sameRef(last.ref, priorRun.ref);
+          const chain = await continuesTaskLine(input.sessionRef, session.provenance, priorRun.continuation.sessionRef,
+            dispatchTask, sessionProvenanceOf);
+          if (chain === 'unreadable') return unavailable('a Session the claim Session continues cannot be read');
+          continuesLine = chain;
+        }
+        prior = priorRun === undefined ? null
+          : continuationPrior(priorRun, releasedLease, consumedWait, input, previousRun, { lastYield, continuesLine });
       }
     }
     // K3 TASK-03r (L10): the review claim's guards from the record and the task

@@ -500,6 +500,10 @@ export async function recordInputAccepted(mailbox: MailboxContext,
     // Only a wait actually bound to this execution, or a transferred wait this handler still owns
     // unconsumed, consumes the wait; an ordinary asynchronous or late reply records acceptance alone.
     boundHere = waitBoundHere || (handlerHere && replyStillBoundToWait(message));
+    // A requeue on a line that continues the waiting one carries the Task's yielded wait (its claim admitted this
+    // Session on the sender's continuation chain), so the bound wait is this execution's even though another Session
+    // sent it. A wait whose reply handler was moved belongs to that handler alone (`handlerHere`).
+    const boundUntransferred = waitBoundHere && (message.replyHandler ?? null) === null;
     facts = {
       observerOwnsExecution,
       kernelMatches: actualKernel !== undefined && actualKernel !== null
@@ -508,10 +512,10 @@ export async function recordInputAccepted(mailbox: MailboxContext,
       claimedSessionMatches: raw['executionSessionRef'] === undefined
         || canonicalOf(raw['executionSessionRef']) === canonicalOf(actualSession),
       executionSessionMatches: part === 'response'
-        ? handlerHere
+        ? handlerHere || boundUntransferred
         : part === 'expiry'
-          ? message.sender.kind === 'work_run'
-            && canonicalOf(message.sender.sessionRef) === canonicalOf(actualSession)
+          ? (message.sender.kind === 'work_run'
+            && canonicalOf(message.sender.sessionRef) === canonicalOf(actualSession)) || boundUntransferred
           : canonicalOf(message.recipient) === canonicalOf(actualSession),
       inputIdTakenByOtherEvent: accepted !== undefined
         && (canonicalOf(accepted.executionRef) !== canonicalOf(executionRef) || canonicalOf(accepted.kernel) !== canonicalOf(kernel)),

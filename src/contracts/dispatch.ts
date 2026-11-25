@@ -290,7 +290,7 @@ export type RunSnapshot = {
     consumedWait?: ConsumedWaitV1;
     /** A-07: the Run whose released lease this claim took; null when there is no predecessor. */
     previousRun: RunRef | null;
-    /** Set only by a claim after a TaskRequeue (TASK-03); exclusive with `consumedWait`. */
+    /** Set only by a claim after a TaskRequeue (TASK-03); beside it `consumedWait` is only a carried yielded wait. */
     requeueRef?: import('./task-requeue.js').TaskRequeueRef;
     /**
      * Bounded terminal detail (C1, §6.1 contract (f)), written once in the same
