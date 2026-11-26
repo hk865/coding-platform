@@ -227,7 +227,7 @@ async function open(kind: 'memory' | 'sqlite'): Promise<Opened> {
     knowledge: knowledgeLinesOver(records), lookups: records, sessionFacts, duty: unknownSessionDuty });
   const materialReads = createMaterialRecordReaders(records);
   const mailbox = createSessionMailbox({
-    defaultInquiryDeadlineMs: 86_400_000,
+    defaultInquiryDeadlineMs: () => 86_400_000,
     records,
     sessions: base.sessionsPort,
     executions: createRunStateReader({ records }),

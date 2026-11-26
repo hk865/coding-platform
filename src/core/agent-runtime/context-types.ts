@@ -20,6 +20,7 @@ import type { CommandRerunRequestReadPort } from '../work-graph/model/command-re
 import type { SecretaryPreparationFactsV1 } from '../work-graph/model/secretary-contracts.js';
 import type { ConsultationFactsV1 } from '../work-graph/model/session-contracts.js';
 import type { NoteMemoryMaterialPort } from '../work-graph/model/note-contracts.js';
+import type { GoalPersonWordsReadPort } from '../work-graph/model/communication-contracts.js';
 import type { TaskContextInputPort } from '../work-graph/model/context-input-contracts.js';
 import type { TaskExecutionRecord } from '../work-graph/model/execution-read-contracts.js';
 import type { GraphContextReadPort } from '../work-graph/model/graph-context-contracts.js';
@@ -47,7 +48,10 @@ export type ContextAssemblerDependencies = Pick<RuntimeExecutionDependencies,
     /** K3 B3 item 7: the Task's requests for the blocked section; optional for old test doubles. */
     commandRerunRequests?: CommandRerunRequestReadPort;
     /** The note memory-material read the notes already share; absent fails a secretary round closed. */
-    memoryMaterial?: NoteMemoryMaterialPort };
+    memoryMaterial?: NoteMemoryMaterialPort;
+    /** The person's words to a Goal's other lines; absent fails an adviser's planning round and a secretary Goal
+     *  round closed. */
+    personWords?: GoalPersonWordsReadPort };
 
 /**
  * The one template id vocabulary. The material carries it so a re-render never

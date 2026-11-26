@@ -14,7 +14,7 @@ import type {
   ExecutionHistoryPage, ExecutionHistoryRequest, TaskExecutionHistoryRequest,
 } from './execution-history-contracts.js';
 import type {
-  CancelQueryExecutionRequest, CancelQueryExecutionResultV1,
+  CancelQueryExecutionRequest, CancelQueryExecutionResultV1, CloseUnenteredQueryRequest,
   DeliverControlRequest, ObserveQueryExecutionRequest, ObserveTaskRunRequest,
   PrepareQueryExecutionRequest, PrepareTaskExecutionRequest, StartQueryExecutionRequest,
   StartTaskExecutionRequest, TaskExecutionRecord,
@@ -81,9 +81,17 @@ export interface RuntimeExecutionPort {
   /**
    * 121-112 "人随时能停": stop the running model Turn of one QueryRun. The Kernel ends it `cancelled` (a running
    * command is stopped through its sandbox) and the QueryRun settles `cancelled` through the normal observation.
+   * A round claimed or prepared but not entered is closed before entry instead (P6I R3, as `closeUnenteredQuery`).
    * Optional like the Query members above; `createAgentRuntime` publishes it.
    */
   cancelQuery?(ctx: CoreCallContext, request: CancelQueryExecutionRequest): Promise<ReadResult<CancelQueryExecutionResultV1>>;
+  /**
+   * P6I R2: close a claimed QueryRun that never entered the Kernel, `reason` as its close message: the Run settles
+   * `not_entered`, its Job closes (a request round gets no new attempt) and its Session is released. Only while the Run
+   * is still `claimed` at `claimedRevision`; a Run that moved on answers `revision_conflict`. The stage driver calls it for a
+   * refusal its source marked lasting. Optional like the Query members above.
+   */
+  closeUnenteredQuery?(ctx: CoreCallContext, request: CloseUnenteredQueryRequest): Promise<ReadResult<QueryExecutionRecord>>;
   /**
    * C3: the continuation brief pinned in a Run's saved manifest, checked
    * against `inputBinding.continuationBriefDigest`. `null` = a Run without

@@ -117,6 +117,9 @@ export type MemberLine = {
   readOnly: boolean;
   /** The TaskTriple the line is responsible for; the one `writeBasisOf` reads. */
   taskRef: TaskTriple | null;
+  /** The Goal the page's subtitle shows (the line's own Goal, else the selected one); the person's words on this
+   *  line count toward it. */
+  goalId: string | null;
   items: MemberItem[];
   groups: MemberRecordGroup[];
   /** §2.2: the two whole-line links, encoded once by `lineHref`. */
@@ -479,6 +482,7 @@ export function adaptMemberLine(source: MemberSource, detail: WorkLineDetailV1):
     interveneReason: intervene !== null && intervene.availability !== 'available' ? intervene.reason : null,
     readOnly: row.status.readOnly === true,
     taskRef: taskOfLine(row),
+    goalId: subGoalId,
     items,
     groups,
     pageMemberHref: lineHref('Member.dc.html', subGoalId, key),

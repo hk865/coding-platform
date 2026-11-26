@@ -19,7 +19,7 @@ import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { SessionRef } from '../../contracts/core/identity.js';
 import type { ReadResult } from '../../contracts/core/results.js';
 import type { QueryRunRef } from '../../contracts/query-job.js';
-import type { UserDecisionBodyV1 } from '../../contracts/goal-decisions.js';
+import { userDecisionBodyOf, type UserDecisionBodyV1 } from '../../contracts/goal-decisions.js';
 import { packString } from '../../contracts/prompts/pack-string.js';
 import type { PromptTextsV1 } from '../../contracts/prompts/prompt-set.js';
 import { renderDeliveryInput, type DeliveryInputV1 } from '../../contracts/prompts/delivery-input.js';
@@ -75,29 +75,15 @@ export function deriveInputId(messageRef: SessionMessage['ref'], part: InputPart
  * the asking Run. The fixed value is `'用户答复\n' + canonicalJson(body)`, so
  * the selection, the exact free text and every annotation reach the model
  * without a prose guess. It renders from the execution's frozen texts, never
- * the global pack. `createMailboxInputSupply` uses it for a decision response;
- * every other reply renders `wait-reply-delivery` instead, never its raw text.
+ * the global pack. `createMailboxInputSupply` and a secretary reply round's
+ * material (`context-secretary-recipe.ts`) use it for a decision response; every
+ * other reply renders `wait-reply-delivery` instead, never its raw text.
  */
 export function formatDecisionResponseInput(texts: PromptTextsV1, body: UserDecisionBodyV1,
   toolNames: readonly string[]): string {
   // The one composer the card-answer submit also calls, so the template has one
   // implementation; this path still renders only the execution's frozen texts.
   return composeDecisionResponseInput(texts, body, toolNames);
-}
-
-/**
- * The formal `UserDecisionBodyV1` of a message response whose metadata carries
- * the user's decision; `null` for every historical reply. The original free text
- * is read from the stored body, so the formatter receives exactly the saved
- * selection/text/annotations and never a re-derived guess.
- */
-function decisionResponseBody(message: SessionMessage, text: string): UserDecisionBodyV1 | null {
-  const response: unknown = message.response;
-  if (response === null || typeof response !== 'object' || !('decision' in response)) return null;
-  const decision = (response as { decision: {
-    selection: UserDecisionBodyV1['selection']; annotations: UserDecisionBodyV1['annotations'];
-  } }).decision;
-  return { schemaVersion: 1, kind: 'user_decision_response', selection: decision.selection, text, annotations: decision.annotations };
 }
 
 function alreadyAcceptedBySource(message: SessionMessage, inputId: string): boolean {
@@ -218,7 +204,7 @@ export function createMailboxInputSupply(deps: MailboxInputSupplyDependencies): 
     }
     const body = await deps.messages.readMessageBody(ctx, { messageRef: message.ref, part: 'response' });
     if (body.status !== 'ready') throw new Error(`input body unavailable: ${body.status}`);
-    const decisionBody = decisionResponseBody(message, body.value.text);
+    const decisionBody = userDecisionBodyOf(message.response, body.value.text);
     let text: string;
     if (decisionBody !== null) {
       text = formatDecisionResponseInput(deps.texts, decisionBody, deps.toolNames);

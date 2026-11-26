@@ -1697,9 +1697,10 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
     }
 
     /**
-     * VR-05 and VR-13: the runner settles an executing window it proved never
-     * ran a process (abandon → `pending`) or whose frozen ticket is
-     * incomplete (→ `interrupted`, `ticket_invalid`). The receipt comes first;
+     * VR-05, VR-13 and VD-10: the runner settles an executing window it proved never
+     * ran a process (abandon → `pending`), whose frozen ticket is incomplete
+     * (→ `interrupted`, `ticket_invalid`), or whose result it could not record
+     * (→ `interrupted`, `result_not_recorded`). The receipt comes first;
      * then the pin, the round and the machine (`checkEventAdmission`: open
      * round, executor, registered check, `executing`, the begun invocation, the
      * pin). The identity is the runner's request id, which it derives from the
@@ -1733,6 +1734,8 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
                 if (!nonEmpty(interrupt.hostInstanceId)) return invalid('a host_restart interruption names the reconciling Host instance');
                 event = { kind: 'check_interrupted', checkId: input.checkId, invocationId: input.invocationId, cause: 'host_restart',
                     hostInstanceId: interrupt.hostInstanceId };
+            } else if (interrupt.cause === 'result_not_recorded') {
+                event = { kind: 'check_interrupted', checkId: input.checkId, invocationId: input.invocationId, cause: 'result_not_recorded' };
             } else {
                 if (interrupt.cause !== 'ticket_invalid' || !nonEmpty(interrupt.ticketProblem)) {
                     return invalid('interruptCheck requires the ticket_invalid cause and its ticket problem');
@@ -1769,11 +1772,9 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
         if (!decided.ok) return refusalOf(decided, round);
         const base = { eventId: deps.newId(), schemaVersion: 1 as const, occurredAt: deps.now(), identityKey: identity,
             roundRef: round.ref, actor, fingerprint, checkId: input.checkId, invocationId: input.invocationId, result: decided.next };
-        const recorded: VerificationRoundEvent = kind === 'abandon'
-            ? { ...base, eventType: VERIFICATION_CHECK_ABANDONED_EVENT_TYPE, cause: (input as AbandonCheckInput).cause }
-            : restart !== null
-                ? { ...base, eventType: VERIFICATION_CHECK_INTERRUPTED_EVENT_TYPE, cause: 'host_restart', hostInstanceId: restart }
-                : { ...base, eventType: VERIFICATION_CHECK_INTERRUPTED_EVENT_TYPE, cause: 'ticket_invalid', hostInstanceId: null };
+        const recorded: VerificationRoundEvent = event.kind === 'check_abandoned'
+            ? { ...base, eventType: VERIFICATION_CHECK_ABANDONED_EVENT_TYPE, cause: event.cause }
+            : { ...base, eventType: VERIFICATION_CHECK_INTERRUPTED_EVENT_TYPE, cause: event.cause, hostInstanceId: restart };
         // The proven fact is committed even after a late caller cancel (the runner passes a finishing signal).
         return await commitRoundWrite(records, signal, { identity, fingerprint, effects: decided.effects, round: decided.next,
             event: recorded, value: decided.next, cancelled: null });

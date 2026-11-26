@@ -33,7 +33,7 @@ import type { KernelExecutionBinding } from '../model/execution-entry-contracts.
 import { requestTailKey, secretaryIntakeKey } from '../model/request-contracts.js';
 import { mergeGuards } from '../persistence/record-guards.js';
 import { waitFactsOfRecord, type MessageGuardContext } from '../state/message-machine.js';
-import type { QueryLifecycleRecords } from '../state/query-run-recovery.js';
+import { settleQueryRunRecord, type QueryLifecycleRecords } from '../state/query-run-recovery.js';
 import {
   absorbRound, endUnstartedRound, newAttempt, recordAbsorbedRounds, setIntake,
 } from '../state/request-rounds.js';
@@ -203,6 +203,28 @@ export function requestDroppedEnd(input: {
   if (roundOf(input.facts, input.records.job.ref) === undefined) return invalid('the round is not a round of its request');
   const ended = endUnstartedRound(input.records, { detail: 'dropped', message: 'request_dropped', occurredAt: input.occurredAt });
   return { ...ended, claims: [noopTailClaim(input.facts)], guards: [...input.facts.guards] };
+}
+
+/**
+ * P6I: a request round whose attempt this Host ended on purpose before entry (a lasting preparation refusal, a
+ * person's stop): the Run settles `not_entered` and the Job closes with that reason, with no new attempt; the intake
+ * the round holds is released and the request tail held still, as `end_unbound` does. The Session release is the
+ * recovery row's own.
+ */
+export function requestEndedBeforeEntry(input: {
+  records: QueryLifecycleRecords;
+  facts: RequestRoundsFactsV1;
+  closeMessage: string;
+  occurredAt: string;
+}): (QueryLifecycleRecords & { claims: UniqueClaimChange[]; guards: RecordGuard[] }) | CoreRejection {
+  if (roundOf(input.facts, input.records.job.ref) === undefined) return invalid('the round is not a round of its request');
+  const released = intakeReleases([input.records.job]);
+  if (!Array.isArray(released)) return released;
+  const ended = settleQueryRunRecord({ job: setIntake(input.records.job, null), run: input.records.run }, {
+    settlement: { outcome: 'not_entered', closeMessage: input.closeMessage }, history: { kind: 'unchanged' },
+    occurredAt: input.occurredAt,
+  });
+  return { ...ended, claims: [noopTailClaim(input.facts), ...released], guards: [...input.facts.guards] };
 }
 
 // ------------------------------------------------------------------------ //

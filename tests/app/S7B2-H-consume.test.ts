@@ -6,8 +6,9 @@
  * the frozen `Date.now()` throttle, so the barrier is the completion signal.
  *
  * Expected (SR7 H.4): 8 Sessions open on heartbeat 1 and the remaining 2 on heartbeat 2; notify-only and unmatched
- * role open no model call, the latter returning `{ reason: 'no_profile' }`; the goal-less person is
- * `{ reason: 'no_goal' }` with `acceptedInputs` staying `[]`; both ordinary late replies stay saved and open no turn
+ * role open no model call, the latter returning `{ reason: 'no_profile' }`; a person message that names no Goal, on a
+ * line that never did Work, stays in the box and off the consumable view (no Goal can be found for it, so it would hold
+ * the queue head), with `acceptedInputs` staying `[]`; both ordinary late replies stay saved and open no turn
  * (P2: p2-frozen.md:151, cp2g3a-r1-rulings.md A06, design-frozen.md:238 — a late reply waits for the sender line's
  * next safe point); a person message and one released agent `action_request` in the same Session turn on the person
  * message while the action_request stays queued.
@@ -83,7 +84,8 @@ it('opens 8 then 2 Sessions, skips the two reasons and turns on the person messa
   expect(world.host.consumeStatus).toEqual([]);
 
   // Heartbeat 2: exactly the remaining two eligible Sessions open. Its page also scans the notify-only line (0 model
-  // calls) and returns the two skip reasons; the two ordinary late replies are the other turns this page can offer.
+  // calls) and returns the one skip reason; the goal-less line is not offered at all; the two ordinary late replies
+  // are the other turns this page can offer.
   await heartbeat(consume);
   for (const session of eligible) {
     expect((await personMessageOf(consume, session))?.status).toBe('responded');
@@ -91,9 +93,9 @@ it('opens 8 then 2 Sessions, skips the two reasons and turns on the person messa
   expect(await consume.world.scripted.requests(notify)).toHaveLength(0);
   expect(await consume.world.scripted.requests(unmatchedRole)).toHaveLength(0);
   expect(await consume.world.scripted.requests(goalLess)).toHaveLength(0);
-  expect(world.host.consumeStatus).toHaveLength(2);
+  expect(world.host.consumeStatus).toHaveLength(1);
   expect(world.host.consumeStatus).toContainEqual({ sessionRef: unmatchedRole.ref, reason: 'no_profile' });
-  expect(world.host.consumeStatus).toContainEqual({ sessionRef: goalLess.ref, reason: 'no_goal' });
+  expect(world.host.consumeStatus).not.toContainEqual({ sessionRef: goalLess.ref, reason: 'no_goal' });
 
   // The wrapped remainder: P2 (p2-frozen.md:151, cp2g3a-r1-rulings.md A06) gives an ordinary late reply no turn and no
   // Host consumer, so across the same six further passes both replies stay saved with no accepted input and their

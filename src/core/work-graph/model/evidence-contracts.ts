@@ -108,7 +108,9 @@ export type AbandonCheckInput = {
 /**
  * VR-13: the frozen ticket the runner received is incomplete (`ticketProblem`
  * is the proof), so the check is `interrupted` with cause `ticket_invalid` and
- * never runs again in the round. `meta.expected` pins the round as re-read.
+ * never runs again in the round. VD-10: the runner ran the check but could not
+ * record its result after every retry (`result_not_recorded`). `meta.expected`
+ * pins the round as re-read.
  */
 export type InterruptCheckInput = {
     roundRef: VerificationRoundRef;
@@ -116,6 +118,7 @@ export type InterruptCheckInput = {
     invocationId: string;
 } & (
     | { cause: 'ticket_invalid'; ticketProblem: string }
+    | { cause: 'result_not_recorded' }
     /** VR-04 (A.2 step 5.6): the start-up reconcile, under this Host's instance lease (D-12, D-18). */
     | { cause: 'host_restart'; hostInstanceId: string }
 );

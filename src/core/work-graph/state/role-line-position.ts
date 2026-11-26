@@ -1,6 +1,6 @@
 /**
- * Role-line positions (pure; imports only `src/contracts`): the goal position an adviser line may take, the region
- * burden of a module and the one value `role-lines/read` carries per scope. Nothing here reads a store.
+ * Role-line positions (pure; imports only `src/contracts` and this directory): the goal position an adviser line may
+ * take, the region burden of a module and the one value `role-lines/read` carries per scope. Nothing here reads a store.
  */
 import type { AdoptedArchitecture } from '../../../contracts/architecture-catalog.js';
 import type { FileGraphPageNodeV1 } from '../../../contracts/architecture-inspection.js';
@@ -10,6 +10,7 @@ import type { GoalRef, GoalSnapshot } from '../../../contracts/ledger.js';
 import type { NoteScopeV1 } from '../../../contracts/note.js';
 import type { GoalScreeningV1 } from '../../../contracts/query-job.js';
 import { pathOwnershipOf } from '../../../contracts/path-ownership.js';
+import { goalStateOf } from './goal-machine.js';
 
 export const MAX_GOALS_PER_ADVISER = 3;
 export const REGION_SLOT_LINE_BUDGET = 15_000;
@@ -35,7 +36,10 @@ export function goalPositionOf(input: {
   goal: GoalSnapshot; phase: GoalPhaseSnapshot | null; screening: GoalScreeningV1 | null;
   adviserLinks: readonly AdviserGoalLinkV1[];
 }): GoalPositionV1 {
-  const inProgress = input.goal.desiredState === 'active' && input.phase?.phase !== 'COMPLETED';
+  // A formal result on the ACTIVE Plan (COMPLETED or ACCEPTED_PARTIAL) ends the goal: it no longer takes a line. A
+  // result on an older Plan does not (B3), so a goal that adopted a new Plan is in progress again.
+  const inProgress = input.goal.desiredState === 'active'
+    && goalStateOf(input.goal, input.phase).completion !== 'for_active';
   const shareable = input.screening?.size === 'small';
   const lines = new Map<string, { session: SessionRef; goals: AdviserGoalLinkV1[] }>();
   for (const link of input.adviserLinks) {

@@ -516,7 +516,7 @@ export function createCandidateRequestFactsReader(deps: RequestFactsDependencies
       let interventionGuards: readonly RecordGuard[] = [rootGuard];
       if (job.job.intent.execution.kind === 'intervention_planning') {
         const proof = await proveInterventionSource({ records: deps.records, signal: ctx.signal, query: job,
-          goalRef: input.goalRef, selector: null });
+          goalRef: input.goalRef, selector: null, withdrawnCounts: input.withdrawnSourceCounts === true });
         if (proof.status !== 'ready') return proof;
         if (proof.value !== null) {
           interventionSource = proof.value.sourceMessageRef;

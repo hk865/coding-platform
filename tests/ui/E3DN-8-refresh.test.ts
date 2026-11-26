@@ -17,8 +17,8 @@ import { bootE3N, countRoute, waitFor } from './helpers/E3N-page.js';
 const slot = worldSlot();
 afterEach(async () => { await slot.close(); }, 180_000);
 
-const REREAD = ['tasks/query', 'verification/round', 'goals/list', 'architecture/change-scope'];
-const NEVER = ['main/read', 'sessions/history', 'executions/history', 'graph/hover', 'decisions/card', 'architecture/query',
+const REREAD = ['tasks/query', 'verification/round', 'goals/list', 'architecture/change-scope', 'graph/hover'];
+const NEVER = ['main/read', 'sessions/history', 'executions/history', 'decisions/card', 'architecture/query',
   'architecture/read', 'materials/open'];
 
 describe('E3DN-8 the change stream', () => {

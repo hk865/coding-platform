@@ -10,13 +10,22 @@ export type GoalPhaseRef = {
 };
 
 /**
- * R3e.3 first formal Goal terminal snapshot.
+ * G6 partial acceptance: the person's trade-off text and who accepted. Only the
+ * configured operator writes one (MVP: a required cancellation never counts as
+ * complete by itself); the instant is the record's `reducedAt`.
+ */
+export type GoalPartialAcceptanceV1 = { rationale: string; acceptedBy: { kind: 'human'; id: string } };
+
+/**
+ * The formal Goal result for one plan. `COMPLETED` is written by `completeGoal`
+ * when everything required is formally satisfied; `ACCEPTED_PARTIAL` by
+ * `acceptPartialResult` when the person ends the Goal with what is done (G6).
+ * `adoptedTaskReductions` pins the formal reductions satisfied at that moment
+ * and `satisfiedObligationIds` the obligations actually covered; for a partial
+ * acceptance they are its evidence refs.
  *
- * This batch declares ONLY the real `COMPLETED` result written by
- * `completeGoal`; the legacy ten-state controller (paused/maintenance/Decision
- * inputs) is intentionally not migrated here. `adoptedTaskReductions` pins the
- * exact formal reductions the Goal completion consumed and
- * `satisfiedObligationIds` records the obligations actually covered.
+ * Both variants stay in ONE alias (an intersection with a parenthesised union):
+ * the state-write check reads only this form as `GoalPhaseSnapshot` fields.
  */
 export type GoalPhaseSnapshot = {
     ref: GoalPhaseRef;
@@ -24,8 +33,7 @@ export type GoalPhaseSnapshot = {
     schemaVersion: 1;
     planRef: PlanRevisionRef;
     planRevision: number;
-    phase: 'COMPLETED';
     adoptedTaskReductions: { ref: TaskReductionRef; revision: number }[];
     satisfiedObligationIds: string[];
     reducedAt: string;
-};
+} & ({ phase: 'COMPLETED' } | { phase: 'ACCEPTED_PARTIAL'; partialAcceptance: GoalPartialAcceptanceV1 });

@@ -26,9 +26,14 @@
  */
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import { sceneLine } from './scene-line.mjs';
 import { scene as MEMBER } from './Member.scene.mjs';
+import { candidateScene } from './Decide.scene.mjs';
 
 const HAVE = JSON.parse(readFileSync(new URL('./Main.scene.json', import.meta.url), 'utf8'));
+const LINE = sceneLine({ projectId: 'e3w-scene', workspaceId: 'e3w-scene', goalId: 'scene-goal',
+  sessionId: 'scene-executor', name: '执行者 · 场景线' });
+HAVE.routes['lines/list'].value.rows[1] = LINE.lineRow;
 const NONE_GOAL = 'scene-goal-3';
 const S7C_GOAL = 's7c-goal';
 const NOT_FOUND = { status: 'rejected', code: 'not_found', reason: 'not in the Main scene' };
@@ -77,8 +82,23 @@ const MAIN_BASE = structuredClone(MR);
 MAIN_BASE.value.cards = MAIN_BASE.value.cards.filter((card) => card.cardKey === 'scene-card-1');
 MAIN_BASE.value.notices = MAIN_BASE.value.notices.filter((notice) => notice.itemKey === 'plan-adoption:scene-plan:1');
 const QUEUE_BASE = structuredClone(HAVE.routes['decisions/queue']);
+const candidateGoal = QUEUE_BASE.value.waitingAnswer[0].source.pins.find((pin) => pin.ref.aggregateType === 'Goal');
+const candidates = candidateScene(candidateGoal, HAVE.routes.bootstrap.workspaces[0].scope.workspaceId);
 QUEUE_BASE.value.waitingAnswer = QUEUE_BASE.value.waitingAnswer.filter((card) => !card.cardKey.startsWith('scene-card-4a'));
 QUEUE_BASE.value.counts.waitingAnswer = QUEUE_BASE.value.waitingAnswer.length;
+// Goal 2 opens on a conflict. Both paths are leaves in the Main catalog.
+const [firstGoal, secondGoal] = HAVE.routes['goals/list'].value.goals;
+const workspace = HAVE.routes.bootstrap.workspaces[0].scope;
+const conflictSubject = { kind: 'goal', goalRef: secondGoal.ref };
+const conflictKey = 'scene-goal-files';
+const conflictCard = {
+  ...QUEUE_BASE.value.waitingAnswer[0], cardKey: conflictKey, subject: conflictSubject, taskRef: null, runRef: null,
+  source: { kind: 'goal_conflict', key: conflictKey, subject: conflictSubject,
+    pins: [firstGoal, secondGoal].map(({ ref, revision }) => ({ ref, revision })) },
+  objects: ['src/ui/views.ts', CORE_PATH].map((path) => ({ kind: 'file', workspace, path, label: path, digest: null })),
+  options: [{ id: 'wait', label: '等前一个目标', effect: 'apply' }, { id: 'order', label: '调整顺序', effect: 'apply' },
+    { id: 'parallel', label: '接受风险并行', effect: 'apply' }],
+};
 const LIVE = HAVE.routes['executions/steps'];
 const ENDED = { status: 'ready', value: { kind: 'steps',
   summary: { startedAt: '2026-11-07T08:30:00+08:00', lastAt: '2026-11-07T08:34:00+08:00', live: false, reads: 2,
@@ -229,8 +249,23 @@ function stateReply(route, input) {
 export const scene = {
   now: HAVE.now,
   routes: { ...HAVE.routes, 'main/read': MR },
-  reply(route, input) {
+  reply(route, input, body) {
     if (route === 'goals/read') pageGoal = input?.goalId ?? null;
+    if (pageGoal === 'scene-goal') {
+      const candidate = candidates.reply(route, body?.request?.input ?? input);
+      if (candidate !== undefined) return candidate;
+      if (route === 'main/read') {
+        const page = structuredClone(MR);
+        page.value.cards.push(...candidates.waiting());
+        return page;
+      }
+      if (route === 'decisions/queue') {
+        const queue = structuredClone(HAVE.routes[route]);
+        queue.value.waitingAnswer.push(...candidates.waiting());
+        queue.value.counts.waitingAnswer = queue.value.waitingAnswer.length;
+        return queue;
+      }
+    }
     if (pageGoal in FOUR_B) {
       if (route === 'goals/read') return { ...readGoal, value: { ...readGoal.value, goal: { ...readGoal.value.goal,
         ref: { ...readGoal.value.goal.ref, goalId: pageGoal }, objective: FOUR_B[pageGoal].name } } };
@@ -243,6 +278,15 @@ export const scene = {
     }
     const scened = stateReply(route, input);
     if (scened !== undefined) return scened;
+    if (pageGoal === secondGoal.ref.goalId && route === 'decisions/queue') {
+      return { ...QUEUE_BASE, value: { ...QUEUE_BASE.value, waitingAnswer: [conflictCard], counts: { ...QUEUE_BASE.value.counts, waitingAnswer: 1 } } };
+    }
+    if (route === 'graph/detail' && input.node?.ref?.taskId === 'scene-work-2') {
+      const graph = HAVE.routes['tasks/query'].value;
+      const row = graph.tasks.find((task) => task.ref.taskId === input.node.ref.taskId);
+      const task = { ...row.definition, task: row.ref, planRef: graph.plan.ref, workspaceId: workspace.workspaceId };
+      return { status: 'ready', value: { section: input.section, task, items: [], nextCursor: null } };
+    }
     if (route === 'queries/cancel') return { status: 'ready', value: { cancelled: true } };
     if (route === 'decisions/answer') return { status: 'ready', value: { answer: { status: 'committed' } } };
     if (route === 'settings/snapshot') return { status: 'ready', value: snapshot4a() };
@@ -280,6 +324,8 @@ export const scene = {
       }
       return MEMBER.reply(route, input);
     }
+    const line = LINE.reply(route, input);
+    if (line !== undefined) return line;
     if ((route === 'tasks/query' || route === 'graph/hover') && input?.goalRef?.goalId === NONE_GOAL) return NOT_FOUND;
     if (pageGoal === NONE_GOAL && route in NONE) return NONE[route];
     if (route === 'main/read') return MR;

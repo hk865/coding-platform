@@ -130,7 +130,7 @@ export function mailboxDependencies(f: S5DecisionFixture): SessionMailboxDepende
     roles: createRoleConfigurationService({ records: f.records, now: f.now, eventId: f.newId }),
     queryRounds: createQueryRoundResolver({ records: f.records, duties: unknownSessionDuty, bodies: f.bodies }),
     materials: materialsFor(f), runtimeAdmission: { bodies: f.bodies, authorizeConfiguration },
-    defaultInquiryDeadlineMs: 86_400_000,
+    defaultInquiryDeadlineMs: () => 86_400_000,
     systemActor: OPERATOR, now: f.now, newId: f.newId,
     duties: { async readMessageDutiesFacts() { return { status: 'ready', value: {
       duties: ['adviser'], readOnlyCopy: false, independentReview: false, guards: [] } }; } } };

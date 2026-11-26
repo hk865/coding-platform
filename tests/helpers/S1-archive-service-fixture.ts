@@ -152,7 +152,7 @@ export async function createArchiveServiceFixture(kind: ClaimFixtureKind) {
     hostInstance: { hostInstanceId: 'fx1-host', lease: 'owned' }, now, eventId: id });
   function mailboxOn() {
     const box = createSessionMailbox({ records, sessions, executions: reads, roles, materials,
-      defaultInquiryDeadlineMs: 86_400_000,
+      defaultInquiryDeadlineMs: () => 86_400_000,
       queryRounds: createQueryRoundResolver({ records, duties: unknownSessionDuty, bodies: b2.bodies }),
       runtimeAdmission: { bodies: b2.bodies, authorizeConfiguration },
       systemActor: { kind: 'system', id: 'fx1-materials' }, now, newId: id });

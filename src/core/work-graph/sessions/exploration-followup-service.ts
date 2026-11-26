@@ -29,7 +29,7 @@ import {
   appendExploration, explorationGroupsOf, setPlannedRounds,
   type ColdStartExplorationQueryRefV1, type ExplorationDepthV1, type RoleLineActionV1,
 } from '../state/role-line-action.js';
-import { DEFAULT_EXPLORATION_DEPTH, explorationDepthOf } from '../state/exploration-control.js';
+import { DEFAULT_EXPLORATION_DEPTH, explorationDepthOf, holdOnEndedRound } from '../state/exploration-control.js';
 import {
   completeFollowup, explorationFollowUpOperationRef, knowledgeConflictQuestion, newExplorationFollowUpAction,
   saveBatchRefs, type ExplorationFollowUpActionV1,
@@ -409,6 +409,9 @@ export function createExplorationFollowUpService(deps: ExplorationFollowUpDeps):
       const end = await endingOf(deps, at, group);
       if (end.status !== 'ready') return end;
       if (end.value.kind === 'reopen') return write(at, appendExploration(action, end.value.entry) as ExplorationFollowUpActionV1);
+      if (end.value.kind === 'hold') {
+        return write(at, holdOnEndedRound(action, end.value.entry, end.value.reason) as ExplorationFollowUpActionV1);
+      }
       if (end.value.kind === 'running') unfinished = true;
     }
     if (unfinished) return stop(at);

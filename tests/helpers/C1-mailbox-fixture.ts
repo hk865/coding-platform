@@ -199,7 +199,7 @@ export async function createC1Harness(kind: ClaimFixtureKind): Promise<C1Harness
       roles: createRoleConfigurationService({records,now,eventId}), materials: materialPort, systemActor,
       // SR11 / Decided 12: this fixture's own inquiries name their duration; the
       // owner has no second default.
-      defaultInquiryDeadlineMs: 86_400_000,
+      defaultInquiryDeadlineMs: () => 86_400_000,
       ...(runtimeAdmission === null ? {} : { runtimeAdmission }),
       ...(openExecutions === null ? {} : { recipientExecutions: openExecutions }),
       ...(dispatchBasis === undefined || dispatchBasis === null ? {} : { dispatchBasis }),

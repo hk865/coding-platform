@@ -67,7 +67,7 @@ export async function assembleB(f: S5DecisionFixture) {
     materials, initialPlanning: { bodies: f.bodies }, now: f.now, eventId: f.newId });
   const sources = createDecisionSourceFacts({ structuralProposalObjects: readStructuralProposalObjects, records, bindings: createInitializationBindingReader({ records }), plans });
   const mailboxDeps: SessionMailboxDependencies = {
-    defaultInquiryDeadlineMs: 86_400_000,
+    defaultInquiryDeadlineMs: () => 86_400_000,
     records, sessions, executions, roles, materials, systemActor: f.operatorActor,
     queryRounds: createQueryRoundResolver({ records, duties: unknownSessionDuty, bodies: f.bodies }),
     now: f.now, newId: f.newId,

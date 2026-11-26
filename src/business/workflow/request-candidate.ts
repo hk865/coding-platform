@@ -159,12 +159,14 @@ export async function proposeFromPlanTurn(
   const normalized = normalizeInitialPlanningResponseV2(parsed.response, facts);
   if (normalized.status !== 'plan') return skipped('no_plan');
 
-  // The secretary arranged the change in its own round; every other round still waits for the person.
-  const direct = facts.manifest.answerShape === 'secretary';
+  // The secretary arranged the change in its own round; every other round still waits for the person. A
+  // candidate-only call (the start-up reconcile's step 6c) writes the candidate and leaves its adoption, check
+  // approval and checks to the normal driver's next pass (FLK rework ruling 2).
+  const adopt = facts.manifest.answerShape === 'secretary' && turn.candidateOnly !== true;
   // The deterministic identity makes a round-end replay read its own candidate before writing. A replay also
   // retries a transient adoption failure; a candidate the person already decided reads `done`.
   const existing = await deps.plans.readPlanProposal(ctx, proposalRef);
-  if (existing.status === 'ready') return direct ? await adoptSmall(deps, ctx, existing.value, checkApproval) : { status: 'done' };
+  if (existing.status === 'ready') return adopt ? await adoptSmall(deps, ctx, existing.value, checkApproval) : { status: 'done' };
   if (existing.status !== 'not_found') return failureOfRead(existing);
 
   let goalRead: ReadResult<GoalDetail>;
@@ -231,5 +233,5 @@ export async function proposeFromPlanTurn(
     meta: { requestId, expected: [{ ref: goal.ref, revision: goal.revision }] },
   });
   if (proposed.status !== 'committed') return failureOf(proposed);
-  return direct ? await adoptSmall(deps, ctx, proposed.value, checkApproval) : { status: 'done' };
+  return adopt ? await adoptSmall(deps, ctx, proposed.value, checkApproval) : { status: 'done' };
 }

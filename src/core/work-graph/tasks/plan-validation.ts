@@ -293,7 +293,7 @@ export function goalGateCountIssue(draft: PlanRevisionDraft | PlanDraftView, sou
     + 'the new obligation list only the new work tasks (an adopted gate keeps exactly the obligations that list it), '
     + 'or, if the person changed what the goal must meet, list the adopted gate '
     + `(${adopted}) with its own taskId and disposition "superseded" and replacedByTaskId naming the new gate; `
-    + 'a task you leave out of a segment stays as it is and stays active');
+    + 'a task you leave out of a segment stays as it is and is not dropped');
 }
 
 /**

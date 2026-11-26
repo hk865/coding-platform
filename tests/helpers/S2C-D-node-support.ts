@@ -311,7 +311,7 @@ export async function openNodeFixture(kind: ClaimFixtureKind, options: NodeFixtu
     executions: createRunStateReader({ records: backend.records }), roles,
     materials: createMaterialService({ bodies, authority: createMaterialRecordReaders(backend.records).authority, now }),
     queryRounds: createQueryRoundResolver({ records: backend.records, duties: unknownSessionDuty, bodies }),
-    defaultInquiryDeadlineMs: 86_400_000, systemActor: { kind: 'system', id: 's2c-d-lineage' }, now, newId });
+    defaultInquiryDeadlineMs: () => 86_400_000, systemActor: { kind: 'system', id: 's2c-d-lineage' }, now, newId });
   const claims = createTaskClaimService({ records: backend.records, roles, now, newId,
     planSourceRoot: planSourceRootOf({ messages: lineageMailbox, plans,
       queries: createQueryJobService({ records: backend.records, now, eventId }) }) });
@@ -621,7 +621,7 @@ export async function openNodeFixture(kind: ClaimFixtureKind, options: NodeFixtu
     const materials = createMaterialService({ bodies: lineBodies,
       authority: createMaterialRecordReaders(backend.records).authority, now });
     const mailbox = createSessionMailbox({ records: backend.records, sessions, executions,
-      defaultInquiryDeadlineMs: 86_400_000,
+      defaultInquiryDeadlineMs: () => 86_400_000,
       queryRounds: createQueryRoundResolver({ records: backend.records, duties: unknownSessionDuty, bodies: lineBodies }),
       roles: createRoleConfigurationService({ records: backend.records, now, eventId: lineEventId }), materials,
       systemActor: { kind: 'system', id: 's2c-d-line' }, now, newId: lineEventId });

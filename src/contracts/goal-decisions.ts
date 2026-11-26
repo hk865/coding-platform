@@ -138,6 +138,17 @@ export type UserDecisionBodyV1 = {
   annotations: DecisionAnnotationV1[];
 };
 
+/**
+ * The formal decision body of a message response whose metadata carries the person's decision; `null` for a plain
+ * reply. `text` is the stored body's own free text, so the body is exactly the saved selection, words and notes, never
+ * a re-derived guess. The line's busy-point input and the secretary reply round both build it here.
+ */
+export function userDecisionBodyOf(response: unknown, text: string): UserDecisionBodyV1 | null {
+  if (response === null || typeof response !== 'object' || !('decision' in response)) return null;
+  const { selection, annotations } = (response as { decision: Pick<UserDecisionBodyV1, 'selection' | 'annotations'> }).decision;
+  return { schemaVersion: 1, kind: 'user_decision_response', selection, text, annotations };
+}
+
 /** The shared autonomy table's action vocabulary (spec §3.2). */
 export type DecisionActionV1 =
   | 'confirm_goal' | 'adopt_first_plan' | 'remember_user_preference'

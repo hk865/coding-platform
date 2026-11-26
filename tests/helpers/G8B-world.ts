@@ -51,11 +51,11 @@ type InterventionEntry = (ctx: CoreCallContext, input: { messageRef: SessionMess
 export type G8BRound = { message: SessionMessage; text: string };
 
 export type G8BWorld = Awaited<ReturnType<typeof openG8BWorld>>;
-/** 只开内存后端：这些都是业务行（RULES S3，lead 11-17 补充裁定 ②）。 */
-export async function openG8BWorld(label: string) {
+/** 只开内存后端：这些都是业务行（RULES S3，lead 11-17 补充裁定 ②）；要 Host 崩溃重启的行开 SQLite（FLK 返工 2）。 */
+export async function openG8BWorld(label: string, backend: 'memory' | 'sqlite' = 'memory') {
   // 25 毫秒的提醒周期让 Host 的消费循环每 25 毫秒醒一次（`host.ts:3856-3857`），`heartbeatUntil` 拨一次钟就是一轮
   // （SCRV、XWR 的世界同样这样给）。
-  const world: S6AHostWorld = await openS6AHostWorld({ backend: 'memory',
+  const world: S6AHostWorld = await openS6AHostWorld({ backend,
     extraHostOptions: { requestDriver: 'on', scribeReminderPeriodMs: 25 } });
   let second: S7D2SecondWorkspace | null = null;
   const restores: (() => void)[] = [];

@@ -22,7 +22,14 @@ import { explorationGroupsOf } from '../state/role-line-action.js';
 import type {
   ColdStartExplorationQueryRefV1, ColdStartPhaseV1, ExplorationDepthV1,
 } from '../state/role-line-action.js';
-import { newExplorationFollowUpAction } from '../state/exploration-followup.js';
+import { explorationFollowUpOperationRef, newExplorationFollowUpAction } from '../state/exploration-followup.js';
+import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
+import type { EncodedRecord } from '../../record-store/ports.js';
+import { lookupAll } from '../persistence/lookup-all.js';
+import { readOwnerRecord } from '../persistence/owner-record-read.js';
+import {
+  CORE_OPERATION_BY_WORKSPACE_PHASE_LOOKUP, decodeSessionOperationRecord, operationRefKey,
+} from './session-record-codecs.js';
 import {
   readColdStartRecord, readWorkspaceJoinRecord, type ColdStartServiceDeps,
 } from './cold-start-service.js';
@@ -37,7 +44,7 @@ import type { executeWriteCommand } from '../persistence/command-executor.js';
 export type ExplorationControlViewV1 = {
   operation: { aggregateType: 'CoreOperation'; projectId: string; operationId: string };
   revision: number;
-  action: 'cold_start' | 'workspace_join';
+  action: 'cold_start' | 'workspace_join' | 'exploration_followup';
   phase: 'accepted' | 'running' | 'completed' | 'failed' | 'unknown';   // the record's phase
   actionPhase: ColdStartPhaseV1 | 'coarse_split' | 'regions' | 'proposals';  // the payload phase
   held: boolean;
@@ -49,13 +56,15 @@ export type ExplorationCancelPort = (ctx: CoreCallContext, runs: readonly QueryR
 
 export type ExplorationControlDeps = Pick<ColdStartServiceDeps,
   'records' | 'queries' | 'proposals' | 'sessions' | 'knowledge' | 'now'> & {
+  /** P6I: the workspace's held follow-ups are found through the operation-by-workspace-and-phase lookup. */
+  records: ColdStartServiceDeps['records'] & RecordLookupPort;
   /** The executor itself; the control passes its delayed `read`/`decide` and the shared commit shape. */
   write: typeof executeWriteCommand;
   /** R-03: abort the marked rounds through the Runtime's one entered-Turn table, after the hold commit. */
   cancel: ExplorationCancelPort;
 };
 
-type TargetV1 = { kind: 'cold_start' | 'workspace_join'; record: RoleLineOperationV1;
+type TargetV1 = { kind: 'cold_start' | 'workspace_join' | 'exploration_followup'; record: RoleLineOperationV1;
   action: { phase: string; explorations?: ColdStartExplorationQueryRefV1[]; result: RoleLineOperationV1['action']['result'];
     depth?: ExplorationDepthV1; plannedRounds?: number } };
 
@@ -92,6 +101,69 @@ async function findTarget(deps: ExplorationControlDeps, workspace: WorkspaceInpu
     return { status: 'ready', value: { kind: 'cold_start', record: cold.value.record, action: cold.value.action } };
   }
   return rejected('invalid', 'this workspace has no unfinished exploration');
+}
+
+/**
+ * P6I: a follow-up of this workspace held on a round ended before entry (`holdOnEndedRound`), or null. A follow-up has
+ * no stop/continue of its own, so the workspace's continue releases it once no held join or cold start is left.
+ */
+async function heldFollowUpOf(deps: ExplorationControlDeps, workspace: WorkspaceInput):
+  Promise<ReadResult<RoleLineOperationV1 | null>> {
+  for (const phase of ['accepted', 'running'] as const) {
+    let items: readonly EncodedRecord[];
+    try {
+      items = (await lookupAll<EncodedRecord>(deps.records, CORE_OPERATION_BY_WORKSPACE_PHASE_LOOKUP,
+        [workspace.projectId, workspace.workspaceId, phase])).items;
+    } catch (error) {
+      return rejected('unavailable', `the exploration follow-ups could not be read: ${String(error)}`);
+    }
+    for (const encoded of items) {
+      const decoded = decodeSessionOperationRecord(encoded);
+      if (decoded.status !== 'decoded') return rejected('unavailable', 'an unfinished operation is damaged');
+      const action = decoded.value.action;
+      if (action.kind === 'role_line' && action.action === 'exploration_followup' && action.result?.status === 'waiting') {
+        return { status: 'ready', value: decoded.value as RoleLineOperationV1 };
+      }
+    }
+  }
+  return { status: 'ready', value: null };
+}
+
+/** What a person's continue releases: the held join or cold start of this workspace, else a held follow-up (P6I). */
+async function continueTarget(deps: ExplorationControlDeps, workspace: WorkspaceInput): Promise<ReadResult<TargetV1>> {
+  const main = await findTarget(deps, workspace);
+  if (main.status === 'ready' && main.value.action.result?.status === 'waiting') return main;
+  // P6I r3: a failed read of the join or cold start answers as itself (`findTarget` answers `invalid` only when there is
+  // no unfinished one). Unread, the held one may be that main exploration, so no follow-up is released in its place.
+  if (main.status === 'rejected' && main.code !== 'invalid') return main;
+  const followUp = await heldFollowUpOf(deps, workspace);
+  if (followUp.status !== 'ready') return followUp;
+  if (followUp.value !== null) {
+    return { status: 'ready', value: { kind: 'exploration_followup', record: followUp.value,
+      action: followUp.value.action as TargetV1['action'] } };
+  }
+  return main.status === 'ready' ? rejected('invalid', 'this exploration is not stopped') : main;
+}
+
+/** One exploration operation by its ref; a ref with no record is `not_found`. */
+async function readControlOperation(deps: ExplorationControlDeps, ref: OperationRef):
+  Promise<{ status: 'ready'; value: RoleLineOperationV1 } | { status: 'not_found' } | CoreRejection> {
+  const read = await readOwnerRecord({ store: deps.records, refKey: operationRefKey(ref),
+    decode: decodeSessionOperationRecord,
+    readError: () => rejected('unavailable', 'the exploration operation cannot be read') });
+  if (!read.ok) return 'notFound' in read ? { status: 'not_found' } : read.rejection;
+  return { status: 'ready', value: read.value as RoleLineOperationV1 };
+}
+
+/** The operation a control receipt names, read back (M2: the receipt, not the current target, answers a replay). */
+async function receiptTarget(deps: ExplorationControlDeps, ref: OperationRef): Promise<ReadResult<TargetV1>> {
+  const read = await readControlOperation(deps, ref);
+  if (read.status !== 'ready') return read.status === 'not_found' ? rejected('unavailable', 'the exploration operation is gone') : read;
+  const action = read.value.action;
+  if (action.action !== 'cold_start' && action.action !== 'workspace_join' && action.action !== 'exploration_followup') {
+    return rejected('unavailable', 'the exploration operation is damaged');
+  }
+  return { status: 'ready', value: { kind: action.action, record: read.value, action: action as TargetV1['action'] } };
 }
 
 /** The last round of every group that has not answered; those are the rounds a stop marks (R-04). */
@@ -131,6 +203,7 @@ export function createExplorationControl(deps: ExplorationControlDeps): Explorat
     let prior: RoleLineOperationV1 | null = null;
     let next: RoleLineOperationV1 | null = null;
     let cancelRefs: ColdStartExplorationQueryRefV1[] = [];
+    const commit = roleLineOperationCommit({ now: deps.now }, trusted.actor, () => ({ prior, next: next! }));
     const written = await deps.write(deps.records, {
       operation: 'role-line-operation',
       principal: ctx.principal as never,
@@ -140,14 +213,13 @@ export function createExplorationControl(deps: ExplorationControlDeps): Explorat
       scope: { projectId: ctx.projectId, workspaceId: ctx.workspaceId ?? null },
       fingerprintInput: { workspace } as never,
       read: async () => {
-        const target = await findTarget(deps, workspace);
-        if (target.status !== 'ready') return targetReadFailure(target);
         if (command === 'continue') {
-          if (target.value.action.result?.status !== 'waiting') {
-            return rejected('invalid', 'this exploration is not stopped');
-          }
+          const target = await continueTarget(deps, workspace);
+          if (target.status !== 'ready') return targetReadFailure(target);
           return { status: 'ready', facts: { target: target.value, refs: [] } };
         }
+        const target = await findTarget(deps, workspace);
+        if (target.status !== 'ready') return targetReadFailure(target);
         const tails = await unansweredGroupTails(deps, ctx, target.value);
         if (tails.status !== 'ready') return targetReadFailure(tails);
         return { status: 'ready', facts: { target: target.value, refs: tails.value } };
@@ -160,16 +232,18 @@ export function createExplorationControl(deps: ExplorationControlDeps): Explorat
         cancelRefs = facts.refs;
         return { decision: null };
       },
-      ...roleLineOperationCommit({ now: deps.now }, trusted.actor, () => ({ prior, next: next! })),
+      build: commit.build,
+      // The receipt also carries the operation it wrote, so its view (a replay's too) reads that one record.
+      result: { ...commit.result, project: (decoded) => ({ revision: decoded.revision, operationRef: decoded.operationRef }) },
     });
     if (written.status === 'refused') return rejected('invalid', 'the exploration command was refused');
     if (written.status !== 'committed') return written;
     if (command === 'stop' && cancelRefs.length > 0) {
       await deps.cancel(ctx, cancelRefs.map((ref) => ref.queryRunRef));
     }
-    // The committed view is the record the write left behind; a replayed receipt never ran `decide`, so the fresh
-    // target read is also what answers the replay. The read happens after the receipt, never before it.
-    const fresh = await findTarget(deps, workspace, written.replayed);
+    // The committed view is the record the write left behind; a replayed receipt never ran `decide`, so the record the
+    // receipt names is also what answers the replay. The read happens after the receipt, never before it.
+    const fresh = await receiptTarget(deps, written.value.operationRef);
     if (fresh.status !== 'ready') return targetReadFailure(fresh);
     const value = viewOf(fresh.value);
     // A replayed receipt answers with the first commit's revision; the later record only supplies the display
@@ -208,6 +282,28 @@ export function createExplorationControl(deps: ExplorationControlDeps): Explorat
       replayed: written.replayed, cursor: written.cursor };
   }
 
+  /**
+   * P6I: re-proposing a batch whose follow-up is held (a round ended before entry, `holdOnEndedRound`) is the person's
+   * continue of that follow-up: `releaseExploration`, and the Host drives it again. Null when there is no such record
+   * or it is not held, so the ordinary birth (or its replay) runs.
+   */
+  async function releaseHeldFollowUp(ctx: CoreCallContext, ref: OperationRef):
+    Promise<WriteResult<{ target: 'followup'; operation: OperationRef }> | null> {
+    const read = await readControlOperation(deps, ref);
+    if (read.status === 'not_found') return null;
+    if (read.status !== 'ready') return read;
+    const record = read.value;
+    if ((record.phase !== 'accepted' && record.phase !== 'running') || record.action.result?.status !== 'waiting') return null;
+    const next: RoleLineOperationV1 = { ...record, revision: record.revision + 1, updatedAt: deps.now(),
+      action: releaseExploration(record.action) };
+    const written = await writeRoleLineOperation(deps, ctx, record, next,
+      { commandId: `exploration-followup-release:${record.ref.operationId}:${String(record.revision)}`,
+        fingerprintInput: { operation: record.ref, revision: record.revision } as never });
+    if (written.status !== 'committed') return written;
+    return { status: 'committed', value: { target: 'followup', operation: { ...record.ref } },
+      replayed: written.replayed, cursor: written.cursor };
+  }
+
   async function beginRepropose(ctx: CoreCallContext, input: {
     projectId: string; workspaceId: string; batchRef: ArchitectureProposalBatchRef; reason: string;
   }): Promise<WriteResult<{ target: 'coarse_split' | 'followup'; operation: RoleLineOperationV1['ref'] }>> {
@@ -226,6 +322,12 @@ export function createExplorationControl(deps: ExplorationControlDeps): Explorat
       && sources.value.every((source) => source.operation !== null && sameJson(source.operation.ref, firstOperation.ref))
       && firstOperation.action.action === 'cold_start' && firstOperation.action.phase === 'coarse_split';
     if (firstOperation === null || !coarse) {
+      // A Work-Run proposal has no round; the operation is born in the workspace the person answered from.
+      const workspaceId = firstRound?.queryRunRef.workspaceId ?? input.workspaceId;
+      const scopedCtx: CoreCallContext = ctx.workspaceId === workspaceId ? ctx : { ...ctx, workspaceId };
+      const key = `repropose:${input.batchRef.batchId}`;
+      const released = await releaseHeldFollowUp(scopedCtx, explorationFollowUpOperationRef(input.projectId, key));
+      if (released !== null) return released;
       const modules = new Map<string, { projectId: string; moduleId: string }>();
       for (const source of sources.value) {
         if (source.region === null) return rejected('invalid', 'a region batch source names no region block');
@@ -251,12 +353,8 @@ export function createExplorationControl(deps: ExplorationControlDeps): Explorat
         depth: firstOperation === null ? 1 : explorationDepthOf(firstOperation.action), kind: 'repropose',
         moduleRefs: [...modules.values()], reason: places === null ? input.reason : `${places}\n\n${input.reason}`,
         sourceBatchRef: input.batchRef, baseCatalogPin: catalogPinOf(window) });
-      // A Work-Run proposal has no round; the operation is born in the workspace the person answered from.
-      const workspaceId = firstRound?.queryRunRef.workspaceId ?? input.workspaceId;
-      const scopedCtx: CoreCallContext = ctx.workspaceId === workspaceId ? ctx : { ...ctx, workspaceId };
       const born = await ensureExplorationFollowUp({ records: deps.records, sessions: deps.sessions, now: deps.now },
-        scopedCtx, { projectId: input.projectId, workspaceId,
-          key: `repropose:${input.batchRef.batchId}`, action });
+        scopedCtx, { projectId: input.projectId, workspaceId, key, action });
       if (born.status !== 'committed') return born;
       return { status: 'committed', value: { target: 'followup', operation: { ...born.value.operation } },
         replayed: born.replayed, cursor: born.cursor };

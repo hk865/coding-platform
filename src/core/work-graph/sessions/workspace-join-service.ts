@@ -91,6 +91,10 @@ export function createWorkspaceJoinService(deps: ColdStartServiceDeps): Workspac
     }
     const problem = workspaceJoinPhaseProblem(action);
     if (problem !== null) return rejected('invalid', problem);
+    // P6I: a held exploration is judged on this read, not on the caller's earlier one (as `driveColdStart`).
+    if (action.result?.status === 'waiting') {
+      return { status: 'ready', value: { phase: action.phase, revision: op.revision, completed: false } };
+    }
     const at: AtV1 = { ctx, input, op, action };
     // The first drive pins the project's current catalog and does not advance; a project without a current catalog
     // waits for its cold start's adoption (a person may join before the first cold start runs).

@@ -1,5 +1,5 @@
 {
-  "description": "点名撤掉这个任务上的一条暂缓原因，一次一条，要带 reasonId。谁能用：本轮挂了本工具的秘书、参谋；秘书请求轮可用。普通原因由放下它的线或本目标的任一秘书、参谋点名撤；书记原因只有负责参谋能撤；人用任务卡的“撤销暂缓”一次撤全部。不动 pendingStop。参数：taskRef 是任务三元组；reasonId 从任务卡的暂缓栏或暂缓回执里读，不猜；note 可选，写为什么能撤。回执：committed（带 value.hold、value.revision、value.reasonId）表示撤了；unchanged 表示这条原因已撤，原样回。",
+  "description": "点名撤掉这个任务上的一条暂缓原因，一次一条，要带 reasonId。普通原因由放下它的线或本目标的任一秘书、参谋点名撤；书记原因只有负责参谋能撤；人用任务卡的“撤销暂缓”一次撤全部。不动 pendingStop。参数：taskRef 是任务三元组；reasonId 从任务卡的暂缓栏或暂缓回执里读，不猜；note 可选，写为什么能撤。回执：committed（带 value.hold、value.revision、value.reasonId）表示撤了；unchanged 表示这条原因已撤，原样回。",
   "parameters": {
     "taskRef": "要撤暂缓的任务三元组。",
     "taskRef.projectId": "任务的项目 id。",

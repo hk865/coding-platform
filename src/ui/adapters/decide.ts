@@ -14,6 +14,11 @@
  */
 
 import { asRecord, asText } from '../values.js';
+import { tasksOf } from './plan.js';
+import type { PlanRevisionDraft } from '../../contracts/plan.js';
+import type { ReadResult } from '../../contracts/core/results.js';
+import type { PlanReviewReadV1 } from '../../contracts/plan-review.js';
+import type { TaskbookExportReadV1 } from '../../contracts/plan-round.js';
 import {
   ACTOR_WORD, blockerTextOf, causeWordOf, decisionCardCountPartial, gapTextOf, goalDisplayState, localShortAt,
   planRefText, planVersionText, reworkLines, stopRunText, stopWordOf, taskState,
@@ -59,6 +64,8 @@ export type DecisionCardV1 = {
   /** Y14: why a closed card closed; absent on old records. */
   closedReason?: 'goal_cancelled' | 'source_resolved' | null;
   actions: readonly string[];
+  staleReason?: string | null;
+  proposedChecks?: readonly { checkId: string; command: string }[];
   /** Y3/R2: the checks this stop card may withdraw and reverify. */
   withdrawableChecks?: readonly string[];
   /** §2.8: the release card's request view; absent on every other source kind. */
@@ -124,6 +131,7 @@ export type DecideSource = {
    * cardKey; `null` is that card's failed read. Absent when the caller did not read
    * the list (the Plan page draws no structural card). */
   proposalFiles?: Record<string, readonly ProposalBatchFileV1[] | null>;
+  candidates?: Record<string, CandidateDetail>;
   /** X9: each knowledge notice's detail reads, by notice item key. `null` in either
    * field is that read's failure; `'not_found'` is the route's “nothing there”. */
   noticeFacts?: Record<string, KnowledgeNoticeRead>;
@@ -268,6 +276,7 @@ export type DecideCard = {
   stale: boolean;
   /** Y11: the answer box's pure judgments, computed here so 4a shares them. */
   answerBox: boolean;
+  noteBox: boolean;
   needsOption: boolean;
   askOnly: boolean;
   /** Y11: the card's objects, each with its canonical key and Chinese label. */
@@ -293,16 +302,18 @@ export type DecideAct = {
   cls: string;
   off: string;
   tip: string;
+  /** 说明框的话进这一步的哪一栏；null 表示不随这次操作发出。 */
+  wordsField: 'note' | 'reason' | null;
 };
 
 export type DecideActionKey =
-  | 'answer' | 'ask' | 'seen' | 'locate'
+  | 'answer' | 'ask' | 'seen' | 'locate' | 'adopt' | 'abandon'
   | 'defer' | 'cancel' | 'restore' | 'continue'
   | 'requeue' | 'fix' | 'note' | 'attest' | 'answer-body'
   | 'reverify' | 'withdraw' | 'speak';
 
 export type DecideStepKey = 'requeue' | 'fix' | 'note' | 'attest'
-  | 'defer' | 'cancel' | 'restore' | 'continue' | 'recover' | 'seen' | 'reverify' | 'withdraw';
+  | 'defer' | 'cancel' | 'restore' | 'continue' | 'recover' | 'seen' | 'reverify' | 'withdraw' | 'abandon';
 export type DecideForm = {
   reason?: string; budget?: string; name?: string; checks?: boolean[]; note?: string;
 };
@@ -409,7 +420,7 @@ function pinsOf(card: DecisionCardV1): Array<{ ref: unknown; revision: number }>
 /** §2.7: requisition's `meta.expected` takes only the Goal and this Run pin; the
  * structural card also takes its one batch pin by the same aggregate type. */
 export function pinsFor(card: DecisionCardV1,
-  kind: 'Goal' | 'Run' | 'ArchitectureProposalBatch'): Array<{ ref: unknown; revision: number }> {
+  kind: 'Goal' | 'Run' | 'ArchitectureProposalBatch' | 'PlanProposal'): Array<{ ref: unknown; revision: number }> {
   return pinsOf(card).filter((pin) => asText(asRecord(pin.ref).aggregateType) === kind);
 }
 
@@ -508,10 +519,22 @@ function roundResultWord(outcome: string): string {
     : outcome === 'INCONCLUSIVE' ? '不完整' : '还没有结果';
 }
 
+/** One check round's line for the round chain: 第 n 轮 · its result. */
+export function roundChainFactsOf(rounds: unknown): Array<{ k: string; v: string }> {
+  return (Array.isArray(rounds) ? rounds : []).map((entry) => {
+    const row = asRecord(entry);
+    const n = typeof row.ordinal === 'number' ? row.ordinal : 1;
+    const word = asText(row.status) === 'open' ? '检查中' : roundResultWord(asText(row.outcome));
+    return { k: '轮次', v: '第 ' + String(n) + ' 轮 · ' + word };
+  });
+}
+
 /** Y1: the eleven-plus failure facts from `TaskRow.failure`/`rework`/`attemptOrdinal`.
  * The first three keys and their order are the unknown-outcome step's known facts
- * (`Decide.dc.html` takes `facts.slice(0, 3)`). */
-function factsOf(row: Record<string, unknown>, checkRows?: Record<string, DecideCheckRow> | null): DecideCard['facts'] {
+ * (`Decide.dc.html` takes `facts.slice(0, 3)`). `rows` hides the three facts the
+ * TaskMap draws elsewhere. */
+export function factsOf(row: Record<string, unknown>, checkRows?: Record<string, DecideCheckRow> | null,
+  rows: { attempt?: boolean; rework?: boolean; exit?: boolean } = {}): DecideCard['facts'] {
   const failure = asRecord(row.failure);
   if (Object.keys(failure).length === 0) return [];
   const definition = asRecord(row.definition);
@@ -533,7 +556,7 @@ function factsOf(row: Record<string, unknown>, checkRows?: Record<string, Decide
   /* 2: who did it. */
   out.push({ k: '谁做的', v: origin === 'host_interrupted' ? '平台中断' : origin === 'human_attested' ? '人工认定' : '系统自动' });
   /* 3: the attempt. */
-  out.push({ k: '尝试', v: attempt });
+  if (rows.attempt !== false) out.push({ k: '尝试', v: attempt });
   /* 4: the latest requeue refusal. */
   out.push({ k: '最近拒绝', v: refusalFactText(automation.lastRefusal, '重新入队') });
   /* 5: the latest reverify refusal, when one exists. */
@@ -594,12 +617,12 @@ function factsOf(row: Record<string, unknown>, checkRows?: Record<string, Decide
     if (text !== '') out.push({ k: '判定', v: text });
   }
   /* 12…: one row per rework history line. */
-  for (const line of reworkLines(row.rework)) out.push({ k: '返工', v: line });
+  if (rows.rework !== false) for (const line of reworkLines(row.rework)) out.push({ k: '返工', v: line });
   /* 末: the one exit when no check covers the requirement. */
   const stopReason = kind === 'stopped' ? asText(verdict.reason) : '';
   const lastReverify = asRecord(automation.lastReverifyRefusal);
-  if (stopReason === 'verification_uncovered'
-    || (asText(lastReverify.code) === 'verification_uncovered' && lastReverify.stale !== true)) {
+  if (rows.exit !== false && (stopReason === 'verification_uncovered'
+    || (asText(lastReverify.code) === 'verification_uncovered' && lastReverify.stale !== true))) {
     out.push({ k: '出路', v: '要补检查，在主对话里说，参谋会起草带新检查的计划' });
   }
   return out;
@@ -954,6 +977,110 @@ function roleOf(plan: unknown, taskId: string): string | null {
   return role === '' ? null : role;
 }
 
+type ChangedRequirement = { title: string; requirements: readonly { description: string }[] };
+type StandardChange = {
+  supersededGates: readonly { title: string }[];
+  droppedObligations: readonly ChangedRequirement[];
+  newObligations: readonly ChangedRequirement[];
+  reason: string;
+  proposedBy: { session: SessionRef | null };
+  personWords: string | null;
+};
+export type CandidateFactsRead = {
+  diagnosis: readonly { message: string }[] | null;
+  exactReview: ReadResult<PlanReviewReadV1>;
+  exportRead: TaskbookExportReadV1;
+  standardChange: ReadResult<StandardChange | null>;
+};
+export type CandidateDetail = {
+  proposal: { reason: { text: string }; draft: PlanRevisionDraft } | null;
+  facts: CandidateFactsRead | null;
+};
+
+export function candidateStaleTextOf(reason: string | null | undefined): string {
+  switch (reason) {
+    case 'basedOn is not the active Plan pointer': return '计划已经变了，这份候选不能直接采用';
+    case '来源已撤回': return '来源已撤回';
+    case '来源不可读': return '来源暂时读不到';
+    default: return '已过期';
+  }
+}
+
+function candidateReviewText(read: CandidateFactsRead['exactReview'], draft: PlanRevisionDraft | null): string {
+  if (read.status !== 'ready') return '审阅暂时读不到';
+  const review = read.value;
+  switch (review.status) {
+    case 'not_sent': return '';
+    case 'waiting': return '审阅中';
+    case 'terminal_invalid': return '审阅没有给出有效结论';
+    case 'decided':
+      if (review.verdict === 'pass') return '审阅通过';
+      return '审阅要改：' + review.findings.map(({ taskId, text }) => {
+        const title = draft?.tasks.find((task) => task.taskId === taskId)?.title;
+        return title ? '「' + title + '」' + text : text;
+      }).join('；');
+  }
+}
+
+function standardChangeText(read: CandidateFactsRead['standardChange'], nav: NavData): string {
+  if (read.status !== 'ready') return '降标的事实暂时读不到';
+  const change = read.value;
+  if (change === null) return '';
+  const requirement = (row: ChangedRequirement) =>
+    '「' + row.title + '」：' + row.requirements.map((item) => item.description).join('；');
+  const lines = [
+    ...change.supersededGates.map((gate) => '被取代的关口「' + gate.title + '」'),
+    ...change.droppedObligations.map((row) => '去掉的要求' + requirement(row)),
+    ...change.newObligations.map((row) => '换成的关口' + requirement(row)),
+    '理由：' + change.reason,
+  ];
+  const session = change.proposedBy.session;
+  if (session !== null) lines.push('提出者：' + (lineNameOfSession(nav.lines, session)
+    || lineNameOfSession(nav.archived, session) || '另一条线'));
+  if (change.personWords !== null) lines.push('人的原话：' + change.personWords);
+  return lines.join('；');
+}
+
+/** 一项没读到只盖住它自己的行；没有缺口、审阅或降标时省去相应的行。 */
+export function candidateFactsOf(facts: CandidateFactsRead | null, draft: PlanRevisionDraft | null,
+  nav: NavData): DecideFact[] {
+  if (facts === null) return ['检查缺口', '审阅', '任务书', '降标'].map((k) => ({ k, v: '暂时读不到' }));
+  const rows: DecideFact[] = [];
+  const add = (k: string, v: string): void => { if (v !== '') rows.push({ k, v }); };
+  add('检查缺口', facts.diagnosis === null ? '这次没算' : facts.diagnosis.map((item) => item.message).join('；'));
+  add('审阅', candidateReviewText(facts.exactReview, draft));
+  const exported = facts.exportRead;
+  if (exported.status === 'unavailable') add('任务书', '这次没导出，不挡采用');
+  if (exported.status === 'ready') {
+    for (const stage of exported.stages) {
+      const suffix = stage.state === 'incomplete' ? '（没写完）' : stage.state === 'missing' ? '（没写出来）' : '';
+      add('任务书', stage.path + suffix);
+    }
+  }
+  add('降标', standardChangeText(facts.standardChange, nav));
+  return rows;
+}
+
+function candidateDetailRows(card: DecisionCardV1, detail: CandidateDetail, nav: NavData): DecideFact[] {
+  const { proposal } = detail;
+  const rows = [{ k: '理由', v: proposal === null ? '暂时读不到' : proposal.reason.text }];
+  if (proposal === null) {
+    rows.push({ k: '任务', v: '暂时读不到' });
+  } else {
+    for (const stage of tasksOf(proposal.draft)) {
+      const taskNames = stage.items.map((task) => task.name).join('、');
+      rows.push({ k: '任务', v: stage.name ? stage.name + '：' + taskNames : taskNames });
+    }
+  }
+  for (const check of card.proposedChecks ?? []) rows.push({ k: '会装上的检查', v: check.checkId + '：' + check.command });
+  return rows.concat(candidateFactsOf(detail.facts, proposal?.draft ?? null, nav));
+}
+
+const STOP_WORDS_FIELD: Partial<Record<DecideActionKey, 'note' | 'reason'>> = {
+  requeue: 'note', note: 'note', reverify: 'note', continue: 'note',
+  attest: 'reason', defer: 'reason', cancel: 'reason', restore: 'reason', fix: 'reason',
+};
+
 function actsOf(
   card: DecisionCardV1, row: Record<string, unknown> | null, conflict: boolean,
   files: { path: string; parts: string[] }[],
@@ -962,7 +1089,7 @@ function actsOf(
   const add = (key: DecideActionKey, label: string, step: DecideStepKey | null, primary: boolean,
     extra: Partial<DecideAct> = {}): DecideAct => {
     const act: DecideAct = { key, label, step, primary, cls: 'btn btn-sm btn-line' + (extra.off === 'true' ? ' is-off' : ''),
-      off: 'false', tip: '', ...extra };
+      off: 'false', tip: '', wordsField: STOP_WORDS_FIELD[key] ?? null, ...extra };
     out.push(act);
     return act;
   };
@@ -970,6 +1097,13 @@ function actsOf(
     for (const act of out) act.primary = act.key === key;
   };
   if (card.readOnly) return out;
+  if (card.source.kind === 'candidate') {
+    if (!card.actions.includes('abandon')) return out;
+    const live = card.actions.includes('adopt');
+    add('adopt', '采用', null, true, live ? {} : { off: 'true', tip: candidateStaleTextOf(card.staleReason) });
+    add('abandon', '放弃', 'abandon', false);
+    return out;
+  }
   if (conflict) {
     const names = files.map((file) => file.path.slice(file.path.lastIndexOf('/') + 1));
     const shown = names.slice(0, 3).join('、') + (names.length > 3 ? ' 等 ' + names.length + ' 个文件' : '');
@@ -990,7 +1124,7 @@ function actsOf(
      not `tasks/requeue`. */
   const interrupted = card.source.kind === 'goal_cause'
     && asText(asRecord(card.source).key).includes('interrupted_pending_resume');
-  if (interrupted) add('continue', '继续', null, true);
+  if (interrupted) add('continue', '继续', null, true, { wordsField: null, tip: '说明框里的话不随这次发出' });
   if (card.source.kind === 'goal_cause' && row !== null) {
     const failure = asRecord(row.failure);
     const stop = stopOf(row);
@@ -1026,7 +1160,7 @@ function actsOf(
     } else if (stop === 'gate_needs_fix') {
       add('fix', '添加修复任务', 'fix', true);
     } else if (stop === 'verification_uncovered') {
-      add('speak', '去主对话说', null, true);
+      add('speak', '去主对话说', null, true, { tip: '说明框里的话不随这次发出' });
     } else if (stop === 'budget_exhausted') {
       if (!gate) {
         add('defer', '延后任务', 'defer', false);
@@ -1086,6 +1220,7 @@ function makeView(args: {
   goalName: string; taskName: string; taskRow: Record<string, unknown> | null;
   plan: unknown; pins: Array<{ ref: unknown; revision: number }>; files: { path: string; parts: string[] }[];
   proposalFiles?: readonly ProposalBatchFileV1[] | null;
+  candidate?: CandidateDetail;
   workspaceNames: Record<string, string>;
   checkRows?: Record<string, DecideCheckRow> | null;
   answerBody?: string;
@@ -1148,7 +1283,8 @@ function makeView(args: {
   }
   const body = args.answerBody === undefined ? null : answerBodyViewOf(args.answerBody, card.objects);
   const baseLine = answer !== null ? answer.selection + (answer.application === 'pending' ? '；等落实' : answer.application === 'applied' ? '；已落实' : '') : sourceLine;
-  const factsBase = args.proposalFiles !== undefined ? proposalFileFactsOf(args.proposalFiles, args.workspaceNames)
+  const factsBase = args.candidate !== undefined ? candidateDetailRows(card, args.candidate, args.nav)
+    : args.proposalFiles !== undefined ? proposalFileFactsOf(args.proposalFiles, args.workspaceNames)
     : release !== null ? actionFacts
       : taskRow !== null ? factsOf(taskRow, args.checkRows)
         : conflict ? [{ k: '重叠文件', v: '', files }] : [];
@@ -1190,6 +1326,7 @@ function makeView(args: {
     sourceLine,
     stale,
     answerBox,
+    noteBox: card.source.kind === 'goal_cause' && acts.length > 0 && args.level !== 'done',
     needsOption: optionNeeded,
     askOnly: ASK_ONLY_SOURCES.includes(card.source.kind),
     objects,
@@ -1273,7 +1410,7 @@ export function adaptDecide(source: DecideSource, ui: DecideUi): DecideData {
       ? card.state === 'closed'
         ? card.closedReason === 'source_resolved' ? '已关闭：来源已解决'
           : card.closedReason === 'goal_cancelled' ? '已关闭：目标已取消' : '已关闭'
-        : answerWord + (card.state === 'applied' ? '；已落实' : '')
+        : answerWord + (card.state === 'applied' ? '；已落实' : card.state === 'answered_pending_application' ? '；已答复，落实没记上。' : '')
       : conflict
         ? '都要改 ' + files.map((file) => file.path).join('、')
         : card.source.kind === 'goal_cause'
@@ -1289,6 +1426,7 @@ export function adaptDecide(source: DecideSource, ui: DecideUi): DecideData {
       goalId: goalId ?? '', ordinal, goalName: nameOf(goalId), taskName, taskRow, taskRef: triple,
       plan: taskGoalId === null ? null : source.tasks[taskGoalId] ?? null, pins, files,
       ...(proposalFiles === undefined ? {} : { proposalFiles }), workspaceNames: source.workspaceNames ?? {},
+      ...(source.candidates?.[card.cardKey] && { candidate: source.candidates[card.cardKey] }),
       ...(source.checkRows === undefined ? {} : { checkRows: source.checkRows }),
       ...(source.answerBodies?.[card.cardKey] === undefined ? {} : { answerBody: source.answerBodies[card.cardKey] }),
     });

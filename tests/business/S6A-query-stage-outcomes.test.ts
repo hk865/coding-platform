@@ -6,11 +6,11 @@
  *   answers `blocked` on a change ("the attempt has not changed"), so a queue
  *   that launched it parks instead of waking itself; once the request is
  *   answered the round has its answer and `advance` answers `terminal`.
- * - A fixed capacity limit waits for a change. A request whose rounds are too
- *   long together for one prepared Query manifest: the claim commits, the
- *   preparation refuses `capacity`, and `advance` answers `blocked` on a change,
- *   not a back-off, because the same call cannot succeed until the input or the
- *   configuration changes.
+ * - A preparation refused for good closes the attempt before entry (P6I R2). A
+ *   request whose rounds are too long together for one prepared Query manifest:
+ *   the claim commits, the preparation refuses `capacity` (the batch only grows,
+ *   so nothing the round waits for would make it fit), and the attempt is closed
+ *   `not_entered` with that refusal as its reason; `advance` answers `terminal`.
  *
  * The driver is the real `createQueryStageDriver` over the world's published
  * Query owner, Runtime and request facts, called directly. The world is the
@@ -116,7 +116,7 @@ describe.each(['memory', 'sqlite'] as const)('the stage driver outcomes (%s)',
         expect(await driver.advance(world.systemContext(), input)).toEqual({ status: 'terminal' });
       }, 60_000);
 
-    it('answers blocked on a change when the preparation is over the manifest capacity', async () => {
+    it('closes the attempt before entry when the preparation is over the manifest capacity', async () => {
       const world = await openS6AHostWorld({ backend });
       worlds.push(world);
       await ensureProjectPointers(world);
@@ -141,13 +141,15 @@ describe.each(['memory', 'sqlite'] as const)('the stage driver outcomes (%s)',
       const driver = createQueryStageDriver({
         queries: world.platform.queries, runtime: world.platform.runtime, facts: world.platform.requestFacts,
       });
-      // The claim commits and the preparation refuses `capacity`: a fixed limit
-      // that waits for a change (fewer or shorter rounds, another configuration).
+      // The claim commits and the preparation refuses `capacity`: the attempt is
+      // closed before entry with the refusal as its reason, so the line is free.
       const outcome = await driver.advance(world.systemContext(),
         { queryJobRef: root.round, expectedRunRef: runRef, profile });
-      expect(outcome).toMatchObject({ status: 'blocked', retry: 'on_change' });
-      expect(outcome.status === 'blocked' ? outcome.reason : null).toContain('capacity');
-      expect((await readQuery(world.ag2b, root.round)).run.run.executionState?.phase).toBe('claimed');
+      expect(outcome).toEqual({ status: 'terminal' });
+      const closed = await readQuery(world.ag2b, root.round);
+      expect(closed.run.run).toMatchObject({ status: 'closed', outcome: 'not_entered' });
+      expect(closed.job.job.closeReason).toMatchObject({ code: 'not_entered' });
+      expect(closed.job.job.closeReason?.message).toContain('preparation_refused: capacity');
       expect(await world.scripted.requests(a)).toHaveLength(0);
     }, 60_000);
   });

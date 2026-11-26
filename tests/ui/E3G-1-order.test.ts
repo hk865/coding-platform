@@ -4,7 +4,7 @@ import { click } from './helpers/E3N-interact.js';
 import { findButtonByLabel, findClass, findLink } from './helpers/boot-page.js';
 import type { FakeElement } from './helpers/dom.js';
 import { cancelGoal } from './helpers/E3N-world.js';
-import { e3gGoalPins, e3gGoalRows, openE3GGoals, openE3GW0, type E3GWorld } from './helpers/E3G-world.js';
+import { e3gGoalPins, e3gGoalRows, openE3GGoals, openE3GW0, pairsOf, rowButton, type E3GWorld } from './helpers/E3G-world.js';
 
 /**
  * E3G-1 G01–G08 (test sheet §2.1): the Goal list, its order writes and the one
@@ -22,24 +22,8 @@ function rowsOf(root: FakeElement): FakeElement[] {
   return e3gGoalRows(root);
 }
 
-function rowButton(row: FakeElement): FakeElement | undefined {
-  return descendants(row).find((element) => element.tagName.toLowerCase() === 'button' && hasClass(element, 'gx-name'));
-}
-
 function label(element: FakeElement, name: string): string {
   return element.getAttribute(name) ?? '';
-}
-
-function pairsOf(root: FakeElement): Array<{ key: string; value: string }> {
-  const dl = findClass(root, 'kv');
-  if (dl === undefined) return [];
-  const pairs: Array<{ key: string; value: string }> = [];
-  for (const child of descendants(dl)) {
-    const tag = child.tagName.toLowerCase();
-    if (tag === 'dt') pairs.push({ key: textOf(child), value: '' });
-    else if (tag === 'dd' && pairs.length > 0) pairs[pairs.length - 1]!.value = textOf(child);
-  }
-  return pairs;
 }
 
 function currentOf(row: FakeElement): string | null {

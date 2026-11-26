@@ -8,6 +8,11 @@
       "version": 16,
       "mentionsTools": []
     },
+    "planning-answer-text": {
+      "file": "templates/planning-answer-text.txt",
+      "version": 1,
+      "mentionsTools": []
+    },
     "consultation-received-input": {
       "file": "templates/consultation-received-input.txt",
       "version": 1,

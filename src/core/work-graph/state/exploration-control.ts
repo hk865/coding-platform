@@ -13,8 +13,18 @@ export function explorationDepthOf(action: Pick<RoleLineActionV1, 'depth'>): Exp
 }
 
 /** The person's stop: `waiting` is the existing “a person must move it, the Host does not drive” state. */
-export function holdExploration(action: RoleLineActionV1): RoleLineActionV1 {
-  return { ...action, result: { status: 'waiting', reason: EXPLORATION_STOP_REASON } };
+export function holdExploration(action: RoleLineActionV1, reason: string = EXPLORATION_STOP_REASON): RoleLineActionV1 {
+  return { ...action, result: { status: 'waiting', reason } };
+}
+
+/**
+ * P6I M1: a round the Host ended on purpose before it entered (a lasting preparation refusal, a stop) holds the
+ * exploration with that reason and marks the round to reopen once. The person's continue releases the hold and the
+ * mark reopens the round; until then nothing reopens it, so a refusal that does not lift never loops.
+ */
+export function holdOnEndedRound(action: RoleLineActionV1, entry: ColdStartExplorationQueryRefV1,
+  reason: string): RoleLineActionV1 {
+  return markRoundReopen(holdExploration(action, reason), [entry], null);
 }
 
 /** The person's continue: clears the hold; the phase, rounds and depth stay put. */

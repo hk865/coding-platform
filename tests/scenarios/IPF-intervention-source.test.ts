@@ -9,8 +9,12 @@
  * - F2（R2）：用带 `goalRef` 的消息造出同样的候选，另一条线 `asker` 用文字回答两个问题（守 `plan_round` 下文字照旧可读）、出两张规划问题卡。
  *   候选等人采用时，人经 `messages/withdraw` 撤回来源消息。期望：决定队列仍读得出，那两张规划问题卡照常，
  *   G 的下一件工作的 Run 能准备。守：IPF R2 改坏 → 撤回之后读队列 `source_stale`；R7 没做 → 候选那一步 `no_answer`。
- * - F3（守护）：消息点名了另一个目标（`goalRef` = 目标 1），没有 `taskRef`；Host 照旧按线最近的工作选 G 开 Query。
- *   期望：证明不成立，入口返回 `rejected/source_stale`，候选不写。守：IPF R1 不比较消息的 Goal → 候选写出；R7 没做 → Query `closed`。
+ * - F3（INT U3）：消息点名了另一个目标（`goalRef` = 目标 1），没有 `taskRef`；点名的目标优先于线最近的工作，
+ *   Query 归目标 1，G 不写候选。守：撤回 U3（又按线最近的工作选 G）→ Query 的目标是 G。原来这一格守的“消息点名的
+ *   目标和 Query 的目标不同”，U3 以后 `handleIntervention` 自己造不出，改由 F3b 从公开的 `queries/submit` 造。
+ * - F3b（守护）：经公开的 `queries/submit` 给 G 开这条消息的干预规划 Query（确定性身份同 Host），消息点名的是目标 1；
+ *   Host 照常推进这一轮。期望：证明不成立，入口返回 `rejected/source_stale`，G 和目标 1 都不写候选。
+ *   守：IPF R1 不比较消息的 Goal → 候选写出。
  *
  * 改坏演示（写测试方 11-17，在副本里临时给生产代码写替身，演示后还原，`git diff -- src` 为 0）：
  * R1+R2 三行全绿；只做 R1 → F2 红在撤回之后读队列；只做 R2 → F1 队列读得出，红在第二步（入口 `source_stale`、
@@ -20,15 +24,19 @@
  */
 import { afterEach, describe, expect, it } from 'vitest';
 import type { ReadResult } from '../../src/contracts/core/results.js';
+import type { GoalRef } from '../../src/contracts/ledger.js';
+import { interventionPlanningQueryRefs } from '../../src/contracts/query-job.js';
 import type { PlanProposal } from '../../src/core/work-graph/model/plan-contracts.js';
 import type { SessionMessage } from '../../src/core/work-graph/model/communication-contracts.js';
-import { graphWrite, plain } from '../helpers/AG2b-collaboration-fixture.js';
+import { AG2B_PROJECT_REF, AG2B_QUERY_BUDGET, AG2B_RUNTIME_BUDGET, AG2B_WORKSPACE_REF, graphWrite, plain }
+  from '../helpers/AG2b-collaboration-fixture.js';
 import { proposalRefOf, readPlanningQuery } from '../helpers/IV-host-fixture.js';
 import {
   createIpfLine, interveneUntilSettled, openIpfWorld, planningQuestionCards, readIpfQueue, sendIntervention,
   startIpfNextWork, type IpfWorld,
 } from '../helpers/IPF-world.js';
-import { S6A_SCOPE, S6A_WORK_ROLE } from '../helpers/S6A-request-fixture.js';
+import { S6A_SCOPE, S6A_WORK_ROLE, S6A_WORK_ROLE_BINDING } from '../helpers/S6A-request-fixture.js';
+import { committed, ready } from '../helpers/S7A-fixture.js';
 import { refinementPlan } from '../helpers/S7B-V-fixture.js';
 
 const worlds: IpfWorld[] = [];
@@ -56,8 +64,9 @@ function outcome(result: { status: string }): string {
   return refused.status === 'rejected' ? `rejected/${String(refused.code)}: ${String(refused.reason)}` : refused.status;
 }
 
-async function readProposal(w: IpfWorld, messageRef: SessionMessage['ref']): Promise<ReadResult<PlanProposal>> {
-  return (await w.world.post('plans/proposal', plain(S6A_SCOPE, proposalRefOf(messageRef, w.goal))))
+async function readProposal(w: IpfWorld, messageRef: SessionMessage['ref'],
+  goal: GoalRef = w.goal): Promise<ReadResult<PlanProposal>> {
+  return (await w.world.post('plans/proposal', plain(S6A_SCOPE, proposalRefOf(messageRef, goal))))
     .body as ReadResult<PlanProposal>;
 }
 
@@ -118,18 +127,46 @@ describe('IPF: 干预来源证明和规划问题来源', () => {
     expect(await startIpfNextWork(w), 'G 的下一件工作的 Run 准备好、进了模型').toBe(1);
   }, 120_000);
 
-  it('F3 守护：消息点名的目标和 Query 的目标不同，证明不成立，候选不写', async () => {
+  it('F3 U3：消息点名的目标拿到 Query，G 不写候选', async () => {
     const w = await openWorld('f3');
     await scriptRefinement(w);
     const other = w.world.goals.first;
     const sent = await sendIntervention(w, { label: 'f3', recipient: w.done, goalRef: other });
     expect(sent.goalRef, '消息点名的是目标 1').toEqual(other);
 
-    const settled = await interveneUntilSettled(w, sent.ref);
+    await interveneUntilSettled(w, sent.ref);
     const query = await readPlanningQuery(w.world, sent.ref);
     expect(query?.job.job.status, 'Query 作答了').toBe('answered');
-    expect(query?.job.job.goalId, 'Query 的目标是按线最近的工作选的 G，不是消息点名的目标 1').toBe(w.goal.goalId);
+    expect(query?.job.job.goalId, 'Query 的目标是消息点名的目标 1，不是线最近的工作选的 G').toBe(other.goalId);
+    expect(await readProposal(w, sent.ref), 'G 不写候选').toMatchObject({ status: 'not_found' });
+  }, 120_000);
+
+  it('F3b 守护：queries/submit 给 G 开的 Query，来源消息点名目标 1，证明不成立，候选不写', async () => {
+    const w = await openWorld('f3b');
+    await scriptRefinement(w);
+    const other = w.world.goals.first;
+    const sent = await sendIntervention(w, { label: 'f3b', recipient: w.done, goalRef: other });
+    const goal = ready<{ goal: { revision: number } }>(
+      (await w.world.post('goals/read', plain(S6A_SCOPE, w.goal))).body, 'the goal G');
+    const refs = interventionPlanningQueryRefs(sent.ref);
+    committed((await w.world.post('queries/submit', graphWrite(S6A_SCOPE, {
+      queryJobId: refs.queryJobRef.queryJobId, runId: refs.queryRunRef.runId,
+      intent: { schemaVersion: 1, intentId: refs.queryJobRef.queryJobId, projectId: S6A_SCOPE.projectId,
+        workspaceId: S6A_SCOPE.workspaceId, goalId: w.goal.goalId, question: 'IPF F3b', focusTaskRefs: [],
+        budget: AG2B_QUERY_BUDGET, multiTurn: { maxRounds: 1 }, correlationId: 'ipf-f3b',
+        execution: { kind: 'intervention_planning', sourceMessageRef: sent.ref, answerShape: 'plan_round',
+          sourceSender: { kind: 'person' }, roleBinding: S6A_WORK_ROLE_BINDING, runtimeBudget: AG2B_RUNTIME_BUDGET } },
+    }, 'ipf-f3b-submit', [
+      { ref: AG2B_PROJECT_REF, revision: 1 }, { ref: AG2B_WORKSPACE_REF, revision: 1 },
+      { ref: w.goal, revision: goal.goal.revision },
+      { ref: refs.queryJobRef, revision: 0 }, { ref: refs.queryRunRef, revision: 0 },
+    ]))).body, 'the planning Query of G');
+
+    const settled = await interveneUntilSettled(w, sent.ref);
+    const query = await readPlanningQuery(w.world, sent.ref);
+    expect(query?.job.job, 'G 的 Query 作答了').toMatchObject({ status: 'answered', goalId: w.goal.goalId });
     expect(outcome(settled), '来源证明不成立').toMatch(/^rejected\/source_stale: /);
-    expect(await readProposal(w, sent.ref), '候选不写').toMatchObject({ status: 'not_found' });
+    expect(await readProposal(w, sent.ref), 'G 不写候选').toMatchObject({ status: 'not_found' });
+    expect(await readProposal(w, sent.ref, other), '目标 1 也不写候选').toMatchObject({ status: 'not_found' });
   }, 120_000);
 });

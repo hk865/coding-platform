@@ -123,6 +123,8 @@ describe('E3M-7 the line view and the other Session lines', () => {
       expect(calls[0]!.input).toEqual({
         recipient: { projectId: 'ag2b-collab-project', sessionId: w.work.sessionId },
         text: 'E3M inline intervention', entry: 'person_intervention', needsReply: true,
+        // The line view's subtitle Goal: the person's words count toward the Goal the view shows.
+        goalRef: { aggregateType: 'Goal', projectId: 'ag2b-collab-project', goalId: 's7c-goal' },
       });
       expect(calls[0]!.input).not.toHaveProperty('waitAfterSend');
       expect(calls[0]!.input).not.toHaveProperty('deadlineMs');
@@ -193,6 +195,7 @@ describe('E3M-7 the line view and the other Session lines', () => {
       expect(calls[0]!.input).toEqual({
         recipient: { projectId: 'ag2b-collab-project', sessionId: w.work.sessionId },
         text: 'E3M successor intervention', entry: 'person_intervention', needsReply: true,
+        goalRef: { aggregateType: 'Goal', projectId: 'ag2b-collab-project', goalId: 's7c-goal' },
       });
       expect(receiptBody(booted, 'messages/send')?.['status']).toBe('committed');
       expect(userTexts(page.root)).toContain('E3M successor intervention');

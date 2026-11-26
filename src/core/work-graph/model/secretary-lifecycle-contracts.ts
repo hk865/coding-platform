@@ -96,6 +96,12 @@ export interface SecretaryHandoffFactsPort {
   readRoutingSet(ctx: CoreCallContext, input: { source: SessionRef; horizon: CommitCursor | null }):
     Promise<ReadResult<RoutingSetFactsV1>>;
   readBriefState(ctx: CoreCallContext, input: { session: SessionRef }): Promise<ReadResult<HandoffBriefStateV1>>;
+  /**
+   * P6I: the close message of an understanding round the Host ended on purpose before it entered (a lasting
+   * preparation refusal, a stop), else `null`. `readCoverage`'s `lastRound` names only rounds that entered and keeps
+   * that meaning, so the handoff reads the round itself for this.
+   */
+  readRoundStop(ctx: CoreCallContext, input: { round: QueryJobRef }): Promise<ReadResult<string | null>>;
   checkArchiveCondition(ctx: CoreCallContext,
     input: { condition: Extract<SessionArchiveConditionV1, { kind: 'secretary_handoff' }>; session: SessionRef }):
     Promise<ReadResult<ConditionCheckV1>>;

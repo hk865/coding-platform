@@ -93,7 +93,7 @@ async function assemble(fixture: TaskClaimFixture) {
     executions: createRunStateReader({ records: fixture.records }), roles: createRoleConfigurationService({
       records: fixture.records, now: () => '2026-09-24T00:00:00.000Z', eventId: () => `r5c-role-${++sequence}` }),
     materials,
-    defaultInquiryDeadlineMs: 86_400_000,
+    defaultInquiryDeadlineMs: () => 86_400_000,
     queryRounds: createQueryRoundResolver({ records: fixture.records, duties: unknownSessionDuty, bodies }),
     systemActor: { kind: 'system', id: 'r5c-business-system' },
     now: () => '2026-09-24T00:00:00.000Z', newId: () => `r5c-business-${++sequence}`,

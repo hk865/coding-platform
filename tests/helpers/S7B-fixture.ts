@@ -247,7 +247,9 @@ export async function reopenS7BHost(world: S6AHostWorld, input: {
   const hold = commitBarrier.hold(byIdentityPrefix('claim-continuation:'), 'the continuation claim');
   const pending = world.post('workflow/advance', plain(S6A_SCOPE, input.advance));
   await hold.reached;
-  await world.crash();
+  // Two writers on purpose: the old Host's held claim lands on release after the restart and the new Host's
+  // re-drive must replay it, not claim again (L-expiry-host Window A; FLK rework ruling 5, `heldCommitsRace`).
+  await world.crash({ heldCommitsRace: true });
   const message = ready<SessionMessage>(await world.post('messages/read', plain(S6A_SCOPE, input.messageRef)),
     `the reopened message ${input.messageRef.messageId}`);
   const facts = ready<SessionFactsV1>(await world.post('sessions/facts', plain(S6A_SCOPE, input.session.ref)),

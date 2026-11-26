@@ -180,6 +180,8 @@ describe('E3M-3 the Member centre', () => {
       expect(calls[0]!.input).toEqual({
         recipient: { projectId: 'ag2b-collab-project', sessionId: w.module.sessionId },
         text: 'E3M intervention', entry: 'person_intervention', needsReply: true,
+        // The page subtitle's Goal: the person's words count toward the Goal the page shows.
+        goalRef: { aggregateType: 'Goal', projectId: 'ag2b-collab-project', goalId: 's7c-goal' },
       });
       expect(metaOf(calls[0]).requestId).toMatch(UUID_V4);
       expect(metaOf(calls[0]).expected).toEqual([]);

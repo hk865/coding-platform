@@ -72,11 +72,11 @@ function parseSkill(id: string): Skill {
 
 /** The five Skills' current lines and block gates; blank-line counts are the frozen renderer fact per grant. */
 const SKILLS: Readonly<Record<string, Skill>> = {
-  'skill-platform-work': { ...parseSkill('skill-platform-work'), blankLines: 27, blankLinesWith: { run_readonly_command: 1 } },
-  'skill-platform-adviser': { ...parseSkill('skill-platform-adviser'), blankLines: 27 },
+  'skill-platform-work': { ...parseSkill('skill-platform-work'), blankLines: 20, blankLinesWith: { run_readonly_command: 1, edit: 1 } },
+  'skill-platform-adviser': { ...parseSkill('skill-platform-adviser'), blankLines: 20 },
   'skill-platform-reviewer': { ...parseSkill('skill-platform-reviewer'), blankLines: 11 },
   'skill-platform-scribe': { ...parseSkill('skill-platform-scribe'), blankLines: 13 },
-  'skill-platform-secretary': { ...parseSkill('skill-platform-secretary'), blankLines: 23 },
+  'skill-platform-secretary': { ...parseSkill('skill-platform-secretary'), blankLines: 19 },
 };
 
 const ALL_TOOLS = [

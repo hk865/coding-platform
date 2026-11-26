@@ -18,6 +18,7 @@ import type { SessionRef } from '../../../contracts/core/identity.js';
 import type { OperationRef } from '../../../contracts/core/operations.js';
 import type { ReadResult } from '../../../contracts/core/results.js';
 import { rejected } from '../../../contracts/core/rejections.js';
+import { userDecisionBodyOf } from '../../../contracts/goal-decisions.js';
 import { messageOf } from '../../../contracts/error-message.js';
 import { canonicalJson, canonicalKey as keyOf, sameJson, type JsonValue } from '../../../contracts/fingerprint.js';
 import {
@@ -310,14 +311,18 @@ async function readSecretaryFactsOnce(
       const relatedRef = round.job.relatedMessageRef!;
       const question = await deps.messages.readMessageBody(ctx, { messageRef: relatedRef, part: 'message' });
       if (question.status !== 'ready') return question;
+      const message = await deps.messages.readMessage(ctx, relatedRef);
+      if (message.status !== 'ready') return message;
       relatedMessageRef = { ...relatedRef };
       if (round.job.roundKind === 'reply') {
         const body = await deps.messages.readMessageBody(ctx, { messageRef: relatedRef, part: 'response' });
         if (body.status !== 'ready') return body;
-        delivery = { question: question.value.text, body: body.value.text };
+        // P6I R1: the answer to a decision card freezes the whole decision, as the line's busy point supplies it
+        // (`execution-inputs.ts`). A chosen option with no words is a whole answer, and words never drop the option.
+        const decision = userDecisionBodyOf(message.value.response, body.value.text);
+        delivery = decision === null ? { question: question.value.text, body: body.value.text }
+          : { question: question.value.text, decision };
       } else {
-        const message = await deps.messages.readMessage(ctx, relatedRef);
-        if (message.status !== 'ready') return message;
         const count = await deps.expiryCount(ctx, { messageRef: relatedRef });
         if (count.status !== 'ready') return count;
         if (count.value === 'incomplete') {
@@ -492,13 +497,14 @@ async function readSecretaryFactsOnce(
   const ordinals = await readGoalOrdinals(deps.records, projectId);
   const goals: SecretaryPreparationFactsV1['goals'] = [];
   for (const goal of listed.goals) {
-    // G6F F4: the list shows the Goal's phase beside its desired state (a completed Goal stays `active`).
+    // G6F F4: the list shows the Goal's phase beside its desired state (a completed or partially accepted Goal stays
+    // `active`).
     const terminal = await readGoalTerminalState(deps.records, goal);
     if (terminal.status !== 'ready') return terminal;
     goals.push({
       goalId: goal.ref.goalId,
       desiredState: goal.desiredState,
-      phase: terminal.value.completed ? 'COMPLETED' : null,
+      phase: !terminal.value.completed ? null : terminal.value.partial ? 'ACCEPTED_PARTIAL' : 'COMPLETED',
       objective: goal.objective,
       ordinal: ordinals?.get(goal.ref.goalId) ?? null,
     });
@@ -677,13 +683,13 @@ export function createSecretaryPreparationFacts(
           // that carries both materials for the same message hands over only the
           // response. The expiry material keeps its round, reference and absorbed
           // history; its `delivery` becomes null, and the existing null-delivery
-          // skip drops the input.
+          // skip drops the input. A reply, plain or a decision, has no `expiryCount`.
           const { round, batch } = result.value.request;
           for (const material of [round, ...batch]) {
             if (material.delivery === null || material.relatedMessageRef === null
-              || 'body' in material.delivery) continue;
+              || !('expiryCount' in material.delivery)) continue;
             const answered = [round, ...batch].some(other => other !== material && other.delivery !== null
-              && 'body' in other.delivery && other.relatedMessageRef !== null
+              && !('expiryCount' in other.delivery) && other.relatedMessageRef !== null
               && sameJson(other.relatedMessageRef, material.relatedMessageRef));
             if (answered) material.delivery = null;
           }

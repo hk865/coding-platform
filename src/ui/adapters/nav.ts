@@ -14,7 +14,7 @@
 import type { TaskGraph } from '../../contracts/task-graph.js';
 import type { SessionRef } from '../../contracts/core/identity.js';
 import { asRecord, asText } from '../values.js';
-import { decisionCardCountPartial, goalDisplayState, isFinishedGoalDisplayPhase,
+import { decisionCardCountPartial, goalDisplayState, isFinishedGoalDisplayPhase, lineNameOf,
   type GoalDisplayPhaseCode, type TaskMapQueueRead } from './task-map.js';
 import type { LineReadValue } from './line-shared.js';
 
@@ -289,8 +289,7 @@ function navLineOf(entry: unknown, archived: boolean): NavLine {
   const view = lineStatusView(status);
   const task = asText(asRecord((Array.isArray(row.responsibleNow) ? row.responsibleNow : [])[0]).title);
   const nameRow = asRecord(row.name);
-  const primary = asText(nameRow.primary);
-  const name = nameRow.source === 'duty_only' ? DUTY_WORD[primary] ?? '未分组' : primary;
+  const name = lineNameOf(row.name);
   return {
     id: projectId + '/' + sessionId,
     key: { projectId, sessionId },

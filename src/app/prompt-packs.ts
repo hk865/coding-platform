@@ -38,6 +38,7 @@ export function isPathWithin(parent: string, child: string): boolean {
 type ReadEntry =
     | { status: 'read'; entry: PromptPackChainEntryV1; parent: string | null }
     | { status: 'missing' }
+    | { status: 'unreadable'; reason: string }
     | { status: 'broken'; entry: PromptPackChainEntryV1 | null; parent: string | null;
         problems: PromptPackProblemV1[] };
 
@@ -55,7 +56,23 @@ function unsafeFileReason(file: string): string | null {
     return null;
 }
 
-type FileRead = { status: 'read'; text: string } | { status: 'rejected'; reason: string };
+/**
+ * P6I: `rejected` is the pack's own fault (an unsafe path, a file that is not there), which stays until the person
+ * edits the pack; `unreadable` is any other read error (permissions, I/O), which may pass on a later read.
+ */
+type FileRead = { status: 'read'; text: string } | { status: 'rejected'; reason: string }
+    | { status: 'unreadable'; reason: string };
+
+/** A file-system error that proves the path is not there; any other error may pass on a later read. */
+function isMissingPath(error: unknown): boolean {
+    const code = (error as NodeJS.ErrnoException | null)?.code;
+    return code === 'ENOENT' || code === 'ENOTDIR';
+}
+
+function fileReadFailure(file: string, error: unknown): FileRead {
+    const reason = `file "${file}" could not be read`;
+    return isMissingPath(error) ? { status: 'rejected', reason } : { status: 'unreadable', reason };
+}
 
 async function readPackFile(
     packReal: string, promptsReal: string, file: string,
@@ -65,8 +82,8 @@ async function readPackFile(
     let target: string;
     try {
         target = await realpath(join(packReal, file));
-    } catch {
-        return { status: 'rejected', reason: `file "${file}" could not be read` };
+    } catch (error) {
+        return fileReadFailure(file, error);
     }
     if (!isPathWithin(packReal, target))
         return { status: 'rejected', reason: `file "${file}" resolves outside the pack directory` };
@@ -75,8 +92,8 @@ async function readPackFile(
         return { status: 'rejected', reason: `file "${file}" resolves outside the prompt directory` };
     try {
         return { status: 'read', text: await readFile(target, 'utf8') };
-    } catch {
-        return { status: 'rejected', reason: `file "${file}" could not be read` };
+    } catch (error) {
+        return fileReadFailure(file, error);
     }
 }
 
@@ -85,16 +102,18 @@ async function readUserPack(
     promptsReal: string, packId: string,
 ): Promise<ReadEntry> {
     const directory = join(promptsReal, packId);
+    const unreadablePack = (reason: string): ReadEntry => ({ status: 'unreadable', reason: `pack ${packId}: ${reason}` });
     let packReal: string;
     try {
         packReal = await realpath(directory);
-    } catch {
-        return { status: 'missing' };
+    } catch (error) {
+        return isMissingPath(error) ? { status: 'missing' } : unreadablePack('the pack directory could not be read');
     }
     if (!isPathWithin(promptsReal, packReal))
         return { status: 'broken', entry: null, parent: null, problems: [problem(packId, null,
             'the pack directory resolves outside the prompt directory')] };
     const manifestRead = await readPackFile(packReal, promptsReal, 'pack.json');
+    if (manifestRead.status === 'unreadable') return unreadablePack(manifestRead.reason);
     if (manifestRead.status === 'rejected')
         return { status: 'broken', entry: null, parent: null, problems: [problem(packId, null, manifestRead.reason)] };
     let manifestValue: unknown;
@@ -112,6 +131,7 @@ async function readUserPack(
     const stringsFile = manifestValue['strings'];
     if (typeof stringsFile === 'string') {
         const read = await readPackFile(packReal, promptsReal, stringsFile);
+        if (read.status === 'unreadable') return unreadablePack(read.reason);
         if (read.status === 'read') strings = { file: stringsFile, text: read.text };
         else problems.push(problem(packId, null, read.reason));
     }
@@ -123,6 +143,7 @@ async function readUserPack(
             if (!isRecord(raw) || typeof raw['file'] !== 'string') continue;
             const file = raw['file'];
             const read = await readPackFile(packReal, promptsReal, file);
+            if (read.status === 'unreadable') return unreadablePack(read.reason);
             if (read.status === 'rejected') {
                 problems.push(problem(packId, templateId, read.reason));
                 continue;
@@ -137,6 +158,7 @@ async function readUserPack(
         for (const [toolName, raw] of Object.entries(declaredTools)) {
             if (typeof raw !== 'string') continue;
             const read = await readPackFile(packReal, promptsReal, raw);
+            if (read.status === 'unreadable') return unreadablePack(read.reason);
             if (read.status === 'rejected') {
                 problems.push(problem(packId, null, read.reason, toolName));
                 continue;
@@ -247,7 +269,9 @@ function mergeProblems(
 export type DiskPromptPackReadV1 =
     | { status: 'ready'; chain: readonly PromptPackChainEntryV1[]; value: ResolvedPromptPackV1; directory: string | null }
     | { status: 'not_found' }
-    | { status: 'rejected'; chain: readonly PromptPackChainEntryV1[]; problems: PromptPackProblemV1[] };
+    | { status: 'rejected'; chain: readonly PromptPackChainEntryV1[]; problems: PromptPackProblemV1[] }
+    /** P6I: a read error other than a missing path; the same pack may read on a later try. */
+    | { status: 'unreadable'; reason: string };
 
 /**
  * Reads and resolves one pack from disk. `platform` is virtual; a user pack is
@@ -264,7 +288,10 @@ export async function readDiskPromptPack(promptsRoot: string, packId: string): P
     if (!isPromptPackId(packId)) return { status: 'not_found' };
     let promptsReal: string;
     try { promptsReal = await realpath(promptsRoot); }
-    catch { return { status: 'not_found' }; }
+    catch (error) {
+        return isMissingPath(error) ? { status: 'not_found' }
+            : { status: 'unreadable', reason: 'the prompt directory could not be read' };
+    }
     const chain: PromptPackChainEntryV1[] = [];
     const problems: PromptPackProblemV1[] = [];
     const seen = new Set<string>();
@@ -280,6 +307,7 @@ export async function readDiskPromptPack(promptsRoot: string, packId: string): P
         }
         seen.add(cursor);
         const read = await readUserPack(promptsReal, cursor);
+        if (read.status === 'unreadable') return read;
         if (read.status === 'missing') {
             if (cursor === packId) return { status: 'not_found' };
             problems.push(problem(packId, null, `pack "${packId}" extends missing pack "${cursor}"`));
@@ -313,6 +341,7 @@ export function createDiskPromptPackSource(promptsRoot: string): PromptPackSourc
         async resolve(packId, _signal) {
             const read = await readDiskPromptPack(promptsRoot, packId);
             if (read.status === 'ready') return { status: 'ready', value: read.value };
+            if (read.status === 'unreadable') return { status: 'rejected', code: 'unavailable', reason: read.reason };
             if (read.status === 'not_found')
                 return { status: 'rejected', code: 'invalid', reason: `prompt pack ${packId} is not available` };
             return { status: 'rejected', code: 'invalid', reason: summarizeProblems(read.problems) };
@@ -344,6 +373,10 @@ export async function listDiskPromptPacks(promptsRoot: string): Promise<PromptPa
     for (const packId of order) {
         const read = await readDiskPromptPack(promptsRoot, packId);
         if (read.status === 'not_found') continue;
+        if (read.status === 'unreadable') {
+            packs.push({ packId, extends: null, problems: [problem(packId, null, read.reason)], templates: [] });
+            continue;
+        }
         if (read.status === 'ready') {
             packs.push({
                 packId,

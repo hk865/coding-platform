@@ -165,6 +165,7 @@ import { DEFAULT_PLAN_LOOP_LIMITS, type PlanLoopLimitsV1 } from '../contracts/pl
 import { checkDigestOf } from '../contracts/check-review.js';
 import type { InstalledCheckOriginEntryV1 } from '../contracts/check-output.js';
 import { DEFAULT_STRUCTURAL_APPROVAL } from '../contracts/architecture-proposal.js';
+import { DEFAULT_REPLY_DEADLINE_MINUTES } from '../contracts/mailbox.js';
 import { createInitializationAdoptionHost, type InitializationAdoptionDependencies } from './initialization-adoption.js';
 import {
   createWorkbenchRuntimeHostBindings,
@@ -830,7 +831,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
           automation: { ...DEFAULT_TASK_AUTOMATION_POLICY }, resourceCaps: resourceCaps.current(),
           workRunTokenBudget, planLoopLimits: structuredClone(planLoopLimits),
           commandReviewLineMinutes, knowledgeLocalOnly: {},
-          structuralApproval: {} })), runtimeNarrowing));
+          structuralApproval: {}, replyDeadlineMinutes: {} })), runtimeNarrowing));
   const resolverRegistry = initialBindings === undefined ? undefined : createHostRuntimeResolverRegistry(initialBindings);
   const runtime: TargetPlatformOptions['runtime'] = resolverRegistry ?? options.runtime;
   // Settings may rebuild the runtime only from the serializable configuration;
@@ -1023,6 +1024,15 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       // 121-109: the project's structural auto-approval, read live from the last settings snapshot; the factory
       // default ("auto") when the project saved none.
       structuralApproval: projectId => lastSnapshot?.structuralApproval[projectId] ?? DEFAULT_STRUCTURAL_APPROVAL,
+      // Q20: the project's default reply deadline, read live from the last settings snapshot at each send; the factory
+      // 24 hours when the project saved none. Only an OWN saved entry counts: a project id such as `constructor` must
+      // not read an inherited object key.
+      defaultInquiryDeadlineMs: () => {
+        const saved = lastSnapshot?.replyDeadlineMinutes;
+        const savedMinutes = saved !== undefined && Object.hasOwn(saved, input.projectId)
+          ? saved[input.projectId] : undefined;
+        return (savedMinutes ?? DEFAULT_REPLY_DEADLINE_MINUTES) * 60_000;
+      },
       commitObserver: commitObserverFor(input.projectId),
       hostInstance: { hostInstanceId: input.lease.hostInstanceId, lease: input.lease.lease, takeover: input.lease.takeover },
       hostClosing: hostClosing.signal,
@@ -1447,6 +1457,8 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
   // command left it but a goal wait still wakes. The queues are shells: a pass takes its scope's project.
   const wakeLoop: WakeLoop = createWakeLoop({ driving: scope => ownedProject(scope.projectId) });
   let lifecycleQueue: ReturnType<typeof createHandoffQueue> | undefined;
+  // The lifecycle queue's plan-turn table, which the start-up reconcile refills (step 3); set with the queue.
+  let recordPlanTurn: ((ctx: CoreCallContext, round: QueryJobRef) => void) | undefined;
   // The Host consumer id a plain Query start records; the request driver's stage driver below reads it too.
   const workflowConsumerId = workflow?.consumerId ?? 'local-workbench-consumer';
   const goalWaitRegistriesV1: GoalWaitRegistries = { all: () => goalWaitRegistries };
@@ -1489,18 +1501,30 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     // The round-end sources waiting for their basis read and start. Memory only: a crash between a round end and
     // its read loses one check until that line's next round end, which records it again.
     const pendingRoundEnds = new Map<string, Map<string, SessionRef>>();
-    // The ended request rounds that may write their request's plan candidate. A separate memory-only table: a
-    // crash between the round end and this read loses one candidate until the person selects an idea or speaks again.
-    const pendingPlanTurns = new Map<string, Map<string, QueryJobRef>>();
+    // The ended request rounds that may write their request's plan candidate. Memory is the fast path; a crash
+    // empties it, and the start-up reconcile refills it with each line's last Query round and the line's earlier
+    // answered request rounds (P2 §2.6; lead ruling 11-27, FLK item 1), whose candidate the start-up traversal writes
+    // once. A start-up entry is `candidateOnly` (FLK rework ruling 2): that traversal only writes a missing
+    // candidate, then the entry stays for the normal driver's next pass (the first one after the loop starts, or with
+    // `resumeOnStartup` off after the first request command arms the workspace), which adopts a small change and asks
+    // for its check approval as a round end's entry does.
+    type PlanTurnEntry = { round: QueryJobRef; candidateOnly: boolean };
+    const pendingPlanTurns = new Map<string, Map<string, PlanTurnEntry>>();
+    const addPlanTurn = (ctx: CoreCallContext, round: QueryJobRef, candidateOnly: boolean): void => {
+      const key = scopeKey({ projectId: ctx.projectId, workspaceId: ctx.workspaceId ?? '' });
+      const turns = pendingPlanTurns.get(key) ?? new Map<string, PlanTurnEntry>();
+      // The start-up refill never replaces an entry the round already has.
+      if (!candidateOnly || !turns.has(round.queryJobId)) turns.set(round.queryJobId, { round, candidateOnly });
+      pendingPlanTurns.set(key, turns);
+    };
+    recordPlanTurn = (ctx, round) => { addPlanTurn(ctx, round, true); };
     /** The round-end hook: record both sources for this workspace and wake its lifecycle queue. It never throws. */
     const recordRoundEnd = async (ctx: CoreCallContext, session: SessionRef, round: QueryJobRef): Promise<void> => {
       const key = scopeKey({ projectId: ctx.projectId, workspaceId: ctx.workspaceId ?? '' });
       const sources = pendingRoundEnds.get(key) ?? new Map<string, SessionRef>();
       sources.set(plainSessionRefKey(session), session);
       pendingRoundEnds.set(key, sources);
-      const turns = pendingPlanTurns.get(key) ?? new Map<string, QueryJobRef>();
-      turns.set(round.queryJobId, round);
-      pendingPlanTurns.set(key, turns);
+      addPlanTurn(ctx, round, false);
       loop.wake({ projectId: ctx.projectId, workspaceId: ctx.workspaceId ?? '' }, LIFECYCLE_QUEUE, 'advance_settled');
     };
     markerRoundEnded = recordRoundEnd;                  // A1b: the drain's marker driver ends a request round the same way
@@ -1564,7 +1588,8 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     /**
      * S1: each ended request round gets one plan-turn attempt. The Host reads only the round; the entry reads the
      * answer. A round whose frozen tool list has no planning submit answers `skipped/no_plan` and writes nothing. A
-     * failed turn stays for the next pass; a transient skip does too, every other outcome removes the entry.
+     * failed turn stays for the next pass; a transient skip does too, every other outcome removes the entry. A
+     * `candidateOnly` entry is called candidate-only, and its `done` keeps it as a normal entry for the next pass.
      */
     const startPendingPlanTurns = async (platform: ProjectPlatform, ctx: CoreCallContext,
       failures: string[]): Promise<void> => {
@@ -1573,7 +1598,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       if (turns === undefined) return;
       const propose = platform.workflow.proposeFromPlanTurn;
       if (propose === undefined) { pendingPlanTurns.delete(workspaceKey); return; }
-      for (const [key, round] of [...turns]) {
+      for (const [key, { round, candidateOnly }] of [...turns]) {
         try {
           const read = await platform.queries.readQueryJob(ctx, round);
           if (read.status !== 'ready') {
@@ -1612,8 +1637,12 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
                 ? { ...ctx.materialReader, actor: { ...requestFacts.value.initiator } } : ctx.materialReader }
             : ctx;
           const result = await propose.call(platform.workflow, turnCtx, { ref: round, answerRef,
-            requestRoot: job.job.requestRoot, goalId });
-          if (result.status === 'done') { turns.delete(key); continue; }
+            requestRoot: job.job.requestRoot, goalId, ...(candidateOnly ? { candidateOnly: true } : {}) });
+          if (result.status === 'done') {
+            if (candidateOnly) turns.set(key, { round, candidateOnly: false });
+            else turns.delete(key);
+            continue;
+          }
           if (result.status === 'skipped') {
             if (!result.transient) turns.delete(key);
             continue;
@@ -2925,7 +2954,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
           plans: platform.plans, reconcile: platform.reconcile,
           actionRequests: platform.actionRequests, claimHolds: platform.claimHolds,
           deliverControl: (...args) => platform.runtime.deliverControl!(...args),
-          repairs: platform.repairs, redriveRepairAnswers, redriveActionReleaseAnswers },
+          repairs: platform.repairs, redriveRepairAnswers, redriveActionReleaseAnswers, sessionFacts: platform.sessionFacts },
         hostInstanceId: lease.hostInstanceId,
         resumeOnStartup,
         takeover: lease.takeover,
@@ -2933,6 +2962,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
         fanOut: (ctx, goalRef, options) => project.goalFanOut.fanOut(ctx, goalRef, options),
         wakeRounds: async target => { await drainGoalWaits(target); },
         ...(lifecycleQueue === undefined ? {} : { handoffQueue: lifecycleQueue }),
+        ...(recordPlanTurn === undefined ? {} : { recordPlanTurn }),
       };
     },
   });
@@ -2953,14 +2983,16 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       .map(workspace => ({ projectId: workspace.scope.projectId, workspaceId: workspace.scope.workspaceId })));
   }
   // The one start both the start-up re-drive and an adopted first plan use: the Goal's own profile ids, the Host
-  // actor's scope context, and a `select_work` advance. A refused start leaves the Goal for the next
-  // `workflow/advance` or `driver-start`.
+  // actor's scope context, and a `select_work` advance. It enters through the route's lease-gated `driverStart`, never
+  // the in-process driver, so a Host without the project's lease starts nothing (HL-07). A refused start leaves the
+  // Goal for the next `workflow/advance` or `driver-start`.
   const startGoalDriver = async (scope: CoreScope, goalRef: GoalRef, flowId: string,
     answers?: StartupReconcileReportV1['redriveGoals'][number]['answers']): Promise<void> => {
     const profileIds = runtimeProfiles.filter(profile => profile.scope.projectId === scope.projectId
       && profile.scope.workspaceId === scope.workspaceId).map(profile => profile.id);
+    const project = projects.get(scope.projectId)!;
     try {
-      await projects.get(scope.projectId)?.collaborationDriver.start(hostScopeContext(scope, actor), {
+      await project.bindings!.driverStart(hostScopeContext(scope, actor), {
         advance: { schemaVersion: 1, goalRef, flowId, sessionHint: null, kind: 'select_work',
           ...(answers === undefined || answers.length === 0 ? {} : { answers }) },
         queryProfileIds: profileIds,
@@ -3422,6 +3454,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
         const notice = await platform.messages.sendMessage(noticeCtx, interventionClosingNoticeRequest({
           recipient: candidate.session, messageRef: offer.messageRef, reason: 'no_answer',
           part: sourcePart, hasReplySlot, withdrawSource: read.value.entry === 'person_intervention',
+          ...(claimed.notStarted === undefined ? {} : { notStarted: claimed.notStarted }),
         }));
         if (notice.status !== 'committed') return null;
       }
@@ -4448,11 +4481,13 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
         projectId: ctx.projectId, workspaceId: ctx.workspaceId ?? '',
         goalId: input.expectedGoal.ref.goalId } } : null;
     });
-  // An adopted first plan starts its Goal's collaboration driver, replayed commits included (the driver's seed
-  // dedupes them); only a context with a workspace starts. The adoption answer is unchanged.
+  // An adopted first plan starts its Goal's collaboration driver; only the first adoption starts and a replay wrote
+  // nothing before. Starting a replay after a restart would rebuild the in-memory driver and `onStarted` would record a
+  // pending manual recovery as `resumed`. Only a context with a workspace starts. The adoption answer is unchanged.
   const adoptInitialization: CoreRouteBindings['adoptInitialization'] = async (ctx, input) => {
     const result = await adoptInitializationWithExport(ctx, input);
-    if (result.status === 'committed' && ctx.workspaceId !== undefined) {
+    if (result.status !== 'committed' || result.replayed) return result;
+    if (ctx.workspaceId !== undefined) {
       await startGoalDriver({ projectId: ctx.projectId, workspaceId: ctx.workspaceId },
         input.expectedGoal.ref, `plan-adopted:${input.expectedGoal.ref.goalId}:${result.receipt.plan.planId}`);
     }
@@ -4488,6 +4523,23 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       ? { plan: result.value, scope: { projectId: result.value.goalRef.projectId,
         workspaceId: ctx.workspaceId ?? '', goalId: result.value.goalRef.goalId } }
       : null);
+  // A Goal a Goal card confirmed (it has an initialization binding) starts when the person adopts its first plan, the
+  // way an adopted initialization does: the platform starts its driver (slice-9-SPEC.md 121-131: such a Goal goes
+  // through `plans/apply`, then the driver). Only the first adoption starts; a replay wrote nothing before, so it must
+  // not start now: after a restart it would rebuild the in-memory driver and `onStarted` would record a pending manual
+  // recovery as `resumed`. A Goal `goals/create` made has no binding, and its caller starts its own driver.
+  const applyPlanAndStartDriver: CoreRouteBindings['applyPlanChange'] = async (ctx, request) => {
+    const result = await applyPlanChangeWithExport(ctx, request);
+    if (result.status !== 'committed' || result.replayed) return result;
+    if (result.value.planRevision !== 1 || ctx.workspaceId === undefined) return result;
+    const { goalRef, planId } = result.value;
+    const bound = await platform.bindings.readBindingByGoal(ctx, { goalRef });
+    if (bound.status === 'ready' && bound.value.length > 0) {
+      await startGoalDriver({ projectId: ctx.projectId, workspaceId: ctx.workspaceId }, goalRef,
+        `plan-adopted:${goalRef.goalId}:${planId}`);
+    }
+    return result;
+  };
   // PL §6.4.3: the public advance takes the same candidate/adoption export path as the
   // driver; the route's own release arming stays inside `routeBindings.advanceWork`.
   const advanceWorkWithExport: CoreRouteBindings['advanceWork'] = async (ctx, input, internal) => {
@@ -4496,7 +4548,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     return advanced;
   };
   project.bindings = leaseGated(lease, { ...routeBindings, registerWorkspace, adoptInitialization,
-    applyPlanChange: applyPlanChangeWithExport, advanceWork: advanceWorkWithExport, askLine });
+    applyPlanChange: applyPlanAndStartDriver, advanceWork: advanceWorkWithExport, askLine });
   }
   const server: WorkbenchServer = createWorkbenchServer({
     token,

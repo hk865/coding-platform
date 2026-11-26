@@ -225,14 +225,15 @@ describe('ruling 14: the pack is resolved once and never falls back', () => {
     if (missing.status === 'rejected') expect(missing.reason).toContain('person-a');
   });
 
-  it('turns a rejection into invalid, naming the pack and keeping the reason', async () => {
+  it('turns a source that cannot read the pack into unavailable, naming the pack and keeping the reason', async () => {
     const source: PromptPackSourcePort = {
       async resolve() { return { status: 'rejected', code: 'unavailable', reason: 'PC disk pack unreadable' }; },
     };
     const result = await resolvePromptPack(source, 'person-a', new AbortController().signal);
     expect(result.status).toBe('rejected');
     if (result.status !== 'rejected') return;
-    expect(result.code).toBe('invalid');
+    // P6I (lead 11-26): a read error may pass, so the preparation backs off instead of closing the round.
+    expect(result.code).toBe('unavailable');
     expect(result.reason).toContain('person-a');
     expect(result.reason).toContain('PC disk pack unreadable');
   });

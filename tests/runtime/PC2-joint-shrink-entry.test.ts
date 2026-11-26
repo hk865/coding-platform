@@ -138,14 +138,14 @@ describe('PC-21 a real K3 shrink reaches the entry', () => {
       expect(Buffer.byteLength(REVIEW_REMINDERS, 'utf8')).toBe(41);
 
       // The shrunk input is the whole re-render, not the stale prefix cut.
-      expect(Buffer.byteLength(manifest.input, 'utf8')).toBe(2216);
-      expect(manifest.contextAssembly.totalBytes).toBe(2216);
+      expect(Buffer.byteLength(manifest.input, 'utf8')).toBe(2154);
+      expect(manifest.contextAssembly.totalBytes).toBe(2154);
       expect(manifest.contextAssembly.sections).toEqual([
-        { name: 'role', startByte: 127, endByte: 643, omitted: 0 },
-        { name: 'goal', startByte: 645, endByte: 677, omitted: 0 },
-        { name: 'task', startByte: 679, endByte: 1394, omitted: 0 },
-        { name: 'unknown_call_review', startByte: 1396, endByte: 2173, omitted: 0 },
-        { name: 'reminders', startByte: 2175, endByte: 2216, omitted: 0 },
+        { name: 'role', startByte: 127, endByte: 581, omitted: 0 },
+        { name: 'goal', startByte: 583, endByte: 615, omitted: 0 },
+        { name: 'task', startByte: 617, endByte: 1332, omitted: 0 },
+        { name: 'unknown_call_review', startByte: 1334, endByte: 2111, omitted: 0 },
+        { name: 'reminders', startByte: 2113, endByte: 2154, omitted: 0 },
       ]);
       // The billed bytes and the omission metadata are the material's, not the
       // difference between the last sections.
@@ -154,8 +154,8 @@ describe('PC-21 a real K3 shrink reaches the entry', () => {
       expect(manifest.contextAssembly.sections.every(section => section.omitted === 0)).toBe(true);
 
       const bytes = Buffer.from(manifest.input, 'utf8');
-      expect(bytes.subarray(1396, 2173).toString('utf8')).toBe(SHRUNK_REVIEW);
-      expect(bytes.subarray(2175, 2216).toString('utf8')).toBe(REVIEW_REMINDERS);
+      expect(bytes.subarray(1334, 2111).toString('utf8')).toBe(SHRUNK_REVIEW);
+      expect(bytes.subarray(2113, 2154).toString('utf8')).toBe(REVIEW_REMINDERS);
 
       const started = await fixture.start();
       expect(started.status, JSON.stringify(started)).toBe('ready');

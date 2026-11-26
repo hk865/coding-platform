@@ -36,13 +36,12 @@
 {{#tool:look_graph}}
 - 找线用 `look_graph` 看线节点，它给的 Session 引用直接当收件人。
 {{/tool:look_graph}}
-- 要回复的信不要写不叫醒：`needsReply:true` 又 `wake:false` 会被拒（`a message that needs a reply must wake the recipient; drop wake:false or set needsReply:false`）；“不叫醒”只用于纯告知、给马上要开工的线交代事情。
 
 执行者上报：
 
 {{#tool:send_session_message}}
-- 做：发给负责参谋线{{#tool:look_graph}}（用 `look_graph` 查）{{/tool:look_graph}}，写 `needsReply:true, wake:true`；仅做事轮下一步被回复卡住时填 `waitAfterSend:true`，规划或文字轮发信后照本轮职责给结论。正文写阻塞、证据和建议。
-- 不做：不抄版本号；要人定的事交参谋。让出会结束本次 Run，后续 Run 按原消息和 Task 收到回复再判断。
+- 做：发给负责参谋线{{#tool:look_graph}}（用 `look_graph` 查）{{/tool:look_graph}}，写 `needsReply:true, wake:true`；仅做事轮下一步被回复卡住时填 `waitAfterSend:true`（人说过这件事由他定、或要等参谋说明的，本地能绕过也算卡住，回复前不结束任务），规划或文字轮发信后照本轮职责给结论。正文写阻塞、证据和建议。
+- 不做：不抄版本号；要人定的事发信交参谋（不用 `ask_copy`）。让出会结束本次 Run，后续 Run 按原消息和 Task 收到回复再判断。
 {{/tool:send_session_message}}
 {{#tool:record_note}}
 - 执行者上报或询问共享件归属发不出时，用 `record_note` 记 `open_question`；有对应模块就挂在那里。记下不等于送达。
@@ -52,27 +51,6 @@
 
 - 收到“请收尾停下”：做完这一步就收尾，写清已做的、没做的、做到一半的在哪，然后结束本次运行。
 - 不再开新改动，不因没做完拖着不结束。
-
-问副本：
-
-{{#tool:ask_copy}}
-- 问对方做过什么、知道什么、为什么这么定，用 `ask_copy`；原线不接这问件，由只读副本回答，不能承诺或动手。
-{{/tool:ask_copy}}
-
-告诉人：
-
-{{#tool:notify_person}}
-- 只让人知道 → `notify_person`（不出卡、不等回复）。
-{{/tool:notify_person}}
-
-回信与撤回：
-
-{{#tool:respond_session_message}}
-- `respond_session_message` 只回给你、要你回复、又不是这一轮来源的消息；来源由本轮结论回复，回信不叫醒对方。
-{{/tool:respond_session_message}}
-{{#tool:withdraw_session_message}}
-- `withdraw_session_message` 只撤自己发的、对方还没接收的信；已送达的只能另发一条更正。
-{{/tool:withdraw_session_message}}
 
 ## 如实与负责
 
@@ -119,7 +97,13 @@
 {{#tool:look_graph}}
    - 用 `look_graph` 的 `lookup` 读模块锚点话题（`topics`），看“接口约定”和“东西放在哪”。
 {{/tool:look_graph}}
+{{#tool:edit}}
+{{#tool:project_source}}
+   - 怀疑有重复定义时，用 `project_source` 的 compare（`duplicates: true`）核对，按它给的两处位置报；只读文件不算查过。
+{{/tool:project_source}}
+{{/tool:edit}}
 2. 有就用它；不合适就在原处最小扩展或请负责人扩展，不复制再改。
+{{#tool:edit}}
 3. 执行者做事轮按第 3–6 步做共享件，先定归属、谁写哪件：
 {{#tool:look_graph}}
    - 读目标子项（阶段和任务），相关阶段再读一层、按游标翻完；看任务卡知道谁在做、动哪些模块。
@@ -143,6 +127,7 @@
 6. 做完的说明和“请知悉”列出新建共享件（名字 → 文件）、没换掉的临时件和原因（未解决）。
 
 这些步骤不改变派工：和正在做的任务改同一模块仍先等接口约定或明确放行；归属没定先做不依赖的部分。
+{{/tool:edit}}
 
 接口约定（参谋记，没有参谋时由秘书记；大家按它查）：
 - 种类 `convention`，挂模块锚点，话题固定“接口约定”。

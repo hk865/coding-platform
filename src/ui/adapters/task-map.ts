@@ -32,7 +32,7 @@ export type GoalDisplayPhaseCode =
 
 /** The unwrapped `ReadResult<GoalReadV1>` value (ruling item 3: boot unwraps). `ordinal` is the
  * Goal's 目标 n in its project, null or absent when the Host cannot tell. */
-export type TaskMapGoalRead = { goal: { ref: { goalId: string }; objective: string }; ordinal?: number | null };
+export type TaskMapGoalRead = { goal: { ref: { goalId: string }; objective: string; revision?: number }; ordinal?: number | null };
 
 /** The unwrapped `ReadResult<GoalDisplayRead>` value. */
 export type TaskMapDisplayRead = { display: { phase: GoalDisplayPhaseCode } };
@@ -46,7 +46,8 @@ export type TaskMapGraphRead = {
 /** The two route replies read on every notification with the base four. */
 export type TaskMapHoverRead = { groups?: unknown[]; tasks?: unknown[]; modules?: unknown[] };
 export type TaskMapLineRead = { counts?: { working?: unknown }; rows?: unknown[] };
-export type TaskMapExtraReads = { hover?: TaskMapHoverRead | null; lines?: TaskMapLineRead | null };
+export type TaskMapExtraReads = { hover?: TaskMapHoverRead | null; lines?: TaskMapLineRead | null;
+  /** D101-3: this Goal's blocked Tasks, read when it has a waiting card. */ waits?: unknown };
 
 export type TaskMapTask = {
   id: string; stageId: string | null; name: string; st: string; why: string;
@@ -60,6 +61,8 @@ export type TaskMapTask = {
   attempt: number | null;
   /** `failure.round.gapCodes` in the page's words; empty when the row has no failure round. */
   gaps: string;
+  /** D42-2: this Task's unclaimed anomaly anchors (`display.anomaly.pending`). */
+  anchors: number;
 };
 
 export type TaskMapDagEdge = {
@@ -68,7 +71,9 @@ export type TaskMapDagEdge = {
 
 export type TaskMapDropped = { id: string; name: string; word: string; why: string;
   /** The adopted revision that made this disposition change; boot reads its acceptedAt. */
-  setIn?: unknown; at?: string };
+  setIn?: unknown; at?: string;
+  /** 5.10-3: a cancelled non-gate Task can be restored from the dropped list. */
+  canRestore: boolean };
 
 /** One running command of a Task, as the boards draw it: the command's first
  * line, the Host's minute count, and the line and Run that can stop it. */
@@ -117,6 +122,12 @@ export type TaskMapData = {
   decisionCards?: { n: number; atLeast: boolean } | null;
   /** `graph/hover` `modules[]`: moduleId → name, the 模块 group names (no id reaches the page). */
   moduleNames?: Record<string, string>;
+  /** D42-2: the unclaimed anchor total for 需要关注; null when there is none. */
+  anchorCount?: { n: number; atLeast: boolean } | null;
+  /** D101-3: “the claimable Tasks are all waiting for you”, '' when not all blocked. */
+  allBlocked?: string;
+  /** T6: the plan and Goal revision this page last read, for a disposition write. */
+  planWrite?: { goalRevision: number; graph: unknown } | null;
 };
 
 /**
@@ -259,7 +270,7 @@ const PHASE_CAUSE_WORD: Record<string, string> = {
   gate_needs_fix: '验收未通过，需要添加修复任务', auto_rework_cap_reached: '自动返工已达上限',
   no_new_basis: '没有新依据，自动返工已停止', verification_uncovered: '没有覆盖验收的检查',
   unknown_outcome: '执行结果待核对', budget_exhausted: '预算耗尽',
-  task_cancelled: '任务已取消', task_paused: '已暂停，可继续',
+  task_cancelled: '人工已取消，不会自动返工', task_paused: '人工已暂停，不会自动返工',
   unknown_call_review: '结果未知的调用待核对', interrupted_pending_resume: '被中断，等你继续',
   round_chain_limit: '检查轮次已到上限',
 };
@@ -267,6 +278,26 @@ const PHASE_CAUSE_WORD: Record<string, string> = {
 /** A phase-cause code's page word (the one table above); an unknown code is ''. */
 export function causeWordOf(code: string): string {
   return PHASE_CAUSE_WORD[code] ?? '';
+}
+
+/* 5.9b-3: a gate's own cause words. Its chain position is named only from the
+   second round on (the first round has no `ordinal`, like a first attempt). */
+const GATE_CAUSE_WORD: Record<string, string> = {
+  verification_running: '验收进行中', awaiting_completion: '验收通过，等待完成',
+  check_failed: '验收未通过', round_inconclusive: '验收不完整', check_interrupted: '验收不完整',
+};
+
+/** One gate row's reason: the gate's own words for a gate cause, 等待验收 for a
+ * gate with no chain, '' for every other row. */
+function gateWhyOf(row: Record<string, unknown>, st: string, cause: Record<string, unknown>, code: string): string {
+  const detail = asRecord(cause.detail);
+  if (detail.gate !== true) {
+    return code === '' && st === 'pending' && asText(asRecord(row.definition).taskKind) === 'gate' ? '等待验收' : '';
+  }
+  const word = GATE_CAUSE_WORD[code];
+  if (word === undefined) return '';
+  const ordinal = detail.ordinal;
+  return word + (typeof ordinal === 'number' && ordinal >= 2 ? '，第 ' + String(ordinal) + ' 轮' : '');
 }
 
 /* The automatic rework count and its cap in brackets; a missing value drops
@@ -280,7 +311,7 @@ export function stopWordOf(row: Record<string, unknown>, stop: string): string {
   const failure = asRecord(row.failure);
   const automation = asRecord(failure.automation);
   const detail = asRecord(asRecord(automation.verdict).detail);
-  if (stop === 'not_reworkable') return asText(detail.cause) === 'round_ambiguous' ? PHASE_CAUSE_WORD.round_ambiguous! : '';
+  if (stop === 'not_reworkable') return causeWordOf(asText(detail.cause));
   if (stop === 'auto_rework_cap_reached') {
     return PHASE_CAUSE_WORD.auto_rework_cap_reached + countOf(detail.operation === 'reverify'
       ? asRecord(failure.round).autoCount : automation.requeueAutoCount, automation.cap);
@@ -296,6 +327,9 @@ export function taskWhyOf(row: Record<string, unknown>, st: string): string {
      verdict, while `phaseCause.code` is only the phase projection. */
   const stop = automationStopOf(row);
   if (st === 'deferred') {
+    /* 5.10-3: a requeued Task deferred again has been requeued before, so it
+       resumes claiming once restored. */
+    if (asText(asRecord(row.phaseCause).code) === 'requeued') return '已重新入队（已延后），恢复后接着领取';
     /* An inactive Task keeps its projected phase and reason when it ran
        (`traced`, E3I:244); otherwise the reason it was deferred is its cause
        (the detail's 处置 row has the same text). */
@@ -308,16 +342,26 @@ export function taskWhyOf(row: Record<string, unknown>, st: string): string {
   }
   const stopWord = stop === '' || (st === 'waiting' && stop === 'task_paused') ? '' : stopWordOf(row, stop);
   if (stopWord !== '') return stopWord;
-  const code = asText(asRecord(row.phaseCause).code);
+  const cause = asRecord(row.phaseCause);
+  const code = asText(cause.code);
+  const gateWord = gateWhyOf(row, st, cause, code);
+  if (gateWord !== '') return gateWord;
   if (code === 'requeued') {
     /* Who requeued is the last rework entry; the `claim_requeued` verdict
        covers every requeue, manual or automatic, so it has no word. */
     const rework = asRecord(row.rework);
     const entries = Array.isArray(rework.entries) ? rework.entries : [];
     const last = asRecord(entries[entries.length - 1]);
-    return last.automatic === true ? '系统自动重新入队' + countOf(last.autoCount, rework.cap) : PHASE_CAUSE_WORD.requeued!;
+    const budget = asRecord(row.requeueBudget).tokenBudget;
+    const budgetText = typeof budget === 'number' ? '，预算 ' + String(Math.round(budget / 1000)) + 'K' : '';
+    return (last.automatic === true ? '系统自动重新入队' + countOf(last.autoCount, rework.cap) : PHASE_CAUSE_WORD.requeued!)
+      + budgetText;
   }
   const word = code === '' ? '' : PHASE_CAUSE_WORD[code] ?? '';
+  /* 5.6-3: the Host stopped before the pause reached its safe point. */
+  if (code === 'paused_interrupted' && asRecord(asRecord(row.phaseCause).detail).kernelPaused === false) {
+    return word + '，暂停尚未到达安全点';
+  }
   /* 2C's sentence: the failure word, then what the automation does next
      (slice-2C-SPEC.md:1192; E3I:202, :228). An interruption is not counted. */
   const automation = asRecord(asRecord(row.failure).automation);
@@ -348,6 +392,59 @@ const ANCHOR_NEXT_WORD: Record<string, string> = {
 };
 const ANCHOR_GOAL_WORD: Record<string, string> = { paused: '目标已暂停', cancelled: '目标已取消' };
 
+/* D101-3: what one blocked Task waits for, by the L46 reason's code. A reason
+   with an unknown code names nothing. */
+const L46_WAIT_WORD: Record<string, string> = {
+  'automation_confirmation_required:system_requeue': '等你确认自动重新入队',
+  'automation_confirmation_required:auto_reverify': '等你确认自动重新检查',
+  automation_confirmation_required: '等你确认自动返工',
+  member_creation_pending: '等你确认创建成员',
+  rework_request_pending: '等你确认返工请求',
+  handoff_approval_pending: '等你确认交接',
+  l46_dependency_blocked: '等前面的任务确认后再做',
+};
+
+/** D101-3: every blocked Task's word, and the roots (everything but a Task
+ * waiting on another Task). A row with an unknown code is still a root. */
+function l46WhyOf(extra: TaskMapExtraReads | undefined): { byTask: Record<string, string>; roots: string[] } {
+  const byTask: Record<string, string> = {};
+  const roots: string[] = [];
+  const rows = asRecord(extra?.waits).waits;
+  for (const entry of Array.isArray(rows) ? rows : []) {
+    const row = asRecord(entry);
+    const id = asText(row.taskId);
+    if (id === '') continue;
+    const reason = asText(row.reason);
+    const cut = reason.indexOf(':');
+    const code = cut < 0 ? reason : reason.slice(0, cut);
+    const suffix = cut < 0 ? '' : reason.slice(cut + 1).trim();
+    const word = L46_WAIT_WORD[code + ':' + suffix] ?? L46_WAIT_WORD[code] ?? '';
+    if (word !== '') byTask[id] = word;
+    if (code !== 'l46_dependency_blocked') roots.push(id);
+  }
+  return { byTask, roots };
+}
+
+/** D42-2: how many unclaimed anchors each Task has; `partial` is an at-least count. */
+function anchorCountsOf(extra: TaskMapExtraReads | undefined): {
+  byTask: Record<string, number>; total: number; atLeast: boolean;
+} {
+  const byTask: Record<string, number> = {};
+  let total = 0;
+  let atLeast = false;
+  for (const entry of Array.isArray(extra?.hover?.tasks) ? extra.hover.tasks : []) {
+    const row = asRecord(entry);
+    const id = asText(asRecord(row.task).taskId);
+    const pending = asRecord(asRecord(asRecord(row.display).anomaly).pending);
+    const n = pending.status === 'exact' ? pending.value : pending.status === 'partial' ? pending.atLeast : 0;
+    if (id === '' || typeof n !== 'number' || n <= 0) continue;
+    if (pending.status === 'partial') atLeast = true;
+    byTask[id] = n;
+    total += n;
+  }
+  return { byTask, total, atLeast };
+}
+
 /** Decision 42 (UIW:129): a Task with an unclaimed interruption anchor reads
  * 中断，待核对 and what it waits for; its state and square stay. */
 function anchorWhyOf(extra: TaskMapExtraReads | undefined): Record<string, string> {
@@ -364,6 +461,52 @@ function anchorWhyOf(extra: TaskMapExtraReads | undefined): Record<string, strin
     out[id] = '中断，待核对' + (word === '' ? '' : ' · ' + word);
   }
   return out;
+}
+
+/** D42-2: one line per anomaly anchor: the line, how it broke, who archived it,
+ * what it changed, that its result is unchecked and who picked it up. */
+export function anchorLinesOf(items: unknown, taskRow: Record<string, unknown> | null): string[] {
+  const out: string[] = [];
+  for (const entry of Array.isArray(items) ? items : []) {
+    const view = asRecord(entry);
+    const anchor = asRecord(view.anchor);
+    const line = asRecord(view.line);
+    const lineName = Object.keys(line).length > 0 ? lineNameOf(line.name) || '一条工作线' : '一条工作线';
+    const cause = asText(anchor.cause) === 'archive_interrupted' ? '执行中被归档，执行被中断'
+      : asText(anchor.cause) === 'retired_archive' ? '退役后归档，任务没做完' : '';
+    const by = asText(asRecord(anchor.archivedBy).kind) === 'human' ? '你' : '平台';
+    const at = asText(anchor.recordedAt);
+    const files = changedFilesTextOf(asRecord(anchor.changedFiles));
+    const parts = [lineName + cause + '（' + by + '归档' + (at !== '' ? '，' + localShortAt(at) : '') + '）', files,
+      '结果没核对'];
+    const picked = asRecord(view.pickedUpBy);
+    if (Object.keys(picked).length > 0) {
+      const same = taskRow !== null && asText(picked.runId) === asText(asRecord(taskRow.execution).runId);
+      const attempt = same && typeof taskRow?.attemptOrdinal === 'number' ? taskRow.attemptOrdinal : null;
+      parts.push(same ? (attempt === null ? '已由最近的一次运行接手' : '已由第 ' + String(attempt) + ' 次尝试接手')
+        : '已由这个任务较早的一次运行接手');
+    }
+    out.push(parts.join('；'));
+  }
+  return out;
+}
+
+/** D42-2: what an anchor's archive changed, in the four states the record has. */
+function changedFilesTextOf(files: Record<string, unknown>): string {
+  const status = asText(files.status);
+  if (status === 'not_entered') return '没开始改';
+  if (status === 'unavailable') return '改动未知';
+  const confirmed = (Array.isArray(files.confirmed) ? files.confirmed : []).map(asText).filter((path) => path !== '');
+  const possible = (Array.isArray(files.possible) ? files.possible : []).map(asText).filter((path) => path !== '');
+  const omitted = typeof files.omitted === 'number' ? files.omitted : 0;
+  const parts: string[] = [];
+  if (confirmed.length > 0) parts.push('确定改过 ' + confirmed.join('、'));
+  if (possible.length > 0) parts.push('可能改过 ' + possible.join('、'));
+  if (omitted > 0) parts.push('另有 ' + String(omitted) + ' 个没列');
+  let text = parts.length === 0 ? '没有改过文件' : parts.join('；');
+  if (status === 'partial') text += '（可能不全）';
+  if (asText(files.source) === 'worktree') text += '，按工作区比对，可能混有别的执行的改动';
+  return text;
 }
 
 /** Decision 49·01 (prototype:2272): an unfinished Task that was read and that
@@ -503,14 +646,29 @@ const isAutoReworkCode = (reason: string): boolean => reason.startsWith('auto-re
  * rework's order, never an attempt ordinal. */
 export function reworkLines(rework: unknown): string[] {
   const entries = asRecord(rework).entries;
+  const cap = asRecord(rework).cap;
   return (Array.isArray(entries) ? entries : []).map((entry, index) => {
     const row = asRecord(entry);
     const at = asText(row.requestedAt);
-    const who = row.automatic === true ? '系统自动' : ACTOR_WORD[asText(asRecord(row.requestedBy).kind)] ?? '人工';
+    /* 5.4-6: an automatic entry names its count and cap; a manual requeue resets
+       the automatic count, so the two numbers can differ. */
+    const who = row.automatic === true ? '系统自动' + countOf(row.autoCount, cap)
+      : ACTOR_WORD[asText(asRecord(row.requestedBy).kind)] ?? '人工';
     return ['第 ' + String(index + 1) + ' 次', who, FAILURE_CLASS_WORD[asText(row.failureClass)] ?? '',
       isAutoReworkCode(asText(row.reason)) ? '' : asText(row.reason), at !== '' ? localShortAt(at) : '']
       .filter((part) => part !== '').join(' · ');
   });
+}
+
+/** 5.5-7: a non-claimable Task under a paused/cancelled Goal says why, from the
+ * display phase this page read; another Goal state says it is not running. */
+function goalNotActiveWhy(display: TaskMapDisplayRead, row: Record<string, unknown>): string {
+  const reasons = asRecord(row.eligibility).reasons;
+  const notActive = (Array.isArray(reasons) ? reasons : [])
+    .some((entry) => asText(asRecord(entry).code) === 'goal_not_active');
+  if (!notActive) return '';
+  return display.display.phase === 'PAUSED' ? '目标已暂停，暂不领取'
+    : display.display.phase === 'CANCELLED' ? '目标已取消，不再领取' : '目标没在进行，暂不领取';
 }
 
 /** `goal` is the unwrapped `ReadResult<GoalDetail>` value; `graph` is the
@@ -526,6 +684,8 @@ export function adaptTaskMap(
     ordinal: typeof goal.ordinal === 'number' ? goal.ordinal : null };
   const owners = ownersOf(extra);
   const anchors = anchorWhyOf(extra);
+  const l46 = l46WhyOf(extra);
+  const anchorCounts = anchorCountsOf(extra);
   const emptyDag: TaskMapDag = { edges: [], nodes: [], band: [], dropped: [], gateIds: [], crit: [], owners: {}, goalOwner: '' };
   if (graph === null) return { goal: goalData, stages: [], tasks: [], running: {}, dag: emptyDag, planMissing: true };
 
@@ -551,7 +711,10 @@ export function adaptTaskMap(
       dropped.push({ id, name: asText(definition.title),
         word: disposition === 'superseded' ? '已替代' : '已取消',
         why: why !== '' ? why : replaced !== '' ? '由 ' + replaced + ' 取代' : '',
-        setIn: asRecord(row.dispositionChange).setIn });
+        setIn: asRecord(row.dispositionChange).setIn,
+        /* 5.10-3: a cancelled work Task can be restored; a superseded one and a
+           gate cannot. */
+        canRestore: disposition === 'cancelled' && definition.taskKind !== 'gate' });
       continue;
     }
     const stage = stageOf(definition);
@@ -564,12 +727,16 @@ export function adaptTaskMap(
     /* the cards read `dag.owners`, so 未分配 goes there too */
     const unassigned = owners.byTask[id] === undefined && owners.none.has(id) ? unassignedOf(st) : '';
     if (unassigned !== '') owners.byTask[id] = unassigned;
+    /* D101-3: a blocked Task names what blocks it; an anchor still comes first.
+       5.5-7: a claimable Task under a Goal that is not running says why. */
+    let why = anchors[id] ?? l46.byTask[id] ?? taskWhyOf(row, st);
+    if (why === '' && st === 'pending') why = goalNotActiveWhy(display, row);
     kept.push({
       id,
       stageId: stage === '' ? null : stage,
       name: asText(definition.title),
       st,
-      why: anchors[id] ?? taskWhyOf(row, st),
+      why: why,
       deps: [],
       gate: definition.taskKind === 'gate',
       optional: definition.requirementLevel === 'optional',
@@ -580,6 +747,7 @@ export function adaptTaskMap(
       reworkCap: typeof asRecord(row.rework).cap === 'number' ? asRecord(row.rework).cap as number : null,
       attempt,
       gaps,
+      anchors: anchorCounts.byTask[id] ?? 0,
     });
   }
   const keptById = new Map(kept.map((task) => [task.id, task]));
@@ -618,6 +786,10 @@ export function adaptTaskMap(
   for (const task of kept) task.deps = deps[task.id] ?? [];
   const st: Record<string, string> = {};
   kept.forEach((task) => { st[task.id] = task.st; });
+  const rootNames = l46.roots.map((id) => keptById.get(id)?.name ?? '').filter((name) => name !== '');
+  const waits = asRecord(extra?.waits);
+  const allBlocked = Object.keys(asRecord(waits.goalBlocked)).length > 0 && rootNames.length > 0
+    ? '能做的任务都在等你确认：' + rootNames.map((name) => '「' + name + '」').join('、') : '';
   const dag: TaskMapDag = {
     edges,
     nodes,
@@ -629,7 +801,9 @@ export function adaptTaskMap(
     owners: owners.byTask,
     goalOwner: owners.goal,
   };
-  return { goal: goalData, stages, tasks: kept, running: {}, dag, moduleNames: moduleNamesOf(extra?.hover) };
+  return { goal: goalData, stages, tasks: kept, running: {}, dag, moduleNames: moduleNamesOf(extra?.hover),
+    anchorCount: anchorCounts.total > 0 ? { n: anchorCounts.total, atLeast: anchorCounts.atLeast } : null,
+    allBlocked };
 }
 
 /** Module id → name from one `graph/hover` read; TaskMap and Main's right panel name a Task's module by it. */
@@ -788,6 +962,10 @@ export type TaskMapNodeDetailData = {
   stop: { lines: string[]; cardStatus: string } | null;
   /** §2.8: the mini card's one status line: the current holds, the waiting stop card and the dispatch request. */
   cardStatus: string;
+  /** T5: the failure facts and the round chain, worded; [] when there are none. */
+  failure: Array<{ k: string; v: string }>;
+  /** T7: one line per anomaly anchor, already worded; [] when there are none. */
+  anchors: string[];
 };
 
 export const PHASE_WORD: Record<string, string> = {
@@ -817,9 +995,12 @@ const ATTENTION_WORD: Record<string, string> = {
 const DUTY_WORD: Record<string, string> = {
   secretary: '秘书', adviser: '参谋', scribe: '书记', reviewer: '审阅者', executor: '执行者',
 };
-function lineNameOf(name: unknown): string {
+/** D49-01: a line's name; when it counts more than its first Task, “首项 等 n 项”. */
+export function lineNameOf(name: unknown): string {
   const row = asRecord(name);
-  return row.source === 'duty_only' ? DUTY_WORD[asText(row.primary)] ?? '未分组' : asText(row.primary);
+  if (row.source === 'duty_only') return DUTY_WORD[asText(row.primary)] ?? '未分组';
+  const extra = typeof row.extraCount === 'number' ? row.extraCount : 0;
+  return asText(row.primary) + (extra > 0 ? ' 等 ' + String(extra) + ' 项' : '');
 }
 
 function ownerWords(owners: unknown): string {
@@ -1304,14 +1485,18 @@ export function adaptTaskMapDetail(
     countsComplete: counts !== null && counts.complete,
     attemptOrdinal: attempt,
     holds, holdRelease, dispatch, stop, cardStatus,
+    failure: [], anchors: [],
     disposition: (disposition === 'cancelled' || disposition === 'superseded' || disposition === 'deferred') ? (() => {
       const change = asRecord(dispositionChange);
       const word = PHASE_WORD[disposition] ?? disposition;
       if (dispositionChange === null) return { word, text: word };
       const actor = ACTOR_WORD[asText(asRecord(change.actor).kind)] ?? '';
       const reason = asText(asRecord(change.reason).text);
+      /* 5.10-3: the previous disposition, when it has a word (`active` has none). */
+      const from = asText(change.from);
+      const fromText = from !== '' && from !== 'active' ? '从 ' + (PHASE_WORD[from] ?? from) + ' ' : '';
       return { word, text: (actor !== '' ? '由 ' + actor + ' ' : '') + (changeAt !== '' ? '于计划 ' + changeAt + ' ' : '')
-        + '改为 ' + (PHASE_WORD[asText(change.to)] ?? word) + (reason !== '' ? '：' + reason : '') };
+        + fromText + '改为 ' + (PHASE_WORD[asText(change.to)] ?? word) + (reason !== '' ? '：' + reason : '') };
     })() : null,
   };
 }
@@ -1331,7 +1516,7 @@ export type TaskMapTrackPageRead = {
 };
 /** One `lines/list` row's fields the track and its line card need. */
 export type TaskMapTrackLineRead = {
-  key: unknown; name?: { primary?: unknown }; status?: { own?: unknown; bucket?: unknown };
+  key: unknown; name?: { primary?: unknown; source?: unknown; extraCount?: unknown }; status?: { own?: unknown; bucket?: unknown };
   sessionCount?: unknown; pinned?: unknown; pinnedBy?: unknown; chainSessions?: unknown;
   archived?: unknown;
   lastActivityAt?: unknown;
@@ -1339,6 +1524,8 @@ export type TaskMapTrackLineRead = {
   duty?: unknown;
   /** The line's formal module and task groups; module grouping reads the module id. */
   groups?: unknown;
+  /** D49-01: the Tasks the line is responsible for now; the hover lists them. */
+  responsibleNow?: unknown;
 };
 /** One `activity/calendar` page as the UI sees it (narrow route value). */
 export type TaskMapCalendarRead = {
@@ -1398,6 +1585,10 @@ export type TaskMapCalendarData = {
   now: string; nowMinute: number;
   complete: boolean;
   summary: string;
+  /** D49-03: why records were not counted, worded, from every page's coverage; ''. */
+  uncountedWhy: string;
+  /** D49-03: some page has records not yet backfilled. */
+  canBackfill: boolean;
 };
 export type TaskMapHistoryLine = {
   taskId: string; segments: Array<{ from: string | null; to: string | null; state: string; word: string }>;
@@ -1454,6 +1645,8 @@ export type TaskMapTimeLine = {
   archived: boolean;
   /** `lines/list` `lastActivityAt`: a line older than today opens in 全部. */
   lastActivityAt: string | null;
+  /** D49-01: the responsible Tasks' titles, when the name counts more than one. */
+  tasksText: string;
 };
 export type TaskMapTimeData = {
   window: { from: string; to: string; fromMinute: number; toMinute: number } | null;
@@ -1590,6 +1783,52 @@ function calendarWindowsOf(read: TaskMapCalendarRead): CalendarWindowFact[] {
  * Completeness comes from each window's `totals.complete`, never from a
  * top-level field the route does not have.
  */
+/* D49-03: why the calendar did not count some records, in the table's order,
+   deduplicated across every page. A window can count the same Run again, so
+   the reasons are written without their counts. */
+const UNCOUNTED_WORD: Record<string, string> = {
+  kernel_unreadable: '读不了', history_read_failed: '读不了', history_damaged: '读不了',
+  no_history_locator: '读不了', turn_not_found: '读不了',
+  capacity: '太长，没算完', not_backfilled: '还没补算',
+  not_recorded: '没有记', no_recording_epoch: '没有记',
+};
+const UNCOUNTED_ORDER = ['读不了', '太长，没算完', '还没补算', '没有记'];
+
+/** D49-03: two reason texts merged in the table's order, without duplicates;
+ * the drilled day's hour pages add their reasons to the year page's. */
+export function mergeUncountedWhy(...texts: string[]): string {
+  const seen = new Set<string>();
+  for (const text of texts) {
+    for (const word of text.replace(/^有的记录/, '').split('、')) if (word !== '') seen.add(word);
+  }
+  return countedWhyText(seen);
+}
+
+function countedWhyText(seen: ReadonlySet<string>): string {
+  return seen.size === 0 ? '' : '有的记录' + UNCOUNTED_ORDER.filter((word) => seen.has(word)).join('、');
+}
+
+function uncountedFactsOf(pages: readonly TaskMapCalendarRead[]): { why: string; canBackfill: boolean } {
+  const seen = new Set<string>();
+  let canBackfill = false;
+  for (const page of pages) {
+    const coverage = asRecord(page.coverage);
+    const tables = [asRecord(coverage.runsUncounted), asRecord(asRecord(coverage.queries).runsUncounted)];
+    for (const table of tables) {
+      for (const entry of Array.isArray(table) ? table : []) {
+        const row = asRecord(entry);
+        const count = typeof row.count === 'number' ? row.count : 0;
+        if (count <= 0) continue;
+        const reason = asText(row.reason);
+        const word = UNCOUNTED_WORD[reason];
+        if (word !== undefined) seen.add(word);
+        if (reason === 'not_backfilled') canBackfill = true;
+      }
+    }
+  }
+  return { why: countedWhyText(seen), canBackfill };
+}
+
 export function adaptTaskMapCalendar(
   read: TaskMapCalendarRead | readonly TaskMapCalendarRead[], windows?: unknown[],
 ): TaskMapCalendarData {
@@ -1693,6 +1932,7 @@ export function adaptTaskMapCalendar(
       ? scopeWord + '：这段时间没有活动。'
       : scopeWord + '：' + metricText(totalsValue.steps, true, '步骤') + ' · ' + metricText(totalsValue.edits, true, '编辑')
         + ' · ' + metricText(totalsValue.checks, true, '检查') + ' 次';
+  const uncounted = uncountedFactsOf(pages);
   const nowIso = asText(first?.now);
   const nowMs = Date.parse(nowIso);
   const from = asText(first?.from);
@@ -1712,7 +1952,7 @@ export function adaptTaskMapCalendar(
     coverage: first?.coverage ?? null,
     recordingSince: asText(first?.recordingSince),
     now: nowIso, nowMinute: Number.isNaN(nowMs) ? NaN : nowMs / 60000,
-    complete: rawComplete, summary,
+    complete: rawComplete, summary, uncountedWhy: uncounted.why, canBackfill: uncounted.canBackfill,
   };
 }
 
@@ -1816,6 +2056,12 @@ export function adaptTaskMapTime(
     const countValue = typeof count.value === 'number' ? String(count.value)
       : typeof count.atLeast === 'number' ? '至少 ' + String(count.atLeast) : '';
     const chain = (Array.isArray(line.chainSessions) ? line.chainSessions : []).map(trackSessionKeyOf).filter((x) => x !== '/' && x !== '');
+    const rawName = asRecord(line.name);
+    const extraCount = typeof rawName.extraCount === 'number' ? rawName.extraCount : 0;
+    const tasksText = extraCount > 0
+      ? (Array.isArray(line.responsibleNow) ? line.responsibleNow : [])
+        .map((entry) => asText(asRecord(entry).title)).filter((title) => title !== '').join('、')
+      : '';
     const groupsRaw = asRecord(line.groups);
     const moduleRaw = asRecord(groupsRaw.module);
     const taskRaw = asRecord(groupsRaw.task);
@@ -1836,6 +2082,7 @@ export function adaptTaskMapTime(
       startAt: '', bars: [], chain: [], omitted: null, lineRead: false,
       archived: line.archived === true || asRecord(line.status).bucket === 'archived',
       lastActivityAt: asText(line.lastActivityAt) || null,
+      tasksText,
     };
     rows.push(row);
     bySession.set(id, row);

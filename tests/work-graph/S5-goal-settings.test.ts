@@ -301,7 +301,7 @@ function mailboxFor(x: Ctx) {
   const readers = createMaterialRecordReaders(f.records);
   const materials = createMaterialService({ bodies: f.bodies, authority: readers.authority, now: f.now });
   const deps: SessionMailboxDependencies = { records: f.records,
-    defaultInquiryDeadlineMs: 86_400_000,
+    defaultInquiryDeadlineMs: () => 86_400_000,
     sessions: createSessionDirectory({ records: f.records,
       knowledge: f.knowledge, lookups: f.records, duty: unknownSessionDuty }),
     executions: createRunStateReader({ records: f.records }),

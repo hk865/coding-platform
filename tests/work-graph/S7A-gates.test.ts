@@ -130,7 +130,7 @@ function waMailbox(world: S6AHostWorld, backend: InMemoryRecordBackend) {
   return createSessionMailbox({ records, sessions, executions, materials, now, newId,
     roles: createRoleConfigurationService({ records, now, eventId: newId }),
     queryRounds: createQueryRoundResolver({ records, duties: unknownSessionDuty, bodies: new RawArtifactBodyStore() }),
-    defaultInquiryDeadlineMs: 86_400_000, systemActor: { kind: 'system', id: 'wa-gates-mailbox' },
+    defaultInquiryDeadlineMs: () => 86_400_000, systemActor: { kind: 'system', id: 'wa-gates-mailbox' },
     recipientExecutions: createRecipientExecutions({ sessions: sessionFacts, executions, records }) });
 }
 /** The published messages plus the internal card-answer read the supply checks (the ONE real mailbox over the same ledger). */
@@ -142,7 +142,7 @@ function supplyMessages(world: S6AHostWorld) {
     roles: createRoleConfigurationService({ records, now, eventId: () => `s7a-gates-role-${++sequence}` }),
     materials: world.platform.materials,
     queryRounds: createQueryRoundResolver({ records, duties: unknownSessionDuty, bodies: new RawArtifactBodyStore() }),
-    defaultInquiryDeadlineMs: 86_400_000, systemActor: { kind: 'system', id: 's7a-gates-supply' }, now,
+    defaultInquiryDeadlineMs: () => 86_400_000, systemActor: { kind: 'system', id: 's7a-gates-supply' }, now,
     newId: () => `s7a-gates-supply-${++sequence}` });
   return { ...world.platform.messages, readDecisionAnswerTaken: mailbox.readDecisionAnswerTaken };
 }

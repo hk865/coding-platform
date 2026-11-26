@@ -875,7 +875,7 @@ export function raceWindow(database: string, writer: RaceWriter, inside: () => P
   const mailbox = createSessionMailbox({ records, sessions, executions: reads, roles,
     materials: createMaterialService({ bodies, authority: createMaterialRecordReaders(records).authority, now: host.now }),
     queryRounds: createQueryRoundResolver({ records, duties: unknownSessionDuty, bodies }),
-    defaultInquiryDeadlineMs: 86_400_000, systemActor: { kind: 'system', id: 'plan-race' },
+    defaultInquiryDeadlineMs: () => 86_400_000, systemActor: { kind: 'system', id: 'plan-race' },
     now: host.now, newId: id });
   return {
     plans,

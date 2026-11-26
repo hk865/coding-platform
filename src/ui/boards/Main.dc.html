@@ -900,8 +900,8 @@ textarea.dc-input { min-height: 52px; }
             <sc-if value="{{hasAsk}}" hint-placeholder-val="{{ false }}">
               <div class="composer-ref">
                 <span class="{{askSq}}" aria-hidden="true"></span>
-                <span class="ellipsis">引用：{{askRef}}</span>
-                <button class="btn btn-icon btn-xs" type="button" onClick="{{clearAsk}}" aria-label="移除引用" title="移除引用">
+                <span class="ellipsis">{{composerContext}}</span>
+                <button class="btn btn-icon btn-xs" type="button" onClick="{{clearAsk}}" aria-label="{{clearContextLabel}}" title="{{clearContextLabel}}">
                   <svg class="ico xs" viewBox="0 0 16 16" aria-hidden="true"><path d="m4.5 4.5 7 7M11.5 4.5l-7 7"></path></svg>
                 </button>
               </div>
@@ -921,7 +921,7 @@ textarea.dc-input { min-height: 52px; }
             <textarea id="composer-input" rows="2" placeholder="{{composerPh}}" value="{{draft}}" onChange="{{onDraft}}"></textarea>
             <div class="composer-foot">
               <sc-if value="{{hasNote}}" hint-placeholder-val="{{ false }}"><span class="to">{{composerNote}}</span></sc-if>
-              <button class="{{sendCls}}" type="button" onClick="{{send}}" aria-label="发送" title="发送">
+              <button class="{{sendCls}}" type="button" onClick="{{send}}" aria-disabled="{{sendOff}}" aria-label="发送" title="发送">
                 <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 12.75V3.5M4.25 7.25 8 3.5l3.75 3.75"></path></svg>
               </button>
             </div>
@@ -1101,7 +1101,7 @@ textarea.dc-input { min-height: 52px; }
                 <span class="{{e.sq}}" aria-hidden="true"></span>
                 <sc-if value="{{e.noGo}}" hint-placeholder-val="{{ true }}"><span>{{e.text}}</span></sc-if>
                 <sc-if value="{{e.goBtn}}" hint-placeholder-val="{{ false }}"><button class="ref" type="button" onClick="{{e.go}}" title="{{e.goTip}}">{{e.text}}</button></sc-if>
-                <sc-if value="{{e.goLink}}" hint-placeholder-val="{{ false }}"><a class="ref" href="Main.dc.html" title="{{e.goTip}}">{{e.text}}</a></sc-if>
+                <sc-if value="{{e.goLink}}" hint-placeholder-val="{{ false }}"><a class="ref" href="{{mainHref}}" title="{{e.goTip}}">{{e.text}}</a></sc-if>
                 <span class="t">{{e.t}}</span>
               </div>
             </sc-if>
@@ -1201,7 +1201,7 @@ textarea.dc-input { min-height: 52px; }
                   </sc-if>
                   <sc-if value="{{e.noteOnly}}" hint-placeholder-val="{{ true }}"><p class="pnote">{{e.note}}</p></sc-if>
                   <sc-if value="{{e.noteGo}}" hint-placeholder-val="{{ false }}"><p class="pnote">{{e.noteA}}<button class="ref" type="button" onClick="{{e.go}}" title="{{e.goTip}}">需要你决定</button>{{e.noteB}}</p></sc-if>
-                  <sc-if value="{{e.noteLink}}" hint-placeholder-val="{{ false }}"><p class="pnote">{{e.noteA}}<a class="ref" href="Main.dc.html" title="{{e.goTip}}">需要你决定</a>{{e.noteB}}</p></sc-if>
+                  <sc-if value="{{e.noteLink}}" hint-placeholder-val="{{ false }}"><p class="pnote">{{e.noteA}}<a class="ref" href="{{mainHref}}" title="{{e.goTip}}">需要你决定</a>{{e.noteB}}</p></sc-if>
                 </div>
                 <sc-if value="{{e.hasReply}}" hint-placeholder-val="{{ false }}">
                   <div class="msg-agent"><p class="prose">{{e.reply}}</p></div>
@@ -1943,6 +1943,14 @@ class Component extends DCLogic {
       if (!s.railOrder && lines.length > 0) patch.railOrder = lines.map((line) => line.id);
       if (s.err) patch.err = '';
       if (pending.length !== (s.pending || []).length) patch.pending = pending;
+      if (s.aconf && s.confCardKey) {
+        const rows = this.mainDecisionRows(data.decisions);
+        const current = rows.length ? rows[(s.dcAt || 0) % rows.length] : null;
+        if (current?.key !== s.confCardKey) {
+          this.clearCardLocation({ ...patch, facts: false });
+          return;
+        }
+      }
       if (Object.keys(patch).length > 0) this.setState(patch);
     }
     /* a node page (x1, x2 …) belongs to the old scale; the maps and the auxiliary pages (文件, 命令, Diff, file pages) stay */
@@ -2353,6 +2361,7 @@ class Component extends DCLogic {
 
   /* files goal 2 plans to change that goal 1 has not finished with */
   overlap() {
+    if (this.dataMode()) return this.state.confFiles || [];
     const a = new Set();
     this.taskModel('g1').tasks.forEach((t) => { if (t.st !== 'satisfied' && t.st !== 'cancelled') (t.files || []).forEach((f) => a.add(f)); });
     const out = [];
@@ -3279,7 +3288,8 @@ class Component extends DCLogic {
   auxArchModel() {
     const aux = this.auxData();
     const version = this.props.dataVersion || 0;
-    if (this._auxAm && this._auxAm.version === version) return this._auxAm.tree;
+    const conflictFiles = this.state.aconf ? this.overlap() : null;
+    if (this._auxAm && this._auxAm.version === version && this._auxAm.conflictFiles === conflictFiles) return this._auxAm.tree;
     const raw = aux && aux.arch && aux.arch.tree ? JSON.parse(JSON.stringify(aux.arch.tree)) : null;
     const root = raw === null ? { id: 'SYS', name: '', kind: 'system', kids: [] } : raw;
     const counts = Object.assign({}, aux && aux.arch ? aux.arch.counts : {});
@@ -3298,9 +3308,15 @@ class Component extends DCLogic {
     const paths = [];
     const walk = (n) => { if (n.kind === 'file' && n.path) paths.push(n.path); (n.kids || []).forEach(walk); };
     walk(tree.root);
-    tree.work = paths;
+    // The full catalog supplies the paths. Only the card's overlap is in focus,
+    // subject to the same 12-file limit as a search.
+    if (conflictFiles) {
+      tree.work = conflictFiles.length <= 12 ? paths.filter((path) => conflictFiles.includes(path)) : [];
+    } else {
+      tree.work = aux && aux.arch && aux.arch.work !== null ? paths : [];
+    }
     Object.assign(tree, { key: 'aux' + version, goal: '', big: false });
-    this._auxAm = { version: version, tree: tree };
+    this._auxAm = { version: version, tree: tree, conflictFiles: conflictFiles };
     return tree;
   }
   /* ruling 2: the leaves and state counts are the adapter's (`auxLeafCountsOf`);
@@ -3333,7 +3349,8 @@ class Component extends DCLogic {
       decisions: null, conversation: [], older: null, track: null, progress: { done: 0, total: 0 }
     };
     return Object.assign(this.auxRenderVals(this.mainRenderVals(this.navRenderVals(base, data), data), data),
-      { settingsHref: this.props.settingsHref || 'Settings.dc.html' });
+      { settingsHref: this.props.settingsHref || 'Settings.dc.html',
+        mainHref: this.props.mainHref || 'Main.dc.html' });
   }
 
   navLineRow(L) {
@@ -3424,7 +3441,7 @@ class Component extends DCLogic {
         autoOpen: dens === '详细' || dens === '完全展开',
         selTask: () => {}, hasTask: () => false, noTaskTip: '',
         taskSq: () => 'sq z8 ' + this.sqAt(D0 !== null && D0.task ? D0.task.st : 'pending'),
-        rejects: () => '', decide: () => null
+        rejects: () => '', decide: () => null, decideHref: true
       });
       /* ruling 16: only a line of the archived bucket says 已归档…超过一天; an
          ended line elsewhere is read-only, with no time and no 已满足 */
@@ -3592,9 +3609,40 @@ class Component extends DCLogic {
   }
 
   /* ------------------------------------------------------------ Main A data layer */
-  /* E3-Main A §2.1/§2.4–§2.9: the thread, the track, the decision card, the Goal bar,
-     the rail order and the composer, all from `props.data` (the main adapter). Only
-     values change; the prototype's holes, classes and layout stay. */
+  mainDecisionRows(decisions) {
+    return (decisions ? decisions.sections : [])
+      .filter((section) => section.level === 'decide' || section.level === 'notice')
+      .flatMap((section) => section.rows);
+  }
+
+  clearCardLocation(patch) {
+    const s = this.state;
+    this.setState({ ...patch, aconf: false, confFiles: null, confCardKey: null });
+    if (s.aconf && s.panel && s.ptab === 'arch' && s.ascope === 'work') this.axRead('arch');
+  }
+
+  cardLocation(view, cardKey) {
+    const task = view && view.taskRef;
+    const overlap = view && view.facts.find((fact) => fact.k === '重叠文件');
+    const paths = (overlap?.files || []).map((file) => file.path);
+    const enabled = !!task || paths.length > 0;
+    return {
+      locateCls: enabled ? '' : 'is-off', locateOff: enabled ? 'false' : 'true',
+      locateTip: task ? '在任务图里看' : enabled ? '在架构图里看重叠的文件' : '这一条在图上没有对应的任务',
+      locate: () => {
+        if (task) {
+          this.setState({ panel: true, ptab: 'task', sel: task.taskId, drill: null, q: '', hover: null,
+            view: this.state.view === 'lanes' ? 'tree' : this.state.view });
+          this.axReadDetail(task.taskId, task.goalId);
+        } else if (paths.length) {
+          this.setState({ panel: true, ptab: 'arch', ascope: 'work', aroot: 'SYS', asel: null, aq: '', hover: null,
+            aconf: true, confFiles: paths, confCardKey: cardKey });
+          this.axRead('arch');
+        }
+      },
+    };
+  }
+
   mainRenderVals(base, data) {
     const s = this.state || {};
     const dens = s.dens || '标准';
@@ -3605,9 +3653,7 @@ class Component extends DCLogic {
     const selectedId = s.navGoalId !== undefined ? s.navGoalId : data.selectedGoalId || null;
     const read = this.props.readState || null;
     const decisions = data.decisions || null;
-    const decideRows = (decisions ? decisions.sections : [])
-      .filter((x) => x.level === 'decide' || x.level === 'notice')
-      .reduce((all, x) => all.concat(x.rows), []);
+    const decideRows = this.mainDecisionRows(decisions);
     const nBy = {};
     for (const row of decideRows) {
       if (row.level === 'decide' && row.goalId) nBy[row.goalId] = (nBy[row.goalId] || 0) + 1;
@@ -3618,7 +3664,7 @@ class Component extends DCLogic {
     /* A06/L01/L02: the Goal bar and the inbox count the same read; the inbox stays
        the workspace's own total (Y1), the Goal bar counts only the selected Goal. */
     const allHref = 'Decide.dc.html' + (data.selectedGoalId ? '?goal=' + encodeURIComponent(data.selectedGoalId) : '');
-    const openAt = (index) => { if (index >= 0) set({ dcAt: index, dcOpen: true, facts: false }); };
+    const openAt = (index) => { if (index >= 0) this.clearCardLocation({ dcAt: index, dcOpen: true, facts: false }); };
     const inbox = Object.assign({}, base.inbox, {
       /* M7: a queue that read only unreadable sources has no card to place; the
          row goes to the page that says which source could not be read. */
@@ -3635,7 +3681,8 @@ class Component extends DCLogic {
     const goals = base.goals.map((row, i) => {
       const n = nBy[data.goals[i].goalId] || 0;
       return Object.assign({}, row, { n: countsPartial && n > 0 ? '至少 ' + n : n, hasN: n > 0, pick: () => {
-        set({ mainPages: 1, dcOpen: false, facts: false, pending: [], ctlReport: null, copyOpen: false, copyDraft: null, copyPick: [] });
+        this.clearCardLocation({ mainPages: 1, dcOpen: false, facts: false, editingRound: null, askCardKey: '', askRef: '', askSq: '',
+          pending: [], ctlReport: null, copyOpen: false, copyDraft: null, copyPick: [] });
         row.pick();
       } });
     });
@@ -3813,10 +3860,10 @@ class Component extends DCLogic {
       hasArranged: arranged !== '', arranged: arranged
     };
 
-    /* MF6(4): the newest answer's ideas become one plan card; 采用 goes through
-       requests/select-idea, iterating stays unconnected. */
+    /* A revision continues the original request, even when the ideas came from a later round. */
     const ideaRow = (data.conversation || []).slice().reverse()
       .find((row) => row.hasIdeas && Array.isArray(row.ideas) && row.ideas.length > 0) || null;
+    const canRevise = ideaRow?.selectable === true && selectedId === data.selectedGoalId;
     let plans = [];
     if (ideaRow !== null) {
       const ids = ideaRow.ideas.map((idea, i) => String.fromCharCode(65 + i));
@@ -3830,7 +3877,15 @@ class Component extends DCLogic {
       plans = [{
         isRound2: false, title: '方案', scope: '', stText: '还没接通', hasDelta: false, delta: [], opts: opts, canAct: true,
         showLine: false, lineOpen: false, lineAct: '', lineText: '', toggleLine: () => {}, showCard: true,
-        iterate: nc, iterateCls: 'btn is-off', iterateTip: '还没接通', iterateOff: 'true',
+        iterate: () => {
+          if (!canRevise || this.state.sending) return;
+          this.clearCardLocation({ editingRound: ideaRow.round.queryJobId, askRef: '', askSq: '', askCardKey: '', facts: false,
+            dcOpen: false, pane: 'chat', confirmCancel: false, err: '' });
+          document.getElementById('composer-input')?.focus();
+        },
+        iterateCls: 'btn' + (canRevise && !s.sending ? '' : ' is-off'),
+        iterateTip: ideaRow.selectable ? '' : '只能修改最新答复里的方案',
+        iterateOff: String(!canRevise || !!s.sending),
         adopt: () => {
           /* Only the request's last answered round may be adopted; once the
              selection's follow-up is answered, that round is the follow-up
@@ -3946,7 +4001,7 @@ class Component extends DCLogic {
        A closed card hands the composer back. An answer failure keeps the card open
        with its line under the card (`cardErr[cardKey]`, kept across a card switch);
        a 标为已读 failure still closes it and lands in the composer's own `.to` slot. */
-    const closeCard = (patch) => set(Object.assign({ dcOpen: false, facts: false }, patch || {}));
+    const closeCard = (patch) => this.clearCardLocation({ dcOpen: false, facts: false, ...patch });
     let dc = { show: false };
     if (decideRows.length > 0 && s.dcOpen && !s.confirmCancel) {
       const at = (s.dcAt || 0) % decideRows.length;
@@ -3963,7 +4018,8 @@ class Component extends DCLogic {
         : '';
       const same = decideRows.filter((r) => r.level === row.level);
       const k = same.indexOf(row);
-      const stepPrimary = v !== null && v.primary !== null && v.primary.key !== 'answer';
+      const adopt = v !== null && v.primary !== null && v.primary.key === 'adopt';
+      const stepPrimary = v !== null && v.primary !== null && v.primary.key !== 'answer' && !adopt;
       const isChoice = !!v && !v.readOnly && v.options.length > 0;
       /* M9: the one answerable card's own pick, words and annotations; they are
          keyed by cardKey (Decide's rule), so a reread that puts another card at
@@ -4013,20 +4069,23 @@ class Component extends DCLogic {
         const paths = (f.files || []).map((file) => file.path).join('、');
         return { k: f.k, v: paths === '' ? f.v : f.v === '' ? paths : f.v + '：' + paths };
       });
-      const submitAnswer = (optionId) => {
-        set({ cardBusy: mapPut(s.cardBusy, row.key, true), cardErr: mapPut(s.cardErr, row.key, '') });
-        Promise.resolve(actions.answerCard(row.key, optionId, note.trim(), sentAnnotations()))
-          .then(() => {
-            const now = this.state || {};
-            set({ cardBusy: mapPut(now.cardBusy, row.key, false), cardEdits: mapPut(now.cardEdits, row.key, {}) });
-            closeCard();
-          })
-          .catch((e) => {
-            const now = this.state || {};
-            set({ cardBusy: mapPut(now.cardBusy, row.key, false),
-              cardErr: mapPut(now.cardErr, row.key, msg(e)) });
-          });
+      const writeCard = async (send) => {
+        const before = this.state || {};
+        if ((before.cardBusy || {})[row.key]) return;
+        set({ cardBusy: mapPut(before.cardBusy, row.key, true), cardErr: mapPut(before.cardErr, row.key, '') });
+        try {
+          await send();
+          const now = this.state || {};
+          set({ cardBusy: mapPut(now.cardBusy, row.key, false), cardEdits: mapPut(now.cardEdits, row.key, {}) });
+          if (now.dcAt === before.dcAt && now.dcOpen === before.dcOpen) closeCard();
+        } catch (error) {
+          const now = this.state || {};
+          set({ cardBusy: mapPut(now.cardBusy, row.key, false), cardErr: mapPut(now.cardErr, row.key, msg(error)) });
+        }
       };
+      const submitAnswer = (optionId) => writeCard(() => actions.answerCard(row.key, optionId, note.trim(), sentAnnotations()));
+      const primaryOff = stepPrimary || cardBusy || (adopt && v.primary.off === 'true')
+        || (needsPick && !wordsOnly) || (reproposePicked && note.trim() === '') || (hasAnswerBox && !isChoice && !wordsOnly);
       dc = Object.assign({}, base.dc, {
         show: true,
         sq: 'sq z8 ' + (row.level === 'decide' ? 's-decide' : 's-waiting'),
@@ -4034,9 +4093,9 @@ class Component extends DCLogic {
         title: row.label, line: v ? v.line : row.sub + recoveryLine, path: v ? v.path : '',
         pos: same.length > 1 ? (k + 1) + ' / ' + same.length : '',
         hasNext: decideRows.length > 1,
-        next: () => set({ dcAt: ((s.dcAt || 0) + 1) % decideRows.length, facts: false }),
+        next: () => openAt(((s.dcAt || 0) + 1) % decideRows.length),
         close: () => closeCard(),
-        locate: nc, locateTip: '还没接通', locateCls: 'is-off', locateOff: 'true',
+        ...this.cardLocation(v, row.key),
         isChoice: isChoice,
         opts: opts,
         hasFacts: facts.length > 0,
@@ -4044,12 +4103,12 @@ class Component extends DCLogic {
         factsLabel: s.facts ? '收起详情' : '详情',
         toggleFacts: () => set({ facts: !s.facts }),
         facts: facts,
-        ask: v === null ? nc : () => {
-          set({ askCardKey: row.key, askRef: row.label,
+        ask: v === null || cardBusy ? nc : () => {
+          closeCard({ askCardKey: row.key, askRef: row.label, editingRound: null,
             askSq: 'sq z8 ' + (row.level === 'decide' ? 's-decide' : 's-waiting'),
-            dcOpen: false, facts: false, pane: 'chat', confirmCancel: false });
+            pane: 'chat', confirmCancel: false });
         },
-        askCls: v === null ? 'is-off' : '', askTip: v === null ? '还没接通' : '', askOff: v === null ? 'true' : 'false',
+        askCls: v === null || cardBusy ? 'is-off' : '', askTip: v === null ? '还没接通' : '', askOff: v === null || cardBusy ? 'true' : 'false',
         /* M9/D42-1: the card's words and annotations, and the two ways a card
            answers without an option (an explicit {kind:'other'}). A card whose
            source needs an option never turns text-only. */
@@ -4068,51 +4127,32 @@ class Component extends DCLogic {
               .then(() => closeCard())
               .catch((e) => closeCard({ err: msg(e) }));
           }
-          : stepPrimary ? nc
+          : adopt ? (primaryOff ? nc : () => writeCard(() => actions.writeCandidate(row.key, 'adopt')))
+            : stepPrimary ? nc
             : hasAnswerBox && !isChoice
               ? () => { if (!cardBusy && wordsOnly) submitAnswer(null); }
               : reproposePicked
                 ? () => { if (!cardBusy && note.trim() !== '') submitAnswer('repropose'); }
                 : () => { if (!cardBusy && (picked !== null || wordsOnly)) submitAnswer(picked); },
-        primaryTip: reproposePicked ? REPROPOSE_GUIDE
+        primaryTip: adopt ? v.primary.tip : reproposePicked ? REPROPOSE_GUIDE
           : hasAnswerBox && !isChoice && note.trim() === '' ? '写一句再点确定'
             : stepPrimary ? '还没接通' : '',
-        primaryCls: 'btn btn-sm btn-primary' + (stepPrimary || (needsPick && !wordsOnly) || cardBusy
-          || (reproposePicked && note.trim() === '')
-          || (hasAnswerBox && !isChoice && !wordsOnly) ? ' is-off' : ''),
-        primaryOff: stepPrimary || (needsPick && !wordsOnly) || cardBusy
-          || (reproposePicked && note.trim() === '')
-          || (hasAnswerBox && !isChoice && !wordsOnly) ? 'true' : 'false',
+        primaryCls: 'btn btn-sm btn-primary' + (primaryOff ? ' is-off' : ''),
+        primaryOff: primaryOff ? 'true' : 'false',
         acts: (v ? v.acts : []).map((a) => ({ label: a.label, cls: 'btn btn-sm btn-line is-off',
-          tip: '还没接通', off: 'true', go: nc })),
+          tip: a.key === 'abandon' ? '到‘需要你决定’页放弃' : '还没接通', off: 'true', go: nc })),
         allHref: 'Decide.dc.html' + (data.selectedGoalId ? '?goal=' + encodeURIComponent(data.selectedGoalId) : '')
       });
     }
 
-    /* A18/A19/A21/A28: send reads the two quote areas apart; the card ref goes as
-       `cardRefs`, the file quotes as structured references, never as a text prefix. */
-    const sendMain = () => {
-      const st = this.state || {};
-      const text = String(st.draft || '').trim();
-      if (!text || st.sending) return;
-      const quotes = Array.isArray(st.quotes) ? st.quotes : [];
-      const refs = quotes.map((q) => ({
-        path: q.path,
-        startLine: q.a === undefined ? null : q.a,
-        endLine: q.b === undefined ? null : q.b,
-        snapshot: q.snap ? (q.snapText || null) : null
-      }));
-      set({ sending: true, err: '' });
-      const call = st.askCardKey ? actions.askCard(st.askCardKey, text) : actions.askSecretary(text, refs);
-      Promise.resolve(call).then((reply) => {
-        if (!reply) { set({ sending: false }); return; }
-        set({ sending: false, pending: (this.state.pending || []).concat([{ root: reply.root, input: reply.input, answer: reply.answer }]),
-          draft: '', quotes: [], askRef: '', askSq: '', askCardKey: '' });
-      }).catch((e) => set({ sending: false, err: msg(e) }));
-    };
-
-    const errText = s.err || '';
-    const quoteNote = base.ax && base.ax.hasQuotes ? base.ax.quoteNote : '';
+    const editing = !!s.editingRound && !s.askRef;
+    const outdated = editing && !(canRevise && s.editingRound === ideaRow.round.queryJobId);
+    const sendOff = !!s.sending || outdated || !String(s.draft || '').trim();
+    const keptQuote = (s.quotes || []).some((quote) => s.heldQuoteIds?.includes(quote.id));
+    const quoteNote = keptQuote ? '引用没有随这次发出（这一种发送不带引用），还在草稿里。'
+      : base.ax.hasQuotes ? base.ax.quoteNote : '';
+    const recipient = !s.askCardKey && !s.askRef && selectedId === data.selectedGoalId ? data.recipientNote : '';
+    const composerNote = s.err || quoteNote || recipient || '';
     const readError = read && read.status === 'error'
       ? { show: true, text: read.message, retry: read.retry }
       : { show: false };
@@ -4121,14 +4161,65 @@ class Component extends DCLogic {
       inbox: inbox, goals: goals, rail: rail, lvr: lvr, gb: gb, dc: dc,
       log: log, pageLines: pageLines, track: track, plans: plans, older: older, fb: fb,
       composerOpen: !dc.show && !s.confirmCancel && !s.copyOpen,
-      hasAsk: !!s.askRef, askRef: s.askRef || '', askSq: s.askSq || 'sq z8 s-pending',
-      clearAsk: () => set({ askRef: '', askSq: '', askCardKey: '' }),
-      send: sendMain, sendCls: 'send' + (String(s.draft || '').trim() || (s.quotes || []).length ? '' : ' is-off'),
-      hasNote: !!errText || !!quoteNote, composerNote: errText || quoteNote,
+      hasAsk: editing || !!s.askRef,
+      composerContext: editing ? (outdated ? '方案已有新答复，请重新选择要修改的方案' : '正在修改这组方案') : base.composerContext,
+      clearContextLabel: editing ? '退出修改' : base.clearContextLabel,
+      composerPh: editing ? '说说你想怎么改' : base.composerPh,
+      clearAsk: () => set({ askRef: '', askSq: '', askCardKey: '', editingRound: null }),
+      send: () => { if (!sendOff) this.sendMain(ideaRow); },
+      sendCls: 'send' + (sendOff ? ' is-off' : ''), sendOff: String(sendOff),
+      hasNote: !!composerNote, composerNote,
       readError: readError,
       showTrace: () => { set({ pane: 'trace', densMenu: false }); if (typeof actions.readMore === 'function') actions.readMore({ mainTrack: true }); },
       showChat: () => { set({ pane: 'chat' }); if (typeof actions.readMore === 'function') actions.readMore({ mainTrack: false }); }
     });
+  }
+
+  async sendMain(ideaRow) {
+    const s = this.state;
+    if (s.sending) return;
+    const actions = this.props.actions;
+    const text = s.draft.trim();
+    const quotes = s.quotes || [];
+    this.setState({ sending: true, err: '' });
+    try {
+      let reply;
+      if (s.askCardKey) {
+        reply = await actions.askCard(s.askCardKey, text);
+      } else {
+        const refs = quotes.map((q) => ({
+          path: q.path, startLine: q.a ?? null, endLine: q.b ?? null, snapshot: q.snap ? (q.snapText || null) : null,
+        }));
+        const continues = s.editingRound && !s.askRef ? ideaRow.requestRoot : null;
+        reply = await actions.askSecretary(text, refs, { continues });
+      }
+      if (!reply) return;
+      this.finishMainSend(s, reply);
+      if (s.askCardKey || s.editingRound) actions.readMore({});
+    } catch (error) {
+      this.setState({ err: error.message });
+    } finally {
+      this.setState({ sending: false });
+    }
+  }
+
+  finishMainSend(sent, reply) {
+    const now = this.state;
+    const patch = {};
+    if (now.navGoalId === sent.navGoalId) patch.pending = (now.pending || []).concat([reply]);
+    if (now.askRef === sent.askRef && now.askCardKey === sent.askCardKey && now.editingRound === sent.editingRound) {
+      Object.assign(patch, { askRef: '', askSq: '', askCardKey: '', editingRound: null });
+      if (now.draft === sent.draft) patch.draft = '';
+    }
+    const quotes = sent.quotes || [];
+    patch.heldQuoteIds = sent.askCardKey ? quotes.map((q) => q.id) : [];
+    if (!sent.askCardKey && quotes.length) {
+      // While a line is open the main draft's quotes live in lvKeep.main.
+      const unsent = (items) => items.filter((q) => !quotes.includes(q));
+      if (now.line) patch.lvKeep = { ...now.lvKeep, main: unsent(now.lvKeep.main) };
+      else patch.quotes = unsent(now.quotes);
+    }
+    this.setState(patch);
   }
 
   /* ------------------------------------------------------------ Main B data layer */
@@ -4166,8 +4257,8 @@ class Component extends DCLogic {
     out.lanesTitle = '还没接通'; out.lanesOff = 'true';
     if (out.scope && out.scope.show) {
       out.scope = Object.assign({}, out.scope, {
-        toWork: () => { set({ ascope: 'work', hover: null }); if (typeof actions.readMore === 'function') actions.readMore({ auxTab: 'arch', auxPath: null, detailTaskId: null, workOnly: true }); },
-        toAll: () => { set({ ascope: 'all', hover: null }); if (typeof actions.readMore === 'function') actions.readMore({ auxTab: 'arch', auxPath: null, detailTaskId: null, workOnly: false }); }
+        toWork: () => { set({ ascope: 'work', hover: null }); this.axRead('arch'); },
+        toAll: () => { set({ ascope: 'all', hover: null }); this.axRead('arch'); }
       });
     }
     /* §2.3: the detail comes from the one `graph/detail` projection, not from
@@ -4809,9 +4900,10 @@ class Component extends DCLogic {
       const nFiles = v.hits.filter((h) => !byId[h].kids.length).length;
       qNote = v.conf ? '两个目标都要改：' + v.hits.length + ' 个文件'
         : v.q ? (v.hits.length ? this.fmt(v.hits.length) + ' 个' + (nFiles === v.hits.length ? '文件' : '') + whereNote(byId, v.hits, '个', '模块') : v.root.id !== 'SYS' ? '本层没有匹配' : '没有匹配') : '';
-      onMapQ = (e) => set({ aq: e && e.target ? e.target.value : '', aconf: false });
-      onMapKey = (e) => { if (!e) return; if (e.key === 'Enter' && v.hits.length) go.selArch(v.hits[0]); if (e.key === 'Escape') set({ aq: '', aconf: false }); };
-      clearQ = () => set({ aq: '', aconf: false }); hasQClear = !!v.q || v.conf;
+      const search = (aq) => this.dataMode() ? this.clearCardLocation({ aq }) : set({ aq, aconf: false });
+      onMapQ = (e) => search(e && e.target ? e.target.value : '');
+      onMapKey = (e) => { if (!e) return; if (e.key === 'Enter' && v.hits.length) go.selArch(v.hits[0]); if (e.key === 'Escape') search(''); };
+      clearQ = () => search(''); hasQClear = !!v.q || v.conf;
       qlist = v.q || v.conf ? v.hits.slice(0, 6).map(qrow(byId, v.root.id, (n) => this.archSq(n, 'collapsed'), (id) => go.selArch(id))) : [];
       qmore = v.hits.length > 6 ? '其余 ' + this.fmt(v.hits.length - 6) + ' 个在图里保持高亮' : '';
       const detId = v.sel || (pins.filter((p) => p.kind === 'arch' && byId[p.id]).slice(-1)[0] || {}).id;
@@ -4893,10 +4985,11 @@ class Component extends DCLogic {
       pageLines: [],
       composerOpen: !dc.show && !s.confirmCancel && !s.copyOpen,
       composerLabel: '发给秘书', composerPh: '问秘书，或说出你要做的事。输入 # 引用任务或模块',
-      hasAsk: !!s.askRef, askRef: s.askRef || '', askSq: s.askSq || 'sq z8 s-pending',
+      hasAsk: !!s.askRef, composerContext: '引用：' + (s.askRef || ''), clearContextLabel: '移除引用', askSq: s.askSq || 'sq z8 s-pending',
       clearAsk: () => set({ askRef: '', askSq: '' }),
       draft: draft, onDraft: (e) => { const val = e && e.target ? e.target.value : ''; set(val ? { draft: val } : { draft: '', iterating: false }); },
-      sendCls: 'send' + (draft.trim() || (s.quotes || []).length ? '' : ' is-off'), send: send,
+      sendCls: 'send' + (draft.trim() || (s.quotes || []).length ? '' : ' is-off'),
+      sendOff: String(!draft.trim() && !(s.quotes || []).length), send: send,
       hasNote: !!ax.hasQuotes, composerNote: ax.quoteNote,
 
       /* G2: the auxiliary area (tab strip, dividers, 文件 / 命令 / Diff / file pages, quotes in the composer) */
@@ -5817,17 +5910,17 @@ class Component extends DCLogic {
     if (demand) actions.readMore(demand);
   }
   /* §2.4: a task node's detail is read on demand; closing it withdraws the demand. */
-  axReadDetail(id) {
+  axReadDetail(id, mapGoal) {
     if (!this.dataMode()) return;
     const actions = this.props.actions || {};
-    if (typeof actions.readMore === 'function') actions.readMore({ auxTab: 'task', detailTaskId: id });
+    if (typeof actions.readMore === 'function') actions.readMore({ auxTab: 'task', detailTaskId: id, ...(mapGoal ? { mapGoal } : {}) });
   }
   axDemand(key) {
     if (key === 'task' || key === 'arch' || key === 'files' || key === 'diff') {
       const st = this.state || {};
       /* ruling 6: 任务图 keeps the selected task's detail */
       return { auxTab: key, auxPath: key === 'diff' ? st.axDiff || null : null, detailTaskId: key === 'task' ? st.sel || null : null,
-        workOnly: key === 'arch' ? st.ascope !== 'all' : false };
+        workOnly: key === 'arch' && st.ascope !== 'all' && !st.aconf };
     }
     if (key === 'cmd' || /^cmd:/.test(String(key))) {
       return { auxTab: 'commands', auxPath: null, detailTaskId: null, workOnly: false };

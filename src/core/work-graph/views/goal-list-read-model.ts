@@ -11,7 +11,7 @@
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { WorkspaceScope } from '../../../contracts/core/identity.js';
 import type { ReadResult } from '../../../contracts/core/results.js';
-import type { GoalSnapshot } from '../../../contracts/ledger.js';
+import type { GoalRef, GoalSnapshot } from '../../../contracts/ledger.js';
 import type { EncodedRecord } from '../../record-store/ports.js';
 import { isRecord, nonEmpty } from '../../../contracts/validation/common.js';
 import type {
@@ -24,6 +24,7 @@ import { decodeGoalSnapshot } from '../persistence/record-codecs.js';
 import { lookupAll, type LookupBatch } from '../persistence/lookup-all.js';
 import { storeFailureToRejection } from '../persistence/read-result-failures.js';
 import { GOAL_BY_WORKSPACE_INDEX, readGoalOrdinals } from '../tasks/plan-readers.js';
+import { readGoalOrigin } from '../tasks/goal-origin.js';
 import {
   readGoalTerminalState, workspaceScopeProblem, type DecisionReadRecordsPort, type GoalTerminalState,
 } from './goal-conflicts.js';
@@ -109,7 +110,9 @@ async function readGoalList(
   for (const goal of goals) {
     const terminal = await readGoalTerminalState(deps.records, goal);
     if (terminal.status !== 'ready') return terminal;
-    rows.push(goalListRowOf(goal, ordinals, terminal.value));
+    const origin = await readGoalOrigin(deps.records, ctx, goal.ref);
+    if (origin.status !== 'ready') return origin;
+    rows.push(goalListRowOf(goal, ordinals, terminal.value, origin.value?.sourceGoal ?? null));
   }
   // §2: order ascending, then creation cursor, then Goal id.
   rows.sort((left, right) => left.order !== right.order ? left.order - right.order
@@ -122,7 +125,8 @@ async function readGoalList(
 function goalListRowOf(
   goal: GoalSnapshot,
   ordinals: Map<string, number> | null,
-  terminal: GoalTerminalState,
+  terminal: GoalTerminalState & { partial: boolean },
+  followsCompletedGoal: GoalRef | null,
 ): GoalListRowV1 {
   return {
     ref: { ...goal.ref },
@@ -137,13 +141,14 @@ function goalListRowOf(
     waitForGoalRef: goal.settings.waitForGoalRef === null ? null : { ...goal.settings.waitForGoalRef },
     activePlanRevision: goal.activePlanRevision === null ? null : { ...goal.activePlanRevision },
     display: { phase: goalListPhaseOf(goal, terminal) },
+    followsCompletedGoal,
   };
 }
 
 /** §2 "display.phase 真值表", in the same priority order as `reduceGoalDisplay`. */
-function goalListPhaseOf(goal: GoalSnapshot, terminal: GoalTerminalState): GoalListPhaseV1 | null {
+function goalListPhaseOf(goal: GoalSnapshot, terminal: GoalTerminalState & { partial: boolean }): GoalListPhaseV1 | null {
   if (terminal.cancelled) return 'CANCELLED';
-  if (terminal.completed) return 'COMPLETED';
+  if (terminal.completed) return terminal.partial ? 'ACCEPTED_PARTIAL' : 'COMPLETED';
   if (goal.desiredState === 'paused') return 'PAUSED';
   if (goal.activePlanRevision === null) return 'PLANNING';
   return null;

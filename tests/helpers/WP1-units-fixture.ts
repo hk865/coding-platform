@@ -587,7 +587,8 @@ export async function startRefusalWorkflow(
   })) };
   const calls: StartRefusalFixture['calls'] = [];
   const deps: WorkflowDependencies = {
-    tasks: { createGoal: forbidden, completeTask: forbidden, completeGoal: forbidden, setGoalControl: forbidden },
+    tasks: { createGoal: forbidden, completeTask: forbidden, completeGoal: forbidden, acceptPartialResult: forbidden,
+      setGoalControl: forbidden },
     plans: { proposePlan: forbidden, applyPlanChange: forbidden, queryGoal: forbidden, readPlanProposal: forbidden,
       queryTaskGraph: forbidden, queryReadyTasks: forbidden },
     sessions: { admitSessionCreation: forbidden, recordSessionCreated: forbidden, readSession: forbidden,

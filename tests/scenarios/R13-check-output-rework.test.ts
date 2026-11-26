@@ -47,12 +47,12 @@ it('C5：种子检查的出处是已批准清单（初始化那次回答），�
   const check = g8Check('r13-c5-check', ['r13-c5-work', 'r13-c5-gate'], 'exit 7');
   const flow = await g8NewGoal(project, 'r13-c5', [g8PlanCall('r13-c5-plan', g8PlanForm('r13-c5', 'local-workbench', [check]))]);
   const head = await project.candidate(flow.goal, flow.requestRoot);
-  expect(await project.apply(flow.goal, head, 'r13-c5-apply')).toMatchObject({ status: 'committed' });
+  // Open the executor line and install its script before the adoption: the platform starts the driver when this
+  // Goal-card Goal's first plan is adopted, and it runs the Task at once.
   const executor = await project.line('r13-c5-executor', LOCAL_WORKBENCH_ROLE);
   await project.world.scripted.script(executor,
     [{ kind: 'text', text: 'R13 C5 Run 1' }, { kind: 'text', text: 'R13 C5 Run 2' }], project.scope);
-  await project.read('workflow/driver-start', { advance: { schemaVersion: 1, goalRef: flow.goal, flowId: 'r13-c5-driver',
-    sessionHint: null, kind: 'select_work' }, queryProfileIds: [] });
+  expect(await project.apply(flow.goal, head, 'r13-c5-apply')).toMatchObject({ status: 'committed' });
   // 检查都没过，自动返工领到 Run 2：Task 选中的 Run 绑好接续说明之前，`executions/brief` 答 incomplete 或 null。
   const bound = await waitFor(async () => {
     const tasks = (await project.read<{ tasks: { ref: { taskId: string }; execution: RunRef | null }[] }>('tasks/query',

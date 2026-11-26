@@ -172,6 +172,8 @@ export type CoreRouteBindings = {
   activateCompletionPolicy: CompletionPolicyConfigurationPort['activateCompletionPolicy'];
   readCurrentCompletionPolicy: NonNullable<CompletionPolicyConfigurationPort['readCurrentCompletionPolicy']>;
   createGoal: GoalTaskPort['createGoal'];
+  /** GOAL-07P (G6): the person's partial acceptance; the owner admits the configured operator only. */
+  acceptPartialResult: GoalTaskPort['acceptPartialResult'];
   queryGoal: (ctx: CoreCallContext, ref: GoalRef) => Promise<ReadResult<GoalReadV1>>;
   adoptInitialArchitecture: ArchitectureCatalogPort['adoptInitialArchitecture'];
   reviseArchitectureCatalog: ArchitectureCatalogPort['reviseArchitectureCatalog'];
@@ -687,6 +689,7 @@ export const CORE_ROUTE_SPECS: Record<
   'completion-policies/activate': { kind: 'graph_write', binding: 'activateCompletionPolicy', owner: 'completionPolicies.activateCompletionPolicy' },
   'completion-policies/read': { kind: 'plain', binding: 'readCurrentCompletionPolicy', owner: 'completionPolicies.readCurrentCompletionPolicy' },
   'goals/create': { kind: 'graph_write', binding: 'createGoal', owner: 'goals.createGoal' },
+  'goals/accept-partial': { kind: 'graph_write', binding: 'acceptPartialResult', owner: 'goals.acceptPartialResult' },
   'goals/read': { kind: 'plain', binding: 'queryGoal', owner: 'plans.queryGoal' },
   'architecture/adopt-initial': { kind: 'graph_write', binding: 'adoptInitialArchitecture', owner: 'architecture.adoptInitialArchitecture' },
   'architecture/revise': { kind: 'graph_write', binding: 'reviseArchitectureCatalog', owner: 'architecture.reviseArchitectureCatalog' },
@@ -1156,6 +1159,7 @@ export function createPlatformCoreRouteBindings(
       ? unsupported('the Host does not publish the current completion policy read')
       : platform.completionPolicies.readCurrentCompletionPolicy.bind(platform.completionPolicies),
     createGoal: platform.goals.createGoal.bind(platform.goals),
+    acceptPartialResult: platform.goals.acceptPartialResult.bind(platform.goals),
     queryGoal: async (ctx, ref) => {
       const read = await platform.plans.queryGoal(ctx, ref);
       if (read.status !== 'ready') return read;
@@ -1843,6 +1847,7 @@ export async function dispatchCoreRoute(
       case 'completion-policies/activate': return bindings.activateCompletionPolicy(ctx, graphWrite.request as never);
       case 'completion-policies/read': return bindings.readCurrentCompletionPolicy(ctx, plain.input as never);
       case 'goals/create': return bindings.createGoal(ctx, graphWrite.request as never);
+      case 'goals/accept-partial': return bindings.acceptPartialResult(ctx, graphWrite.request as never);
       case 'goals/read': return bindings.queryGoal(ctx, plain.input as never);
       case 'architecture/adopt-initial': return bindings.adoptInitialArchitecture(ctx, graphWrite.request as never);
       case 'architecture/revise': return bindings.reviseArchitectureCatalog(ctx, graphWrite.request as never);

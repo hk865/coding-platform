@@ -52,7 +52,7 @@ describe('E3N-5 not connected controls', () => {
       /* A19: connected — the three unavailable marks are gone. */
       expect((send()!.getAttribute('class') ?? '').split(/\s+/)).not.toContain('is-off');
       expect(send()!.getAttribute('title')).toBe('发送');
-      expect(send()!.getAttribute('aria-disabled')).toBeNull();
+      expect(send()!.getAttribute('aria-disabled')).not.toBe('true');
     } finally {
       await page.restore();
     }

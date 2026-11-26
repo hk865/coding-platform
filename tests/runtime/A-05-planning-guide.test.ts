@@ -21,10 +21,14 @@ describe('A-05: the initial planning guide', () => {
     const text = PACK.templates['initial-planning-answer'] ?? '';
     expect(text).toContain('submit_plan_round');
     expect(text).toContain('answerKind');
-    expect(text).toContain('exactly one JSON object as your entire final answer');
     expect(text).toContain('estimatedLines');
     expect(text).toContain('sizeClass');
     expect(text).toContain('only this segment');
     expect(TEMPLATE_SLOTS['initial-planning-answer']).toEqual({});
+    // The JSON text shape moved to its own template, rendered only on the path
+    // with no submission tool.
+    const textOnly = PACK.templates['planning-answer-text'] ?? '';
+    expect(textOnly).toContain('exactly one JSON object as your entire final answer');
+    expect(TEMPLATE_SLOTS['planning-answer-text']).toEqual({});
   });
 });

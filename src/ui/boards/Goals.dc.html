@@ -22,6 +22,8 @@ body { margin: 0; background: #1F1F1F; }
 .gx-goal { gap: 8px; min-height: 36px; padding: 0 8px 0 0; }
 .gx-name { display: flex; align-items: center; gap: 10px; flex: 1 1 auto; min-width: 0; align-self: stretch; padding: 0 0 0 8px; text-align: left; }
 .gx-line { flex: 0 1000 auto; min-width: 0; font-size: 12px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* 16b's long reason lines: the line yields first, so the name keeps its last pixel (a long name still ellipsizes at 60%) */
+.gx-name .row-name { flex-shrink: 0; max-width: 60%; }
 .row.is-on .gx-line { color: var(--text-2); }
 .row.is-on .order-acts { opacity: 1; }
 .gx-log { display: flex; flex-direction: column; gap: 12px; }
@@ -182,7 +184,7 @@ body { margin: 0; background: #1F1F1F; }
                   <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.75 3.25h10.5v7.25H8l-3 2.5v-2.5H2.75Z"></path></svg>
                   问秘书
                 </button>
-                <button class="btn-text is-off" type="button" onClick="{{cf.reopen}}" title="还没接通" aria-disabled="true">改主意</button>
+                <button class="btn-text is-off" type="button" onClick="{{cf.reopen}}" title="{{cf.reopenTip}}" aria-disabled="true">改主意</button>
                 <span class="note">{{cf.note}}</span>
                 <button class="{{cf.goCls}}" type="button" onClick="{{cf.go}}" aria-disabled="{{cf.goOff}}">确定</button>
               </div>
@@ -192,7 +194,7 @@ body { margin: 0; background: #1F1F1F; }
             <div class="plan-line">
               <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="M6.75 4.25h6.5M6.75 8h6.5M6.75 11.75h6.5"></path><path d="m2.5 4.25.9.9 1.6-1.65M2.5 8l.9.9L5 7.25M2.75 11.75h1.5"></path></svg>
               <span>{{cf.doneText}}</span>
-              <button class="btn-text is-off" type="button" onClick="{{cf.reopen}}" title="还没接通" aria-disabled="true">改主意</button>
+              <button class="btn-text is-off" type="button" onClick="{{cf.reopen}}" title="{{cf.reopenTip}}" aria-disabled="true">改主意</button>
             </div>
           </sc-if>
         </section>
@@ -1829,7 +1831,9 @@ class Component extends DCLogic {
         name: g.name, line: g.line, sq: g.sq, n: g.n, hasN: g.hasN, open: isOpenBoard, cur: g.current ? 'true' : null,
         cls: 'row gx-goal' + (isOpenBoard ? ' is-on' : ''),
         tip: g.tip + '。点一下' + (isOpenBoard ? '收起' : '展开'),
-        kv: [{ k: '进度', v: g.kv.progress }, { k: '工作线', v: g.kv.line }, { k: '改动', v: g.kv.changed }, { k: '自治', v: g.kv.autonomy }],
+        kv: [{ k: '进度', v: g.kv.progress }, { k: '工作线', v: g.kv.line }, { k: '改动', v: g.kv.changed }, { k: '自治', v: g.kv.autonomy }]
+          .concat((g.whys || []).map((v) => ({ k: '原因', v })))
+          .concat((g.waitWhys || []).length > 0 ? [{ k: '在等', v: g.waitWhys.join('、') }] : []),
         toggle: () => set({ rowOpen: (this.state || {}).rowOpen === g.id ? null : g.id }),
         up: move(g.id, 'up'), down: move(g.id, 'down'),
         upOff: g.upOff, downOff: g.downOff, upCls: g.upCls, downCls: g.downCls, upLabel: g.upLabel, downLabel: g.downLabel,
@@ -1866,7 +1870,7 @@ class Component extends DCLogic {
       goOff: !cfPick, goCls: 'btn btn-primary' + (cfPick ? '' : ' is-off'),
       ask: askConflict, go: decideBoard,
       doneText: labels.length ? '已接受并行风险：' + labels.join('；') : '已决定',
-      reopenTip: '还没接通', reopen: notConnected,
+      reopenTip: '答过的冲突卡不能重开，接受过的并行风险也撤不掉；任一目标换了计划版本，平台会重新判冲突。', reopen: notConnected,
     };
 
     /* ---- log: the record starts with the conflict card's own detection, then this page's messages.

@@ -50,6 +50,10 @@ describe('G8A: a later plan brings its own checks and whoever adopts it approves
     expect({ status: round.status, closeCode: round.closeCode }, JSON.stringify(round))
       .toEqual({ status: 'ended', closeCode: null });
     const head = await project.candidate(flow.goal, flow.requestRoot);
+    // The person opens an executor line and installs its script before adopting: the platform starts the driver when
+    // this Goal-card Goal's first plan is adopted, and it runs the Task and opens its check round at once.
+    const executor = await project.line('g8-c1-executor', LOCAL_WORKBENCH_ROLE);
+    await project.world.scripted.script(executor, [{ kind: 'text', text: 'G8 C1 done' }], project.scope);
     const before = JSON.stringify(await project.settingsEntry());
     expect(await project.apply(flow.goal, head, 'g8-c1-apply')).toMatchObject({ status: 'committed' });
     const workspace = await project.settingsEntry();
@@ -60,11 +64,6 @@ describe('G8A: a later plan brings its own checks and whoever adopts it approves
     expect(after, 'the approval names the person').toContain('"approvedBy":{"kind":"person"}');
     expect(before).not.toContain('"approvedBy":{"kind":"person"}');
 
-    // The person opens an executor line and starts the Goal; the Host runs the Task and opens its check round.
-    const executor = await project.line('g8-c1-executor', LOCAL_WORKBENCH_ROLE);
-    await project.world.scripted.script(executor, [{ kind: 'text', text: 'G8 C1 done' }], project.scope);
-    await project.read('workflow/driver-start', { advance: { schemaVersion: 1, goalRef: flow.goal, flowId: 'g8-c1-driver',
-      sessionHint: null, kind: 'select_work' }, queryProfileIds: [] });
     const planRef = (await project.read<{ goal: { activePlanRevision: unknown } }>('goals/read', flow.goal)).goal
       .activePlanRevision;
     const node = { kind: 'task', ref: { projectId: flow.goal.projectId, goalId: flow.goal.goalId, taskId: 'g8-c1-work' },

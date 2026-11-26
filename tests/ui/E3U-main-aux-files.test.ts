@@ -5,8 +5,8 @@ import { afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 import { findAllClass, findClass, findElement, type BootedPage } from './helpers/boot-page.js';
 import type { FakeElement } from './helpers/dom.js';
 import {
-  auxTab, callsTo, countRoute, descendants, hasClass, lineRowNamed, onMain, quietPage, settledN, textOf, waitFor,
-  type PageLog,
+  auxTab, callsTo, countRoute, descendants, hasClass, lineRowNamed, onMain, openAuxFile, quietPage, settledN, textOf,
+  waitFor, type PageLog,
 } from './helpers/E3N-page.js';
 import { click } from './helpers/E3N-interact.js';
 import { E3U_MODULE_SHA, openW1, openWGit, openWWritable, unlockWGit, type E3NWorld } from './helpers/E3N-world.js';
@@ -92,12 +92,7 @@ const fpState = (root: FakeElement): string => textOf(findClass(root, 'fp-state'
 
 /** 文件 → the row of `src/module.ts` → its page. */
 async function openModule(page: BootedPage, log: PageLog): Promise<void> {
-  click(auxTab(page.root, '文件')!);
-  const row = await waitRow(page.root);
-  await quietPage(log);
-  click(row);
-  await waitFor(() => codeTexts(page.root).length > 0);
-  await quietPage(log);
+  await openAuxFile(page, log, MODULE);
 }
 
 async function waitRow(root: FakeElement): Promise<FakeElement> {

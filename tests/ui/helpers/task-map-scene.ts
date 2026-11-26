@@ -562,6 +562,9 @@ function nodeDetail(input: Record<string, unknown>): NodeDetailV1 {
   if (section === 'participants') {
     return { section: 'participants', items: [], nextCursor: null, sourceCursor: CURSOR };
   }
+  if (section === 'anomalies') {
+    return { section: 'anomalies', items: [], nextCursor: null, sourceCursor: CURSOR };
+  }
   const task = taskOf(taskId);
   /* the summary's responsible line is the hover's (hoverTask), as one source in production */
   const owner = ownerLineOfTask(taskId);

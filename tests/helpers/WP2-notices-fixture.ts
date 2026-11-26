@@ -101,7 +101,7 @@ export async function openWP2NoticesFixture(kind: 'memory' | 'sqlite', factory: 
       permissions: structuredClone(input.permissions), hostTemplate: structuredClone(B2_HOST.hostTemplate) } };
   };
   const mailboxDeps = { records, sessions: f.sessions, executions: reads, roles, materials,
-    defaultInquiryDeadlineMs: 86_400_000,
+    defaultInquiryDeadlineMs: () => 86_400_000,
     queryRounds: createQueryRoundResolver({ records, duties: unknownSessionDuty, bodies: b2.bodies }),
     runtimeAdmission: { bodies: b2.bodies, authorizeConfiguration }, systemActor: actor, now: f.now, newId: f.id,
     // NR tests reply binding; DU owns testing how these trusted facts are resolved.

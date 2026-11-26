@@ -32,6 +32,11 @@ body { margin: 0; background: #1F1F1F; }
 .tm-act { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px 32px; }
 .tm-act-side { display: flex; flex-direction: column; gap: 6px; padding-bottom: 1px; }
 .tm-act-side .tl-sum { margin: 0; line-height: 18px; }
+.dc-field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; line-height: 18px; color: var(--text-3); }
+.dc-input { all: unset; box-sizing: border-box; display: block; width: 100%; padding: 6px 10px; border-radius: 6px; background: var(--ground); box-shadow: inset 0 0 0 1px var(--line-2); font-size: 13px; line-height: 20px; color: var(--text-strong); white-space: pre-wrap; }
+textarea.dc-input { min-height: 52px; }
+.dc-input::placeholder { color: var(--text-3); }
+.dc-input:focus-visible { box-shadow: inset 0 0 0 1px var(--text-3); }
 /* 查找 + 需要关注 (the approved TaskMap's first canvas line), on the DAG and the 大纲 */
 .tm-tools { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 28px; min-height: 28px; }
 .tm-canvas.is-dag > .tm-tools { padding: 10px 24px 0; }
@@ -260,7 +265,7 @@ body { margin: 0; background: #1F1F1F; }
               <button class="btn-text dg-drop-btn" type="button" onClick="{{dag.toggleDrop}}" aria-expanded="{{dag.dropOpen}}">{{dag.dropLabel}}</button>
               <sc-if value="{{dag.dropOpen}}" hint-placeholder-val="{{ false }}">
                 <sc-for list="{{dag.dropped}}" as="x" hint-placeholder-count="2">
-                  <p class="dg-drop-row"><span class="sq z8 s-cancelled" aria-hidden="true"></span><span>{{x.name}}</span><span class="tx-cancelled">{{x.word}}</span><span class="dg-drop-why">{{x.at}} {{x.why}}</span></p>
+                  <p class="dg-drop-row"><span class="sq z8 s-cancelled" aria-hidden="true"></span><span>{{x.name}}</span><span class="tx-cancelled">{{x.word}}</span><span class="dg-drop-why">{{x.at}} {{x.why}}</span><sc-if value="{{x.canRestore}}" hint-placeholder-val="{{ false }}"><button class="btn-text" type="button" disabled="{{x.off}}" onClick="{{x.restore}}">恢复</button></sc-if><sc-if value="{{x.hasError}}" hint-placeholder-val="{{ false }}"><span class="tx-failed">{{x.error}}</span></sc-if></p>
                 </sc-for>
               </sc-if>
             </div>
@@ -442,6 +447,8 @@ body { margin: 0; background: #1F1F1F; }
               </sc-if>
               <div class="tm-act-side">
                 <p class="tl-sum">{{wl.sum}}</p>
+                <sc-if value="{{wl.canBackfill}}" hint-placeholder-val="{{ false }}"><button class="btn-text" type="button" disabled="{{wl.backfillOff}}" onClick="{{wl.backfill}}">补算这一段</button></sc-if>
+                <sc-if value="{{wl.hasBackfillError}}" hint-placeholder-val="{{ false }}"><span class="tx-failed">{{wl.backfillError}}</span></sc-if>
                 <span class="cal-legend" aria-hidden="true">少<span class="cal-c cal-l0"></span><span class="cal-c cal-l1"></span><span class="cal-c cal-l2"></span><span class="cal-c cal-l3"></span><span class="cal-c cal-l4"></span>多</span>
               </div>
             </div>
@@ -687,6 +694,7 @@ body { margin: 0; background: #1F1F1F; }
                   <dt>尝试</dt>
                   <dd>{{det.attempt}}</dd>
                 </sc-if>
+                <sc-for list="{{det.fail}}" as="fr" hint-placeholder-count="0"><dt>{{fr.k}}</dt><dd>{{fr.v}}</dd></sc-for>
               </dl>
             </sc-if>
           </sc-if>
@@ -700,6 +708,20 @@ body { margin: 0; background: #1F1F1F; }
               </div>
             </div>
           </sc-if>
+          <sc-if value="{{det.dispConfirmOpen}}" hint-placeholder-val="{{ false }}">
+            <div class="decision" role="alertdialog" aria-label="{{det.dispTitle}}" onKeyDown="{{det.dispKey}}">
+              <p class="dc-title">{{det.dispTitle}}</p>
+              <p class="dc-line">{{det.dispLine}}</p>
+              <div class="dc-field">
+                <label for="tm-disp-note">原因（可选）</label>
+                <textarea id="tm-disp-note" class="dc-input" rows="2" maxlength="2000" placeholder="写下为什么，会记进这次计划改动" value="{{det.dispNote}}" onChange="{{det.dispNoteChange}}"></textarea>
+              </div>
+              <div class="dc-foot">
+                <button class="btn btn-sm first" type="button" onClick="{{det.dispKeep}}" onKeyDown="{{det.dispKey}}" ref="{{det.dispKeepRef}}">不了</button>
+                <button class="btn btn-sm btn-primary" type="button" onClick="{{det.dispGo}}" onKeyDown="{{det.dispKey}}">{{det.dispConfirmLabel}}</button>
+              </div>
+            </div>
+          </sc-if>
           <sc-if value="{{det.actsOpen}}" hint-placeholder-val="{{ true }}">
             <div class="d-acts">
               <sc-if value="{{det.canHandle}}" hint-placeholder-val="{{ false }}">
@@ -709,12 +731,13 @@ body { margin: 0; background: #1F1F1F; }
                 <button class="{{det.stopAct.cls}}" type="button" ref="{{det.stopAct.ref}}" disabled="{{det.stopAct.off}}" onClick="{{det.stopAct.go}}">{{det.stopAct.label}}</button>
               </sc-if>
               <sc-for list="{{det.acts}}" as="ac" hint-placeholder-count="2">
-                <button class="{{ac.cls}}" type="button" disabled="{{ac.off}}" onClick="{{ac.go}}">{{ac.label}}</button>
+                <button class="{{ac.cls}}" type="button" disabled="{{ac.off}}" onClick="{{ac.go}}" ref="{{ac.ref}}">{{ac.label}}</button>
               </sc-for>
             </div>
           </sc-if>
           <sc-if value="{{det.hasHoldError}}" hint-placeholder-val="{{ false }}"><p class="d-state"><span class="tx-failed">{{det.holdError}}</span></p></sc-if>
           <sc-if value="{{det.hasStopError}}" hint-placeholder-val="{{ false }}"><p class="d-state"><span class="tx-failed">{{det.stopError}}</span></p></sc-if>
+          <sc-if value="{{det.hasDispError}}" hint-placeholder-val="{{ false }}"><p class="d-state"><span class="tx-failed">{{det.dispError}}</span></p></sc-if>
         </section>
       </sc-if>
     </aside>
@@ -730,11 +753,16 @@ class Component extends DCLogic {
     this.state = { theme: null, view: 'dag', sel: null, pins: [], q: '', att: null, legend: false, crit: false, dropOpen: false, dgOpen: null,
       dHover: null, eHover: null, relHover: null, hover: null, open: {}, ofold: {}, nowOpen: false,
       t: null, wlBy: 'role', wlWin: 'today', wlCell: null, wlDay: null, wlClosed: {}, wlArch: false, wlAttn: false, wlPins: [], wlSort: 0, wlSel: null, wHover: null,
-      stopConfirm: null, stopBusy: {}, stopError: null, holdBusy: {}, holdError: null };
+      stopConfirm: null, stopBusy: {}, stopError: null, holdBusy: {}, holdError: null,
+      dispConfirm: null, dispNote: '', dispBusy: {}, dispError: null, backfillBusy: false, backfillError: null };
     this._stopSel = null;
     this._stopShown = false;
     this._stopBtn = null;
     this.stopCancelReturn = false;
+    this._dispKey = '';
+    this._dispShown = false;
+    this._dispBtn = null;
+    this.dispCancelReturn = false;
   }
 
   componentDidUpdate(prev) {
@@ -745,19 +773,27 @@ class Component extends DCLogic {
     if (this._stopSel !== s.sel) {
       this._stopSel = s.sel;
       this.stopCancelReturn = false;
+      this.dispCancelReturn = false;
       /* a stop failure belongs to its Task (6-3/N6): a new selection only withdraws
          the confirm card, and coming back still shows that Task's own failure text */
       if (s.stopConfirm !== null) this.setState({ stopConfirm: null });
+      if (s.dispConfirm !== null) this.setState({ dispConfirm: null });
     }
     /* the confirm card clears itself when this draw did not show it: entering replay, the
        command ending, or a stop already in flight (6-4) */
     if (s.stopConfirm !== null && !this._stopShown) this.setState({ stopConfirm: null });
+    if (s.dispConfirm !== null && !this._dispShown) this.setState({ dispConfirm: null });
     /* the drawn 停止 may still be disabled while the write is in flight: keep the
        return flag until it can take focus (a failed write re-enables it) */
     const b = this._stopBtn;
     if (this.stopCancelReturn && b && b.isConnected && !b.disabled) {
       this.stopCancelReturn = false;
       b.focus();
+    }
+    const db = this._dispBtn;
+    if (this.dispCancelReturn && db && db.isConnected && !db.disabled) {
+      this.dispCancelReturn = false;
+      db.focus();
     }
     this.revealSel();
   }
@@ -785,6 +821,29 @@ class Component extends DCLogic {
       event.preventDefault();
       close();
     }
+  }
+
+  /* 5.10-3: the dropped list's 恢复 writes at once (it can be cancelled again).
+     Its in-flight key and failure text never share the detail's. */
+  dropState(x) {
+    const s = this.state || {}; const key = 'drop:' + x.id; const e = s.dispError;
+    return Object.assign({}, x, { off: !!((s.dispBusy || {})[key]), restore: () => this.dropRestore(x),
+      hasError: !!(e && e.id === key), error: e && e.id === key ? e.text : '' });
+  }
+  dropRestore(x) {
+    const s = this.state || {}; const key = 'drop:' + x.id;
+    const a = this.props.actions;
+    if (!x.canRestore || (s.dispBusy || {})[key] || !a || !a.changeTaskDisposition) return;
+    this.setState({ dispBusy: Object.assign({}, s.dispBusy || {}, { [key]: true }), dispError: null });
+    a.changeTaskDisposition(x.id, 'active').then(
+      () => this.setState({ dispBusy: this.busyCleared(key) }),
+      (e) => this.setState({ dispBusy: this.busyCleared(key),
+        dispError: { id: key, text: e && e.message ? String(e.message) : '恢复失败。' } }));
+  }
+  busyCleared(key) {
+    const m = Object.assign({}, (this.state || {}).dispBusy || {});
+    delete m[key];
+    return m;
   }
 
   revealSel() {
@@ -892,7 +951,7 @@ class Component extends DCLogic {
       const detail = data.detail && data.detailFor === String(t.id) ? data.detail : null;
       const node = { id: 'task:' + t.id, name: t.name, kind: 'task', st: t.st, why: t.why || '', sem: t.instruction || '',
         gate: t.gate, optional: t.optional === true, att: t.attempt, stageId: t.stageId || null, owner: t.owner || '', statusNote: detail ? detail.cardStatus || '' : '',
-        running: (data.running || {})[String(t.id)] || null, gaps: t.gaps || '',
+        running: (data.running || {})[String(t.id)] || null, gaps: t.gaps || '', anchors: t.anchors || 0,
         files: [], rework: t.rework || [], reworkCap: typeof t.reworkCap === 'number' ? t.reworkCap : null, deps: (t.deps || []).map((d) => 'task:' + d), next: [], kids: [] };
       const home = t.stageId && nodes['stage:' + t.stageId] ? nodes['stage:' + t.stageId] : root;
       home.kids.push(node);
@@ -1695,7 +1754,8 @@ class Component extends DCLogic {
       card: card || empty, ccard: ccard || empty, unhover: on.unhover || noop,
       cal: { rows: calRows, head: head }, calCls: 'cal' + (o.full ? ' full' : ''), winWord: winWord,
       note: u0 ? '未排期 ' + u0 : '', hasNote: u0 > 0,
-      sum: winWord + '：' + (complete ? '步骤 ' + total.st + ' · 编辑 ' + total.ed + ' · 检查 ' + total.ck + ' 次' : this.tlUnknown(used)),
+      sum: winWord + '：' + (complete ? '步骤 ' + total.st + ' · 编辑 ' + total.ed + ' · 检查 ' + total.ck + ' 次'
+        : this.tlUnknown(used) + (!complete && A.calendar && A.calendar.uncountedWhy ? '（' + A.calendar.uncountedWhy + '）' : '')),
       height: y
     };
   }
@@ -1768,7 +1828,7 @@ class Component extends DCLogic {
         role: row.role || 'unknown', name: row.name, task: taskRef || null,
         bars: bars, sessions: sessions, first: null, last: null, st: null, waitTo: null, end: null, attn: 9,
         archived: row.archived === true, area: areaRef || null, pinned: row.pinned === true, countPartial: row.countPartial === true,
-        chainSessions: row.chainSessions || [] };
+        chainSessions: row.chainSessions || [], tasksText: row.tasksText || '' };
       bars.forEach((b) => { lineOfRun[b.id] = L.id; });
       list.push(L); byId[L.id] = L;
     });
@@ -2077,7 +2137,8 @@ class Component extends DCLogic {
     const winWord = o.cell && A.cells[o.cell] ? this.tlDateLabel(this.tlDayOf(A.cells[o.cell].startMinute)) + ' ' + p2(A.cells[o.cell].localHour) + ':00 这一小时' : pickedDay !== null ? dayLabel(pickedDay) : '全部（' + this.tlDateLabel(first) + ' 起，' + nw + ' 周）';
     const u0 = this.unschedCount();
     return { yr: yr, cal: cal, ccard: ccard, ticks: ticks, evs: evs, wins: wins, crumbs: crumbs,
-      sum: winWord + '：' + (complete ? '步骤 ' + S1.st + ' · 编辑 ' + S1.ed + ' · 检查 ' + S1.ck + ' 次' : this.tlUnknown(used)) + (u0 ? ' · 未排期 ' + u0 : '') };
+      sum: winWord + '：' + (complete ? '步骤 ' + S1.st + ' · 编辑 ' + S1.ed + ' · 检查 ' + S1.ck + ' 次'
+        : this.tlUnknown(used) + (!complete && A.calendar && A.calendar.uncountedWhy ? '（' + A.calendar.uncountedWhy + '）' : '')) + (u0 ? ' · 未排期 ' + u0 : '') };
   }
   /* =====================================================================
      TaskMap — the full-page task graph: DAG (default) + 大纲 + 轨道. The
@@ -2088,7 +2149,8 @@ class Component extends DCLogic {
   /* The page facts the DAG needs: the real dropped rows and nothing else. */
   pageData() {
     const data = this.props.data || {};
-    const dropped = ((data.dag && data.dag.dropped) || []).map((x) => ({ name: x.name, word: x.word, why: x.why, at: x.at || '' }));
+    const dropped = ((data.dag && data.dag.dropped) || []).map((x) => ({ id: x.id, name: x.name, word: x.word,
+      why: x.why, at: x.at || '', canRestore: x.canRestore === true }));
     return { dropped: dropped };
   }
 
@@ -2413,6 +2475,7 @@ class Component extends DCLogic {
      marks; pinIt(id) = 固定; selRef remembers the selected element. */
   dagView(s, S, go, H, pinIt, selRef, readDropped) {
     const tm = this.taskModel(); const G = this.dagGraph(); const D = this.pageData();
+    const data = this.props.data || {};
     const set = (p) => this.setState(p); const noop = () => {};
     const lay = this.dagLayout(s.dgOpen); const cp = this.critPath(S); const crit = !!s.crit;
     const selN = tm.byId[s.sel] || null;
@@ -2435,7 +2498,8 @@ class Component extends DCLogic {
       bandCard: { show: false, x: 0, bottom: 0, sq: '', name: '', word: '', tx: '', why: '', rows: [], hint: '' },
       crit: crit, critCls: 'seg-btn' + (crit ? ' is-on' : ''), toggleCrit: () => set({ crit: !(this.state || {}).crit, dHover: null }),
       unhover: () => { if ((this.state || {}).dHover) set({ dHover: null }); }, unhoverE: () => { if ((this.state || {}).eHover) set({ eHover: null }); },
-      dropOpen: !!s.dropOpen, toggleDrop: () => { const open = !(this.state || {}).dropOpen; set({ dropOpen: open }); if (open && readDropped) readDropped(); }, dropped: D.dropped,
+      dropOpen: !!s.dropOpen, toggleDrop: () => { const open = !(this.state || {}).dropOpen; set({ dropOpen: open }); if (open && readDropped) readDropped(); }, dropped: D.dropped.map((x) => S.live && data.goal && data.goal.st !== 'cancelled'
+        ? this.dropState(x) : Object.assign({}, x, { canRestore: false })),
       dropLabel: D.dropped.length === 0 ? '' : '另有' + ['已取消', '已替代'].map((w) => [w, D.dropped.filter((x) => x.word === w).length]).filter((p) => p[1]).map((p) => p[0] + ' ' + p[1] + ' 个').join('、') + '任务，不画在图里' + (s.dropOpen ? ' · 收起' : ' · 展开') };
     const nameOf = (id) => (tm.byId[id] || {}).name || id;
     out.critNote = !crit ? '到目标验收最长的一串没完成的依赖' : !cp.len ? '到目标验收没有没完成的依赖'
@@ -2779,7 +2843,9 @@ class Component extends DCLogic {
       const act = units.some(actAt); const L = T.some((t) => t.lit); const sel = units.some((u) => u.id === selUnit); const u0 = units[0];
       const r = Object.assign({}, blank, { isLine: true, h: rowH(n),
         cls: 'lane r' + n + ' wl-row' + (act ? ' is-act' : '') + (L ? ' is-lit' : '') + (sel ? ' is-sel' : '') + (units.every((u) => u.archived) ? ' is-arch' : '') + (packed ? ' is-packed' : ''),
-        name: inPacked ? (packed ? rowName(units) : u0.short) : u0.name, title: units.map((u) => u.name + (u.line && u.line.sessions > 1 ? '（工作记录 ' + u.line.sessions + ' 段）' : '')).join('；'),
+        name: inPacked ? (packed ? rowName(units) : u0.short) : u0.name,
+        title: units.map((u) => u.line && u.line.tasksText ? u.name + '：' + u.line.tasksText
+          : u.name + (u.line && u.line.sessions > 1 ? '（工作记录 ' + u.line.sessions + ' 段）' : '')).join('；'),
         canPin: !packed && by !== 'task' && !!u0.line, pinned: !!(u0.line && u0.line.pinned === true),
         pinCls: 'btn btn-icon btn-xs wl-pin' + (u0.line && u0.line.pinned === true ? ' is-on' : ''),
         pinLabel: u0.line && u0.line.pinned === true ? '取消固定这条工作线' : '固定这条工作线（排在最前）', pin: () => pinLine(u0),
@@ -2968,6 +3034,9 @@ class Component extends DCLogic {
       unhover: () => { if ((this.state || {}).wHover) set({ wHover: null }); },
       hasCal: !LG || !!day, cal: LG ? LG.cal : { cls: tv.calCls, head: tv.cal.head, rows: tv.cal.rows }, ccard: ccard, sum: LG ? LG.sum : tv.sum + (tv.hasNote ? ' · ' + tv.note : ''),
       hasYr: !!LG, yr: LG ? LG.yr : { cls: 'cal yr full', wdays: [], weeks: [], card: { show: false, tasks: [] } },
+      canBackfill: !!(S.live && (this.props.data.time || {}).calendar && this.props.data.time.calendar.canBackfill),
+      backfillOff: !!s.backfillBusy, backfill: () => this.backfillCalendar(),
+      hasBackfillError: !!s.backfillError, backfillError: s.backfillError || '',
       legendOn: !!s.legend && !!full,
       hasSel: !!selU, selName: selU ? selU.name : '', selSub: (() => {
         if (!selU) return '';
@@ -2983,6 +3052,20 @@ class Component extends DCLogic {
       selPin: selU ? () => pinLine(selU) : noop,
       selClear: () => { set({ wlSel: null, wHover: null }); if (actions.readMore) actions.readMore({ lineKey: null }); }
     };
+  }
+  /* D49-03: backfill the whole span the calendar was read over, then the write
+     rereads it. A failure stays beside the button until the next click. */
+  backfillCalendar() {
+    const s = this.state || {}; const data = this.props.data || {};
+    const cal = data.time && data.time.calendar; const a = this.props.actions;
+    if (!cal || !a || !a.backfillCalendar || s.backfillBusy) return;
+    const wins = cal.windows || [];
+    const from = wins.length ? wins.map((w) => w.from).sort()[0] : cal.from;
+    const to = wins.length ? wins.map((w) => w.to).sort().slice(-1)[0] : cal.to;
+    this.setState({ backfillBusy: true, backfillError: null });
+    a.backfillCalendar({ from, to }).then(
+      () => this.setState({ backfillBusy: false, backfillError: null }),
+      (e) => this.setState({ backfillBusy: false, backfillError: e && e.message ? String(e.message) : '补算没有成功。' }));
   }
   /* 回到现在, on the track and in the right column: the replay reads are withdrawn and the cursor goes back to now */
   backToNow() {
@@ -3117,6 +3200,8 @@ class Component extends DCLogic {
     const base = { hasArch: false, archSum: '', arch: [], hasLines: false, lines: [], noLines: false, hasLinesNote: false, linesNote: '', acts: [], canHandle: false,
       stopAct: null, stopConfirmOpen: false, actsOpen: true, stopConfirmLine: '', stopConfirmKey: noop, stopKeep: noop, stopKeepRef: noop, stopGo: noop,
       hasStopError: false, stopError: '',
+      dispConfirmOpen: false, dispTitle: '', dispLine: '', dispKey: noop, dispKeep: noop, dispKeepRef: noop, dispGo: noop,
+      dispConfirmLabel: '', dispNote: '', dispNoteChange: noop, hasDispError: false, dispError: '', fail: [],
       hasMore: false, moreOpen: false, moreLabel: '', need: '', hasAttempt: false, attempt: '', toggleMore: noop,
       close: () => { this.setState({ sel: null, relHover: null, dHover: null }); const a = this.props.actions; if (a && a.readMore) a.readMore({ detailTaskId: go.shownTask((this.state || {}).pins), lineKey: null }); } };
     const sqT = (tid) => 'sq z8 ' + this.sqAt((S.map[tid] || tm.byId[tid] || {}).st);
@@ -3165,6 +3250,14 @@ class Component extends DCLogic {
       const stopErr = (this.state || {}).stopError;
       out.stopError = stopErr && stopErr.id === id ? stopErr.text : '';
       out.hasStopError = !!out.stopError;
+      /* T5: the failure facts and round chain, already worded; in replay they are
+         the facts now. */
+      out.fail = (real && real.failure ? real.failure : []).map((f) => ({ k: f.k, v: f.v + (S.live ? '' : '（现在）') }));
+      const dispState = (this.state || {}).dispConfirm;
+      const dispTo = dispState && dispState.id === id && S.live ? dispState.to : '';
+      this._dispShown = dispTo !== '';
+      out.dispConfirmOpen = dispTo !== '';
+      out.actsOpen = !stopConfirmOpen && dispTo === '';
       /* 更多: 必需/可选 and, from the second attempt on, how that attempt came;
          the facts are on the task node already, not waiting for the detail read. */
       const r = this.lastAt(id, this.statesAt(null), 'run');
@@ -3224,6 +3317,10 @@ class Component extends DCLogic {
       if (n.gaps) {
         out.rel = out.rel.concat([{ k: '缺项', items: [], files: [], lines: [n.gaps + (S.live ? '' : '（现在）')], hasText: false, text: '' }]);
       }
+      /* D42-2: the anchors' own lines, each with its own time (no 现在). */
+      if (real && real.anchors && real.anchors.length) {
+        out.rel = out.rel.concat([{ k: '异常锚点', items: [], files: [], lines: real.anchors, hasText: false, text: '' }]);
+      }
       /* 撤销暂缓 (design 4.3): one click releases every reason on this Task
          through the one tasks/hold/release write. */
       if (S.live && real && real.holdRelease && real.holdRelease.available) {
@@ -3238,6 +3335,58 @@ class Component extends DCLogic {
           a.releaseHolds(real.holdRelease.task).then(onReleased, onReleaseFailed);
         } });
       }
+      /* 5.10-1: a work Task's own disposition. A satisfied Task's is final, a gate
+         never changes, and a cancelled Goal refuses every plan change. */
+      const taskId = String(id).replace(/^task:/, '');
+      const canDispose = S.live && !n.gate && !!(data.goal && data.goal.st !== 'cancelled');
+      const choices = canDispose && n.st !== 'satisfied'
+        ? (n.st === 'deferred' ? [['active', '恢复任务'], ['cancelled', '取消任务']]
+          : [['deferred', '延后任务'], ['cancelled', '取消任务']])
+        : [];
+      choices.forEach(([to, label]) => {
+        const off = busyIn('dispBusy');
+        out.acts.push({ label, off, cls: 'btn-text' + (off ? ' is-off' : ''), ref: (el) => {
+          if (el && this._dispKey === id + '|' + to) this._dispBtn = el;
+        }, go: (e) => {
+          if (busyIn('dispBusy')) return;
+          this.cancelOpened('disp', e);
+          this._dispKey = id + '|' + to;
+          this.setState({ dispConfirm: { id, to }, dispNote: '', stopConfirm: null, dispError: null });
+        } });
+      });
+      if (dispTo !== '') {
+        /* The two running phases stop the affected execution first; the write
+           then refuses with busy/stopping_affected_work and a second click. */
+        const prefix = n.st === 'running' || n.st === 'verifying' ? '进行中的执行会先停下。' : '';
+        const gates = (G.next[id] || []).filter((tid) => tm.byId[tid] && tm.byId[tid].gate)
+          .map((tid) => '“' + tm.byId[tid].name + '”');
+        out.dispTitle = dispTo === 'deferred' ? '延后这个任务？' : dispTo === 'cancelled' ? '取消这个任务？' : '恢复这个任务？';
+        out.dispLine = dispTo === 'deferred'
+          ? prefix + '延后后它不再推进；恢复或取消之前，目标不能完成。'
+          : dispTo === 'cancelled'
+            ? prefix + '取消后它不再画在任务图里，列在图下“已取消”里；执行和检查记录都保留，之后可以在那里恢复。'
+              + (gates.length ? gates.join('、') + '（验收）也等它，取消前先确认验收不再需要它。' : '')
+            : '恢复后它回到目标里，平台照常安排领取。';
+        out.dispConfirmLabel = dispTo === 'deferred' ? '延后任务' : dispTo === 'cancelled' ? '取消任务' : '恢复任务';
+        out.dispNote = (this.state || {}).dispNote || '';
+        out.dispNoteChange = (e) => this.setState({ dispNote: e && e.target ? String(e.target.value) : '' });
+        out.dispKey = (e) => this.cancelKey('disp', e, () => { this.cancelClosed('disp'); this.setState({ dispConfirm: null }); });
+        out.dispKeep = () => { this.cancelClosed('disp'); this.setState({ dispConfirm: null }); };
+        out.dispKeepRef = (el) => this.cancelRef('disp', el);
+        out.dispGo = () => {
+          const a = this.props.actions;
+          if (!a || !a.changeTaskDisposition || busyIn('dispBusy')) return;
+          this.dispCancelReturn = true;
+          this.setState({ dispConfirm: null, dispError: null, dispBusy: withBusy('dispBusy', true) });
+          a.changeTaskDisposition(taskId, dispTo, (this.state || {}).dispNote || '').then(
+            () => this.setState({ dispBusy: withBusy('dispBusy', false) }),
+            (e) => this.setState({ dispBusy: withBusy('dispBusy', false),
+              dispError: { id: id, text: e && e.message ? String(e.message) : '改处置失败。' } }));
+        };
+      }
+      const dispErr = (this.state || {}).dispError;
+      out.dispError = dispErr && dispErr.id === id ? dispErr.text : '';
+      out.hasDispError = !!out.dispError;
       if (real && real.filesUnknown) out.rel = out.rel.concat([grp('改过', [], '改动未知')]);
       /* 架构: the planned modules (计划要改, no square: no real file state) and the
          adapted actual files, grouped by the formal catalog; the plan's listed files (计划要改, no square while only planned);
@@ -3284,6 +3433,8 @@ class Component extends DCLogic {
     }
     if ((this.state || {}).view !== 'outline') out.acts.push({ label: '在大纲里看', go: () => go.outline(id) });
     if ((this.state || {}).view !== 'dag') out.acts.push({ label: '在 DAG 里看', go: () => go.dag(id) });
+    /* the template's ref reads a value; an act without one passes null to skip it */
+    out.acts = out.acts.map((act) => act.ref === undefined ? Object.assign({}, act, { ref: null }) : act);
     return out;
   }
   /* The one participation entry: read the already-adapted `graph/detail`
@@ -3374,7 +3525,8 @@ class Component extends DCLogic {
        outranks it (E3-3): the page keeps the last data, but the bar says the
        read-error or 重连 text, not a count. */
     const working = data && data.time ? data.time.workingCount : null;
-    const barWhy = read && read.stale && read.staleText ? String(read.staleText) : working && working.known ? working.text : '';
+    const barWhy = read && read.stale && read.staleText ? String(read.staleText)
+      : data && data.allBlocked ? String(data.allBlocked) : working && working.known ? working.text : '';
     const emptyNow = { cls: 'dg-now is-folded', label: '竖条所在时刻在进行的任务', title: '现在', count: '', replay: false,
       back: noop, canFold: false, foldLabel: '展开', toggleFold: noop, open: false, items: [], none: false,
       hasMore: false, more: '', hasHeld: false, held: [] };
@@ -3483,7 +3635,8 @@ class Component extends DCLogic {
     /* 查找 and 需要关注 on the DAG and the 大纲; no synthetic 目标验收 name. */
     const q = String(s.q || '').trim(); const att = !q && s.att ? s.att : null;
     const hits = q ? this.findUnder(tm.root, (n) => n.name.indexOf(q) >= 0)
-      : att ? tm.tasks.filter((t) => t.st === att).map((t) => t.id) : [];
+      : att === 'anchor' ? tm.tasks.filter((t) => t.anchors > 0).map((t) => t.id)
+        : att ? tm.tasks.filter((t) => t.st === att).map((t) => t.id) : [];
     const H = this.hitInfo(view === 'dag' ? hits : []);
     const whereNote = (hs) => {
       const real = hs.filter((h) => byId[h]); if (!real.length) return '';
@@ -3493,7 +3646,8 @@ class Component extends DCLogic {
       const tops = new Set(real.map((h) => this.crumbsOf(byId, h)[1]).filter((c) => c && c.kind === 'stage').map((c) => c.id));
       return '，在 ' + tops.size + ' 个阶段';
     };
-    const qNote = q ? (hits.length ? hits.length + ' 个' + whereNote(hits) : '没有匹配') : att ? '标出：' + W[att] + ' ' + hits.length + (S.live ? '' : '（现在）') : '';
+    const qNote = q ? (hits.length ? hits.length + ' 个' + whereNote(hits) : '没有匹配')
+      : att ? '标出：' + (att === 'anchor' ? '异常锚点' : W[att]) + ' ' + hits.length + (S.live ? '' : '（现在）') : '';
     const qrow = (id) => {
       const n = byId[id]; if (!n) return null;
       const path = this.crumbsOf(byId, n.parent).filter((c) => c.parent).map((c) => c.name).join(' / ');
@@ -3524,6 +3678,12 @@ class Component extends DCLogic {
     const cards = data.decisionCards || null;
     if (cards && cards.n > 0) attn.items.push({ name: '需要你决定', word: (cards.atLeast ? '至少 ' : '') + cards.n + ' 张卡', sq: 'sq z8 ' + this.sqAt('decide'),
       on: false, cls: 'tm-ai', title: '“需要你决定”页：全部目标的待处理和已处理', go: () => location.assign('Decide.dc.html') });
+    /* D42-2: this Goal's unclaimed anomaly anchors; clicking marks their Tasks. */
+    const ac = (data && data.anchorCount) || null;
+    if (ac && ac.n > 0) attn.items.push({ name: '异常锚点', word: (ac.atLeast ? '至少 ' : '') + ac.n + ' 条',
+      sq: 'sq z8 ' + this.sqAt('blocked'), on: att === 'anchor', cls: 'tm-ai' + (att === 'anchor' ? ' is-on' : ''),
+      title: (att === 'anchor' ? '不再标出' : '在图里标出' + nowWord + '有异常锚点的任务'),
+      go: () => set({ att: (this.state || {}).att === 'anchor' && !String((this.state || {}).q || '').trim() ? null : 'anchor', q: '', hover: null, dHover: null }) });
     attn.none = attn.items.length === 0;
 
     if (view === 'outline') this._wlFz = null;
@@ -3540,6 +3700,7 @@ class Component extends DCLogic {
     const detId = selOk || pins.slice(-1)[0] || null;
     const now = this.nowList(s, S, go, detId);
     this._stopShown = false;
+    this._dispShown = false;
     const det0 = detId ? this.dagDetail(detId, S, go, hov) : null;
     const det = det0 ? (() => {
       const pinned = pins.indexOf(det0.id) >= 0;
@@ -3549,7 +3710,7 @@ class Component extends DCLogic {
       return Object.assign({}, det0, { pinned: pinned, hasPins: others.length > 0, pins: others, closeLabel: pinned ? '关闭并取消固定' : '关闭详情',
         close: () => { const left = ((this.state || {}).pins || []).filter((p) => p !== det0.id); set({ sel: null, relHover: null, dHover: null, pins: left });
           if (actions.readMore) actions.readMore({ detailTaskId: go.shownTask(left), lineKey: null }); },
-        acts: det0.acts.concat([{ label: pinned ? '取消固定' : '固定', go: pinned ? unpin : pinIt(det0.id, []) }])
+        acts: det0.acts.concat([{ label: pinned ? '取消固定' : '固定', ref: null, go: pinned ? unpin : pinIt(det0.id, []) }])
           .map((ac) => Object.assign({ cls: 'btn-text', off: false }, ac)) });
     })() : null;
     return {

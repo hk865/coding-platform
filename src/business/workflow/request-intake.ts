@@ -395,7 +395,14 @@ export function createRequestIntake(deps: RequestIntakeDependencies): RequestInt
     operationId: string; sourceMessageRef: SessionMessageRef; goalRef: GoalRef; text: string;
   }): Promise<RequestSubmitResultV1> {
     const appended = await deps.rounds.append(ctx, { command: { kind: 'intervention_new_goal', ...input } });
-    return submitResultOf(appended);
+    const result = submitResultOf(appended);
+    // 121-111: with `resumeOnStartup: 'off'` the workspace's queues stay unarmed until a request command wakes them;
+    // a direct intervention's first append must arm them like a plain submit, or a free secretary never draws the card.
+    // A replay wrote nothing before, so it must not wake.
+    if (result.status === 'queued' && appended.status === 'appended' && !appended.replayed) {
+      deps.wake?.(workspaceOf(ctx), 'request_command');
+    }
+    return result;
   }
 
   function submitResultOf(result: RequestAppendResultV1): RequestSubmitResultV1 {

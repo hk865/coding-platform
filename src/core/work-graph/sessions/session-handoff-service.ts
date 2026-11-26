@@ -498,7 +498,7 @@ export type SessionHandoffAdvanceDependencies = {
   operations: Pick<SessionDirectoryPort, 'getSessionOperation' | 'readSession'>;
   /** The coverage and routing-set reads (the one facts view). */
   /** The one facts view, plus the brief's saved goal refs it reads: this owner reads no Note itself. */
-  coverage: Pick<SecretaryHandoffFactsPort, 'readCoverage' | 'readRoutingSet'> & HandoffBriefRefsReadPort;
+  coverage: Pick<SecretaryHandoffFactsPort, 'readCoverage' | 'readRoutingSet' | 'readRoundStop'> & HandoffBriefRefsReadPort;
   /** D's threshold basis, bound by I1. */
   basis(session: SessionRef, scope: WorkspaceScope): Promise<ReadResult<SecretaryHandoffBasisV1>>;
   /** D's internal request receipt read; the close of an old understanding command belongs to the composite. */
@@ -1138,7 +1138,14 @@ export function createSessionHandoffAdvanceService(deps: SessionHandoffAdvanceDe
           // command after the real round changed, so this pass writes nothing and waits.
           if (existing?.round !== null && existing?.round !== undefined
             && facts.coverage.lastRound?.queryJobId !== existing.round.queryJobId) {
-            return stopOf('incomplete', 'the understanding round has not ended yet');
+            // P6I: a round the Host ended on purpose before entry never becomes `lastRound` (only entered rounds do).
+            // Its stop reason is the handoff's; no later generation replaces it on its own.
+            const stopped = await deps.coverage.readRoundStop(savedCtx, { round: existing.round });
+            if (stopped.status !== 'ready') {
+              return stopped.status === 'rejected' ? stopped : rejected('unavailable', 'the understanding round read is not ready');
+            }
+            return stopOf('incomplete', stopped.value === null ? 'the understanding round has not ended yet'
+              : `the understanding round ended before entry: ${stopped.value}`);
           }
           const routing = await deps.coverage.readRoutingSet(savedCtx, { source, horizon: facts.coverage.horizon });
           if (routing.status !== 'ready') {

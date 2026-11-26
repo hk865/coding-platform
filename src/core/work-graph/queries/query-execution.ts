@@ -74,8 +74,8 @@ import { mergeGuards } from '../persistence/record-guards.js';
 import { SECRETARY_TAIL_RETRIES, type SecretaryProfileV1 } from '../model/request-contracts.js';
 import { readRequestRounds, type RequestRoundsFactsV1 } from './request-rounds-read.js';
 import {
-  coveredByDrop, enteredConsumptionCommands, requestAbandon, requestDroppedEnd, requestRetry, requestStartCheck,
-  requestStartPass, type EnteredConsumptionInputV1, type RequestStartPlan,
+  coveredByDrop, enteredConsumptionCommands, requestAbandon, requestDroppedEnd, requestEndedBeforeEntry, requestRetry,
+  requestStartCheck, requestStartPass, type EnteredConsumptionInputV1, type RequestStartPlan,
 } from './request-round-claims.js';
 import { contextAssemblyProblem, frozenSectionOrderProblem } from '../state/context-input.js';
 import {
@@ -1564,9 +1564,13 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
     // Goal, and a mismatched nullness is an inconsistent manifest. A
     // role_exploration Query has no Goal and is compared the same way.
     if (manifestGoal === null || factsGoal === null) {
-      if ((!isRequestRound(job) && job.job.intent.execution.kind !== 'role_exploration'
-        && !isConsultationQuery(job)) || manifestGoal !== factsGoal) {
+      if (!isRequestRound(job) && job.job.intent.execution.kind !== 'role_exploration' && !isConsultationQuery(job)) {
         return rejectedWithNonEmptyCurrent('invalid', 'no goal');
+      }
+      // P6I: a request attributed to a Goal between the preparation read and this bind has a moved source, not a
+      // broken one; the next preparation reads the Goal again.
+      if (manifestGoal !== factsGoal) {
+        return rejectedWithNonEmptyCurrent('source_stale', 'the request Goal moved since the Query manifest was prepared');
       }
       if (manifest.workspace.revision !== facts.value.workspace.revision
         || !sameRef(manifest.workspace.ref, facts.value.workspace.ref)) {
@@ -2355,7 +2359,7 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
       const read = await messages.readMessage(input.owned, relatedMessageRef);
       if (read.status !== 'ready') return toRejection(read);
       const message = read.value;
-      const part: 'response' | 'expiry' = 'body' in delivery ? 'response' : 'expiry';
+      const part: 'response' | 'expiry' = 'expiryCount' in delivery ? 'expiry' : 'response';
       const inputId = deriveSessionInputId(message.ref, part);
       const accepted = (message.acceptedInputs ?? []).find(entry => entry.inputId === inputId);
       const plan = enteredConsumptionCommands({
@@ -2729,6 +2733,16 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
           requestGuards.push(...plan.guards);
           break;
         }
+        case 'end_round_before_entry': {
+          const plan = requestEndedBeforeEntry({ records: { job, run }, facts: requireRequestFacts(),
+            closeMessage: effect.closeMessage, occurredAt });
+          if ('status' in plan) return plan;
+          nextJob = plan.job;
+          nextRun = plan.run;
+          claims.push(...plan.claims);
+          requestGuards.push(...plan.guards);
+          break;
+        }
         case 'new_attempt': {
           const plan = requestRetry({ records: { job, run }, facts: requireRequestFacts(), occurredAt });
           if ('status' in plan) return plan;
@@ -2840,7 +2854,8 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
         case 'not_entered':
           // Q-01 needs no probe (begin commits `entering` before the Kernel starts); Q-02 needs a readable Kernel.
           return { event: { kind: 'query_reconcile_not_entered', hostInstanceId: input.hostInstanceId,
-            ...(input.notEnteredCloseMessage === undefined ? {} : { notEnteredCloseMessage: input.notEnteredCloseMessage }) },
+            ...(input.notEnteredCloseMessage === undefined ? {} : { notEnteredCloseMessage: input.notEnteredCloseMessage }),
+            ...(input.endedBeforeEntry === undefined ? {} : { endedBeforeEntry: input.endedBeforeEntry }) },
             guard: { ...base, probe: state.phase === 'entering' ? input.probe : null, kernel: state.phase === 'entering' && input.probe === 'ready'
               ? { turn: 'absent', mappedOutcome: null, boundaryComplete: false, unresolvedToolCallIds: [] } : null },
             cause: 'query_reconcile_not_entered', turnSeen: false };
@@ -2942,6 +2957,30 @@ export function createQueryExecution(deps: QueryExecutionDependencies): QueryExe
         return rejectedWithNonEmptyCurrent('forbidden', 'the QueryRun is outside the Host call scope');
       }
       return readExecutionRecord(deps, queryRunRef);
+    },
+    async readQueryRunState(ctx, ref) {
+      const owned = ownContext(ctx);
+      if (owned === null) return rejectedWithNonEmptyCurrent('invalid', 'the call context cannot be isolated from the caller');
+      if (hostActor(owned) === null) return rejectedWithNonEmptyCurrent('forbidden', 'readQueryRunState requires a trusted Host call context');
+      if (!isRecord(ref) || ref.aggregateType !== 'QueryRun' || !nonEmpty(ref.projectId)
+        || !nonEmpty(ref.workspaceId) || !nonEmpty(ref.queryJobId) || !nonEmpty(ref.runId)) {
+        return rejectedWithNonEmptyCurrent('invalid', 'readQueryRunState requires a complete QueryRunRef');
+      }
+      if (ref.projectId !== owned.projectId) return rejectedWithNonEmptyCurrent('forbidden', 'the QueryRun is outside the Host call scope');
+      // Only the Run is read: an unclaimed Run has no Session, and its state is all a stop needs.
+      const key = queryRunRefKey(ref);
+      let read;
+      try {
+        read = await deps.records.readMany([key]);
+      } catch (error) {
+        return rejectedWithNonEmptyCurrent('unavailable', `the QueryRun read failed: ${messageOf(error)}`);
+      }
+      if (read.status !== 'ready') return rejectedWithNonEmptyCurrent('unavailable', `${read.code}: ${read.reason}`);
+      const record = read.value.records.find((entry) => entry.refKey === key);
+      if (record === undefined) return { status: 'not_found' };
+      const decoded = decodeQueryRunSnapshotRecord(record);
+      return decoded.status === 'decoded' ? { status: 'ready', value: decoded.value }
+        : rejectedWithNonEmptyCurrent('unavailable', `the QueryRun is not readable: ${decoded.reason}`);
     },
     async readPreparationFacts(ctx, ref) {
       const owned = ownContext(ctx);

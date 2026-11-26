@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { findClass, findElement } from './helpers/boot-page.js';
-import { bootE3N, descendants, hasClass, quietPage, textOf, waitFor } from './helpers/E3N-page.js';
+import { bootE3N, countRoute, descendants, hasClass, quietPage, textOf, waitFor } from './helpers/E3N-page.js';
 import { click, hover } from './helpers/E3N-interact.js';
 import { openE3GW0, type E3GWorld } from './helpers/E3G-world.js';
 import { planReady } from './helpers/E3P-world.js';
@@ -92,7 +92,7 @@ describe('E3P Plan rail', () => {
     }
   }, 60_000);
 
-  it('PA-02 the Goal rows show ordinal and name, mark the current one and link the other to Main', async () => {
+  it('PA-02 the Goal rows show ordinal and name, link the other to Main, and a data line opens its view', async () => {
     const { page, log } = await bootE3N(w.world, 'Plan', { search: '?goal=ag2b-goal' });
     try {
       await planReady(log);
@@ -108,18 +108,24 @@ describe('E3P Plan rail', () => {
       const lines = rail === undefined ? [] : descendants(rail).filter((element) => element.tagName.toLowerCase() === 'button'
         && hasClass(element, 'row') && hasClass(element, 'wl-row'));
       const dataLine = lines.find((line) => !textOf(findClass(line, 'row-name')).includes('秘书'))!;
-      /* 具名改坏: 数据工作线行不画未接通，点了写 `s.line`；下面三句红。 */
-      expect(dataLine.getAttribute('aria-disabled')).toBe('true');
-      expect(dataLine.getAttribute('title')).toBe('还没接通');
-      const calls = log.calls.length;
-      click(dataLine);
-      await quietPage(log);
-      expect(log.calls.length).toBe(calls);
-      expect(hasClass(lines.find((line) => textOf(findClass(line, 'row-name')).includes('秘书'))!, 'is-current')).toBe(true);
+      /* 5a: the four unconnected bindings are gone from the template, so the data row has no disabled state. */
+      expect(dataLine.getAttribute('aria-disabled')).toBeNull();
+      expect(dataLine.getAttribute('title')).toBeNull();
       hover(dataLine);
       await waitFor(() => findClass(page.root, 'lv-card') !== undefined);
-      /* 具名改坏: `lvRail` 的 hint 不看 `off`（原 `Plan.dc.html:3966`）；这一句红（写“点一下在中间打开它的对话”）。 */
-      expect(textOf(findClass(findClass(page.root, 'lv-card')!, 'hc-hint'))).toBe('还没接通');
+      expect(textOf(findClass(findClass(page.root, 'lv-card')!, 'hc-hint'))).toBe('点一下在中间打开它的对话');
+      /* 具名改坏: `navBoardVals` 不给线行包 `openLine`；下面 `lines/read` 那一句红。 */
+      const before = countRoute(log, 'lines/read');
+      click(dataLine);
+      await waitFor(() => findClass(page.root, 'lv-headbar') !== undefined);
+      await quietPage(log);
+      expect(countRoute(log, 'lines/read')).toBe(before + 1);
+      const railNow = findElement(page.root, (element) => hasClass(element, 'rail-sec')
+        && element.getAttribute('aria-label') === '工作线');
+      const linesNow = railNow === undefined ? [] : descendants(railNow).filter((element) => element.tagName.toLowerCase() === 'button'
+        && hasClass(element, 'row') && hasClass(element, 'wl-row'));
+      expect(hasClass(linesNow.find((line) => textOf(findClass(line, 'row-name')).includes('秘书'))!, 'is-current')).toBe(false);
+      expect(hasClass(linesNow.find((line) => textOf(findClass(line, 'row-name')) === textOf(findClass(dataLine, 'row-name')))!, 'is-current')).toBe(true);
     } finally {
       await page.restore();
     }

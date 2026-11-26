@@ -2943,11 +2943,12 @@ class Component extends DCLogic {
     /* 7D2 EXC: one ruled caption row per unfinished initialization exploration. The row's own
        range comes from the last read; the click sends one write and the board only greys that
        row's button. A failed write's text stays in the same row until the next click or a
-       successful write. */
+       successful write. A workspace's held follow-up has its own row (P6I r3), so the key names
+       the row's kind too. */
     const exploreBusy = s.exploreBusy || {};
     const exploreFailed = s.exploreFailed || {};
     const exploreRows = (this.props.data && Array.isArray(this.props.data.explore) ? this.props.data.explore : []).map((r) => {
-      const key = String(r.projectId) + '/' + String(r.workspaceId);
+      const key = String(r.projectId) + '/' + String(r.workspaceId) + '/' + String(r.kind);
       const busy = !!exploreBusy[key];
       const error = exploreFailed[key] || '';
       const go = () => {

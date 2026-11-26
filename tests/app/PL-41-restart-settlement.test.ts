@@ -285,8 +285,10 @@ describe('PL-41 (c): an accepted candidate whose M is a real executor\'s wait', 
     await world.crash();
     expect((await readS7BMessage(world, m.message.ref)).response, 'no reply before the start').toBeNull();
     await startGoalDriver(world, goal, 'pl41c-driver');
+    // After the reply the driver resumes the executor's waiting Run, which takes the reply as its input on a later
+    // pass; that acceptance is written on M too, so M is read for the comparisons below once it has landed.
     const replied = await heartbeatUntil(world, () => readS7BMessage(world, m.message.ref),
-      message => message.response !== null, 24);
+      message => (message.acceptedInputs ?? []).some(input => input.part === 'response'), 48);
     expect(replied.response?.sender.kind, 'the one reply is the formal Query\'s').toBe('query_run');
     await expectReplyFromOriginalQuery(world, m.message.ref, 'S7B3 V pl41c');
     await heartbeat(world);
@@ -297,12 +299,15 @@ describe('PL-41 (c): an accepted candidate whose M is a real executor\'s wait', 
     // Forward work goes on (the new Task's member request is its own message and Query); M gets no second one.
     // G7 W2: the pass that wrote the candidate also closed the adviser's round (`candidate`), so the inbox holds that
     // Host notice too; a platform notice is fixed `wake:false` and never a planning Query's source (`p2-frozen.md:100`,
-    // `:144`). The member request is a Host system message that does open its own Query.
-    const inbox = await listed(world, 'inbox', adviser);
+    // `:144`). The member request is a Host system message that does open its own Query; both arrive on the
+    // driver's later passes, so the row reads the inbox and the Queries together once that Query is there.
+    const queryOf = (message: SessionMessage): string => interventionPlanningQueryRefs(message.ref).queryJobRef.queryJobId;
+    const { inbox, queries } = await heartbeatUntil(world, async () => ({ inbox: await listed(world, 'inbox', adviser),
+      queries: (await sessionQueries(world, adviser)).map(run => run.ref.queryJobId) }),
+    read => read.inbox.some(message => message.sender.kind === 'host' && message.wake !== false
+      && read.queries.includes(queryOf(message))), 24);
     expect(inbox.filter(message => message.sender.kind !== 'host').map(message => message.ref)).toEqual([m.message.ref]);
-    expect((await sessionQueries(world, adviser)).map(run => run.ref.queryJobId).sort())
-      .toEqual(inbox.filter(message => message.wake !== false)
-        .map(message => interventionPlanningQueryRefs(message.ref).queryJobRef.queryJobId).sort());
+    expect([...queries].sort()).toEqual(inbox.filter(message => message.wake !== false).map(queryOf).sort());
     expect((await candidateCards(world, goal)).filter(card => card.state === 'waiting_answer')).toEqual([]);
   }, 120_000);
 });

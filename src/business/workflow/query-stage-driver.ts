@@ -16,11 +16,11 @@
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { SessionRef, VersionPin } from '../../contracts/core/identity.js';
 import type { PreparedQueryExecution } from '../../contracts/core/prepared-execution.js';
-import { rejected } from '../../contracts/core/rejections.js';
+import { isLastingRejection, rejected } from '../../contracts/core/rejections.js';
 import type { CoreRejection, ReadResult, WriteResult } from '../../contracts/core/results.js';
 import { canonicalJson, sameJson, type JsonValue } from '../../contracts/fingerprint.js';
 import {
-  isRequestRound, type QueryExecutionStateV1, type QueryJobAnswerSnapshot, type QueryJobRef, type QueryJobSnapshot,
+  isRequestRound, preparationRefusedMessage, type QueryExecutionStateV1, type QueryJobAnswerSnapshot, type QueryJobRef, type QueryJobSnapshot,
   type QueryRunRef, type QueryRunSnapshot,
 } from '../../contracts/query-job.js';
 import type { RuntimeExecutionPort } from '../../core/agent-runtime/ports.js';
@@ -53,7 +53,7 @@ export interface QueryStageDriver {
 export type QueryStageDriverDependencies = {
   /** The Query owner's pending read and claim; the driver is its only stage caller. */
   queries: QueryJobPort;
-  runtime: Pick<RuntimeExecutionPort, 'prepareQuery' | 'startQuery' | 'observeQuery'>;
+  runtime: Pick<RuntimeExecutionPort, 'prepareQuery' | 'startQuery' | 'observeQuery' | 'closeUnenteredQuery'>;
   /**
    * The request facts read a claim needs: the current owner AND the revision of
    * its Session record, which the claim pins. It is the same complete read the
@@ -97,7 +97,10 @@ function blocked(retry: 'on_change' | 'backoff', reason: string): Blocked {
  * a fixed capacity/budget limit waits for the next change (an input or a
  * configuration change is what can lift it), because the same call cannot
  * succeed until something else moves; a read failure or an unread watermark
- * backs off, because a later pass may succeed with nothing changed.
+ * backs off, because a later pass may succeed with nothing changed. A claimed
+ * attempt whose preparation is refused with a mark of a lasting cause does not
+ * wait: it is closed (`refusedPreparation`); a preparation refused for a setting
+ * not there yet backs off (`PREPARATION_REFUSALS_RETRIED`).
  */
 function blockedOutcome(stage: string, failure: CoreRejection): Blocked {
   const reason = `${stage} failed: ${failure.code}: ${failure.reason}`;
@@ -120,6 +123,14 @@ function blockedOutcome(stage: string, failure: CoreRejection): Blocked {
       return blocked('backoff', reason);
   }
 }
+
+/**
+ * Preparation refusals prepared again after a back-off, not on the next change (lead 11-26): a source that moved
+ * between the preparation read and its bind (`source_stale`), and a configuration not there yet (`unsupported`: no
+ * model key; `forbidden`: no matching binding). Saving a setting does not wake the request queue, so a round waiting
+ * for a change would stay still after the person saves the key.
+ */
+const PREPARATION_REFUSALS_RETRIED: ReadonlySet<CoreRejection['code']> = new Set(['source_stale', 'unsupported', 'forbidden']);
 
 function blockedRead(stage: string, result: Exclude<ReadResult<unknown>, { status: 'ready' }>): Blocked {
   if (result.status === 'not_found') return blockedOutcome(stage, rejected('not_found', 'the record does not exist'));
@@ -233,7 +244,7 @@ export function createQueryStageDriver(deps: QueryStageDriverDependencies): Quer
         return blocked('on_change', 'preparing the attempt failed: the Runtime has no Query prepare binding');
       }
       const result = await deps.runtime.prepareQuery(ctx, { queryRunRef: record.run.ref, requestId: prepareId });
-      if (result.status !== 'ready') return blockedRead('preparing the attempt', result);
+      if (result.status !== 'ready') return refusedPreparation(ctx, record, result);
       prepared = result.value;
     } else {
       // The persisted prepared pins are the whole start input: the manifest is
@@ -266,6 +277,29 @@ export function createQueryStageDriver(deps: QueryStageDriverDependencies): Quer
       if (replaced !== null) return replaced;
     }
     return blockedRead('starting the attempt', started);
+  }
+
+  /**
+   * P6I R2: a refusal its source marked lasting (`lastingRejection`: a template that cannot render, a selected prompt
+   * pack that is not there, a frozen input that does not fit) closes the claimed attempt before entry, the refusal as
+   * its close message, so the Session is free again and `requests/read` shows why; the round then ends (`terminal`).
+   * The close pins the claimed revision this preparation read: an attempt another pass prepared meanwhile is read
+   * again and driven on (`progressed`), never closed by a stale refusal. A refusal in
+   * `PREPARATION_REFUSALS_RETRIED` is prepared again after a back-off; any other waits as the table says.
+   */
+  async function refusedPreparation(ctx: CoreCallContext, record: Attempt,
+    result: Exclude<ReadResult<PreparedQueryExecution>, { status: 'ready' }>): Promise<QueryStageOutcome> {
+    if (result.status !== 'rejected') return blockedRead('preparing the attempt', result);
+    if (!isLastingRejection(result) || deps.runtime.closeUnenteredQuery === undefined) {
+      return PREPARATION_REFUSALS_RETRIED.has(result.code)
+        ? blocked('backoff', `preparing the attempt failed: ${result.code}: ${result.reason}`)
+        : blockedRead('preparing the attempt', result);
+    }
+    const closed = await deps.runtime.closeUnenteredQuery(ctx, { queryRunRef: record.run.ref,
+      claimedRevision: record.run.revision, reason: preparationRefusedMessage(result.code, result.reason) });
+    if (closed.status === 'ready') return attemptOutcome(closed.value);
+    if (closed.status === 'rejected' && closed.code === 'revision_conflict') return { status: 'progressed' };
+    return blockedRead('closing the refused attempt', closed);
   }
 
   /**

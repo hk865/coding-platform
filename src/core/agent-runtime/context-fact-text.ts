@@ -68,7 +68,6 @@ export function rolePayload(
   const binding = [
     S('context.role.bindingHeading'),
     `${S('context.role.binding')}${JSON.stringify(permissions)}`,
-    `${S('context.role.tools')}${permissions.tools.join(', ') || S('context.none')}`,
     `${S('context.role.writeScope')}${permissions.writeScope.join(', ') || S('context.none')}`,
   ].join('\n');
   let specification: string;

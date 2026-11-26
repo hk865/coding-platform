@@ -116,9 +116,10 @@ describe('the intervention-planning Query recipe', () => {
     expect(questionAt).toBeGreaterThan(0);
     expect(input.slice(0, questionAt)).not.toContain(text);
     expect(input.slice(questionAt)).toContain(`## Question\n${text}`);
-    // The widened preparation condition appends the initial-planning answer guide.
+    // The widened preparation condition appends the initial-planning answer guide; this round carries
+    // submit_plan_round, so the guide gives the tool path (the text-path JSON form is only for a round without it).
     expect(input).toContain(`${text}\n\nThis round's answer has one of two forms; use the form the round provides.\n`);
-    expect(input).toContain('(schemaVersion 2, kind "plan"|"needs_decision"');
+    expect(input).toContain('This round provides submit_plan_round: call it, never text');
     expect(input).not.toContain('## Footprint');
 
     const answerRef = started.answer?.ref;

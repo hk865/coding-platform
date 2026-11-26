@@ -270,6 +270,11 @@ function capacityRefusal(line: Extract<RoleLineCreateResultV1, { status: 'capaci
   return seatAtCap(line.detail!)!;
 }
 
+/** L-6: a split that ended failed answers its stored failure; the start and the link's read again share it. */
+function storedSplitFailure(saved: RoleLineOperationV1): CoreRejection {
+  return rejected((saved.failure?.code ?? 'unavailable') as CoreError, saved.failure?.reason ?? 'the split failed');
+}
+
 /** A canonical scope list: every entry a role scope, no duplicate by `canonicalKey`; the empty set is legal. */
 function roleScopeListProblem(scope: unknown): string | null {
   if (!Array.isArray(scope) || !scope.every(isRoleScopeV1)) return 'the scope must be a list of role scopes';
@@ -954,9 +959,7 @@ export function createRoleLineOperations(deps: RoleLineOperationsDeps): RoleLine
       }
     }
     // L-6: a same-identity split that already failed answers its stored failure and is not driven again.
-    if (saved.phase === 'failed') {
-      return rejected((saved.failure?.code ?? 'unavailable') as CoreError, saved.failure?.reason ?? 'the split failed');
-    }
+    if (saved.phase === 'failed') return storedSplitFailure(saved);
     // C9: a split waiting for its card — this plan's, or another plan's of the same source — answers that card.
     if (saved.action.result?.status === 'waiting') {
       return { status: 'ready', value: { operation: saved.ref, revision: saved.revision,
@@ -1080,8 +1083,9 @@ export function createRoleLineOperations(deps: RoleLineOperationsDeps): RoleLine
    * The `created` phase (lead 11-04): the saved `move` scopes leave the source and open on the new line in ONE
    * reanchor commit (`destination`), which also carries the `linked` operation; a child region the source holds only
    * through its parent opens on the new line alone (TS-5's open-only plan). Goals first, child regions last, `linked`
-   * in the last commit; a crash before a commit redoes the same call, after it the receipt answers. A refused link
-   * ends the split failed; the new line stays a legal standby line and its seat was converted at registration.
+   * in the last commit; a crash before a commit redoes the same call, after it the receipt answers. A pinned card that
+   * moved after the read is read again; any other refused link ends the split failed; the new line stays a legal
+   * standby line and its seat was converted at registration.
    */
   async function linkSplit(ctx: CoreCallContext, saved: RoleLineOperationV1, body: RoleLineSplitSavedV1):
     Promise<ReadResult<RoleLineContinueResultV1>> {
@@ -1148,6 +1152,16 @@ export function createRoleLineOperations(deps: RoleLineOperationsDeps): RoleLine
     }
     if (refusal === null) return { status: 'ready', value: { revision: linked.revision, state: 'created', capacity: null } };
     if (TRANSIENT_CODES.has(refusal.code)) return refusal;
+    // A pinned card moved after the read (the source's own Run ending moves its card): read the split again and go on
+    // from its phase, so the kept region is judged on the cards as they are now and only a real loss ends it failed.
+    // A conflict marked `scopeOwned` (another Session holds the scope) moved no pin: a second read meets it again.
+    // Lead ruling 11-27 (FLK item 4): a split another driver ended failed meanwhile answers that stored failure,
+    // never `done`; a completed one answers done and any other phase goes on from where it is now.
+    if (refusal.code === 'revision_conflict' && refusal.scopeOwned === undefined) {
+      const fresh = await readRoleLineRecord(ctx, saved.ref);
+      if (fresh.status !== 'ready') return fresh;
+      return fresh.value.phase === 'failed' ? storedSplitFailure(fresh.value) : continueRoleLineSplit(ctx, fresh.value);
+    }
     const ended = await writeOperation(ctx, saved, failedRecordOf(saved, saved.action, refusal));
     if (ended.status !== 'committed') return ended;
     return refusal;

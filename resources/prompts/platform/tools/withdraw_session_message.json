@@ -1,5 +1,5 @@
 {
-  "description": "撤回：撤自己发出的、对方未读、未答、未投递的 Session 消息。谁能用：本轮挂了撤回工具，只撤自己发的信。发错了或不再需要对方看，趁还没送到。不撤别人发的；已送达的只能另发一条更正；发给人的卡和请知悉不用这个工具撤。参数：messageRef，完整消息引用，不带版本。回执：committed 表示撤了；被拒照原句读。会被拒：only an unread, unanswered, undelivered message can be withdrawn。",
+  "description": "撤回：撤自己发出的、对方未读、未答、未投递的 Session 消息。只撤自己发的信。发错了或不再需要对方看，趁还没送到。不撤别人发的；已送达的只能另发一条更正；发给人的卡和请知悉不用这个工具撤。参数：messageRef，完整消息引用，不带版本。回执：committed 表示撤了；被拒照原句读。",
   "parameters": {
     "messageRef": "要撤回的消息，完整引用。",
     "messageRef.aggregateType": "固定写 \"SessionMessage\"。",

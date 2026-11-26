@@ -1186,7 +1186,7 @@ export function checkI6EndingConsistency(world: InvariantWorld): InvariantViolat
   return out;
 }
 
-const INTERRUPTED_CAUSES: readonly string[] = ['host_restart', 'ticket_invalid'];
+const INTERRUPTED_CAUSES: readonly string[] = ['host_restart', 'ticket_invalid', 'result_not_recorded'];
 const INCONCLUSIVE_CAUSES: readonly string[] = ['not_started', 'source_not_matched', 'process_timed_out', 'process_cancelled', 'process_abnormal'];
 
 /** §11.7 I-7: round and check shapes, outcomes, causes; finalized rounds and settled checks never change. */

@@ -10,6 +10,7 @@ import { E3U_EMPTY_STAGE, E3U_WD_FIRST, E3U_WD_LATER, openW1, openW4, openWDeps 
 import { callsOf, openMemberS7C, worldSlot } from './helpers/E3M-world.js';
 import { openE3GW1 } from './helpers/E3G-world.js';
 import { relationGroup } from './helpers/E3A-page.js';
+import { detailTitle } from './helpers/E3D-page.js';
 import { dlValue } from './helpers/E3C-world.js';
 import { openS6ARequestWorld } from '../helpers/S6A-request-fixture.js';
 import type { FakeElement } from './helpers/dom.js';
@@ -57,11 +58,6 @@ async function showAll(page: BootedPage, log: PageLog): Promise<void> {
 }
 
 const squareOf = (node: FakeElement | undefined): FakeElement | undefined => (node === undefined ? undefined : findClass(node, 'sq'));
-/** The open detail's title; '' while no detail is drawn. */
-const detailTitle = (root: FakeElement): string => {
-  const detail = findClass(root, 'detail');
-  return detail === undefined ? '' : textOf(findClass(detail, 'd-title'));
-};
 const detailReadsSince = (log: PageLog, from: number): unknown[] => callsOf(log, 'graph/detail', from)
   .map((call) => (call.input as { node?: { ref?: { taskId?: unknown } } }).node?.ref?.taskId);
 

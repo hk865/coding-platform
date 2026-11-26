@@ -140,6 +140,8 @@ export type AuthorizeQueryConfiguration = (
  */
 export interface QueryExecutionPort {
   readQueryExecution(ctx: CoreCallContext, ref: QueryRunRef): Promise<ReadResult<QueryExecutionRecord>>;
+  /** P6I R3: one QueryRun as stored, claimed or not (no Session is read); `queries/cancel` judges an unclaimed one. */
+  readQueryRunState?(ctx: CoreCallContext, ref: QueryRunRef): Promise<ReadResult<QueryRunSnapshot>>;
   readPreparationFacts(ctx: CoreCallContext, ref: QueryRunRef): Promise<ReadResult<QueryPreparationFacts>>;
   claimQuery(ctx: CoreCallContext, request: GraphWrite<{
     queryRunRef: QueryRunRef;
@@ -200,6 +202,11 @@ export type QueryReconcileInput = {
   activity?: RunActivityFactsV1;
   /** Q-02's close message; absent means the start-up reconcile's `host_restart_before_entry`; the in-process settle of an aborted entry passes `aborted_before_entry`. */
   notEnteredCloseMessage?: 'host_restart_before_entry' | 'aborted_before_entry';
+  /**
+   * P6I: why this Host ended a claimed or prepared attempt on purpose (a lasting preparation refusal, a person's stop).
+   * It is the close message, and a request round closes with it instead of getting a new attempt.
+   */
+  endedBeforeEntry?: string;
   result:
     /** Q-01 (claimed/prepared) and Q-02 (entering, the readable Kernel holds no fixed Turn). */
     | { kind: 'not_entered' }

@@ -128,7 +128,7 @@ describe('PC-19 the declaration check at preparation', () => {
     try {
       // No start: the preparation itself is the rejected result.
       expect(fixture.preparation).toEqual({
-        status: 'rejected', code: 'invalid',
+        status: 'rejected', code: 'invalid', lasting: true,
         reason: 'the prompt pack pc2-review-empty template "unknown-call-review" slot "writtenLines": '
           + 'required slot "writtenLines" is empty in template "unknown-call-review"',
       });
@@ -167,7 +167,6 @@ describe('PC-19 the declaration check at preparation', () => {
       + '## Runtime context\n'
       + '## Runtime binding\n'
       + 'roleBinding: {"policyRevision":"rl-query-host@1","tools":["read"],"writeScope":[]}\n'
-      + 'tools: read\n'
       + 'writeScope: (none)\n\n'
       + '## Role specification\n'
       + 'role: advisor (absent)\n'
@@ -186,13 +185,12 @@ describe('PC-19 the declaration check at preparation', () => {
       + 'current understanding: 目标 rl-query-goal：还没有当前理解\n'
       + '## Question\n'
       + 'Read the workspace and answer\n\n'
-      + 'PC2 GUIDE\nREAD-LINE\nEND';
+      + 'PC2 GUIDE\nREAD-LINE\nEND\n\nPC2 TEXT GUIDE';
     const expectedWithoutRead = '# Verified read-only Query input\n\n'
       + 'This is the current bounded Query context assembled from formal platform facts; it is not a transcript.\n\n'
       + '## Runtime context\n'
       + '## Runtime binding\n'
       + 'roleBinding: {"policyRevision":"rl-query-host@1","tools":[],"writeScope":[]}\n'
-      + 'tools: (none)\n'
       + 'writeScope: (none)\n\n'
       + '## Role specification\n'
       + 'role: advisor (absent)\n'
@@ -211,12 +209,13 @@ describe('PC-19 the declaration check at preparation', () => {
       + 'current understanding: 目标 rl-query-goal：还没有当前理解\n'
       + '## Question\n'
       + 'Read the workspace and answer\n\n'
-      + 'PC2 GUIDE\nEND';
+      + 'PC2 GUIDE\nEND\n\nPC2 TEXT GUIDE';
     const pack = pc2PackEntry('pc2-q03-initial', {
       templates: {
         'initial-planning-answer': {
           text: 'PC2 GUIDE\n{{#tool:read}}\nREAD-LINE\n{{/tool:read}}\nEND', mentionsTools: [],
         },
+        'planning-answer-text': { text: 'PC2 TEXT GUIDE', mentionsTools: [] },
       },
     });
     const source = await pc2ResolvedSource([pack]);

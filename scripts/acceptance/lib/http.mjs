@@ -122,16 +122,17 @@ export class Client {
   /**
    * A `graph_write` route: `{scope, request:{input, meta:{requestId, expected}}}`. A `revision_conflict`
    * answer names the current revisions; the person's way is to re-read and send again, so one retry takes
-   * them (the pins of `goals/control`, policy pointers and GoalPhase have no read route).
+   * them (the pins of `goals/control`, policy pointers and GoalPhase have no read route). `repin: false` sends
+   * once (P6I E05-D2: a request only right for the revision its caller read keeps the first answer, refusal included).
    */
-  async write(route, scope, input, expected = [], meta = {}) {
+  async write(route, scope, input, expected = [], { repin = true, ...meta } = {}) {
     const requestId = meta.requestId ?? newId(route.replace(/\W+/g, '-'));
     let pins = expected;
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const { http, body } = await this.#send('POST', CORE + route,
         { scope, request: { input, meta: { requestId, expected: pins } } }, { ...meta, commandId: requestId });
       const current = body?.current;
-      if (attempt === 0 && body?.code === 'revision_conflict' && Array.isArray(current) && current.length > 0) {
+      if (attempt === 0 && repin && body?.code === 'revision_conflict' && Array.isArray(current) && current.length > 0) {
         pins = pins.map(pin => current.find(entry => JSON.stringify(entry.ref) === JSON.stringify(pin.ref)) ?? pin);
         continue;
       }

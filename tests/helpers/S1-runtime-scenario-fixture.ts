@@ -248,7 +248,7 @@ export async function openS1RuntimeFixture(options: {
   const modelRequests = createModelCallService(common);
   const controls = createRunControlService({ records, reads, authority: materialReads.authority, now, eventId: newId });
   const messages = createSessionMailbox({ records, sessions, executions: reads, roles, materials,
-    defaultInquiryDeadlineMs: 86_400_000,
+    defaultInquiryDeadlineMs: () => 86_400_000,
     queryRounds: createQueryRoundResolver({ records, duties: unknownSessionDuty, bodies }),
     runtimeAdmission: { bodies, authorizeConfiguration }, systemActor: { kind: 'system', id: 's1-mailbox' }, now, newId });
   const sessionFacts = createSessionFactsService({ records });

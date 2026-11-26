@@ -86,7 +86,7 @@ the window.
 - **Lag probe.** `lib/lag.mjs` is preloaded into each Host (`NODE_OPTIONS=--import`), samples
   `perf_hooks.monitorEventLoopDelay` and writes p50/p95/p99/max; recorded only, no threshold.
 - **Seed Goals.** A settings-opened workspace gets its trusted checks, policy and architecture only from a cold-start
-  adoption (`src/app/host-settings-types.ts:182-194`), which is the real product path. So E05 and B06 (and B06-W5's
+  adoption (`src/app/host-settings-types.ts:191-203`), which is the real product path. So E05 and B06 (and B06-W5's
   non-Git project) first run one small cold-start Goal, then the explicit `goals/create` → `plans/propose/apply` Goal.
 - **Planning rounds.** The Host's idle consume pass runs once a minute per workspace and takes an
   `intervention_planning` Query through its stages in one pass (G7 W2: submit, claim, prepare + start; the proposal
@@ -106,7 +106,7 @@ the window.
   write the tests it runs); B06, whose Tasks only read, sends `moduleCheck` (`node --test checks/module.test.mjs`, the
   fixture's assertions on `src/module.js`, `package.json` and `README.md`).
 - **Goal waits end early.** `waitGoal` ends before its deadline, judged like a wait that ran out, when (a) the Goal's
-  display headline is NEEDS_DECISION on a Task stop of the UI's 要决定 set (`src/ui/adapters/goals.ts:185`) and no card
+  display headline is NEEDS_DECISION on a Task stop of the UI's 要决定 set (`src/ui/adapters/goals.ts:195`) and no card
   is left for the person (`the platform stopped: <code> on <taskId>`), or (b) nothing public changed for 32 minutes
   (above the waiting scenario's 30-minute wait plus a heartbeat) and the meter's last complete reading has nothing in
   flight in the project (`stalled: …`, with the last phase, cause and driver wait reason). "Public" is the Goal's
@@ -126,6 +126,21 @@ the window.
   （最新的 Run 按各自领取的 `outbox.claim.claimedAt` 定，同一毫秒按进入游标 `startedSince`；按 `roundRef` 核采用版本；
   Run 列表或最新一轮读失败记 `env-unavailable`，不选轮、不退到更早的轮；Goal 完成但没有轮记 fail，还没轮记 not-run；
   Goal 完成但必需要求仍 pending 记 fail）；合法的 `no_new_basis` 停止不再被记成某条判据的 fail。
+- **平台没把轮跑起来（P6I D1–D3，P6 第三次补跑之后；lead 11-26 返工）。** 计量每次完整读数记下每个在途 QueryRun 的 `(revision, phase)`、它没变的起点 `since`、
+  这一页读数返回的时刻 `seenAt` 和 Run 所在的工作区 `runScope`（`budget.mjs` `#queryState`、`#pages`）。Session 卡的占用指向别的工作区里的 QueryRun 时，
+  记下它的完整引用，此后每次读数都按完整引用到 Run 所在的工作区追读，占用释放了也照读，终态用量入账后才放下（`#elsewhere`、`#dropCounted`，r3）；
+  Job 已换了新 attempt、旧的那个从这里读不到了，计量停下。QueryRun 的键按固定字段顺序生成（`queryRunKey`：领取保留调用方传的引用，字段顺序可能不同）。
+  在途按 Session 的工作区或 Run 的工作区算，哪一个在范围里都算，同一个 Run 只收一次，在途数按收进来的条目算（`inFlight`，r3）。
+  Host 重启（`watch` 换了 Host）时清空计时和旧的在途快照，新 Host 第一次完整读数之前不判停。
+  一个 Query（Session 或 Run 在这个项目的工作区）停在 `claimed` 或 `prepared`、`seenAt − since` 到 5 分钟，再按完整 QueryRunRef 去 Run 所在的工作区
+  `queries/read` 一次，版本和 phase 都没变，才判平台没把它跑起来：这一个公共判断 `flows.mjs` `stalledEntry`
+  让 `waitGoal`（`endedEarly` 的 (c)）、`waitCandidate`、`waitRequest` 和 E08 的 `waitChangeCandidate` 当场结束，note 写 QueryRun、phase 和起点时间。
+  等运行名额（`admissionWait`）超过 5 分钟的只在 note 里写一次“等运行名额…不算停滞”（按完整 QueryRunRef 加起点去重），不判停。
+  E08 等改需求候选的等待结束、没拿到候选时，再读一次候选（`lastChangeCandidate`，r3）：读到可采用的、又没过 30 分钟的时限，就照常由人采用；过了时限记超时，
+  写读到的状态；读不到就写读不到，候选在、但不是 `candidate`（过时、没采用）就写它的状态；确实读到没有候选，才直接读改需求的最后一轮
+  （不算路由轮和被吸收的轮）的 Job 和 Run、核对完整引用：Run 按 `not_entered` 结束归平台（平台没把轮跑起来）；有回答或实际进入的证据、却没出候选，才归模型；
+  还在进入之前写“还没进入 Kernel”，别的结束（`unknown`、Kernel 读不了）写“无法确认是否进入”。收尾的 `cancelItem` 按回执的 `stop` 判：`stopping`、`stopped`
+  走原来的排空；`not_running` 先重读这一轮：已换了 attempt、已关闭或已回答就继续收尾，还占着线或读不到才记“平台没停下进入之前的轮”。停止和重读都发到 Run 所在的工作区。
 - **等在途的查询（lead 11-17，G6 第六次之后）。** 查询还在跑、它的某个请求用量暂时未知时，计量只是暂停：场景的等待和收尾原地每 20 秒读一次，等查询结束、暂停解除；30 分钟还没结束，才成为整轮的停止（`budget.mjs` 的 `#waitHeld`）。
 - **Verdicts.** Three words only: a failed check → `fail`; none failed but one not run → `uncovered` with one of the
   seven reason codes; all ran and passed → `pass`. An existing capability that ran and did the wrong thing, or did not
@@ -156,7 +171,15 @@ the window.
   (`claim_hold_held` / `scribe_stop_held`, nothing in flight, no card in hand: `the platform stopped: <reason>`); a
   `message` card the person answered and the asking agent has not recorded as applied is not in the person's hand
   (the count is noted). `approve` picks an `action_release` card's `approve` option by id.
-- **Candidate adoption (P6H).** `waitGoal`'s `adoptCandidates` (only `int` passes it) acts on a candidate card that
+- **E05 的种子目标（lead 11-26，E05-D1–D3）。** 种子目标的等待照 `int` 写成 `adoptCandidates: true, check: null`：人采用候选，种子停住记 `not-run`，不再把 E05 第一条没判的判据记成 fail。
+  这次等待采用过候选、当前任务的停因是 `no_new_basis`、这张卡还没点过时，`waitGoal` 在停止卡上替人点“附上说明作为新依据”（`reverifyCard`：读失败 Run 的链头轮，
+  只在它有失败的检查时点；`verification/reverify` 的 note 只写采用了的候选 id 和实际失败的检查 id，pin 读到的链头轮版本，只发一次（`write` 的 `repin: false`：
+  版本动了就记那次拒绝，不换 pin 再发）；每张卡一次，按这一次的真实回执记成功或被拒），
+  不点“重新入队”（任务定义没变，会再被 no_new_basis 拒）。
+  (a) 支判停时，人手上还有驱动没采用的候选卡（沿 `nextCursor` 数完 `waiting_answer` 里带 `adopt` 的；有一页没读到或卡来源没读全，这一次不判，下一次重数），
+  就写“平台停下等人：…；人手上还有 N 张可采用的候选卡（驱动没采用）”，
+  不写成 `the platform stopped`。
+- **Candidate adoption (P6H).** `waitGoal`'s `adoptCandidates` (`int` and E05's seed pass it) acts on a candidate card that
   offers `adopt` as the person would: `plans/apply` with the card's Goal and proposal pins; only a committed apply is
   noted, `revision_conflict`/`busy` wait for the next poll, any other refusal ends the preparation. `broken(..., null)`
   records a prerequisite stop as `not-run` without failing a check.
@@ -189,3 +212,4 @@ the window.
 | `lib/report.mjs` | result.json, README, checks/* and the seven reason codes |
 | `scenarios/*.mjs` | one module per scenario (`e08b.mjs`: the P6 variant of E08) |
 | `cells/*.mjs` | A1, B1, compaction, the attached Goals, B06 |
+| `test/driver.test.mjs` | the driver's own checks against a fake Host (P6I r3); `node --test scripts/acceptance/test/driver.test.mjs`, outside the vitest suite |

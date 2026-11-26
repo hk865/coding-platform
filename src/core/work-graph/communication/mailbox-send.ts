@@ -583,9 +583,9 @@ export async function sendMessage(mailbox: MailboxContext, ctx: CoreCallContext,
   if (!sent.ok) return refuseSend(mailbox, refusalOf(sent, sentCtx), identityKey, fingerprint);
   // The deadline is frozen at the commit's one clock instant; an overflow is
   // refused before anything is written.
-  // A reply-asking send with no explicit deadline gets the platform's default
-  // inquiry deadline; the frozen instant and the record both use this value.
-  const deadlineMs = send.deadlineMs ?? (send.needsReply ? mailbox.deps.defaultInquiryDeadlineMs ?? null : null);
+  // A reply-asking send with no explicit deadline gets the project setting's
+  // default deadline, read at this send; the frozen instant and the record both use this value.
+  const deadlineMs = send.deadlineMs ?? (send.needsReply ? mailbox.deps.defaultInquiryDeadlineMs?.() ?? null : null);
   let frozenDeadline: string | null = null;
   const companions = async (at: string) => {
     const sentCompanions = sentMessageCompanions(at, deadlineMs);

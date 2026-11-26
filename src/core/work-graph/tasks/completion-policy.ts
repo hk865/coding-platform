@@ -160,6 +160,30 @@ function satisfiedReduction(taskFacts: CanonicalTaskFacts, taskId: string): Task
   return reduction;
 }
 
+/**
+ * The already-started side effects on ANY adopted task, from the actual Runs
+ * and Task leases the canonical reader already returned: an execution that is
+ * active, unknown, quarantined or unreconciled, and a still-valid Lease. Each
+ * must be reconciled before the Goal is COMPLETED (a completion reason) or
+ * accepted partially (GOAL-07P refuses while any is left). A pending/plan_only
+ * optional node with no Run and no Lease is NOT one.
+ */
+function unsettledExecutionsOf(taskFacts: CanonicalTaskFacts): string[] {
+  const unsettled: string[] = [];
+  for (const [taskId, runs] of taskFacts.runsByTaskId) {
+    for (const run of runs) {
+      const blocker = runUnresolvedBlocker(run);
+      if (blocker !== null) unsettled.push(`task ${taskId}: ${blocker}`);
+    }
+  }
+  for (const [taskId, state] of taskFacts.byTaskId) {
+    if (state.lease.status === 'leased') {
+      unsettled.push(`task ${taskId} still holds a valid lease held by run ${state.lease.holderRunId}`);
+    }
+  }
+  return unsettled;
+}
+
 /** PURE Goal completion decision over the selected Plan and the canonical task
  * facts. It never counts a cached satisfied number: required active work, a
  * required active Goal gate and a non-empty required obligation set must all be
@@ -212,26 +236,12 @@ export function evaluateGoalCompletion(input: {
     }
   }
 
-  // Consume the actual Runs and Task leases the canonical reader already
-  // returned. A pending/plan_only optional node with no Run and no Lease is NOT
-  // a gate; an already-started execution (active, unknown, quarantined or
-  // unreconciled) or a still-valid Lease on ANY adopted task is a real side
-  // effect that must be reconciled before the Goal can be COMPLETED.
-  for (const [taskId, runs] of taskFacts.runsByTaskId) {
-    for (const run of runs) {
-      const blocker = runUnresolvedBlocker(run);
-      if (blocker !== null) reasons.push(`task ${taskId}: ${blocker}`);
-    }
-  }
-  for (const [taskId, state] of taskFacts.byTaskId) {
-    if (state.lease.status === 'leased') {
-      reasons.push(`task ${taskId} still holds a valid lease held by run ${state.lease.holderRunId}`);
-    }
-  }
+  const unsettledExecutions = unsettledExecutionsOf(taskFacts);
+  reasons.push(...unsettledExecutions);
 
   // GOAL-07/08 add the reviewer reason to an incomplete answer.
   const requiresReviewer = requiredObligations.some(obligation => obligation.verificationRequirements
     .some(requirement => requirement.requirementLevel === 'required' && requirement.kind === 'reviewer'));
   return { plan: { ref: plan.ref, planRevision: plan.planRevision }, evaluation: { completed: reasons.length === 0, reasons },
-    requiresReviewer, adoptedTaskReductions, satisfiedObligationIds: [...satisfiedObligations] };
+    unsettledExecutions, requiresReviewer, adoptedTaskReductions, satisfiedObligationIds: [...satisfiedObligations] };
 }

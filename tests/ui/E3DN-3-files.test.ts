@@ -4,9 +4,8 @@ import {
 } from './helpers/E3DN-done-world.js';
 import type { FakeElement } from './helpers/dom.js';
 import { findClass } from './helpers/boot-page.js';
-import { settle, worldSlot } from './helpers/E3M-world.js';
-import { notConnected } from './helpers/E3N-interact.js';
-import { descendants, hasClass, textOf } from './helpers/E3N-page.js';
+import { callsOf, press, settle, worldSlot } from './helpers/E3M-world.js';
+import { auxTab, countRoute, descendants, hasClass, quietPage, textOf, waitFor } from './helpers/E3N-page.js';
 
 /**
  * E3DN-3 D07–D08 (test sheet §2.3): 改动的文件 lists `architecture/change-scope`'s
@@ -88,7 +87,7 @@ describe('E3DN-3 改动的文件', () => {
     }
   }, 180_000);
 
-  it('D08 a file row names the tasks that changed it; a task name is unconnected', async () => {
+  it('D08 a file row names the tasks that changed it; the task name and the architecture link open the right panel', async () => {
     const done = await mainWorld();
     const { page, log } = await bootDone(done.world, done.goal.goalId);
     try {
@@ -98,17 +97,24 @@ describe('E3DN-3 改动的文件', () => {
       const tasks = descendants(more ?? page.root).filter((element) => element.tagName.toLowerCase() === 'button'
         && hasClass(element, 'd-item'));
       expect(tasks.map((task) => textOf(task)).sort()).toEqual(['PL stage 1 done-a', 'PL stage 1 done-b']);
-      const before = log.calls.length;
-      /* 具名改坏: 任务名点击发 `tasks/query`/`graph/detail`；本行的未接通三样/零请求红。 */
-      notConnected(tasks[0]!);
-      expect(log.calls.length).toBe(before);
-      /* N23 stays in place, drawn 还没接通 (§2.6/§2.11); 具名改坏: `inArch: false` hides it — this line is red. */
       const arch = descendants(more ?? page.root).find((element) => element.tagName.toLowerCase() === 'button'
         && textOf(element) === '在架构图里看');
       expect(arch, 'N23 在架构图里看').toBeDefined();
       expect(hasClass(arch!, 'btn-text')).toBe(true);
-      notConnected(arch!);
-      expect(log.calls.length).toBe(before);
+      expect(arch!.getAttribute('aria-disabled')).not.toBe('true');
+      const fromTask = log.calls.length;
+      press(tasks.find((task) => textOf(task) === 'PL stage 1 done-a'), 'PL stage 1 done-a');
+      await waitFor(() => auxTab(page.root, '任务图')?.getAttribute('aria-selected') === 'true');
+      await quietPage(log);
+      const detail = callsOf(log, 'graph/detail', fromTask)
+        .filter((call) => (call.input as { section?: string }).section === 'participants');
+      expect(detail.map((call) => ((call.input as { node?: { ref?: { taskId?: unknown } } })
+        .node?.ref?.taskId))).toEqual(['done-a']);
+      const fromArch = countRoute(log, 'architecture/read');
+      press(arch!, 'N23 在架构图里看');
+      await waitFor(() => auxTab(page.root, '架构图')?.getAttribute('aria-selected') === 'true');
+      await quietPage(log);
+      expect(countRoute(log, 'architecture/read')).toBe(fromArch + 1);
     } finally {
       await page.restore();
     }
@@ -117,7 +123,7 @@ describe('E3DN-3 改动的文件', () => {
   it('D08c a superseded task stays under the file it changed, its square cancelled', async () => {
     const done = await slot.use('superseded', () => openDoneDeliveryWorld({ humanRework: true, supersedeB: true }),
       (world) => world.close());
-    const { page } = await bootDone(done.world, done.goal.goalId);
+    const { page, log } = await bootDone(done.world, done.goal.goalId);
     try {
       await settle(() => sectionSum(page.root, FILES) !== '', 10_000);
       const shared = (await fileRows(page.root)).find((row) => row.path === 'src/a.ts');
@@ -128,6 +134,15 @@ describe('E3DN-3 改动的文件', () => {
       const square = descendants(taskB!).find((element) => hasClass(element, 'sq'));
       /* 具名改坏: done.ts 文件行的 `?? 'cancelled'` 改成 `?? 'pending'`；done-b 画成 s-notyet，本行红。 */
       expect(square?.getAttribute('class')).toMatch(/\bs-cancelled\b/);
+      /* 5c: the superseded task is not on the task map, so its name is drawn grey and reads no detail.
+         具名改坏: 交付页不查 `mapTaskIds`，每个任务名都给点击；下面三句红。 */
+      expect(hasClass(taskB!, 'is-off')).toBe(true);
+      expect(taskB!.getAttribute('title')).toBe('任务图里没有它：已取消或已被替代');
+      const before = log.calls.length;
+      press(taskB!, 'PL stage 1 done-b');
+      await quietPage(log);
+      expect(callsOf(log, 'graph/detail', before)
+        .filter((call) => (call.input as { section?: string }).section === 'participants')).toHaveLength(0);
     } finally {
       await page.restore();
     }

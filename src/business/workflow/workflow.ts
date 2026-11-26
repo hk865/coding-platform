@@ -1,6 +1,7 @@
 import type { CoreCallContext, HostPrincipal } from '../../contracts/core/call-context.js';
 import type { CoreRejection, ReadResult, WriteResult } from '../../contracts/core/results.js';
-import type { EffectWriteResultV1, SessionMessageRef } from '../../contracts/core/session-message.js';
+import { isUserMessageRecipient, type EffectWriteResultV1, type SessionMessageRef }
+  from '../../contracts/core/session-message.js';
 import type { TaskClaim } from '../../contracts/core/task-claim.js';
 import type { SessionRef, VersionPin } from '../../contracts/core/identity.js';
 import type { SessionProvenanceV1 } from '../../contracts/core/session.js';
@@ -2383,6 +2384,27 @@ export function createWorkflow(deps: WorkflowDependencies & {
   }
 
   /**
+   * The close reason of this Goal's sent system round `requestId` when its Query ended `failed` with no answer: the
+   * Kernel refused the round before calling the model (a window that cannot hold its required content). Null when the
+   * round was not sent, has not ended, has an answer or ended another way, and without the Query owner (the wait
+   * stays as it was). A failed read is returned.
+   */
+  async function failedRoundReason(owned: Owned, requestId: string): Promise<string | null | CoreRejection> {
+    const consult = deps.consultations;
+    if (consult === undefined) return null;
+    const sent = await sentRoundOf(owned, requestId);
+    if (sent.status === 'not_found') return null;
+    if (sent.status !== 'ready') return readRejection(sent);
+    const read = await consult.queries.readQueryJob(owned.ctx,
+      interventionPlanningQueryRefs(sent.value, owned.workspaceId).queryJobRef);
+    if (read.status === 'not_found') return null;
+    if (read.status !== 'ready') return readRejection(read);
+    const job = read.value.job.job;
+    const reason = job.closeReason;
+    return reviewQueryEnded(job) && job.answerRefs.length === 0 && reason?.code === 'failed' ? reason.message : null;
+  }
+
+  /**
    * K3 layering (121-109 "the adviser responsible for that part"): the record's adviser line — the narrowest region
    * adviser of the Task's module, else the Goal's (the one L35 read, `technical`, no asker). `null` is none; a failed
    * read is returned, never "no adviser". A command rerun request's adviser is found the same way (121-110).
@@ -2693,6 +2715,21 @@ export function createWorkflow(deps: WorkflowDependencies & {
     | { kind: 'skip'; remembered?: { reason: string; basis?: GoalWaitBasisV1 } }
     | { kind: 'rejection'; rejection: CoreRejection };
 
+  /** The line the person spoke on when this Goal came from their words on a COMPLETED Goal's line; null for any other
+   *  Goal, for words addressed to the user, and without the origin read. */
+  async function originLineOf(owned: Owned, goal: GoalSnapshot): Promise<SessionRef | null | CoreRejection> {
+    if (deps.goalOrigin === undefined || deps.messages === undefined) return null;
+    const origin = await deps.goalOrigin(owned.ctx, goal.ref);
+    if (origin.status !== 'ready') return readRejection(origin);
+    if (origin.value === null) return null;
+    const { messageRef } = origin.value;
+    const message = await deps.messages.readMessage(ownedInWorkspace(owned, messageRef.workspaceId).ctx, messageRef);
+    if (message.status !== 'ready') return readRejection(message);
+    const recipient = message.value.recipient;
+    return isUserMessageRecipient(recipient) ? null
+      : { projectId: recipient.projectId, sessionId: recipient.sessionId };
+  }
+
   async function classifyTaskClaim(
     owned: Owned, base: Base, config: WorkflowHostConfiguration, goal: GoalSnapshot, graph: TaskGraph,
     task: RuntimeTask, row: TaskRow, held: L46WaitV1 | undefined, overlap: ModuleOverlapV1,
@@ -2976,9 +3013,16 @@ export function createWorkflow(deps: WorkflowDependencies & {
       }
       chosen = { kind: 'reuse', card: original.value };
     } else {
+      // Decision 49 item 21 (a): a Goal added after a COMPLETED Goal from the person's words on its line hands its
+      // first plan's tasks to that line first; a line that does not qualify is passed over as usual, never waited for.
+      let preferred = priorityRequest?.preferredLine ?? null;
+      if (preferred === null && graph.plan.planRevision === 1) {
+        const origin = await originLineOf(owned, goal);
+        if (origin !== null && 'status' in origin) return { kind: 'rejection', rejection: origin };
+        preferred = origin;
+      }
       const picked = await chooseSession(owned, goal, binding, base.sessionHint, taskRef,
-        row.definition.scope.kind === 'module' ? row.definition.scope.moduleRef : null,
-        priorityRequest?.preferredLine ?? null);
+        row.definition.scope.kind === 'module' ? row.definition.scope.moduleRef : null, preferred);
       chosen = picked;
       chosenBasis = picked.basis;
     }
@@ -3068,9 +3112,17 @@ export function createWorkflow(deps: WorkflowDependencies & {
             { projectId: owned.projectId, workspaceId: owned.workspaceId },
           ) === 'committed') {
             // The round is already committed: keep the complete merge basis and wait.
-            // The next pass sees the same gap and skips it; no self-wake guard is written.
-            const pending = 'plan_refine_pending: the refinement round is already committed';
-            return waiting(null, candidateWait === null ? pending : `${pending}; ${candidateWait.reason}`, undefined, basis);
+            // The next pass sees the same gap and skips it; no self-wake guard is written. A round the Kernel refused
+            // (user 11-01: a refusal is recorded as a failure, never quietly shrunk) says so in the wait, where the
+            // person sees it among the Goal's waits; it is not sent again (the round's own identity).
+            const failed = await failedRoundReason(owned, requestId.value);
+            if (failed !== null && typeof failed !== 'string') return failed;
+            const pending = failed === null ? 'plan_refine_pending: the refinement round is already committed'
+              : `plan_refine_failed: the refinement round ended without an answer: ${failed}`;
+            const waitBasis = failed === null ? basis
+              : mergedWaitBasisOf(goal, [basis, goalWaitBasisOf(goal, ['plan_refine_failed'], [])]);
+            return waiting(null, candidateWait === null ? pending : `${pending}; ${candidateWait.reason}`, undefined,
+              waitBasis);
           }
           return advancing(null, makePerform(base, { kind: 'send_system_round', request: {
             round, recipient: adviser.session, text,
@@ -3555,14 +3607,18 @@ export function createWorkflow(deps: WorkflowDependencies & {
     const graphRead = await deps.plans.queryTaskGraph(owned.ctx, { goalRef: base.goalRef });
     if (graphRead.status !== 'ready') return readRejection(graphRead);
     const graph = graphRead.value;
+    // A GoalPhase for the active plan ends the Goal: COMPLETED, or ACCEPTED_PARTIAL by the person (G6). An ended Goal
+    // takes no new work.
     if (graph.completion !== undefined && graph.completion.status === 'recorded'
-      && graph.completion.selectedPlanMatches && graph.completion.snapshot.phase === 'COMPLETED') {
-      // A12: an ended Query's source still settles after the Goal completes. The abandoned-chain reply runs first; a
+      && graph.completion.selectedPlanMatches) {
+      // A12: an ended Query's source still settles after the Goal ends. The abandoned-chain reply runs first; a
       // chain that cannot be judged or a reply that did not finish waits and is retried. A chain still undecided
-      // leaves one `PlanProposal` wait on the completed Goal, so its later abandonment wakes this pass again.
+      // leaves one `PlanProposal` wait on the ended Goal, so its later abandonment wakes this pass again.
       const abandoned = await replyAbandonedChains(owned, goal);
       if (abandoned.wait !== null) return waiting(null, abandoned.wait.reason, undefined, abandoned.wait.basis);
-      return completed(null, 'the Goal is formally COMPLETED', abandoned.undecided
+      const ended = graph.completion.snapshot.phase === 'COMPLETED' ? 'the Goal is formally COMPLETED'
+        : 'the person accepted the Goal\'s partial result (ACCEPTED_PARTIAL)';
+      return completed(null, ended, abandoned.undecided
         ? goalWaitBasisOf(goal, ['abandoned_candidate_reply_pending'], ['PlanProposal']) : undefined);
     }
     // Node-level review (121-45, N1): an `every_step` Goal takes one work node at a time. Its Goal loop selects

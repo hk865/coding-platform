@@ -3,6 +3,7 @@ import type { PreparedQueryManifestV1 } from "./core/prepared-execution.js";
 import type { InitializationBindingRef } from "./initialization-binding.js";
 import type { InitializationSourceV1, InterventionAnswerSourceV1 } from "./initial-planning.js";
 import type { DeliveryInputV1 } from "./prompts/delivery-input.js";
+import type { UserDecisionBodyV1 } from "./goal-decisions.js";
 export type QueryJobRef = {
     aggregateType: "QueryJob";
     projectId: string;
@@ -45,7 +46,29 @@ export type QueryRunRef = {
  */
 export type SecretaryRoundDeliveryV1 =
   | Omit<Extract<DeliveryInputV1, { template: 'wait-reply-delivery' }>, 'template' | 'messageId'>
-  | Omit<Extract<DeliveryInputV1, { template: 'wait-expiry-delivery' }>, 'template' | 'messageId'>;
+  | Omit<Extract<DeliveryInputV1, { template: 'wait-expiry-delivery' }>, 'template' | 'messageId'>
+  /**
+   * P6I R1: the answer to a decision card: the question and the whole saved decision (the option, the person's words,
+   * the notes). The decision renders as the reply's body, so a successor line still sees the question and message id.
+   */
+  | { question: string; decision: UserDecisionBodyV1 };
+/**
+ * P6I: the close message of an attempt a Host ended on purpose before it entered: a person's stop, or a preparation
+ * refused for a cause that does not lift by itself (`preparation_refused: <code>: <reason>`). Such a round is not a lost
+ * attempt to retry: the same stop or refusal would end every new attempt the same way.
+ */
+export const STOPPED_BEFORE_ENTRY = 'stopped_before_entry';
+const PREPARATION_REFUSED = 'preparation_refused: ';
+
+export function preparationRefusedMessage(code: string, reason: string): string {
+  return `${PREPARATION_REFUSED}${code}: ${reason}`;
+}
+
+/** Whether a Job's close reason is an attempt ended on purpose before entry (see `STOPPED_BEFORE_ENTRY`). */
+export function endedOnPurposeBeforeEntry(closeReason: { code: string; message: string } | null): boolean {
+  return closeReason !== null && closeReason.code === 'not_entered'
+    && (closeReason.message === STOPPED_BEFORE_ENTRY || closeReason.message.startsWith(PREPARATION_REFUSED));
+}
 export type SecretaryRoundMaterialV1 = {
     ref: QueryJobRef;
     revision: number;

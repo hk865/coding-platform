@@ -24,12 +24,27 @@ import { toolSchema as z, type ProcessSandbox, type ToolCall, type ToolDefinitio
 export type ShellSeamCall = { callId: string; arguments: unknown };
 
 /**
+ * Listeners told, in the held call's own async context, each time a call starts waiting at a latch, with a probe
+ * that answers true until the latch lets it go: the S6A host world tells a Kernel run held at a seam from one still
+ * going when the row crashes the Host (FLK rework ruling 6, tests/helpers/S6A-host-fixture.ts).
+ */
+const heldListeners = new Set<(holding: () => boolean) => void>();
+
+/** Hear each tool call a seam starts holding; returns the call that removes the listener. */
+export function onToolSeamHeld(listener: (holding: () => boolean) => void): () => void {
+  heldListeners.add(listener);
+  return () => { heldListeners.delete(listener); };
+}
+
+/**
  * The ONE blocking latch both seams use: an armed gate the handler waits on,
  * the recorded calls, and a way for a test to await the first call.
  */
 class BlockingLatch {
   private armed = false;
   private gate: Promise<void> = Promise.resolve();
+  /** Whether `gate` has been opened (the probe the held-call listeners get). */
+  private gateState = { open: true };
   private openGate: (() => void) | null = null;
   private waiters: Array<() => void> = [];
   readonly calls: ShellSeamCall[] = [];
@@ -39,7 +54,9 @@ class BlockingLatch {
   arm(): void {
     this.armed = true;
     this.calls.length = 0;
-    this.gate = new Promise<void>((resolve) => { this.openGate = resolve; });
+    const state = { open: false };
+    this.gateState = state;
+    this.gate = new Promise<void>((resolve) => { this.openGate = () => { state.open = true; resolve(); }; });
   }
 
   release(): void {
@@ -63,6 +80,8 @@ class BlockingLatch {
   async hold(call: Readonly<ToolCall>): Promise<void> {
     this.calls.push({ callId: call.callId, arguments: call.arguments });
     for (const waiter of this.waiters.splice(0)) waiter();
+    const state = this.gateState;
+    for (const listener of heldListeners) listener(() => !state.open);
     await this.gate;
   }
 }

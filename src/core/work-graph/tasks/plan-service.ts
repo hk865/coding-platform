@@ -67,7 +67,7 @@ import {
   type GateFailureInputV1, type WorkFailureInputV1,
 } from '../state/task-failure.js';
 import { gateCoveredTaskIds, gateFixInProgress } from '../state/decision-policy.js';
-import type { GoalPhaseRef } from '../../../contracts/goal-phase.js';
+import type { GoalPhaseRef, GoalPhaseSnapshot } from '../../../contracts/goal-phase.js';
 import type {
   QueryJobAnswerRef,
   QueryJobRef,
@@ -212,7 +212,7 @@ import { mergeGuards } from './execution-entry-service.js';
 import {
   GOAL_FAN_OUT_ACTOR, findGoalResumeContinuations, goalFanOutRequestId, goalStateOf, goalWithObjective,
   reduceGoalDisplay, transitionGoal,
-  type GoalDisplayTaskFactsV1, type GoalRunControlCapabilityV1, type GoalRunStopInputV1,
+  type GoalDisplayFactsV1, type GoalDisplayTaskFactsV1, type GoalRunControlCapabilityV1, type GoalRunStopInputV1,
 } from '../state/goal-machine.js';
 import { notEnteredEntryPhase } from '../state/control-intent-machine.js';
 import { runControlNodeOf } from '../state/run-machine.js';
@@ -2221,6 +2221,19 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
       if (confirmed.status !== 'ready') return asReadResult(confirmed);
       watermark = confirmed.readThrough ?? watermark;
     }
+    // A formal result on the ACTIVE Plan (GOAL-18/19) ends the goal: no task is
+    // claimable, though `queryTaskGraph` still returns the plan's task facts.
+    // A result on an older Plan does not end it (B3).
+    const goalPhaseRef: GoalPhaseRef = { aggregateType: 'GoalPhase', projectId: goalRef.projectId, goalId: goalRef.goalId };
+    const phaseRead = await readGoalPhase(records, goalPhaseRef);
+    if (phaseRead.status !== 'ready') return asReadResult(phaseRead);
+    if (!sameCursor(watermark, phaseRead.readThrough)) {
+      const confirmed = await confirmActivePlan(records, goalRef, plan.ref);
+      if (confirmed.status !== 'ready') return asReadResult(confirmed);
+      watermark = confirmed.readThrough ?? watermark;
+    }
+    watermark = laterCursor(watermark, phaseRead.readThrough) ?? watermark;
+    const goalEnded = goalStateOf(window.goal, phaseRead.snapshot).completion === 'for_active';
     if (page.atLeastCursor !== undefined) {
       const comparison = compareWatermark(watermark, page.atLeastCursor);
       if (comparison.status === 'not_ready') return comparison;
@@ -2245,6 +2258,11 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
             : { kind: 'platform', cursor: cursor.waterline as CommitCursor } };
       }
       after = cursor.after;
+    }
+    // An ended goal has nothing claimable. The empty page still carries the
+    // watermark read above, so a client can tell it read the result.
+    if (goalEnded) {
+      return { status: 'ready', value: { items: [], nextCursor: null, sourceCursor: watermark } };
     }
     const phases = phasesOf(facts.value);
     const index = buildTaskRowIndex(plan);
@@ -2320,8 +2338,8 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
       const phaseRead = await readGoalPhase(records, phaseRef);
       if (phaseRead.status !== 'ready') return asReadResult(phaseRead);
       const display = reduceGoalDisplay({ desiredState: goal.desiredState, activePlanRef: null,
-        completion: phaseRead.snapshot === null ? { status: 'not_recorded' } : { status: 'recorded', selectedPlanMatches: false },
-        partialAcceptance: null, pendingProposal, tasks: [], runsByTaskId: new Map(), runStopInputs: [], interruption: null });
+        ...goalResultDisplayFacts(phaseRead.snapshot, null),
+        pendingProposal, tasks: [], runsByTaskId: new Map(), runStopInputs: [], interruption: null });
       return { status: 'ready', value: { goal, display, liveRuns: [], resumePending: [],
         sourceCursor: laterCursor(pending.readThrough, phaseRead.readThrough) } };
     }
@@ -2385,9 +2403,8 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
         capability: notEnteredEntryPhase(runControlNodeOf(run)) !== null ? { status: 'supported' as const } : capability }));
     }
     const display = reduceGoalDisplay({ desiredState: goal.desiredState, activePlanRef: plan.ref,
-      completion: phaseRead.snapshot === null ? { status: 'not_recorded' } : { status: 'recorded',
-        selectedPlanMatches: planRevisionRefKey(phaseRead.snapshot.planRef) === planRevisionRefKey(plan.ref) },
-      partialAcceptance: null, pendingProposal, tasks, runsByTaskId: facts.value.runsByTaskId, runStopInputs,
+      ...goalResultDisplayFacts(phaseRead.snapshot, plan.ref),
+      pendingProposal, tasks, runsByTaskId: facts.value.runsByTaskId, runStopInputs,
       interruption: interruptionRead.snapshot });
     return { status: 'ready', value: { goal, display, liveRuns: liveRuns.map((run) => run.ref), resumePending,
       sourceCursor: watermark } };
@@ -2655,7 +2672,10 @@ export function createRequestCandidateService(deps: PlanServiceDependencies): Re
 
       let requestGuards: readonly RecordGuard[] = [];
       if (requestRef !== null) {
-        const factsRead = await requestFactsReader.readCandidateRequestFacts(ctx, { requestRef, goalRef: proposal.goalRef });
+        /* lead 11-27: abandoning a candidate whose source was withdrawn is allowed; the request,
+           Goal, operator and pins are judged as before. */
+        const factsRead = await requestFactsReader.readCandidateRequestFacts(ctx,
+          { requestRef, goalRef: proposal.goalRef, withdrawnSourceCounts: true });
         if (factsRead.status !== 'ready') return asWriteRejection(factsRead, 'the request facts are unavailable');
         const sourceMessageRef = proposal.sourceMessageRef;
         if (sourceMessageRef === null) {
@@ -2745,6 +2765,23 @@ function entryCapabilityOf(value: unknown): GoalRunControlCapabilityV1 | null {
     return { status: 'unsupported', reason: value['reason'] };
   }
   return null;
+}
+
+/**
+ * GOAL-18/19 inputs from the stored GoalPhase: only a COMPLETED record is a
+ * recorded completion (matched in full against the active plan); an
+ * ACCEPTED_PARTIAL record reads as not recorded, and gives its partial
+ * acceptance only while it is for the active plan.
+ */
+function goalResultDisplayFacts(
+  phase: GoalPhaseSnapshot | null, activePlanRef: PlanRevisionRef | null,
+): Pick<GoalDisplayFactsV1, 'completion' | 'partialAcceptance'> {
+  if (phase === null) return { completion: { status: 'not_recorded' }, partialAcceptance: null };
+  const forActivePlan = activePlanRef !== null && planRevisionRefKey(phase.planRef) === planRevisionRefKey(activePlanRef);
+  if (phase.phase === 'COMPLETED') {
+    return { completion: { status: 'recorded', selectedPlanMatches: forActivePlan }, partialAcceptance: null };
+  }
+  return { completion: { status: 'not_recorded' }, partialAcceptance: forActivePlan ? phase.partialAcceptance : null };
 }
 
 /** GOAL-27 `awaiting_gate`: the work Tasks inside a gate's scope (goal: every one; stage: its stage; module: its module).

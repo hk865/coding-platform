@@ -13,7 +13,8 @@ import { messageOf } from '../../contracts/error-message.js';
 import { rejected } from '../../contracts/core/rejections.js';
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { SessionRef } from '../../contracts/core/identity.js';
-import type { GoalRef } from '../../contracts/ledger.js';
+import type { GoalRef, GoalSnapshot } from '../../contracts/ledger.js';
+import type { SessionRecord } from '../../contracts/core/session.js';
 import type { PreparedQueryManifestV1 } from '../../contracts/core/prepared-execution.js';
 import { canonicalJson, type JsonValue } from '../../contracts/fingerprint.js';
 import type { ReadResult } from '../../contracts/core/results.js';
@@ -48,10 +49,29 @@ import {
 } from './context-rendering.js';
 import { packString } from '../../contracts/prompts/pack-string.js';
 import { sortedSources } from './context-support.js';
+import { formatDecisionResponseInput } from './execution-inputs.js';
 import type {
   AssembledContextV1, ContextAssemblerDependencies, ContextQueryHistoryInputV1, OptionalRow,
 } from './context-types.js';
 import type { ResolvedRuntimeConfiguration } from './execution-contracts.js';
+
+/**
+ * What the person said directly to this Goal's other lines, as a section that follows the Goal (context only: each line
+ * already handled its own message); empty when there is none. Shared by an adviser's planning round and the
+ * secretary's Goal round. The read is declared: a missing port or a failed read fails the round's preparation, never
+ * "the person said nothing".
+ */
+export async function personWordsSection(deps: ContextAssemblerDependencies, ctx: CoreCallContext,
+  goal: GoalSnapshot, line: SessionRecord, texts: PromptTextsV1): Promise<ReadResult<string>> {
+  if (deps.personWords === undefined) return rejected('unavailable', 'the person words read is not wired');
+  const read = await deps.personWords.readGoalPersonWords(ctx, { goalRef: goal.ref,
+    workspaceId: goal.workspaceRef.workspaceId,
+    exceptLine: { projectId: line.ref.projectId, sessionId: line.ref.sessionId } });
+  if (read.status !== 'ready') return read;
+  const items = read.value.items;
+  return { status: 'ready', value: items.length === 0 ? '' : [packString(texts, 'context.personWords'),
+    ...items.map(item => `- to ${item.recipient.sessionId} at ${item.sentAt}: ${item.text.text}`)].join('\n') };
+}
 
 /** The objective's first line, cut to 160 code points with `…` when it is longer. */
 function goalLineObjective(objective: string): string {
@@ -101,12 +121,16 @@ export function roundMaterial(round: SecretaryRoundMaterialV1, texts: PromptText
   if (round.delivery !== null && round.relatedMessageRef !== null) {
     // The frozen slots are the canonical delivery input minus the template and
     // message id: an expiry carries `expiryCount` and takes the expiry
-    // template; every other frozen delivery is the reply template.
+    // template; every other frozen delivery is the reply template. A decision
+    // card's answer is that reply's body, composed by the line's own decision
+    // composer (P6I R1), so the question and the message id stay beside it.
     const delivery = round.delivery;
     const messageId = round.relatedMessageRef.messageId;
     lines.push('expiryCount' in delivery
       ? renderDeliveryInput(texts, { template: 'wait-expiry-delivery', messageId, ...delivery }, toolNames)
-      : renderDeliveryInput(texts, { template: 'wait-reply-delivery', messageId, ...delivery }, toolNames));
+      : renderDeliveryInput(texts, { template: 'wait-reply-delivery', messageId, question: delivery.question,
+        body: 'decision' in delivery ? formatDecisionResponseInput(texts, delivery.decision, toolNames) : delivery.body },
+      toolNames));
   }
   if (round.selectedIdea !== null) {
     lines.push(packString(texts, 'secretary.selectedIdea'), `${round.selectedIdea.title}: ${round.selectedIdea.detail}`);
@@ -282,6 +306,9 @@ export async function assembleSecretaryContext(
       extensions = read.value.extensions;
     }
     goalPayloadText = goalPayload(goal, secretary.workspace.revision, extensions, texts);
+    const words = await personWordsSection(deps, ctx, goal, input.facts.record.session, texts);
+    if (words.status !== 'ready') return words;
+    if (words.value !== '') goalPayloadText += '\n' + words.value;
     const read = await memory.readMemoryMaterial(ctx, { goalId: goal.ref.goalId, includeInputs: true });
     if (read.status !== 'ready') return read;
     goalGeneral = read.value.general;

@@ -7,7 +7,7 @@ import type { CoreRejection } from '../../contracts/core/results.js';
 import type { TaskClaim } from '../../contracts/core/task-claim.js';
 import type { PlanRevisionDraft, PlanRevisionRef, PlanRevisionSnapshot, RuntimeTask } from '../../contracts/plan.js';
 import type { PlanningAnswerShapeV1, QueryJobAnswerRef, QueryJobIntentV1 } from '../../contracts/query-job.js';
-import { interventionPlanningQueryRefs, queryJobRefFor } from '../../contracts/query-job.js';
+import { endedOnPurposeBeforeEntry, interventionPlanningQueryRefs, queryJobRefFor } from '../../contracts/query-job.js';
 import type { SystemRoundV1 } from '../../contracts/plan-round.js';
 import { commandReviewSubjectOfText, planningReplyTextOf } from '../../contracts/plan-round.js';
 import { parseCommandReviewAnswer, type CommandReviewAnswerV1 } from '../../contracts/scribe-review.js';
@@ -16,10 +16,12 @@ import { sameJson } from '../../contracts/fingerprint.js';
 import { parseInitialPlanningResponseV2 } from '../../contracts/initial-planning-parse.js';
 import type { PlanProposal, TaskRow } from '../../core/work-graph/model/plan-contracts.js';
 import type { SessionCard } from '../../core/work-graph/model/session-contracts.js';
-import { interventionGoalRefOf, type SessionMessage } from '../../core/work-graph/model/communication-contracts.js';
+import { interventionGoalRefOf, planningDutyOnly, type SessionMessage }
+  from '../../core/work-graph/model/communication-contracts.js';
 import { plainSessionRefToAggregate } from '../../core/work-graph/sessions/session-record-codecs.js';
 import { sessionMessageRefKey } from '../../core/work-graph/sessions/message-record-codecs.js';
 import { decisionActionPolicy } from '../../core/work-graph/state/decision-policy.js';
+import { isEndedGoalDisplayPhase } from '../../core/work-graph/state/goal-machine.js';
 import { isMessageAgentSender, waitFactsOfRecord, waitStateOf } from '../../core/work-graph/state/message-machine.js';
 import { normalizeInitialPlanningResponseV2 } from '../../core/work-graph/tasks/initial-plan.js';
 import { reviewQueryEnded } from '../../core/work-graph/model/evidence-contracts.js';
@@ -189,7 +191,7 @@ export function createInterventionHandler(deps: InterventionDependencies): Inter
       // Only the person's B20 message may reach the claim, the adoption and the new-Goal request. Every other
       // source is a planning round: its addressee is the message's own `taskRef`, never the line's newest Work. B20
       // itself is unchanged (design 2.3/4.1): the person's message to an adviser or reviewer line plans only, too.
-      const planning = !person || duty === 'adviser' || duty === 'reviewer';
+      const planning = !person || planningDutyOnly(duty);
       let addressed = planning
         ? message.taskRef ?? null
         : message.taskRef ?? facts.value.latestWork?.task ?? null;
@@ -202,19 +204,20 @@ export function createInterventionHandler(deps: InterventionDependencies): Inter
           : message.goalRef ?? null;
       let goalRead = goalRef === null ? null : await plans.queryGoal(messageOwned.ctx, goalRef, { scope: 'project' });
       if (goalRead !== null && goalRead.status !== 'ready') return asRejection(goalRead, 'the message Goal');
-      // Coordination: every reader finds a message's one Query from the message alone, in the workspace of the Goal
-      // it names (`interventionGoalRefOf`), else its own. A line's newest Work whose Goal lives in another workspace
-      // gives way: the named Goal is handled instead, and with none named the message stays queued. One workspace
-      // never differs.
+      // A Goal the person names wins over the line's newest Work, in any workspace: the line page sends the Goal its
+      // subtitle shows, so the message counts toward the Goal the person saw there. With none named the newest Work's
+      // Goal stands, unless it lives in another workspace: every reader finds a message's one Query from the message
+      // alone, in the workspace of the Goal it names (`interventionGoalRefOf`), else its own, so the message stays
+      // queued.
       const named = interventionGoalRefOf(message);
       if (goalRead !== null && goalRef !== null && !planning && message.taskRef === null && addressed !== null
         && named?.goalId !== goalRef.goalId) {
-        const namedRead = named === null ? null : await plans.queryGoal(messageOwned.ctx, named, { scope: 'project' });
-        if (namedRead !== null && namedRead.status !== 'ready') return asRejection(namedRead, 'the message Goal');
-        const queryWorkspaceId = namedRead === null ? message.ref.workspaceId
-          : namedRead.value.goal.workspaceRef.workspaceId;
-        if (goalRead.value.goal.workspaceRef.workspaceId !== queryWorkspaceId) {
-          if (named === null) return { status: 'queued', reason: 'no_task' };
+        if (named === null) {
+          const otherWorkspace = goalRead.value.goal.workspaceRef.workspaceId !== message.ref.workspaceId;
+          if (otherWorkspace) return { status: 'queued', reason: 'no_task' };
+        } else {
+          const namedRead = await plans.queryGoal(messageOwned.ctx, named, { scope: 'project' });
+          if (namedRead.status !== 'ready') return asRejection(namedRead, 'the message Goal');
           addressed = null;
           goalRef = named;
           goalRead = namedRead;
@@ -233,16 +236,17 @@ export function createInterventionHandler(deps: InterventionDependencies): Inter
       // routed to `requestNewGoal`), and so does an adviser's ended `ucr:` or `crr:` Query (K3 layering, 009, 121-110:
       // only the platform closes it; the round has no mailbox tools) and a scribe's ended `scr:` Query (121-112: the
       // platform applies its conclusion); any other ended Query's source settles here once its Goal takes no
-      // new work for good (cancelled or COMPLETED), where the branches below would leave it open and its line
-      // unarchivable.
-      const goalOpen = goal !== null && goal.desiredState !== 'cancelled' && display?.phase !== 'COMPLETED';
+      // new work for good (cancelled, COMPLETED or ACCEPTED_PARTIAL), where the branches below would leave it open
+      // and its line unarchivable.
+      const goalOpen = goal !== null && goal.desiredState !== 'cancelled' && !isEndedGoalDisplayPhase(display?.phase);
       if (!goalOpen || (trusted !== null && (duty === 'reviewer' || duty === 'adviser' || duty === 'scribe'))) {
         const settled = await closeSettledSource(goalOwned, message, goalOpen);
         if (settled !== null) return settled;
       }
-      // COMPLETED is checked BEFORE any claim. Only the person's message starts a new goal-less request; every
-      // other source leaves the message readable and opens no round (design 2.3, "目标已结束，不开轮").
-      if (goal !== null && display !== null && display.phase === 'COMPLETED') {
+      // An ended Goal (COMPLETED, or ACCEPTED_PARTIAL by the person) is checked BEFORE any claim. Only the person's
+      // message starts a new goal-less request; every other source leaves the message readable and opens no round
+      // (design 2.3, "目标已结束，不开轮").
+      if (goal !== null && display !== null && isEndedGoalDisplayPhase(display.phase)) {
         if (!person || settleOnly) return { status: 'queued', reason: 'no_task' };
         return requestNewGoal(goalOwned, message, goal, text);
       }
@@ -347,22 +351,22 @@ export function createInterventionHandler(deps: InterventionDependencies): Inter
           return { status: 'answer_ready', branch: 'no_task', answerRef: { ...answerRef }, reason: 'declined' };
         }
         return chainEndingOf(owned, message, execution.sourcePart === 'decision_answer' ? 'decision_answer' : 'message',
-          answerRef, proposal.value, execution.repliesToMessageRef, goalOpen, display?.phase === 'COMPLETED');
+          answerRef, proposal.value, execution.repliesToMessageRef, goalOpen, isEndedGoalDisplayPhase(display?.phase));
       }
 
       /**
        * A12: one round's ending from its candidate chain's end, read the same way as the consumable view. An
        * unreadable chain waits for the next pass. An adopted end is `adopted`; when the adopted tail is another
        * round, its adoption recovery replies M, so only R is associated here (`replySlot: 'source'`). A pending end is
-       * this round's `candidate` close-out while the Goal takes work or has completed: the candidate is still undecided,
-       * so its notice is filled and M stays unanswered until the completion exit takes the abandoned tail's Answer
-       * back to M. A cancelled Goal keeps the abandoned close-out. An abandoned end is `declined`: M by this round's
+       * this round's `candidate` close-out while the Goal takes work or has ended (COMPLETED or ACCEPTED_PARTIAL): the
+       * candidate is still undecided, so its notice is filled and M stays unanswered until the ended-Goal exit takes
+       * the abandoned tail's Answer back to M. A cancelled Goal keeps the abandoned close-out. An abandoned end is `declined`: M by this round's
        * own Answer when it is the tail; otherwise the Goal loop replies M with the tail's Answer, so this round waits
        * while M is still an open wait and then closes only R. No notice is resent and no round opens.
        */
       async function chainEndingOf(owned: Owned, message: SessionMessage, part: 'message' | 'decision_answer',
         answerRef: QueryJobAnswerRef, proposal: PlanProposal, repliesTo: SessionMessageRef | undefined,
-        goalOpen: boolean, goalCompleted: boolean): Promise<HandleInterventionResultV1> {
+        goalOpen: boolean, goalEnded: boolean): Promise<HandleInterventionResultV1> {
         const end = await requestCandidateChainEndOf(owned.ctx, chainDeps, proposal);
         if (end.status !== 'ready') return asRejection(end, 'the candidate chain');
         if (end.value.kind === 'incomplete') {
@@ -373,7 +377,7 @@ export function createInterventionHandler(deps: InterventionDependencies): Inter
           ({ status: 'answer_ready', branch: 'no_task', answerRef: { ...answerRef }, reason,
             ...(sourceOnly ? { replySlot: 'source' as const } : {}) });
         if (end.value.kind === 'accepted') return ending('adopted', !own);
-        if (end.value.kind === 'pending' && (goalOpen || goalCompleted)) return ending('candidate', false);
+        if (end.value.kind === 'pending' && (goalOpen || goalEnded)) return ending('candidate', false);
         if (own) return ending('declined', false);
         if (goalOpen && repliesTo !== undefined) {
           const wait = await mailbox.readMessage(ownedInWorkspace(owned, repliesTo.workspaceId).ctx, repliesTo);
@@ -718,7 +722,11 @@ export function createInterventionHandler(deps: InterventionDependencies): Inter
         const answerRef = record.job.job.answerRefs.at(-1);
         // A formally ended Query with no saved Answer is the third ending: the Host sends the one fixed notice
         // and withdraws the stale source. Only this proven end reaches it; every read/version failure above returned.
-        if (answerRef === undefined) return { status: 'no_answer', branch: 'no_task' };
+        if (answerRef === undefined) {
+          const closeReason = record.job.job.closeReason;
+          return { status: 'no_answer', branch: 'no_task',
+            ...(endedOnPurposeBeforeEntry(closeReason) ? { notStarted: closeReason!.message } : {}) };
+        }
         const readFacts = plans.readInitialPlanAnswerFacts;
         if (readFacts === undefined) {
           return { status: 'rejected', code: 'unsupported',

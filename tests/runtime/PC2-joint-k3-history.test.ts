@@ -40,7 +40,6 @@ This is the current task context assembled from formal platform facts; it is not
 ## Runtime context
 ## Runtime binding
 roleBinding: {"policyRevision":"legacy-template","tools":["read"],"writeScope":[],"createMember":false}
-tools: read
 writeScope: (none)
 
 ## Role specification

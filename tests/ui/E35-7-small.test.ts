@@ -23,7 +23,7 @@ describe('E35-7 small', () => {
 
   it('E35-7 7.2 an acceptance node names （验收） once', () => {
     /* Named mutation: keep the gate suffix in the node tip. */
-    expect(sceneView([]).vals().dag.nodes.find((n) => n.id === 'task:T18')!.tip).toBe('重新入队验收，待执行（验收）');
+    expect(sceneView([]).vals().dag.nodes.find((n) => n.id === 'task:T18')!.tip).toBe('重新入队验收，待执行（验收）：等待验收');
   });
 
   it('E35-7 7.3 resting on a node lights no line of its own', () => {

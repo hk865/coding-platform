@@ -10,12 +10,14 @@
 // （`hold-before-adopt`，只读不撤，裁定 Q1）；采用时 sub 的 Run 还在跑，平台先停它、回 busy（#7），等 Run 结束再采用；
 // 采用后读谁采用、哪个版本、sub 是否取消（`switch`）。
 import { newId, ready } from '../lib/http.mjs';
-import { scopeKey } from '../lib/budget.mjs';
+import { queryRunKey, scopeKey } from '../lib/budget.mjs';
 import { Abort } from '../lib/report.mjs';
-import { answerCard, approve, broken, chooseModel, coldStart, executions, openProject, readRequest, sleep, submitRequest, taskCard,
-  taskRounds, waitFor, waitGoal, waitingCards, waitRequest } from '../lib/flows.mjs';
+import { answerCard, approve, broken, chooseModel, coldStart, executions, openProject, readRequest, sleep, stalledEntry, submitRequest,
+  taskCard, taskRounds, waitFor, waitGoal, waitingCards, waitRequest } from '../lib/flows.mjs';
 
 const MINUTE = 60_000;
+/** The hard limit of the wait for the change candidate. */
+const CHANGE_WAIT_MS = 30 * MINUTE;
 export const SEED = {
   'package.json': '{\n  "name": "g6-e08",\n  "type": "module",\n  "scripts": { "test": "node --test" }\n}\n',
   'README.md': '# g6-e08\n\nA tiny calculator.\n',
@@ -60,7 +62,7 @@ export async function runsOf(project, goalRef, taskId, gaps = null) {
  * A request whose last round closed without a candidate ends the wait at once (as `waitCandidate`, flows.mjs).
  * `onPoll` lets the caller read what it watches meanwhile.
  */
-export async function waitChangeCandidate(ctx, project, goalRef, requestRoot, rec, { check, timeoutMs = 30 * MINUTE, onPoll,
+export async function waitChangeCandidate(ctx, project, goalRef, requestRoot, rec, { check, timeoutMs = CHANGE_WAIT_MS, onPoll,
   done = value => value?.head !== null && value?.head !== undefined && value.status === 'candidate', judge = true } = {}) {
   const answered = new Set();
   let closed = null;
@@ -81,7 +83,10 @@ export async function waitChangeCandidate(ctx, project, goalRef, requestRoot, re
       : null;
     return ready(await project.host.client.read('plans/request-candidate', project.scope, { goalRef, requestRef: requestRoot }));
   };
-  if (judge) return waitFor(ctx, 'the changed plan candidate', read, done, { timeoutMs, check, ended: () => closed });
+  if (judge) {
+    return waitFor(ctx, 'the changed plan candidate', read, done, { timeoutMs, check,
+      ended: async () => closed ?? await stalledEntry(ctx, project) });
+  }
   // lead 11-25 (E08b, P6 run: the model answered in prose, no candidate ever came, the 30-minute wait judged
   // adopt-after-end fail): without a candidate nothing is adopted, so this wait judges nothing and returns null — on
   // the timeout, on a round closed without a candidate, or once the request's last round has settled and no Query of
@@ -96,12 +101,66 @@ export async function waitChangeCandidate(ctx, project, goalRef, requestRoot, re
     const settledRound = last !== undefined && (last.status === 'ended' || last.status === 'unknown');
     const quiet = settledRound && ctx.budget.inFlight({ scopes: [scopeKey(project.scope)] }).queries === 0;
     idleSince = quiet ? idleSince ?? Date.now() : null;
-    const why = closed ?? (idleSince !== null && Date.now() - idleSince >= 5 * MINUTE
+    const why = closed ?? await stalledEntry(ctx, project) ?? (idleSince !== null && Date.now() - idleSince >= 5 * MINUTE
       ? `the request's last round ${last.ref?.queryJobId ?? '-'} ended without a candidate and no Query ran for 5 min`
       : Date.now() > deadline ? `no candidate after ${Math.round(timeoutMs / MINUTE)} min` : null);
     if (why !== null) { rec.note(`改需求没有候选：${why}`); return null; }
     await sleep(10_000);
   }
+}
+
+/**
+ * P6I D2, r3 (lead 11-27): the change candidate read once more after the wait gave up, and whose it is when there is
+ * none. The wait's last read can miss a candidate written a moment later, so an adoptable head read here goes back to
+ * the caller (`candidate`), which adopts it as usual; past the wait's hard limit (`pastDeadline`) it is a timeout
+ * instead, written with the state read. A failed read is written as that, and a head in another state (stale, not
+ * adopted) with its state. Only a read that answers with no head at all is a missing candidate: `changeRoundOwner`.
+ */
+export async function lastChangeCandidate(project, goalRef, requestRoot, { pastDeadline }) {
+  const late = pastDeadline ? `改需求的候选过了 ${CHANGE_WAIT_MS / MINUTE} 分钟的等待时限（超时）；` : '';
+  const missing = (owner, text) => ({ candidate: null, owner, text: `${late}${text}` });
+  const candidateBody = await project.host.client.read('plans/request-candidate', project.scope, { goalRef, requestRef: requestRoot });
+  const candidate = ready(candidateBody);
+  if (candidate === null) {
+    return missing('unknown', `改需求的候选读不到（${candidateBody?.status ?? '没答'} ${candidateBody?.code ?? ''} ${candidateBody?.reason ?? ''}）`);
+  }
+  if (candidate.head !== null && candidate.head !== undefined) {
+    if (candidate.status !== 'candidate') return missing('unknown', `改需求的候选在，状态是 ${candidate.status}，不是 candidate`);
+    if (!pastDeadline) return { candidate, owner: null, text: null };
+    return missing('unknown', '最后一次复读才读到候选，状态 candidate');
+  }
+  const round = await changeRoundOwner(project, requestRoot);
+  return missing(round.owner, round.text);
+}
+
+/**
+ * P6I D2: whose a change without a candidate is, read from the change's last round (not a routing round, not one
+ * absorbed into another) by its own `queries/read` and checked against its full Job and Run refs. A Run that ended
+ * `not_entered` (a refused preparation, a stop, a drop) is the platform's; a round with an answer, or whose Run shows it
+ * entered (its execution history), ran and wrote no candidate: the model's. A round still before entry says so; any
+ * other end without that evidence (an `unknown` Run, a Kernel that could not be read) cannot show whether it entered.
+ */
+async function changeRoundOwner(project, requestRoot) {
+  const last = (await readRequest(project, requestRoot))?.rounds.filter(round => round.kind !== 'routing' && round.absorbedInto === null).at(-1);
+  if (last === undefined) return { owner: 'unknown', text: 'requests/read 读不到改需求的轮' };
+  const read = ready(await project.host.client.read('queries/read', project.scope, last.ref));
+  if (read === null || !sameJson(read.job?.ref, last.ref) || queryRunKey(read.run?.ref) !== queryRunKey(last.runRef)) {
+    return { owner: 'unknown', text: `轮 ${last.ref.queryJobId} 本身读不到（queries/read 没答，或 Job/Run 引用对不上）` };
+  }
+  const id = last.ref.queryJobId;
+  const { job } = read.job;
+  const { run } = read.run;
+  if (run.outcome === 'not_entered') {
+    return { owner: 'platform', text: `轮 ${id} 没进入 Kernel 就结束了（${job.closeReason?.code ?? '-'}：${job.closeReason?.message ?? ''}）` };
+  }
+  if (job.answerRefs.length > 0 || (run.executionState?.history ?? null) !== null) {
+    return { owner: 'model', text: `轮 ${id} 跑了，没交 submit_plan_round` };
+  }
+  const phase = run.executionState?.phase ?? null;
+  if (run.status === 'pending' && (phase === null || phase === 'claimed' || phase === 'prepared')) {
+    return { owner: 'unknown', text: `轮 ${id} 是 ${job.status}/${phase ?? '未领取'}，还没进入 Kernel` };
+  }
+  return { owner: 'unknown', text: `轮 ${id} 是 ${job.status}/${run.status}/${run.outcome ?? phase ?? '-'}，无法确认是否进入 Kernel` };
 }
 
 /**
@@ -296,17 +355,30 @@ async function run(ctx, rec) {
     rec.note(`the person selected idea 1 of ${ideasRound.ideas.length} on the change: ${ideasRound.ideas[0].title}`);
     await waitRequest(ctx, project, change.requestRoot, 40 * MINUTE);
   }
-  // P6 diagnosis 2 #10/#11: no candidate is still `versions` fail (lead), but in the model's terms, not "the platform
-  // did not do it"; what sub's task card shows at that moment (the secretary's hold, sub's Runs) goes into the notes.
-  const candidate = await waitChangeCandidate(ctx, project, goalRef, change.requestRoot, rec, { judge: false });
+  // P6 diagnosis 2 #10/#11: no candidate is still `versions` fail (lead); P6I D2: it names the platform when the change
+  // round never ran, else the model. What sub's task card shows at that moment (the secretary's hold, sub's Runs) goes
+  // into the notes. P6I r3: before that the candidate is read once more, and one adoptable within the hard limit is
+  // adopted as usual (the wait's last read can miss a candidate written a moment later).
+  const changeWaitEnds = Date.now() + CHANGE_WAIT_MS;
+  let candidate = await waitChangeCandidate(ctx, project, goalRef, change.requestRoot, rec, { judge: false, timeoutMs: CHANGE_WAIT_MS });
   if (candidate === null) {
-    const card = subId === null ? null : await taskCard(project, goalRef, subId);
-    const holds = (card?.holds ?? []).map(hold => `${hold.kind}/${hold.state}${hold.expired ? '/expired' : ''} by ${hold.placedBy?.kind}${
-      hold.placedBy?.duty ? `:${hold.placedBy.duty}` : ''}@${hold.placedAt}`).join('；') || '无';
-    const subRunsNow = subId === null ? '-' : (await runsOf(project, goalRef, subId)).length;
-    rec.note(`E08 没有候选时 sub 的任务卡：暂缓 ${holds}；sub 的 Run ${subRunsNow} 个（hold-before-adopt 没走到采用前那一步，不改判）`);
-    rec.fail('versions', '模型没有写出改需求的候选（改需求的轮没交 submit_plan_round，见 notes 的“改需求没有候选”），没有可由人采用的改后版本');
-    throw new Abort('not-run', 'no change candidate: the model wrote none');
+    const last = await lastChangeCandidate(project, goalRef, change.requestRoot, { pastDeadline: Date.now() > changeWaitEnds });
+    if (last.candidate === null) {
+      const card = subId === null ? null : await taskCard(project, goalRef, subId);
+      const holds = (card?.holds ?? []).map(hold => `${hold.kind}/${hold.state}${hold.expired ? '/expired' : ''} by ${hold.placedBy?.kind}${
+        hold.placedBy?.duty ? `:${hold.placedBy.duty}` : ''}@${hold.placedAt}`).join('；') || '无';
+      const subRunsNow = subId === null ? '-' : (await runsOf(project, goalRef, subId)).length;
+      rec.note(`E08 没有候选时 sub 的任务卡：暂缓 ${holds}；sub 的 Run ${subRunsNow} 个（hold-before-adopt 没走到采用前那一步，不改判）`);
+      rec.fail('versions', last.owner === 'platform'
+        ? `平台没有把改需求的轮跑起来：${last.text}（见 notes 的“改需求没有候选”），没有可由人采用的改后版本`
+        : last.owner === 'model'
+          ? `模型没有写出改需求的候选（${last.text}，见 notes 的“改需求没有候选”），没有可由人采用的改后版本`
+          : `改需求没有候选：${last.text}（见 notes 的“改需求没有候选”），没有可由人采用的改后版本`);
+      throw new Abort('not-run', last.owner === 'model' ? 'no change candidate: the model wrote none'
+        : `no change candidate: ${last.owner === 'platform' ? 'the platform did not run the round' : 'the round state'} (${last.text})`);
+    }
+    rec.note(`改需求的候选在等待结束后的最后一次复读里读到（${last.candidate.head.ref?.proposalId ?? '-'}），照常由人采用`);
+    candidate = last.candidate;
   }
 
   // hold-before-adopt (P6 observation, read only): before the person adopts, sub carries the secretary's own hold

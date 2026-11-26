@@ -130,20 +130,21 @@ export type CheckExecutionTicket = {
 };
 
 /**
- * Why a check did not reach PASS/FAIL (C5). `host_restart` and `ticket_invalid`
- * accompany phase `interrupted` (VR-04, VR-13); the other five accompany a
- * finished INCONCLUSIVE check, in `outcomeFor` order (VR-03).
+ * Why a check did not reach PASS/FAIL (C5). `host_restart`, `ticket_invalid` and
+ * `result_not_recorded` accompany phase `interrupted` (VR-04, VR-13, VD-10); the
+ * other five accompany a finished INCONCLUSIVE check, in `outcomeFor` order (VR-03).
  */
 export type RoundCheckIncompleteCause =
     | "host_restart"
     | "ticket_invalid"
+    | "result_not_recorded"
     | "not_started"
     | "source_not_matched"
     | "process_timed_out"
     | "process_cancelled"
     | "process_abnormal";
 export const ROUND_CHECK_INCOMPLETE_CAUSES: readonly RoundCheckIncompleteCause[] = Object.freeze([
-    "host_restart", "ticket_invalid", "not_started", "source_not_matched", "process_timed_out",
+    "host_restart", "ticket_invalid", "result_not_recorded", "not_started", "source_not_matched", "process_timed_out",
     "process_cancelled", "process_abnormal",
 ]);
 

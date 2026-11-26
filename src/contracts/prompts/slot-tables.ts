@@ -110,6 +110,9 @@ export const TEMPLATE_SLOTS: Readonly<Record<string, TemplateSlotTableV1>> = {
         checks: { required: true },
     },
     'initial-planning-answer': {},
+    // The text answer path only (no submission tool): the JSON object shape and
+    // the optional setup the tool schemas otherwise describe.
+    'planning-answer-text': {},
     'continuation-brief': {
         marker: { required: true },
         body: { required: false },

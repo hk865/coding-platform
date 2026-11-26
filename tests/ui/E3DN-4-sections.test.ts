@@ -62,7 +62,7 @@ describe('E3DN-4 没有做的、返工与接续、用量', () => {
       /* 具名改坏: `automatic === true` 判反；第一行的“系统自动”红。 */
       const first = detailLines(await openRow(page.root, rows[0], 'dv-more', TASK_B));
       expect(first).toHaveLength(1);
-      expect(first[0]).toContain('第 1 次 · 系统自动 · 检查未通过');
+      expect(first[0]).toContain('第 1 次 · 系统自动（1/3） · 检查未通过');
       const second = detailLines(await openRow(page.root, rows[1], 'dv-more', TASK_B));
       expect(second).toHaveLength(1);
       expect(second[0]).toContain('第 2 次 · 人工');

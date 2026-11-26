@@ -326,7 +326,6 @@ textarea.dc-input { min-height: 52px; }
             </div>
             <p class="dc-title">{{dc.title}}</p>
             <p class="dc-line">{{dc.line}}</p>
-            <sc-if value="{{dc.hasFailed}}" hint-placeholder-val="{{ false }}"><p class="dc-line"><span class="tx-failed">{{dc.failed}}</span></p></sc-if>
 
             <sc-if value="{{dc.isChoice}}" hint-placeholder-val="{{ false }}">
               <div class="opts no-key" role="radiogroup" aria-label="怎么处理冲突">
@@ -351,6 +350,7 @@ textarea.dc-input { min-height: 52px; }
                   <label for="dc-answer">你的话（可选）</label>
                   <textarea id="dc-answer" class="dc-input" rows="2" placeholder="{{dc.answerPh}}" value="{{dc.answerText}}" onChange="{{dc.onAnswer}}"></textarea>
                 </div>
+                <sc-if value="{{dc.hasBoxHint}}" hint-placeholder-val="{{ false }}"><p class="dc-line">{{dc.boxHint}}</p></sc-if>
                 <sc-if value="{{dc.hasObjects}}" hint-placeholder-val="{{ false }}">
                   <button class="btn-text dc-more" type="button" onClick="{{dc.toggleAnnotations}}" aria-expanded="{{dc.showAnnotations}}">{{dc.annotationLabel}}</button>
                 </sc-if>
@@ -433,8 +433,10 @@ textarea.dc-input { min-height: 52px; }
               </div>
             </sc-if>
 
+            <sc-if value="{{dc.applicationText}}" hint-placeholder-val="{{ false }}"><p class="dc-line">{{dc.applicationText}}</p></sc-if>
+            <sc-if value="{{dc.hasFailed}}" hint-placeholder-val="{{ false }}"><p class="dc-line"><span class="tx-failed">{{dc.failed}}</span></p></sc-if>
             <div class="dc-foot">
-              <button class="btn btn-sm first" type="button" onClick="{{dc.ask}}">
+              <button class="btn btn-sm first{{dc.askCls}}" type="button" onClick="{{dc.ask}}" aria-disabled="{{dc.askOff}}">
                 <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.75 3.25h10.5v7.25H8l-3 2.5v-2.5H2.75Z"></path></svg>
                 问秘书
               </button>
@@ -3731,7 +3733,11 @@ class Component extends DCLogic {
     const err = read !== null && read.status === 'error' ? String(read.message || '') : '';
     const A = this.props.actions || {};
     const s = this.state || {};
-    const set = (p) => this.setState(p);
+    const set = (patch) => {
+      const saved = (this.state || {}).applicationRetry;
+      const leaveCard = saved && (('dec' in patch && patch.dec !== saved.cardKey) || patch.cardClosed || patch.line);
+      this.setState(leaveCard ? { ...patch, applicationRetry: null } : patch);
+    };
     const noop = () => {};
     /* Y7: the card writes' in-flight key and one failure line, plus the answer
        box's own inputs and annotation expansion. All of it is board state, so a
@@ -3758,15 +3764,24 @@ class Component extends DCLogic {
        (cleared when that write starts, so a success leaves none). */
     const failAt = (key, text) => ({ cardFail: Object.assign({}, (this.state || {}).cardFail || {}, { [key]: text }) });
     const cardRun = async (key, work, consumesInput) => {
+      if (((this.state || {}).cardBusy || {})[key]) return;
       set(Object.assign(failAt(key, ''), busyAt(key, true)));
       try {
-        await work();
+        const pending = await work();
         /* An answered card leaves the queue: a conflict it lit goes with it and the
            architecture tab reads 当前工作 again, as closeCard does. A conflict
            another card lit while this answer was in flight stays lit. */
         const st = this.state || {};
         const lit = !!consumesInput && st.conf === true && st.confFor === key;
         set(Object.assign(busyAt(key, false), consumesInput ? editDrop(key) : {}, lit ? { conf: false, confFiles: [] } : {}));
+        if (pending && pending.cardKey === key) {
+          if (st.dec === key && !st.cardClosed && !st.line) {
+            set({ dec: key, tab: 'done', applicationRetry: pending, step: null, facts: false });
+            A.readMore({ decideDone: true, ...(lit ? { auxTab: 'arch', workOnly: true } : {}) });
+          } else A.readMore({});
+          return;
+        }
+        if (st.applicationRetry && st.applicationRetry.cardKey === key) set({ applicationRetry: null });
         if (lit && st.panel !== false && st.ptab === 'arch' && typeof A.readMore === 'function') {
           A.readMore({ auxTab: 'arch', auxPath: null, detailTaskId: null, workOnly: true });
         }
@@ -4013,10 +4028,13 @@ class Component extends DCLogic {
       const defaults = act.step === 'requeue' ? { reason: '', budget: cardView && cardView.budget ? cardView.budget.def : '' }
         : act.step === 'fix' ? { name: cardView ? cardView.fixName : '', checks: cardView ? cardView.checks.map(() => true) : [] }
           : {};
+      const words = String(editOf(key).note || '');
+      if (cardView && cardView.noteBox && act.wordsField && words.trim()) defaults[act.wordsField] = words;
       set({ step: act.step, stepFor: key, form: defaults, facts: false });
     };
     const actGo = (act) => {
       if (!act) return noop;
+      if (act.off === 'true') return noop;
       if (act.key === 'locate') {
         const overlap = (cardView ? cardView.facts : []).filter((fact) => fact.k === '重叠文件')[0] || null;
         const files = (overlap && overlap.files ? overlap.files : []).map((file) => file.path);
@@ -4040,8 +4058,13 @@ class Component extends DCLogic {
       }
       if (act.step !== null) return () => openStep(cur.key, act);
       return () => {
+        if (act.key === 'adopt') {
+          void cardRun(cur.key, () => A.writeCandidate(cur.key, 'adopt'));
+          return;
+        }
         if (act.key === 'continue') {
-          void cardRun(cur.key, () => A.requeueCard(cur.key, { reason: CONTINUE_TEXT, budget: null }));
+          const note = act.wordsField === 'note' ? editOf(cur.key).note : null;
+          void cardRun(cur.key, () => A.requeueCard(cur.key, { reason: CONTINUE_TEXT, budget: null, note }), true);
           return;
         }
         if (act.key === 'defer') { void cardRun(cur.key, () => A.changeDisposition(cur.key, 'deferred')); return; }
@@ -4132,9 +4155,15 @@ class Component extends DCLogic {
         const facts = cardView.facts.map((fact) => ({ k: fact.k, v: fact.v,
           files: (fact.files || []).map((file) => ({ full: file.path, parts: file.parts })) }));
         primary = cardView.primary;
-        const isDone = cur.level === 'done';
+        const retry = s.applicationRetry && s.applicationRetry.cardKey === cur.key ? s.applicationRetry : null;
+        // 答复回执先于队列重读到达，此时原来的选项已经不能再提交。
+        const pending = cardView.state === 'answered_pending_application' || (!!retry && cur.level !== 'done');
+        const isDone = cur.level === 'done' || pending;
         const isChoice = cardView.options.length > 0 && !cardView.readOnly && !isDone;
         const isBox = !!cardView.answerBox && !isDone;
+        const noteBox = !!cardView.noteBox && !isDone;
+        const omitted = noteBox ? [primary, ...cardView.acts].filter((act) => act && act.wordsField === null)
+          .map((act) => '‘' + act.label + '’') : [];
         /* Y7: the one needsOption the main card reads too; a source the server
            refuses a text-only answer for must pick an option, except the ask-only
            sources, whose words go to the secretary instead. */
@@ -4156,10 +4185,12 @@ class Component extends DCLogic {
           ? { label: '看答复', cls: 'btn btn-sm btn-line', off: 'false', tip: '',
             go: () => A.readMore({ decideAnswer: cur.key }) }
           : null;
-        const acts = cardView.acts.map((act) => ({ label: act.label, tip: act.tip || '',
+        const acts = (pending && cur.level !== 'done' ? [] : cardView.acts).map((act) => ({ label: act.label, tip: act.tip || '',
           cls: act.cls + (act.off === 'true' || isBusy ? ' is-off' : ''), off: act.off === 'true' || isBusy ? 'true' : 'false',
           go: (event) => { if (act.off === 'true' || isBusy) return A.notConnected(event); return actGo(act)(); } }));
         if (answerAct) acts.push({ label: answerAct.label, tip: answerAct.tip, cls: answerAct.cls, off: answerAct.off, go: answerAct.go });
+        if (pending && retry) acts.push({ label: '重试落实', tip: '', cls: 'btn btn-sm btn-line' + (isBusy ? ' is-off' : ''),
+          off: isBusy ? 'true' : 'false', go: () => cardRun(cur.key, retry.retry) });
         const pos = (peersOf(cur).indexOf(cur) + 1) + ' / ' + peersOf(cur).length;
         const appendTalk = (reply) => {
           if (reply === null) return;
@@ -4171,6 +4202,8 @@ class Component extends DCLogic {
         };
         const submitAnswer = () => {
           if (!canSubmit) return;
+          // 就算是队列默认展开的第一张，答复回执也只跟原卡走。
+          set({ dec: cur.key });
           if (repropose) {
             void cardRun(cur.key, () => A.answerCard(cur.key, 'repropose', text, annotationsFor()), true);
             return;
@@ -4235,19 +4268,25 @@ class Component extends DCLogic {
           facts: facts, hasFacts: facts.length > 0 || !!cardView.answer,
           showFacts: !!s.facts, factsLabel: s.facts ? '收起详情' : '详情',
           toggleFacts: () => set({ facts: !(this.state || {}).facts }),
-          ask: () => set({ ask: cur.key, draft: '', step: null }),
+          ask: isBusy ? noop : () => set({ ask: cur.key, draft: noteBox ? String(editOf(cur.key).note || '') : '', step: null }),
+          askOff: isBusy ? 'true' : 'false', askCls: isBusy ? ' is-off' : '',
           acts: acts,
           actsCls: cardView.acts.length + (cardView.primary !== null ? 1 : 0) >= 5 ? ' dc-acts-many' : '',
           hasFailed: failText !== '',
           failed: failText,
-          hasAnswerBox: isBox,
-          answerPh: repropose ? '例如：这两块不该分开' : '写一句你的答复（可选）',
+          applicationText: !pending ? '' : retry && retry.state === 'awaiting_resume'
+            ? '已答复。目标暂停中，继续目标后再点‘重试落实’。' : '已答复，落实没记上。',
+          hasAnswerBox: isBox || noteBox,
+          hasBoxHint: noteBox,
+          boxHint: '这段话跟着你点的那一步发出' + (omitted.length ? '；' + omitted.join('、') + '不带它' : '') + '。只想说话，点‘问秘书’。',
+          answerPh: noteBox ? '写一句说明（可选），跟着你点的那一步发出'
+            : repropose ? '例如：这两块不该分开' : '写一句你的答复（可选）',
           answerText: text,
           onAnswer: (e) => set(editPatch(cur.key, { note: e && e.target ? e.target.value : '' })),
-          hasObjects: objectLines.length > 0,
+          hasObjects: isBox && objectLines.length > 0,
           annotationLabel: edit.annotOpen ? '收起批注（' + String(objectLines.length) + '）'
             : '加批注（' + String(objectLines.length) + '）',
-          showAnnotations: !!edit.annotOpen,
+          showAnnotations: isBox && !!edit.annotOpen,
           toggleAnnotations: () => set(editPatch(cur.key, { annotOpen: !editOf(cur.key).annotOpen })),
           annotations: objectLines,
           hasPrimary: !isDone && (primary !== null || isChoice || isBox),
@@ -4257,7 +4296,7 @@ class Component extends DCLogic {
           primaryTip: askOnlyOff ? '这张卡没有请求号；点‘问秘书’' : repropose ? reproposeTip
             : staleApprove ? '计划已经变了，这个请求是按旧计划提的。拒绝后对方会收到回答，可以按新计划再提一次。'
               : primary ? (primary.tip || '') : '',
-          primaryGo: isBox || isChoice ? submitAnswer : () => actGo(primary)(),
+          primaryGo: !canSubmit ? noop : isBox || isChoice ? submitAnswer : actGo(primary),
         });
       }
       /* The one step block both branches share (X6/X9): the card's own step act, or the
@@ -4278,12 +4317,14 @@ class Component extends DCLogic {
           const form = s.form || {};
           const val = (e) => (e && e.target ? e.target.value : '');
           const setForm = (patch) => set({ form: Object.assign({}, (this.state || {}).form || {}, patch) });
+          const sameStep = () => this.state.stepFor === cur.key && this.state.step === stepKey;
           st = Object.assign(st, {
             back: () => { if (((this.state || {}).form || {}).busy) return; set({ step: null, form: {} }); },
             backOff: !!form.busy, confirm: stepAct.label, off: false, backLabel: '返回',
             go: async () => {
               if (st.off) return;
-              if (((this.state || {}).form || {}).busy) return;
+              if (((this.state || {}).form || {}).busy || ((this.state || {}).cardBusy || {})[cur.key]) return;
+              set(Object.assign(busyAt(cur.key, true), failAt(cur.key, '')));
               setForm({ busy: true, failed: '' });
               try {
                 if (stepKey === 'recover') {
@@ -4304,28 +4345,30 @@ class Component extends DCLogic {
                     note: String(form.note || ''),
                     budget: cardView.budget ? String(form.budget === undefined ? cardView.budget.def : form.budget) : null,
                   });
-                } else if (stepKey === 'note') {
+                } else if (stepKey === 'note' || stepKey === 'reverify') {
                   await A.reverifyCard(cur.key, String(form.note || ''));
                 } else if (stepKey === 'fix') {
                   const checks = form.checks || cardView.checks.map(() => true);
                   await A.addRepairTask(cur.key, { name: String(form.name === undefined ? cardView.fixName : form.name),
-                    checkIds: cardView.checks.filter((check, i) => checks[i] !== false).map((check) => check.checkId) });
+                    checkIds: cardView.checks.filter((check, i) => checks[i] !== false).map((check) => check.checkId),
+                    note: form.reason });
                 } else if (stepKey === 'attest') {
                   await A.attestCard(cur.key, String(form.reason || ''));
                 } else if (stepKey === 'withdraw') {
                   await A.withdrawAndReverify(cur.key);
-                } else if (stepKey === 'reverify') {
-                  await A.reverifyCard(cur.key, null);
-                } else if (stepKey === 'defer') {
-                  await A.changeDisposition(cur.key, 'deferred');
-                } else if (stepKey === 'cancel') {
-                  await A.changeDisposition(cur.key, 'cancelled');
-                } else if (stepKey === 'restore') {
-                  await A.changeDisposition(cur.key, 'active');
+                } else if (stepKey === 'abandon') {
+                  await A.writeCandidate(cur.key, 'abandon');
+                } else {
+                  const disposition = { defer: 'deferred', cancel: 'cancelled', restore: 'active' }[stepKey];
+                  await A.changeDisposition(cur.key, disposition, form.reason);
                 }
-                set({ step: null, form: {}, dec: null, cardClosed: true, facts: false });
+                if (cardView.noteBox) set(editDrop(cur.key));
+                if (sameStep()) set({ step: null, form: {}, dec: null, cardClosed: true, facts: false });
               } catch (error) {
-                setForm({ busy: false, failed: msgOf(error) });
+                if (sameStep()) setForm({ busy: false, failed: msgOf(error) });
+                else set(failAt(cur.key, msgOf(error)));
+              } finally {
+                set(busyAt(cur.key, false));
               }
             },
           });
@@ -4350,6 +4393,9 @@ class Component extends DCLogic {
               hasFailed: !!form.failed, failed: String(form.failed || ''),
               confirm: '标为已读', backLabel: '取消', off: !!form.busy,
             });
+          } else if (stepKey === 'abandon') {
+            Object.assign(st, { title: '放弃候选', text: '放弃这份候选：卡会关掉，现在的计划不变。要换做法，在主对话里说。',
+              confirm: '确认放弃', off: !!form.busy });
           } else if (stepKey === 'requeue') {
             const reason = String(form.reason || '');
             const note = String(form.note || '');
@@ -4396,7 +4442,8 @@ class Component extends DCLogic {
               text: '这一轮只有下面这些检查没过，它们不是这个目标的计划带来的。撤回以后平台用新的检查配置把这一轮重跑一次。'
                 + '只点“重新入队”不行：重新入队比的是失败、源码和计划，检查配置不算新依据。',
               hasEvidence: true, evidence: cardView.withdraw.map((check) => ({ k: '检查', v: check.text })),
-              text2: '撤回只改这个工作区的设置，计划不动；以后要装回，到设置页。',
+              text2: '撤回只改这个工作区的设置，计划不动；以后要装回，到设置页。'
+                + (String(editOf(cur.key).note || '').trim() ? '说明框里的话不随这次发出。' : ''),
               confirm: '撤回并重新检查', off: !!form.busy,
             });
           } else if (stepKey === 'reverify') {
@@ -4405,6 +4452,8 @@ class Component extends DCLogic {
               text: cardView.isGate
                 ? '不等源码变化，把验收的检查再跑一轮。如果是检查本身坏了，先到设置页撤回它（左栏左下“设置” → 工作区与权限 → 检查），再点这里。'
                 : '不建新的执行，在同一次执行上把登记的检查重跑一轮。',
+              hasNote: true, note: String(form.note || ''), notePh: '可选：写一句新情况。会存成一份材料，算新依据',
+              onNote: (e) => setForm({ note: val(e) }),
               confirm: cardView.isGate ? '重新验收' : '重新检查', off: !!form.busy,
             });
           } else if (stepKey === 'cancel') {
@@ -4413,8 +4462,15 @@ class Component extends DCLogic {
             Object.assign(st, { title: '延后任务', text: '延后后它不再推进；恢复或取消之前，目标不能完成。',
               confirm: '延后任务', off: !!form.busy });
           } else if (stepKey === 'restore') {
-            Object.assign(st, { title: '恢复任务', text: '恢复后它回到目标里；能不能领取由 owner 判。',
+            Object.assign(st, { title: '恢复任务', text: '恢复后它回到目标里，平台照常安排领取。',
               confirm: '恢复任务', off: !!form.busy });
+          }
+          if (stepAct.wordsField === 'reason' && stepKey !== 'attest') {
+            const repair = stepKey === 'fix';
+            Object.assign(st, { hasReason: true, reason: String(form.reason || ''),
+              reasonLabel: repair ? '给修复任务的话（可选）' : '原因（可选）',
+              reasonPh: repair ? '写一句给执行者的话' : '写一句为什么，会记进这次计划改动的原因',
+              onReason: (e) => setForm({ reason: val(e) }) });
           }
           /* X6/X9: the confirm's `is-off` follows its own `off` after every branch, so an
              enabled step is clickable in a real browser (`kit.css`'s pointer-events). */
@@ -4435,6 +4491,7 @@ class Component extends DCLogic {
         const reply = await A.askCard(askRow.key, text);
         set({ askBusy: false });
         if (reply === null) return;
+        if (askRow.view && askRow.view.noteBox) set(editPatch(askRow.key, { note: '' }));
         const prev = ((this.state || {}).talk || {})[askRow.key] || [];
         set({ talk: Object.assign({}, (this.state || {}).talk || {}, {
           [askRow.key]: prev.concat([{ who: 'you', text: reply.input, t: '' },

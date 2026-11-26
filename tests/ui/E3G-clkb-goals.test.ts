@@ -46,8 +46,8 @@ describe('E3G CLKB Goals rows', () => {
     try {
       await turns(() => e3gConflictOptions(page.root).length === 3, 3_000);
       await decideConflict(page, 2);
-      const firstLabel = `与 ${opened.world.goals.second.goalId} 并行，已接受风险`;
-      const secondLabel = `与 ${opened.world.goals.first.goalId} 并行，已接受风险`;
+      const firstLabel = '与目标 2 并行，已接受风险';
+      const secondLabel = '与目标 1 并行，已接受风险';
       await turns(() => textOf(conflictSectionOf(page.root)).includes('已接受并行风险'), 3_000);
       /* The card's own done line keeps both labels; this half is green today. */
       expect(textOf(findClass(conflictSectionOf(page.root), 'plan-line'))).toContain(firstLabel);
@@ -57,6 +57,10 @@ describe('E3G CLKB Goals rows', () => {
       expect(rows).toHaveLength(2);
       expect(textOf(rows[0]!)).toContain(firstLabel);
       expect(textOf(rows[1]!)).toContain(secondLabel);
+      for (const row of rows) {
+        expect(textOf(row)).not.toContain(opened.world.goals.first.goalId);
+        expect(textOf(row)).not.toContain(opened.world.goals.second.goalId);
+      }
     } finally {
       await page.restore();
     }
@@ -152,8 +156,8 @@ describe('E3G CLKB Goals rows', () => {
       expect(conflictCard(page.root)).toBeUndefined();
       const done = textOf(findClass(conflictSectionOf(page.root), 'plan-line'));
       expect(done).toContain('已接受并行风险');
-      expect(done).toContain(`与 ${opened.world.goals.second.goalId} 并行，已接受风险`);
-      expect(done).toContain(`与 ${opened.world.goals.first.goalId} 并行，已接受风险`);
+      expect(done).toContain('与目标 2 并行，已接受风险');
+      expect(done).toContain('与目标 1 并行，已接受风险');
     } finally {
       await page.restore();
     }

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { bootE3N, pickTab } from './helpers/E3N-page.js';
+import { bootE3N, pickTab, waitFor } from './helpers/E3N-page.js';
 import { findElement } from './helpers/boot-page.js';
 import { openW1 } from './helpers/E3N-world.js';
 import type { S6ARequestWorld } from '../helpers/S6A-request-fixture.js';
@@ -38,7 +38,7 @@ describe('E3N-6 the shell for both boards', () => {
 });
 
 describe('E3N-6 完整架构图 carries the Goal', () => {
-  it.each(['Main', 'Plan', 'Decide'] as const)(
+  it.each(['Main', 'Plan', 'Decide', 'Done'] as const)(
     'N51 %s keeps the URL Goal on 完整架构图', async (name) => {
       const opened = await openW1();
       worlds.push(opened.world);
@@ -46,6 +46,8 @@ describe('E3N-6 完整架构图 carries the Goal', () => {
       const { page, log } = await bootE3N(opened.world, name, { search: `?goal=${goalId}` });
       try {
         await pickTab(page, log, '架构图');
+        await waitFor(() => findElement(page.root, (element) => element.tagName.toLowerCase() === 'a'
+          && (element.getAttribute('href') ?? '').startsWith('ArchOverview.dc.html')) !== undefined);
         const link = findElement(page.root, (element) => element.tagName.toLowerCase() === 'a'
           && (element.getAttribute('href') ?? '').startsWith('ArchOverview.dc.html'));
         expect(link).toBeDefined();
@@ -74,6 +76,8 @@ describe('E3N-6 完整架构图 carries the Goal', () => {
         });
         try {
           await pickTab(failed.page, failed.log, '架构图');
+          await waitFor(() => findElement(failed.page.root, (element) => element.tagName.toLowerCase() === 'a'
+            && (element.getAttribute('href') ?? '').startsWith('ArchOverview.dc.html')) !== undefined);
           const href = findElement(failed.page.root, (element) => element.tagName.toLowerCase() === 'a'
             && (element.getAttribute('href') ?? '').startsWith('ArchOverview.dc.html'))!
             .getAttribute('href') ?? '';

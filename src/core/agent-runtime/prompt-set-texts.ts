@@ -10,9 +10,9 @@
  * origin it is (a body may have been written by an earlier run).
  */
 import { resolve } from 'node:path';
-import { rejected } from '../../contracts/core/rejections.js';
+import { lastingRejection, rejected } from '../../contracts/core/rejections.js';
 import { isRecord } from '../../contracts/validation/common.js';
-import type { ArtifactRef } from '../../contracts/artifact.js';
+import { ARTIFACT_MAX_SIZE_BYTES, artifactBodySize, type ArtifactRef } from '../../contracts/artifact.js';
 import type { SourceRefV1 } from '../../contracts/dispatch.js';
 import type { BaseSystemPromptInput } from '../../../vendor/coding-agent/dist/public-api.js';
 import { FileSkillLoader as KernelFileSkillLoader } from '../../../vendor/coding-agent/dist/public-api.js';
@@ -106,7 +106,8 @@ export function trackPromptTexts(pack: { templates: Readonly<Record<string, stri
 export function promptRenderProblem(error: unknown, packId: string): CoreRejection | null {
   if (!(error instanceof PromptRenderError)) return null;
   const slot = error.slot === null ? '' : ` slot "${error.slot}"`;
-  return rejected('invalid', `the prompt pack ${packId} template "${error.templateId}"${slot}: ${error.message}`);
+  // P6I R2: a frozen template that cannot render the same frozen input never will.
+  return lastingRejection('invalid', `the prompt pack ${packId} template "${error.templateId}"${slot}: ${error.message}`);
 }
 
 /**
@@ -133,8 +134,10 @@ export function promptDeclarationProblem(
 /**
  * Ruling 14 item 2: the pack is resolved ONCE, before anything renders. An
  * absent source uses the ruling-30 default installation (the generated platform
- * pack) — this is not a fallback for a named pack: any rejection of the requested
- * pack becomes `invalid`, names the pack and keeps the source's reason.
+ * pack) — this is not a fallback for a named pack: a rejection of the requested
+ * pack names the pack and keeps the source's reason. P6I: a pack the source
+ * reports missing or invalid is a lasting `invalid`; a source that could not read
+ * it (`unavailable`, or a throw) is `unavailable`, and a later preparation reads again.
  */
 export async function resolvePromptPack(
   source: PromptPackSourcePort | undefined,
@@ -147,10 +150,11 @@ export async function resolvePromptPack(
     resolved = await source.resolve(packId, signal);
   } catch (error) {
     if (signal.aborted) return rejected('cancelled', 'the preparation was cancelled while the prompt pack was resolved');
-    return rejected('invalid', `the prompt pack ${packId} could not be resolved: ${error instanceof Error ? error.message : String(error)}`);
+    return rejected('unavailable', `the prompt pack ${packId} could not be resolved: ${error instanceof Error ? error.message : String(error)}`);
   }
   if (resolved.status === 'rejected') {
-    return rejected('invalid', `the prompt pack ${packId} could not be resolved: ${resolved.reason}`);
+    const reason = `the prompt pack ${packId} could not be resolved: ${resolved.reason}`;
+    return resolved.code === 'invalid' ? lastingRejection('invalid', reason) : rejected('unavailable', reason);
   }
   return { status: 'ready', value: resolved.value };
 }
@@ -162,8 +166,20 @@ function isStringRecord(value: unknown): value is Record<string, string> {
 type StoredText = { digest: string; ref: ArtifactRef };
 
 /**
+ * P6I: the one judgement of a body past the body store's size cap (`ARTIFACT_MAX_SIZE_BYTES`). The store refuses it
+ * for its size and the same text never fits, so it is a lasting `capacity`; the prompt texts and the Query manifest
+ * both ask here before they store. Null when the body fits.
+ */
+export function oversizedBody(body: string, what: string): CoreRejection | null {
+  const size = artifactBodySize(body);
+  return size <= ARTIFACT_MAX_SIZE_BYTES ? null
+    : lastingRejection('capacity', `${what} is ${String(size)} bytes, over the body store's ${String(ARTIFACT_MAX_SIZE_BYTES)}`);
+}
+
+/**
  * Stores every part once per distinct text and returns the frozen `PromptSetV1`.
- * A failed put is `unavailable`, exactly like a failed manifest store.
+ * A text past the store's size cap is a lasting `capacity` (`oversizedBody`); any
+ * other failed put is `unavailable` with the store's reason, like a failed manifest store.
  */
 export async function storePromptTexts(
   bodies: Pick<RawArtifactStorePort, 'put'>,
@@ -179,6 +195,8 @@ export async function storePromptTexts(
     const cacheKey = `${contentType}|${text}`;
     const hit = byText.get(cacheKey);
     if (hit !== undefined) return hit;
+    const oversized = oversizedBody(text, 'a prompt text');
+    if (oversized !== null) return oversized;
     let put;
     try {
       put = await bodies.put({ body: text, contentType, sourceRefs, origin, requestedAt });

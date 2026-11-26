@@ -139,7 +139,7 @@ export async function applyCommandReview(
     // Query: only that round is stopped; a Task hold and its later release do not apply.
     const stopped = running ? await stopCommandRun(ctx, ports, deps, subject, `${operationId}:cancel`) : 'not_running';
     if (typeof stopped !== 'string') return stopped;
-    actuality = stopped === 'stopping' ? 'stopped' : 'ended';
+    actuality = stopped === 'not_running' ? 'ended' : 'stopped';
   } else {
     const taskRef: TaskTriple = { projectId: subject.projectId, goalId: subject.goalId, taskId: subject.run.taskId };
     const claimHolds = ports.claimHolds;
@@ -191,7 +191,7 @@ export async function applyCommandReview(
     } else if (holdReasonId !== null) {
       const stopped = await stopCommandRun(ctx, ports, deps, subject, `${operationId}:cancel`);
       if (typeof stopped !== 'string') return stopped;
-      actuality = stopped === 'stopping' ? 'stopped' : 'ended';
+      actuality = stopped === 'not_running' ? 'ended' : 'stopped';
     } else {
       actuality = 'ended';
     }
@@ -255,7 +255,7 @@ function commandStopText(input: {
  * judgement and that commit from interleaving, and what stops is the whole Run (design :589).
  */
 async function stopCommandRun(ctx: CoreCallContext, ports: CommandReviewPorts, deps: CommandReviewDeps,
-  subject: CommandReviewSubjectV1, requestId: string): Promise<'stopping' | 'not_running' | CoreRejection> {
+  subject: CommandReviewSubjectV1, requestId: string): Promise<'stopping' | 'stopped' | 'not_running' | CoreRejection> {
   if (subject.run.kind === 'query') {
     if (ports.runtime.cancelQuery === undefined) {
       return rejected('unsupported', 'the Query stop is not wired; the command was not stopped');

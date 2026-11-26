@@ -53,6 +53,7 @@ import { lookupAll } from '../persistence/lookup-all.js';
 import { catalogForWorkspace } from '../../../contracts/workspace-catalog.js';
 import { messageConsumptionProblem, messageFactsOfRecord } from '../state/message-machine.js';
 import { goalPositionOf, regionPositionOf, type RoleLinePositionV1 } from '../state/role-line-position.js';
+import { goalStateOf } from '../state/goal-machine.js';
 import { reclaimIdleLineOf, type ReclaimSeatV1, type RoleLineReclaimPort } from '../state/role-line-reclaim.js';
 import { planRoleLineSplit } from '../state/role-line-split.js';
 import type { RoleLineIdleFactsV1 } from '../state/session-availability.js';
@@ -610,7 +611,8 @@ export function createRoleLineMaintenance(deps: RoleLineMaintenanceDeps): RoleLi
   /**
    * A line that holds an active goal through an open responsible goal link works for that goal even before the goal
    * has a plan or a task (o4a ruling 51): reclaiming it would leave the goal with no adviser and outside the adviser
-   * queue. A paused, cancelled or formally completed goal does not keep the line; a failed read keeps it (not idle).
+   * queue. A paused or cancelled goal, or one with a formal result on its ACTIVE Plan, does not keep the line; a
+   * result on an older Plan does not end the goal (B3). A failed read keeps it (not idle).
    */
   async function holdsActiveGoalOf(links: readonly SessionWorkLink[]): Promise<ReadResult<boolean>> {
     for (const link of links) {
@@ -622,7 +624,7 @@ export function createRoleLineMaintenance(deps: RoleLineMaintenanceDeps): RoleLi
       const phase = await deps.readGoalPhase(deps.records,
         { aggregateType: 'GoalPhase', projectId: goalRef.projectId, goalId: goalRef.goalId });
       if (phase.status !== 'ready') return phase;
-      if (phase.snapshot === null) return ready(true);
+      if (goalStateOf(goal.goal, phase.snapshot).completion !== 'for_active') return ready(true);
     }
     return ready(false);
   }

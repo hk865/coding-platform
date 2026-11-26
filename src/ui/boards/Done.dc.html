@@ -1128,7 +1128,6 @@ body { margin: 0; background: #1F1F1F; }
       </div>
     </div>
 
-    <sc-if value="{{samplePanel}}" hint-placeholder-val="{{ true }}">
     <sc-if value="{{isMap}}" hint-placeholder-val="{{ true }}">
       <div class="ptools">
         <div class="seg" role="group" aria-label="视图">
@@ -1151,7 +1150,7 @@ body { margin: 0; background: #1F1F1F; }
         </sc-if>
         <button class="{{legendCls}}" type="button" onClick="{{toggleLegend}}" aria-pressed="{{legend}}">图例</button>
         <sc-if value="{{tpIsTask}}" hint-placeholder-val="{{ true }}">
-          <a class="btn-text plink" href="TaskMap.dc.html" title="整页的任务图：目标 1 在 10-04 14:15 的依赖图（DAG）、大纲和轨道（还没做完时；这里是 10-06 16:33）">
+          <a class="btn-text plink" href="{{taskMapHref}}" title="{{taskMapTip}}">
             整页查看
             <svg class="ico xs" viewBox="0 0 16 16" aria-hidden="true"><path d="M9.25 2.75h4v4M13.25 2.75 7.75 8.25"></path><path d="M11.75 9.5v3.75h-9V4.25h3.75"></path></svg>
           </a>
@@ -1178,7 +1177,7 @@ body { margin: 0; background: #1F1F1F; }
             <button class="{{scope.allCls}}" type="button" aria-pressed="{{scope.isAll}}" onClick="{{scope.toAll}}" title="整棵树：每个模块一条分支">全部</button>
           </div>
           <sc-if value="{{scope.hasNote}}" hint-placeholder-val="{{ false }}"><span class="note">{{scope.note}}</span></sc-if>
-          <a class="btn-text plink" href="ArchOverview.dc.html" title="分层的模块图：模块之间的依赖和数据流，可以逐层进入">
+          <a class="btn-text plink" href="{{archHref}}" title="分层的模块图：模块之间的依赖和数据流，可以逐层进入">
             完整架构图
             <svg class="ico xs" viewBox="0 0 16 16" aria-hidden="true"><path d="M9.25 2.75h4v4M13.25 2.75 7.75 8.25"></path><path d="M11.75 9.5v3.75h-9V4.25h3.75"></path></svg>
           </a>
@@ -1476,8 +1475,6 @@ body { margin: 0; background: #1F1F1F; }
         </div>
       </section>
     </sc-if>
-    </sc-if>
-    <sc-if value="{{panelOff}}" hint-placeholder-val="{{ false }}"><p class="empty pbody">还没接通</p></sc-if>
   </aside>
 </div>
 </x-dc>
@@ -1497,6 +1494,11 @@ class Component extends DCLogic {
       ptab: 'task', view: 'tree', aview: 'tree', ascope: 'work', sel: null, asel: null, q: '', aq: '',
       open: {}, aopen: {}, ofold: {}, drill: null, aroot: 'SYS', hover: null, relHover: null, legend: false, pins: [], extra: []
     });
+    /* §2.1/B-04: a wired page has no sample file page, Diff selection, command
+       state or expanded sample folders; the sample mount keeps them. */
+    if (this.props.readState !== undefined && this.props.readState !== null) {
+      Object.assign(this.state, { axPages: [], axDiff: null, axCmd: {}, axDirs: {} });
+    }
   }
 
 
@@ -1596,12 +1598,13 @@ class Component extends DCLogic {
     return s.cancelled ? 'c' : s.paused ? 'p' : '-';
   }
   /* the delivery is still open (not accepted, goal not cancelled): 当前工作 then shows what it changed */
-  delivOpen() { return this.verdict() !== 'accepted' && this.runMode() !== 'c'; }
+  delivOpen() { return this.dataMode() ? true : this.verdict() !== 'accepted' && this.runMode() !== 'c'; }
   /* the secretary works after 接受 (goal 2's plan) and after a sent 要求补做 (the redo plan) */
   secBusy() { const v = this.verdict(); return v === 'accepted' || v === 'redo'; }
   /* a goal's own state (rail, goal bar and the root square of its task map all use this).
      Goal 1 is complete; your verdict on the delivery decides what follows. Goal 3 waits behind goal 2 either way. */
   goalSt(goal) {
+    if (this.dataMode()) return this.props.data && this.props.data.nav.selectedDisplay ? this.props.data.nav.selectedDisplay.st : 'pending';
     const v = this.verdict();
     if (goal === 'g1') {
       if (v === 'partial') return { c: 'cancelled', p: 'waiting' }[this.runMode()] || 'running';
@@ -1610,7 +1613,10 @@ class Component extends DCLogic {
     if (goal === 'g2') return v === 'accepted' ? 'pending' : 'future';
     return 'future';
   }
-  goalWord(goal) { return { satisfied: '已完成', running: '运行中', waiting: '已暂停，可继续', cancelled: '已取消', pending: '规划中', future: '等待中' }[this.goalSt(goal)]; }
+  goalWord(goal) {
+    if (this.dataMode()) return this.props.data && this.props.data.nav.selectedDisplay ? this.props.data.nav.selectedDisplay.word : '状态未读';
+    return { satisfied: '已完成', running: '运行中', waiting: '已暂停，可继续', cancelled: '已取消', pending: '规划中', future: '等待中' }[this.goalSt(goal)];
+  }
 
   /* ------------------------------------------------------------ shared fake data: goal 1 at its end (Main's std40 + plan A, all required tasks satisfied) */
   done40() {
@@ -1885,6 +1891,7 @@ class Component extends DCLogic {
 
   /* 部分接受: each returned gate goes back to 待执行 and gets a 补做 task right before it */
   taskModel(goal) {
+    if (this.dataMode()) return this.auxTaskModel();
     const s = this.state || {};
     goal = goal || s.goal || 'g1';
     const back = goal === 'g1' && s.verdict === 'partial' ? (s.back || []) : [];
@@ -1930,6 +1937,7 @@ class Component extends DCLogic {
      them), so the map agrees with 改动的文件. And `changed` keeps Done's rule: the source files (src/) this goal
      changed, in tree order — the delivery's 当前工作 draws them ("本目标改了 n 个源码文件"). */
   archModel(goal) {
+    if (this.dataMode()) return this.auxArchModel();
     const s = this.state || {};
     goal = goal || s.goal || 'g1';
     const tm = this.taskModel(goal);
@@ -2271,6 +2279,7 @@ class Component extends DCLogic {
   }
   /* "name · status word" (工作中 / 等回复 / 待命 / 已暂停 / 待核对), then what it is about */
   goalAgent(goal) {
+    if (this.dataMode()) return '—';
     const v = this.verdict(); const m = this.runMode();
     if (goal === 'g1') {
       if (v === 'partial') return m === 'c' ? '秘书 · 待命' : m === 'p' ? '秘书 · 待命，目标已暂停' : '秘书 · 待命，补做任务等成员领取';
@@ -2324,6 +2333,7 @@ class Component extends DCLogic {
     return what + ' · 双击固定 · 右键新标签打开';
   }
   fileSem() {
+    if (this.dataMode()) return {};
     return {
       'verification-machine.ts': '检查轮次的状态机：判定通过、未通过和检查不完整。',
       'task-machine.ts': '任务的状态机：领取、执行、失败、重新入队与完成。',
@@ -2389,6 +2399,7 @@ class Component extends DCLogic {
      when your verdict changed it), a stage the lines that worked on its tasks; the goal's root keeps goalAgent (the read API
      while the delivery waits for you, the board's own clock after your verdict). Goals 2 and 3 have no work lines yet. */
   ownerOf(goal, n) {
+    if (this.dataMode()) return '—';
     if (n.kind === 'goal') return this.goalAgent(goal);
     if (goal !== 'g1') return '未分配';
     if (n.kids.length) return this.wlGroupOwner(n.id, 'done');
@@ -2399,6 +2410,7 @@ class Component extends DCLogic {
      the files of their tasks (wlAreaOwnerNow; the sample has no 模块维护 line; the approved row named a module's old
      executor) */
   archOwner(n, mod) {
+    if (this.dataMode()) return '—';
     const W = this.wlNow(); const word = (role) => (W.rows.filter((x) => x.role === role)[0] || { word: '待命' }).word;
     if (n.kind === 'system') return '架构参谋 · ' + word('advisor');
     const own = mod ? mod.owner : '';
@@ -2589,6 +2601,8 @@ class Component extends DCLogic {
     const W = this.words();
     const tree = this.taskModel(goal); const n = tree.byId[id];
     if (!n) return null;
+    /* ruling 17: a wired tree names no 语义; the read gives one only for a task's detail */
+    const sem = this.dataMode() ? '—' : n.sem;
     const noop = () => {};
     const crumbs = this.crumbsOf(tree.byId, id).map((c, i, a) => ({ name: c.name, sep: i > 0, cls: 'c' + (i === a.length - 1 ? ' is-on' : ''), go: () => go.selTask(c.id) }));
     const sqOf = (t) => 'sq z8 ' + (t.kids.length ? this.taskSq(t, 'collapsed', goal) : this.sqAt(t.st));
@@ -2609,7 +2623,7 @@ class Component extends DCLogic {
       }
       const agent = this.ownerOf(goal, n);
       return { kind: 'task', id: id, sq: 'sq ' + this.sqAt(n.st), name: n.name, tx: 'tx-' + n.st, word: W[n.st] + (n.gate ? '（验收）' : ''), why: n.why ? '：' + n.why : '',
-        crumbs: crumbs, agent: agent, sem: n.sem, rel: rel, group: false };
+        crumbs: crumbs, agent: agent, sem: sem, rel: rel, group: false };
     }
     const isRoot = n.kind === 'goal';
     const count = this.countLine(n, 'task');
@@ -2623,7 +2637,7 @@ class Component extends DCLogic {
     }
     return { kind: 'task', id: id, sq: 'sq ' + (isRoot ? 's-' + this.goalSt(goal) : this.taskSq(n, 'collapsed', goal)), name: n.name,
       tx: isRoot ? 'tx-' + this.goalSt(goal) : 'tx-plain', word: isRoot ? this.goalWord(goal) : count, why: isRoot ? ' · ' + count : '',
-      crumbs: crumbs, agent: this.ownerOf(goal, n), sem: n.sem, rel: rel, group: true };
+      crumbs: crumbs, agent: this.ownerOf(goal, n), sem: sem, rel: rel, group: true };
   }
 
   archDetail(goal, id, go) {
@@ -2638,13 +2652,14 @@ class Component extends DCLogic {
     w(n);
     const known = taskIds.filter((t) => tm.byId[t]);
     const items = known.slice(0, 8).map((tid) => { const t = tm.byId[tid]; return { name: t.name, sq: 'sq z8 ' + this.sqAt(t.st), go: () => go.selTask(tid), over: noop, out: noop }; });
-    const rel = [{ k: '任务', items: items, files: [], lines: [], hasText: !items.length || known.length > 8, text: !items.length ? '本目标没有任务改动这里' : '另有 ' + (known.length - 8) + ' 个任务' }];
+    const rel = [{ k: '任务', items: items, files: [], lines: [], hasText: !items.length || known.length > 8,
+      text: !items.length ? (this.dataMode() && taskIds.length ? '—' : '本目标没有任务改动这里') : '另有 ' + (known.length - 8) + ' 个任务' }];
     /* the module's observed import counts (semDeps), most first; three by name, the rest as one count (consistency pass:
        the same row on every board; the full set is on 完整架构图) */
     const dk = mod && mod.deps ? Object.keys(mod.deps).sort((a, b) => mod.deps[b] - mod.deps[a]) : [];
     const more = dk.slice(3); const moreN = more.reduce((a, k) => a + mod.deps[k], 0);
     const deps = dk.slice(0, 3).map((k) => k + ' ' + this.fmt(mod.deps[k]) + ' 处').concat(more.length ? ['另 ' + more.length + ' 个模块共 ' + this.fmt(moreN) + ' 处'] : []);
-    if (n.kind !== 'system') rel.push({ k: '依赖', items: [], files: [], lines: [], hasText: true, text: deps.length ? mod.name + ' 依赖 ' + deps.join('，') : '没有引用其他模块' });
+    if (n.kind !== 'system') rel.push({ k: '依赖', items: [], files: [], lines: [], hasText: true, text: deps.length ? mod.name + ' 依赖 ' + deps.join('，') : this.dataMode() ? '—' : '没有引用其他模块' });
     const path = n.kind === 'file' || n.kind === 'sub' ? n.path : n.kind === 'module' ? mod.path : '';
     if (path) rel.push({ k: '路径', items: [], files: [this.axFileItem(path)], lines: [], hasText: false, text: '' });
     const sem = n.kind === 'file' ? this.fileSemOf(tree, n) : (n.sem || (mod && mod.sem) || '');
@@ -2689,12 +2704,29 @@ class Component extends DCLogic {
       if (e && e.preventDefault) e.preventDefault();
       if (e && e.stopPropagation) e.stopPropagation();
     };
+    /* C2: the nine locators. The task map draws the adopted plan's tasks; a task
+       outside it (cancelled, superseded) is drawn grey with the reason. */
+    const mapTaskIds = data && Array.isArray(data.mapTaskIds) ? data.mapTaskIds : [];
+    const onMap = (id) => id !== null && id !== undefined && mapTaskIds.indexOf(id) >= 0;
     const emptyNav = { goals: [], selectedGoalId: null, selectedGoalRevision: null, selectedDisplay: null,
       lines: [], archived: [], archivedText: '没有已归档的工作线', head: '工作中 0 · 待命 0', headTip: '',
       counts: { working: 0, standby: 0, archived: 0 },
       inbox: { decideN: 0, decideText: '0', noticeN: 0, hasDecide: false, hasNotice: false, none: true },
       detail: null, tasks: null, hasGoal: false, phaseRevision: null, scope: null };
     const nav = data && data.nav ? data.nav : emptyNav;
+    const rootId = nav.selectedGoalId;
+    const selTask = (id) => {
+      set({ panel: true, ptab: 'task', sel: id, hover: null, relHover: null, drill: null });
+      if (typeof A.readMore === 'function') {
+        A.readMore({ auxTab: 'task', detailTaskId: id === rootId ? null : id, auxPath: null, workOnly: false });
+      }
+    };
+    const selArch = (path) => {
+      set({ panel: true, ptab: 'arch', asel: path, aroot: 'SYS', hover: null });
+      if (typeof A.readMore === 'function') {
+        A.readMore({ auxTab: 'arch', auxPath: null, detailTaskId: null, workOnly: false });
+      }
+    };
     const selected = nav.selectedDisplay || null;
     const phase = selected ? selected.phase : '';
     const finished = phase === 'COMPLETED' || phase === 'CANCELLED';
@@ -2776,8 +2808,8 @@ class Component extends DCLogic {
         rounds: q.rounds.length === 0 ? [{ n: '—', res: '', tx: '', why: '', t: '' }]
           : q.rounds.map((r) => ({ n: '第 ' + r.n + ' 轮', res: r.word, tx: r.tx, why: r.why || '', t: '' })),
         open: open, cls: 'dv-row' + (open ? ' is-open' : ''), toggle: () => set({ req: open ? null : q.key }),
-        locateLabel: q.taskIds.length ? '在任务图里看“' + q.gate + '”' : '在任务图里看目标', locate: ncGo,
-        locateCls: 'btn-text ' + nc.class, locateTip: nc.title, locateAria: nc['aria-disabled'] };
+        locateLabel: q.taskIds.length ? '在任务图里看“' + q.gate + '”' : '在任务图里看目标',
+        locate: () => selTask(q.taskIds.filter(onMap)[0] || rootId), locateCls: 'btn-text', locateTip: null, locateAria: null };
     });
     const accSum = D ? D.acc.sum : '';
 
@@ -2794,10 +2826,11 @@ class Component extends DCLogic {
         return { rel: f.rel, isNew: false, add: add, del: del, open: fOpen,
           cls: 'dv-row dv-frow' + (fOpen ? ' is-open' : ''),
           toggle: () => set({ file: fOpen ? null : f.key }),
-          tasks: f.tasks.map((t) => ({ name: t.name, sq: 'sq z8 ' + this.sqAt(t.state), go: ncGo,
-            cls: 'd-item ' + nc.class, tip: nc.title, aria: nc['aria-disabled'] })),
-          inArch: true, archCls: 'btn-text ' + nc.class, archTip: nc.title,
-          archAria: nc['aria-disabled'], arch: ncGo };
+          tasks: f.tasks.map((t) => { const off = !onMap(t.taskId); return { name: t.name, sq: 'sq z8 ' + this.sqAt(t.state),
+            go: off ? ncGo : () => selTask(t.taskId), cls: 'd-item' + (off ? ' is-off' : ''),
+            tip: off ? '任务图里没有它：已取消或已被替代' : null, aria: off ? 'true' : null }; }),
+          inArch: !!f.archPath, archCls: 'btn-text', archTip: null,
+          archAria: null, arch: f.archPath ? () => selArch(f.archPath) : noop };
       });
       return { name: g.name, path: g.path, hasPath: g.hasPath, n: files.length + ' 个文件',
         add: plus(g.add), del: minus(g.del), files: files, open: open,
@@ -2811,19 +2844,22 @@ class Component extends DCLogic {
     const T = D ? D.todo : { sum: '', later: [] };
     const todo = Object.assign(sec('todo', T.sum), {
       laterLine: '',
-      later: T.later.map((t) => ({ name: t.name, sq: 'sq z8 s-' + t.phase, go: ncGo,
-        cls: 'd-item ' + nc.class, tip: nc.title, aria: nc['aria-disabled'] })),
+      later: T.later.map((t) => { const off = !onMap(t.taskId); return { name: t.name, sq: 'sq z8 s-' + t.phase,
+        go: off ? ncGo : () => selTask(t.taskId), cls: 'd-item' + (off ? ' is-off' : ''),
+        tip: off ? '任务图里没有它：已取消或已被替代' : null, aria: off ? 'true' : null }; }),
       differLabel: '在任务图里看', differ: '还没接通', differGo: ncGo, differCls: 'btn-text ' + nc.class,
       differTip: nc.title, differAria: nc['aria-disabled'], commit: T.commit });
 
     const R = D ? D.rework : { sum: '', rows: [], autoNote: '' };
     const rws = R.rows.map((r) => {
       const open = s.rw === r.key;
+      const off = !onMap(r.taskId);
       return { name: r.name, sq: 'sq z10 ' + this.sqAt(r.state || 'pending'), k: r.kind === 'cont' ? '接续' : '返工',
         lines: r.lines, sum: r.sum, failureClass: r.failureClass,
         open: open, cls: 'dv-row' + (open ? ' is-open' : ''),
-        toggle: () => set({ rw: open ? null : r.key }), locate: ncGo,
-        locateCls: 'btn-text ' + nc.class, locateTip: nc.title, locateAria: nc['aria-disabled'] };
+        toggle: () => set({ rw: open ? null : r.key }), locate: off ? ncGo : () => selTask(r.taskId),
+        locateCls: 'btn-text' + (off ? ' is-off' : ''), locateTip: off ? '任务图里没有它：已取消或已被替代' : null,
+        locateAria: off ? 'true' : null };
     });
     const reworkSec = Object.assign(sec('rework', R.sum), { note: R.autoNote });
 
@@ -2895,8 +2931,8 @@ class Component extends DCLogic {
         hold('ack', A.ackDelivery()).catch(logWriteFailure('知道了', nav.selectedGoalId));
       };
       dc = { show: true, lvl: CD.level, sq: 'sq z8 s-waiting',
-        locate: ncGo, locateTip: nc.title,
-        locateCls: 'btn-text ellipsis ' + nc.class, locateAria: nc['aria-disabled'],
+        locate: () => selTask(rootId), locateTip: '在任务图里看',
+        locateCls: 'btn-text ellipsis', locateAria: null,
         path: CD.path, pos: '', hasNext: false, next: noop,
         close: () => set({ cardClosed: true }),
         title: CD.title, line: CD.line, lineCls: 'dc-line dv-choices',
@@ -2953,20 +2989,16 @@ class Component extends DCLogic {
     const problemOpen = !!s.problemOpen;
 
     const selectedGoal = nav.goals.filter((g) => g.goalId === nav.selectedGoalId)[0] || null;
-    const ax = Object.assign({}, base.ax, {
-      tabs: base.ax.tabs.filter((t) => t.key.indexOf('f:') !== 0).map((t) => (t.key === 'task' || t.key === 'arch' ? t
-        : Object.assign({}, t, { offCls: ' ' + nc.class, off: nc['aria-disabled'], tip: nc.title, pick: ncGo }))),
-      newItems: base.ax.newItems.map((m) => Object.assign({}, m, {
-        cls: m.cls + ' ' + nc.class, tip: nc.title, off: nc['aria-disabled'], go: ncGo })),
-      quotes: [], hasQuotes: false, quoteNote: '', qMax: Object.assign({}, base.ax.qMax, { show: false }),
-    });
-    return Object.assign(base, {
+    return this.auxRenderVals(Object.assign(base, {
       inboxRows: inboxRows, goals: goals, lvr: lvr, rail: rail, members: [],
       headTitle: selectedGoal ? (selectedGoal.objective || selectedGoal.name) : '交付',
       isG1: true, isG2: false, isG3: false,
       isChat: (s.pane || 'chat') === 'chat', isTrace: (s.pane || 'chat') === 'trace',
-      sampleChat: false, sampleTrace: false, samplePanel: false, panelOff: true,
+      sampleChat: false, sampleTrace: false,
       mainHref: this.props.mainHref || 'Main.dc.html',
+      archHref: this.props.archHref || 'ArchOverview.dc.html',
+      taskMapHref: this.props.taskMapHref || 'TaskMap.dc.html',
+      taskMapTip: '整页的任务图：依赖图（DAG）、大纲和轨道',
       dv: dv, gb: gb, dc: dc, blank: { show: blankShow, text: blankText,
         canRetry: err !== '' && read !== null && typeof read.retry === 'function',
         retry: read && typeof read.retry === 'function' ? read.retry : noop },
@@ -2982,8 +3014,415 @@ class Component extends DCLogic {
         : '问秘书，或说出你要做的事。输入 # 引用任务或模块',
       draft: draft, onDraft: (e) => set({ draft: e && e.target ? e.target.value : '' }),
       sendCls: 'send' + (draft.trim() && !busy.send ? '' : ' is-off'), send: send,
-      ax: ax,
+    }), data);
+  }
+
+  /* ------------------------------------------------------------ the right panel's data layer (C1)
+     Main's methods on Done's gate: a page with `readState` or `data` draws from the read,
+     while the sample mount (`_sampleVals`) keeps the prototype. */
+  dataMode() {
+    return !this._sampleVals && ((this.props.readState !== undefined && this.props.readState !== null) || this.props.data);
+  }
+  auxData() {
+    const data = this.props.data || null;
+    return data && data.aux ? data.aux : null;
+  }
+  /* §2.2: the right panel's own route data, finished into Done's tree shape.
+     `finishTree` is the same aggregate rule the sample tree uses; the copy
+     keeps `props.data` immutable across renders. */
+  auxTaskModel() {
+    const aux = this.auxData();
+    const version = this.props.dataVersion || 0;
+    if (this._auxTm && this._auxTm.version === version) return this._auxTm.tree;
+    const raw = aux && aux.task && aux.task.tree ? JSON.parse(JSON.stringify(aux.task.tree)) : null;
+    const root = raw === null ? { id: 'G0', name: '', kind: 'goal', goal: '', kids: [] } : raw;
+    const neutral = (n) => { if (!n.kids || n.kids.length === 0) n.st = n.st || 'none'; (n.kids || []).forEach(neutral); };
+    neutral(root);
+    const tree = this.finishTree(root);
+    this.auxCounts(tree, aux && aux.task ? aux.task.counts : {});
+    tree.tasks = []; const w = (n) => { if (n.kind === 'task') tree.tasks.push(n); (n.kids || []).forEach(w); }; w(tree.root);
+    const mods = aux && aux.task && aux.task.taskModules ? aux.task.taskModules : {};
+    const detail = aux && aux.task ? aux.task.detail : null;
+    const detailFor = aux && aux.task ? aux.task.detailFor : null;
+    tree.tasks.forEach((t) => { t.next = []; t.att = t.att || 1; t.gate = !!t.gate; t.sem = t.sem || ''; t.why = t.why || ''; t.module = mods[t.id] || '';
+      t.statusNote = detail && detailFor === t.id ? detail.cardStatus || '' : ''; });
+    tree.tasks.forEach((t) => (t.deps || []).forEach((d) => { if (tree.byId[d]) tree.byId[d].next.push(t.id); }));
+    Object.assign(tree, { key: 'aux' + version, goal: '', big: false });
+    this._auxTm = { version: version, tree: tree };
+    return tree;
+  }
+  auxArchModel() {
+    const aux = this.auxData();
+    const version = this.props.dataVersion || 0;
+    if (this._auxAm && this._auxAm.version === version) return this._auxAm.tree;
+    const raw = aux && aux.arch && aux.arch.tree ? JSON.parse(JSON.stringify(aux.arch.tree)) : null;
+    const root = raw === null ? { id: 'SYS', name: '', kind: 'system', kids: [] } : raw;
+    const counts = Object.assign({}, aux && aux.arch ? aux.arch.counts : {});
+    counts.SYS = counts[root.id]; root.id = 'SYS';
+    const neutral = (n) => { if (!n.kids || n.kids.length === 0) { n.st = n.st || 'none'; n.tasks = n.tasks || []; } (n.kids || []).forEach(neutral); };
+    neutral(root);
+    const areaOf = (n, mod) => { n.area = n.kind === 'module' ? n.id : mod; (n.kids || []).forEach((k) => areaOf(k, n.area)); };
+    root.kids.forEach((k) => areaOf(k, null));
+    const tree = this.finishTree(root);
+    this.auxCounts(tree, counts);
+    const paths = [];
+    const walkFiles = (n) => { if (n.kind === 'file' && n.path) paths.push(n.path); (n.kids || []).forEach(walkFiles); };
+    walkFiles(tree.root);
+    /* C3: 交付页的“当前工作”画本目标改过的文件，不读 architecture/work-scope */
+    const changed = this.props.data && Array.isArray(this.props.data.archChanged) ? this.props.data.archChanged : [];
+    tree.changed = paths.filter((path) => changed.indexOf(path) >= 0);
+    tree.work = [];
+    Object.assign(tree, { key: 'aux' + version, goal: '', big: false });
+    this._auxAm = { version: version, tree: tree };
+    return tree;
+  }
+  /* ruling 2: the leaves and state counts are the adapter's (`auxLeafCountsOf`);
+     finishTree's own count of a childless node is replaced, and a node the
+     adapter did not count (the empty placeholder root) counts none */
+  auxCounts(tree, counts) {
+    Object.keys(tree.byId).forEach((id) => {
+      const c = counts[id] || { leaves: 0, cnt: {} };
+      Object.assign(tree.byId[id], { leaves: c.leaves, cnt: Object.assign({}, c.cnt) });
     });
+  }
+  axRead(key) {
+    const actions = this.props.actions || {};
+    if (typeof actions.readMore !== 'function') return;
+    const demand = this.axDemand(key);
+    if (demand) actions.readMore(demand);
+  }
+  axReadDetail(id) {
+    if (!this.dataMode()) return;
+    const actions = this.props.actions || {};
+    if (typeof actions.readMore === 'function') actions.readMore({ auxTab: 'task', detailTaskId: id });
+  }
+  axDemand(key) {
+    const st = this.state || {};
+    if (key === 'task' || key === 'arch' || key === 'files' || key === 'diff') {
+      return { auxTab: key, auxPath: key === 'diff' ? st.axDiff || null : null,
+        detailTaskId: key === 'task' ? st.sel || null : null,
+        /* C3: 交付页的“当前工作”只是本地切换，架构图恒读整棵树 */
+        workOnly: false };
+    }
+    if (key === 'cmd' || /^cmd:/.test(String(key))) {
+      return { auxTab: 'commands', auxPath: null, detailTaskId: null, workOnly: false };
+    }
+    if (String(key).indexOf('f:') === 0) {
+      return { auxTab: 'file', auxPath: String(key).slice(2), detailTaskId: null, workOnly: false };
+    }
+    if (String(key).indexOf('d:') === 0) {
+      return { auxTab: 'diff', auxPath: String(key).slice(2), detailTaskId: null, workOnly: false };
+    }
+    return null;
+  }
+  /* §2.1: in data mode the right panel's workspace is the route's, never the
+     sample `axRepo()`; files only holds the one file page the read returned. */
+  auxRepo() {
+    const aux = this.auxData();
+    const version = this.props.dataVersion || 0;
+    if (this._auxR && this._auxR.version === version) return this._auxR.repo;
+    const files = {};
+    const F = aux && aux.file;
+    if (F) files[F.path] = { from: 1, total: F.lines.length, loaded: F.readAtText, lines: F.lines, eol: F.eol,
+      digest: F.digest, digestBasis: F.digestBasis, disk: { at: '', by: '', add: 0, del: 0, lines: F.lines, text: F.content } };
+    const view = aux && aux.diff ? aux.diff.view : null;
+    const changed = aux && aux.diff ? aux.diff.rows.map((f) => ({ path: f.path, add: f.added, del: f.deleted, by: '',
+      hunks: view !== null && view.path === f.path && view.hunks !== null ? view.hunks : [], note: '' })) : [];
+    const cmds = aux && aux.commands ? aux.commands.rows.map((r) => ({
+      id: r.checkId, name: r.checkId, line: r.line, command: r.command, cwd: r.cwd, timeoutMs: r.timeoutMs,
+    })) : [];
+    const repo = { files: files, changed: changed, cmds: cmds };
+    this._auxR = { version: version, repo: repo };
+    return repo;
+  }
+  auxTree() {
+    const aux = this.auxData();
+    return aux && aux.files ? aux.files.tree : [];
+  }
+  auxPaths() {
+    const aux = this.auxData();
+    const version = this.props.dataVersion || 0;
+    if (this._auxP && this._auxP.version === version) return this._auxP.paths;
+    const out = aux && aux.files ? { files: new Set(aux.files.paths), dirs: new Set(aux.files.dirs), known: true }
+      : { files: new Set(), dirs: new Set(), known: false };
+    this._auxP = { version: version, paths: out };
+    return out;
+  }
+  auxFileNote(repo) {
+    const aux = this.auxData();
+    if (aux && aux.error) return aux.error.text;
+    if (!aux || !aux.diff) return '';
+    if (aux.diff.files && aux.diff.files.repository === 'not_git') return '不是 git 工作区';
+    return '工作区 · 改动 ' + repo.changed.length + ' 个文件' + this.auxCheckedNote();
+  }
+  auxCheckedNote() {
+    const aux = this.auxData();
+    return aux && aux.diff && typeof aux.diff.checkedFirst === 'number' ? ' · 只核对了前 ' + aux.diff.checkedFirst + ' 个文件' : '';
+  }
+
+  /* the right panel's values on the read: the two maps rebuilt from
+     `auxTaskModel`/`auxArchModel`, then the public node detail (C1) */
+  auxRenderVals(base, data) {
+    if (!this.dataMode()) return base;
+    const s = this.state || {};
+    const actions = this.props.actions || {};
+    const aux = data && data.aux ? data.aux : null;
+    const out = Object.assign({}, base);
+    const set = (p) => this.setState(p);
+    out.togglePanel = () => {
+      const open = (this.state || {}).panel !== false;
+      set(open ? { panel: false, axMax: false, axNew: false } : { panel: true });
+      if (typeof actions.readMore !== 'function') return;
+      if (open) { actions.readMore({ auxTab: null }); return; }
+      const st = this.state || {};
+      actions.readMore(this.axDemand(st.ptab) || { auxTab: 'task', auxPath: null, detailTaskId: null, workOnly: false });
+    };
+    /* C3: “当前工作 / 全部”只是本地切换，架构图两种范围都读整棵树 */
+    if (out.scope && out.scope.show) {
+      out.scope = Object.assign({}, out.scope, {
+        toWork: () => set({ ascope: 'work', hover: null }),
+        toAll: () => set({ ascope: 'all', hover: null })
+      });
+    }
+
+    const extra = s.extra || [];
+    let panelTab = s.ptab || 'task';
+    const isAux = (k) => (s.axTabs || []).indexOf(k) >= 0 || (k.indexOf('f:') === 0 && (s.axPages || []).indexOf(k.slice(2)) >= 0);
+    if (panelTab !== 'task' && panelTab !== 'arch' && !isAux(panelTab) && !extra.some((x) => x.key === panelTab)) panelTab = 'task';
+    const isTask = panelTab === 'task'; const isArch = panelTab === 'arch';
+    const rootGoal = data && data.nav ? data.nav.selectedGoalId : null;
+    const go = {
+      selTask: (id) => { set({ panel: true, ptab: 'task', sel: id, hover: null, relHover: null, drill: null });
+        if (typeof actions.readMore === 'function') actions.readMore({ auxTab: 'task', detailTaskId: id === rootGoal ? null : id, auxPath: null, workOnly: false }); },
+      selArch: (path) => { set({ panel: true, ptab: 'arch', asel: path, aroot: 'SYS', hover: null });
+        if (typeof actions.readMore === 'function') actions.readMore({ auxTab: 'arch', auxPath: null, detailTaskId: null, workOnly: false }); }
+    };
+    const pins = s.pins || [];
+    const pinIt = (kind, id, openIds) => () => {
+      const st = this.state || {};
+      const list = (st.pins || []).filter((p) => !(p.kind === kind && p.id === id)).concat([{ kind: kind, id: id }]).slice(-3);
+      const key = kind === 'task' ? 'open' : 'aopen';
+      const op = Object.assign({}, st[key] || {}); (openIds || []).forEach((x) => { op[x] = true; });
+      set(Object.assign({ pins: list, hover: null, [key]: op }, kind === 'task' ? { sel: id } : { asel: id }));
+    };
+    const noCard = { show: false, x: 0, top: 'auto', bottom: 'auto', sq: 'sq z10', name: '', tx: '', word: '', why: '', path: '', hasPath: false, agent: '', sem: '', hasSem: false,
+      tasks: [], hasTasks: false, more: '', hasMore: false, hint: '' };
+    const auxCardOf = (v, pmap, build) => {
+      const id = s.hover;
+      if (!id || !v.byId[id] || !pmap[id]) return noCard;
+      const row = v.flat.rows.filter((r) => r.id === id)[0];
+      const host = row ? null : v.flat.rows.filter((r) => (r.leaves || []).some((k) => k.id === id))[0];
+      return Object.assign(build(v.byId[id]), this.cardPos(pmap[id], v.flat.height), { hint: this.cardHint(id, row, host, v.sel) });
+    };
+    const qrow = (byId, sqOf, goSel) => (id) => {
+      const n = byId[id];
+      const path = this.crumbsOf(byId, n.parent).filter((c) => c.parent).map((c) => c.name).join(' / ');
+      return { name: n.name, sq: 'sq z8 ' + (n.kids.length ? sqOf(n) : this.sqAt(n.st)), path: path, go: () => goSel(id) };
+    };
+    const wire = (v, map) => {
+      const openKey = map === 'task' ? 'open' : 'aopen'; const selKey = map === 'task' ? 'sel' : 'asel';
+      const selRef = (el) => { if (el) this._selRow = el; }; const noRef = () => {};
+      const selId = (this.state || {})[selKey];
+      /* READS-11: only a task has a detail to read; a stage or goal row (or a
+         deselect) only withdraws a task detail that was read. */
+      const wantDetail = (id) => {
+        const n = id === null ? null : this.auxTaskModel().byId[id];
+        if (n && n.kind === 'task') { this.axReadDetail(id); return; }
+        const a = this.auxData();
+        if (a && a.task && a.task.detailFor !== null) this.axReadDetail(null);
+      };
+      const pickNode = (r) => () => {
+        const st = this.state || {};
+        if (!r.canOpen) { const id = st[selKey] === r.id ? null : r.id; set({ [selKey]: id, hover: null, relHover: null }); if (map === 'task') wantDetail(id); return; }
+        if (!r.open) set({ [selKey]: r.id, [openKey]: Object.assign({}, st[openKey] || {}, { [r.id]: true }), hover: null, relHover: null });
+        else if (st[selKey] === r.id) set({ [openKey]: Object.assign({}, st[openKey] || {}, { [r.id]: false }), hover: null });
+        else set({ [selKey]: r.id, hover: null, relHover: null });
+        if (map === 'task') wantDetail(st[selKey] === r.id && r.open ? null : r.id);
+      };
+      return v.flat.rows.map((r) => {
+        const outRow = Object.assign({}, r);
+        /* the row that holds the selection (its own row, or the comb it sits on) reports its element to revealSel() */
+        outRow.ref = selId && (r.id === selId || (r.leaves || []).some((k) => k.id === selId)) ? selRef : noRef;
+        if (r.isFold) {
+          outRow.pick = () => set({ ofold: Object.assign({}, (this.state || {}).ofold || {}, { [r.foldKey]: true }) });
+          outRow.pin = this.noop; outRow.tab = this.noop; outRow.hover = this.noop;
+          return outRow;
+        }
+        outRow.pick = pickNode(r); outRow.pin = pinIt(map, r.id, r.canOpen ? [r.id] : []); outRow.tab = this.noop;
+        outRow.hover = () => { if ((this.state || {}).hover !== r.id) set({ hover: r.id }); };
+        if (r.leaves) outRow.leaves = r.leaves.map((k) => Object.assign({}, k, {
+          pick: k.isGroup ? () => set({ [selKey]: k.id, [openKey]: Object.assign({}, (this.state || {})[openKey] || {}, { [r.id]: true }), hover: null, relHover: null })
+            : () => set({ [selKey]: (this.state || {})[selKey] === k.id ? null : k.id, hover: null, relHover: null }),
+          pin: pinIt(map, k.id, k.isGroup ? [r.id] : []), tab: this.noop, hover: () => { if ((this.state || {}).hover !== k.id) set({ hover: k.id }); }
+        }));
+        return outRow;
+      });
+    };
+    let tp = null;
+    const tpOpt = { set: set, map: 'task', viewW: this.panelPx(s) - 32, viewH: 750, hasDetail: !!s.sel || pins.some((p) => p.kind === 'task'), detailH: 330,
+      lines: false, at: 'done', ctl: null };
+    let rows = []; let treeCls = 'tree'; let crumbs = []; let card = noCard; let rel = { show: false, d: '', head: '' };
+    let scope = { show: false, empty: false, emptyText: '', emptyAct: '', isWorkShown: false, isWork: false, isAll: false, workCls: 'seg-btn', allCls: 'seg-btn', toWork: this.noop, toAll: this.noop,
+      note: '', hasNote: false, workTip: '', legend: '' };
+    let mapPh = ''; let mapQ = ''; let qNote = ''; let onMapQ = this.noop; let onMapKey = this.noop; let clearQ = this.noop; let hasQClear = false;
+    let qlist = []; let qmore = ''; let det = null; let curRoot = null;
+    if (isTask) {
+      const v = this.taskView(s, s.dens || '标准');
+      tp = this.tpThumb(v, s, tpOpt); v.flat = tp.flat;
+      const byId = v.byId; curRoot = v.root;
+      rows = wire(v, 'task');
+      treeCls = 'tree ' + (v.outline ? 'g-outline outline' : 'g-tree') + (v.flat.focus ? ' focus' : '');
+      const pmap = this.posMap(v.flat, v.outline);
+      card = tp.place(this.tpCard(auxCardOf(v, pmap, (n) => this.taskCard(v.goal, n)), byId[s.hover], tpOpt));
+      if (v.selN && v.selN.kind === 'task' && s.relHover && v.rel.has(s.relHover)) {
+        const isDep = v.selN.deps.indexOf(s.relHover) >= 0;
+        const a = this.posOf(pmap, byId, isDep ? s.relHover : v.sel); const b = this.posOf(pmap, byId, isDep ? v.sel : s.relHover);
+        if (a && b && a !== b) { const p = this.relPath(a, b, v.outline); rel = { show: true, d: p.d, head: p.head }; }
+      }
+      crumbs = v.crumbs.map((c, i, a) => ({ name: c.name, sep: i > 0, cls: 'c' + (i === a.length - 1 ? ' is-on' : ''), go: () => set({ drill: c.kind === 'goal' ? null : c.id, hover: null }) }));
+      mapPh = '查找任务'; mapQ = s.q || '';
+      qNote = v.q ? (v.hits.length ? v.hits.length + ' 个' : s.drill ? '本层没有匹配' : '没有匹配') : '';
+      onMapQ = (e) => set({ q: e && e.target ? e.target.value : '' });
+      onMapKey = (e) => { if (!e) return; if (e.key === 'Enter' && v.hits.length) go.selTask(v.hits[0]); if (e.key === 'Escape') set({ q: '' }); };
+      clearQ = () => set({ q: '' }); hasQClear = !!v.q;
+      qlist = v.q ? tp.qrows(v.hits.slice(0, 6).map(qrow(byId, (n) => this.taskSq(n, 'collapsed', v.goal), (id) => go.selTask(id)))) : [];
+      qmore = v.hits.length > 6 ? '其余 ' + (v.hits.length - 6) + ' 个在图里保持高亮' : '';
+      const detId = v.sel || (pins.filter((p) => p.kind === 'task' && byId[p.id]).slice(-1)[0] || {}).id;
+      if (detId) det = this.tpDetail(this.taskDetail('g1', detId, go, { on: (tid) => set({ relHover: tid }), off: () => { if ((this.state || {}).relHover) set({ relHover: null }); } }), byId[detId], tpOpt);
+    } else if (isArch) {
+      const v = this.archView(s);
+      v.flat = this.archLeafSq(v.flat, v.byId);
+      tp = this.tpThumb(v, s, { set: set, map: 'arch' });
+      const byId = v.byId; curRoot = v.root;
+      rows = wire(v, 'arch');
+      treeCls = 'tree ' + (v.outline ? 'g-outline outline' : 'g-tree') + (v.flat.focus ? ' focus' : '');
+      const pmap = this.posMap(v.flat, v.outline);
+      card = auxCardOf(v, pmap, (n) => this.archCard(v.goal, n));
+      const toScope = (k) => () => set({ ascope: k, hover: null });
+      const ended = !v.deliv;
+      scope = { show: true, isWork: v.work, isAll: !v.work, workCls: 'seg-btn' + (v.work ? ' is-on' : ''), allCls: 'seg-btn' + (v.work ? '' : ' is-on'),
+        toWork: toScope('work'), toAll: toScope('all'),
+        workTip: v.deliv ? '交付还没接受：画出本目标改过的子模块，它们的文件在分支上的小格子里，绿色是改过的'
+          : '只画正在处理的文件的路径；每一层其余的节点折叠成分支上的小格子和一行说明',
+        note: !v.work || !v.nWork ? '' : v.deliv ? '本目标改了 ' + v.nWork + ' 个源码文件，在 ' + v.nWorkMods + ' 个模块' : '正在处理 ' + v.nWork + ' 个文件，在 ' + v.nWorkMods + ' 个模块',
+        hasNote: v.work && v.nWork > 0,
+        empty: v.work && !v.nWork && !v.sel && !v.hits.length, isWorkShown: v.work,
+        emptyText: ended ? '目标已结束，没有正在改的文件。它改过的 ' + v.nChanged + ' 个源码文件在全部里是绿色。'
+          : '现在没有执行中、需要你决定或失败的任务在改文件。',
+        emptyAct: '切到全部看整棵树',
+        legend: v.deliv ? '当前工作（交付）：每个改过的子模块一行，分支上的小格子是它的文件，绿色是改过的；悬停看名字，点一下画出它的路径'
+          : '当前工作：分支上的小格子是这一层其余的节点，悬停看名字和状态，点一下画出它的路径' };
+      crumbs = v.crumbs.map((c, i, a) => ({ name: c.name, sep: i > 0, cls: 'c' + (i === a.length - 1 ? ' is-on' : ''), go: () => set({ aroot: c.id, hover: null }) }));
+      mapPh = '查找模块或文件'; mapQ = s.aq || '';
+      const nFiles = v.hits.filter((h) => !byId[h].kids.length).length;
+      qNote = v.q ? (v.hits.length ? this.fmt(v.hits.length) + ' 个' + (nFiles === v.hits.length ? '文件' : '') : v.root.id !== 'SYS' ? '本层没有匹配' : '没有匹配') : '';
+      onMapQ = (e) => set({ aq: e && e.target ? e.target.value : '' });
+      onMapKey = (e) => { if (!e) return; if (e.key === 'Enter' && v.hits.length) go.selArch(v.hits[0]); if (e.key === 'Escape') set({ aq: '' }); };
+      clearQ = () => set({ aq: '' }); hasQClear = !!v.q;
+      qlist = v.q ? v.hits.slice(0, 6).map(qrow(byId, (n) => this.archSq(n, 'collapsed'), (id) => go.selArch(id))) : [];
+      qmore = v.hits.length > 6 ? '其余 ' + this.fmt(v.hits.length - 6) + ' 个在图里保持高亮' : '';
+      const detId = v.sel || (pins.filter((p) => p.kind === 'arch' && byId[p.id]).slice(-1)[0] || {}).id;
+      if (detId) det = this.archDetail('g1', detId, go);
+    }
+    let detVals = det ? (() => {
+      const kind = det.kind;
+      const pinned = pins.some((p) => p.kind === kind && p.id === det.id);
+      const selKey = kind === 'task' ? 'sel' : 'asel';
+      const acts = [];
+      if (det.group && curRoot && det.id !== curRoot.id) {
+        acts.push({ label: '进入这一层', go: () => set(kind === 'task' ? { drill: det.id, hover: null } : { aroot: det.id, asel: null, hover: null }) });
+      }
+      acts.push({ label: pinned ? '取消固定' : '固定', go: pinned ? () => set({ pins: ((this.state || {}).pins || []).filter((p) => !(p.kind === kind && p.id === det.id)) }) : pinIt(kind, det.id, []) });
+      const model = kind === 'arch' ? this.archModel('g1') : this.taskModel('g1');
+      const others = pins.filter((p) => p.kind === kind && p.id !== det.id && model.byId[p.id]).map((p) => {
+        const n = model.byId[p.id];
+        return { name: n.name, sq: 'sq z8 ' + (n.kids.length ? (kind === 'task' ? this.taskSq(n, 'collapsed', 'g1') : this.archSq(n, 'collapsed')) : this.sqAt(n.st)),
+          go: kind === 'task' ? () => go.selTask(p.id) : () => go.selArch(p.id) };
+      });
+      return Object.assign({}, det, {
+        cls: 'detail', canClose: true, pinned: pinned, hasPins: others.length > 0, pins: others,
+        close: () => set({ [selKey]: null, relHover: null, pins: ((this.state || {}).pins || []).filter((p) => !(p.kind === kind && p.id === det.id)) }), acts: acts
+      });
+    })() : null;
+    if (aux && aux.task && aux.task.det && aux.task.detailFor === s.sel && detVals) {
+      const detData = aux.task.det;
+      const close = detVals.close;
+      detVals = Object.assign({}, detVals, detData, {
+        cls: detVals.cls, canClose: detVals.canClose, pinned: detVals.pinned,
+        hasPins: detVals.hasPins, pins: detVals.pins, acts: detVals.acts,
+        close: () => { close(); if (typeof actions.readMore === 'function') actions.readMore({ detailTaskId: null }); }
+      });
+      detVals.rel = (detData.rel || []).map((group) => Object.assign({}, group, {
+        items: (group.items || []).map((it) => Object.assign({}, it, {
+          go: () => { set({ sel: it.id, hover: null, relHover: null }); this.axReadDetail(it.id); },
+          over: () => set({ relHover: it.id }), out: () => set({ relHover: null })
+        })),
+        files: (group.files || []).map((file) => this.axFileItem(file.full))
+      }));
+      detVals.crumbs = (detVals.crumbs || []).map((crumb) => Object.assign({}, crumb, {
+        go: () => {
+          set({ sel: crumb.id, hover: null });
+          if (typeof actions.readMore === 'function') actions.readMore({ auxTab: 'task', detailTaskId: crumb.id });
+        }
+      }));
+      detVals = this.tpDetail(detVals, this.taskModel('g1').byId[detData.id], { lines: false });
+    }
+    /* ruling 13: the empty states sit in the search box's note; an error note goes first */
+    if (isTask && aux && aux.task && aux.task.tree && !aux.task.tree.kids.length && !qNote) {
+      qNote = '这个目标还没有采用的计划';
+    }
+    if (isArch && aux && aux.arch && aux.arch.tree === null && !qNote) {
+      qNote = '还没有采纳的架构';
+    }
+    if (isTask ? !(aux && aux.task && aux.task.tree) : !(aux && aux.arch && aux.arch.tree)) {
+      rows = [];
+      if (isArch) scope = Object.assign({}, scope, { empty: false });
+      const read = this.props.readState;
+      const none = read && read.status === 'error' ? read.message : '';
+      if (none && !qNote) qNote = none;
+    }
+    if (aux && aux.error && (aux.tab === 'task' || aux.tab === 'arch')) {
+      qNote = aux.error.text;
+    }
+    const isOutlineNow = isArch ? s.aview === 'outline' : s.view === 'outline';
+    Object.assign(out, {
+      isMap: isTask || isArch, tpIsTask: isTask,
+      isTree: !isOutlineNow, isOutline: isOutlineNow,
+      viewTreeCls: 'seg-btn' + (!isOutlineNow ? ' is-on' : ''), viewOutlineCls: 'seg-btn' + (isOutlineNow ? ' is-on' : ''),
+      showTree: () => set(isArch ? { aview: 'tree', hover: null, relHover: null } : { view: 'tree', hover: null, relHover: null }),
+      showOutline: () => set(isArch ? { aview: 'outline', hover: null, relHover: null } : { view: 'outline', hover: null, relHover: null }),
+      tpv: tp ? tp.view : { cls: 'tp-view', x: 0, y: 0, down: this.noop, move: this.noop, up: this.noop, wheel: this.noop },
+      tpb: tp ? tp.bar : { show: false, cls: 'tp-hint', text: '', tip: '', canBack: false, back: this.noop },
+      treeCls: treeCls, rows: rows, rel: rel, card: card, scope: scope,
+      mapPh: mapPh, mapQ: mapQ, onMapQ: onMapQ, onMapKey: onMapKey, hasQNote: !!qNote, qNote: qNote, clearQ: clearQ, hasQClear: hasQClear,
+      hasQList: qlist.length > 0, qlist: qlist, hasQMore: !!qmore, qmore: qmore,
+      legend: !!s.legend, legendCls: 'seg-btn' + (s.legend ? ' is-on' : ''), toggleLegend: () => set({ legend: !(this.state || {}).legend }),
+      hasCrumbs: crumbs.length > 1, crumbs: crumbs,
+      unhover: () => { if ((this.state || {}).hover) set({ hover: null }); },
+      hasDet: !!detVals,
+      det: detVals || { cls: 'detail', sq: 'sq', name: '', tx: '', word: '', why: '', crumbs: [], agent: '', sem: '', rel: [], acts: [], canClose: false, close: this.noop, pinned: false, hasPins: false, pins: [] }
+    });
+    if (out.lv && out.lv.show) out.lv = Object.assign({}, out.lv, { togglePanel: out.togglePanel });
+
+    /* the ax pages are rebuilt from the read: the sample base's file page,
+       command output and Diff rows must not survive (C1). */
+    out.ax = this.axView(Object.assign({}, s, { ptab: panelTab }), { at: '', extra: extra });
+    out.ax.tabs = out.ax.tabs.map((t) => {
+      const x = extra.filter((y) => y.key === t.key)[0];
+      return x ? Object.assign({}, t, { close: () => set({ extra: ((this.state || {}).extra || []).filter((y) => y.key !== x.key), ptab: panelTab === x.key ? x.kind : panelTab }) }) : t;
+    });
+    /* B7c: 文件页签、文件页和引用到草稿还没接通；其余页签照读 */
+    out.ax.tabs = out.ax.tabs.map((t) => (t.key === 'files'
+      ? Object.assign({}, t, { offCls: ' is-off', off: 'true', tip: '还没接通', pick: this.noop })
+      : t));
+    out.ax.newItems = out.ax.newItems.map((m) => (m.label === '文件'
+      ? Object.assign({}, m, { cls: m.cls + ' is-off', off: 'true', tip: '还没接通', go: this.noop })
+      : m));
+    out.ax.hide = () => { set({ panel: false, axMax: false, axNew: false }); if (typeof actions.readMore === 'function') actions.readMore({ auxTab: null }); };
+    out.ax.dOpenShow = false;
+    out.ax.quotes = []; out.ax.hasQuotes = false; out.ax.quoteNote = '';
+    out.ax.qMax = Object.assign({}, out.ax.qMax, { show: false });
+    return out;
   }
 
   /* ------------------------------------------------------------ renderVals */
@@ -3581,7 +4020,7 @@ class Component extends DCLogic {
       headTitle: this.goalInfo()[goal].name, isG1: goal === 'g1', isG2: goal === 'g2', isG3: goal === 'g3',
 
       isChat: (s.pane || 'chat') === 'chat', isTrace: s.pane === 'trace',
-      sampleChat: true, sampleTrace: true, samplePanel: true, panelOff: false,
+      sampleChat: true, sampleTrace: true,
       paneChatCls: 'tab' + ((s.pane || 'chat') === 'chat' ? ' is-on' : ''), paneTraceCls: 'tab' + (s.pane === 'trace' ? ' is-on' : ''),
       showChat: () => set({ pane: 'chat' }), showTrace: () => set({ pane: 'trace', densMenu: false }),
       dens: dens, densMenu: !!s.densMenu, densities: densities, toggleDens: () => set({ densMenu: !(this.state || {}).densMenu }),
@@ -3593,6 +4032,9 @@ class Component extends DCLogic {
       log: (s.log || []).filter((l) => (l.goal || 'g1') === goal).map((l) => ({ isSys: !!l.isSys, isUser: !!l.isUser, isAgent: !!l.isAgent, text: l.text, t: l.t, from: l.from || '', hasFrom: !!l.from, hasIcon: true, noGo: true, goLink: false })),
 
       mainHref: this.props.mainHref || 'Main.dc.html',
+      archHref: this.props.archHref || 'ArchOverview.dc.html',
+      taskMapHref: this.props.taskMapHref || 'TaskMap.dc.html',
+      taskMapTip: '整页的任务图：目标 1 在 10-04 14:15 的依赖图（DAG）、大纲和轨道（还没做完时；这里是 10-06 16:33）',
       gb: gb, dc: dc,
       composerOpen: !dc.show && !gb.confirm,
       composerLabel: redo ? '说说要补做什么' : '发给秘书',
@@ -3784,6 +4226,7 @@ class Component extends DCLogic {
     return o;
   }
   archFileSem() {
+    if (this.dataMode()) return {};
     return {
       'verification-machine.ts': '检查轮次的状态机：判定通过、未通过和检查不完整。',
       'task-machine.ts': '任务的状态机：领取、执行、失败、重新入队与完成。',
@@ -3975,6 +4418,7 @@ class Component extends DCLogic {
 
   /* ------------------------------------------------------------ the shared fake workspace (real paths, short content) */
   axRepo() {
+    if (this.dataMode()) return this.auxRepo();
     if (this._axr) return this._axr;
     const TM = 'src/core/work-graph/state/task-machine.ts'; const AM = 'src/core/work-graph/state/attempt-machine.ts';
     const RC = 'src/core/work-graph/persistence/record-codecs.ts'; const SV = 'src/app/server.ts';
@@ -4057,6 +4501,7 @@ class Component extends DCLogic {
 
   /* the repository's folders and files (from semTreeData, arch-semantic.js), parsed once */
   axTree() {
+    if (this.dataMode()) return this.auxTree();
     if (this._axt) return this._axt;
     const str = this.semTreeData(); let i = 0;
     const parse = (base) => {
@@ -4078,6 +4523,7 @@ class Component extends DCLogic {
   /* the repository's real files and folders (the 文件 tree's data), for "can this path be opened" (axRepo() first: a board
      at another moment may add files to the tree there) */
   axPaths() {
+    if (this.dataMode()) return this.auxPaths();
     this.axRepo();
     if (this._axp) return this._axp;
     const files = new Set(); const dirs = new Set();
@@ -4090,6 +4536,15 @@ class Component extends DCLogic {
   /* a path in a map's detail (文件, 路径) and on node pages (markup: .d-fline): a file opens its page in the auxiliary area,
      a folder opens 文件 at it, a changed file also offers 看 Diff; a path not in the repository (a planned file) stays text */
   axFileItem(path) {
+    if (this.dataMode()) {
+      /* 文件页归 Astra 的 B7c：本批路径画成字；“看 Diff”照 Main 留着 */
+      const P = this.axPaths();
+      const isFile = P.known ? P.files.has(path) : false;
+      const changed = isFile && this.axRepo().changed.some((f) => f.path === path);
+      const a = String(path).split('/'); const noop = () => {};
+      return { full: path, parts: a.map((x, i) => (i < a.length - 1 ? x + '/' : x)), canOpen: false, cantOpen: true, open: noop,
+        tip: '还没接通', hasDiff: changed, diff: changed ? () => this.axOpenDiff(path) : noop };
+    }
     const P = this.axPaths(); const isFile = P.files.has(path); const isDir = !isFile && P.dirs.has(path);
     const changed = isFile && this.axRepo().changed.some((f) => f.path === path);
     const a = String(path).split('/'); const noop = () => {};
@@ -4107,6 +4562,7 @@ class Component extends DCLogic {
   axOpenDiff(path) {
     const st = this.state || {};
     this.setState({ axTabs: (st.axTabs || []).indexOf('diff') >= 0 ? st.axTabs : (st.axTabs || []).concat(['diff']), ptab: 'diff', axDiff: path, axCmp: null, axNew: false, panel: true, hover: null });
+    if (this.dataMode()) this.axRead('diff');
   }
   axRevealDir(path) {
     const st = this.state || {};
@@ -4138,7 +4594,8 @@ class Component extends DCLogic {
     o = o || {}; const at = o.at || '14:15';
     const repo = this.axRepo(); const ptab = s.ptab || 'task';
     const noop = () => {};
-    const go = (key) => set({ ptab: key, axNew: false, hover: null });
+    const actions = this.props.actions || {};
+    const go = (key) => { set({ ptab: key, axNew: false, hover: null }); if (this.dataMode()) this.axRead(key); };
     /* ---- tabs */
     const toolName = { files: '文件', cmd: '命令', diff: 'Diff' };
     /* a second (third …) 命令 page is 'cmd:2' (…): its own runs and output, named 命令 2, so several terminals tell apart */
@@ -4153,6 +4610,7 @@ class Component extends DCLogic {
       else patch.extra = (c.extra || []).filter((y) => y.key !== key);
       if ((c.ptab || 'task') === key) patch.ptab = 'task';
       set(patch);
+      if (this.dataMode() && patch.ptab === 'task') this.axRead('task');
     };
     /* file pages with the same name (src/app/main.ts, src/ui/main.ts) get the shortest parent that tells them apart, in
        front ("app/main.ts" / "ui/main.ts": under the strip's name cap the part that differs is the part that stays);
@@ -4182,13 +4640,13 @@ class Component extends DCLogic {
     const newItems = [['files', '文件'], ['cmd', '命令'], ['diff', 'Diff']].map((p) => {
       const open = (s.axTabs || []).indexOf(p[0]) >= 0;
       return { label: p[1], open: open, cls: 'menu-item' + (open ? ' is-on' : ''),
-        go: () => { const c = cur(); set({ axTabs: open ? c.axTabs : (c.axTabs || []).concat([p[0]]), ptab: p[0], axNew: false, panel: true }); } };
+        go: () => { const c = cur(); set({ axTabs: open ? c.axTabs : (c.axTabs || []).concat([p[0]]), ptab: p[0], axNew: false, panel: true }); if (this.dataMode()) this.axRead(p[0]); } };
     });
     /* with 命令 open, + also opens another 命令 page (the next free number) */
     if ((s.axTabs || []).indexOf('cmd') >= 0) {
       const used = (s.axTabs || []).map(cmdN); let nx = 2; while (used.indexOf(nx) >= 0) nx += 1;
       newItems.splice(2, 0, { label: '再开一个命令页（命令 ' + nx + '）', open: false, cls: 'menu-item',
-        go: () => { const c = cur(); set({ axTabs: (c.axTabs || []).concat(['cmd:' + nx]), ptab: 'cmd:' + nx, axNew: false, panel: true }); } });
+        go: () => { const c = cur(); set({ axTabs: (c.axTabs || []).concat(['cmd:' + nx]), ptab: 'cmd:' + nx, axNew: false, panel: true }); if (this.dataMode()) this.axRead('cmd:' + nx); } });
     }
     /* ---- dividers: pointer drag (captured on the handle) and keyboard arrows. The widths stay unset (railW / panelW
        null: the shell keeps the CSS widths of each window size, 232 / 480 and 208 / 420 at ≤ 1240px) until you drag a
@@ -4313,8 +4771,31 @@ class Component extends DCLogic {
     }
     /* ---- commands */
     const cmdKey = (id) => (cmdN(ptab) ? ptab + '/' + id : id);   /* 命令 keeps the old keys; 命令 2 … key by page */
+    const cmdData = this.dataMode() && this.auxData() ? this.auxData().commands : null;
     const cmds = repo.cmds.map((c0) => {
       const ck = cmdKey(c0.id);
+      if (cmdData) {
+        /* 121-147：读到数据时这一行只记 `shown`；视图取运行表里的，
+           本页还没运行过这一行时取未运行的视图。 */
+        const st = (s.axCmd || {})[ck] || { shown: false };
+        const view = cmdData.runs[ck] || cmdData.idle;
+        const upd = (p) => { const all = Object.assign({}, cur().axCmd || {}); all[ck] = Object.assign({}, all[ck] || { shown: false }, p); set({ axCmd: all }); };
+        const runOff = cmdData.allowed ? 'false' : 'true';
+        const runTip = cmdData.allowed ? '' : '这个工作区没有开“跑命令”的授权';
+        const hasOut = view.out !== '';
+        const runFailed = (e) => set({ err: String(e && e.message ? e.message : e) });
+        const starting = st.starting === true;
+        return { id: c0.id, name: c0.name, line: c0.line,
+          word: starting ? '正在启动' : view.word, dot: starting ? 'dot s-running' : view.dot,
+          canRun: !starting && (view.phase === 'idle' || view.phase === 'ended'), canCancel: view.phase === 'running',
+          runLabel: view.phase === 'idle' ? '运行' : '再运行', runOff: runOff, runTip: runTip,
+          run: () => { if (!cmdData.allowed) return; upd({ starting: true }); Promise.resolve(actions.runCommand(ck, { command: c0.command, cwd: c0.cwd, timeoutMs: c0.timeoutMs })).then(() => upd({ shown: true, starting: false })).catch((e) => { upd({ starting: false }); runFailed(e); }); },
+          cancel: () => { Promise.resolve(actions.stopCommand(ck)).catch(runFailed); },
+          hasOut: hasOut, shown: hasOut && !!st.shown, kept: hasOut && !st.shown,
+          keptText: '输出已隐藏，仍然保留（' + view.outLines + ' 行）',
+          toggleLabel: st.shown ? '隐藏输出' : '显示输出', toggle: () => upd({ shown: !st.shown }),
+          out: view.out, outLines: view.outLines };
+      }
       const st = (s.axCmd || {})[ck] || { st: 'idle', shown: false, n: 0 };
       const upd = (p) => { const all = Object.assign({}, cur().axCmd || {}); all[ck] = Object.assign({}, all[ck] || { st: 'idle', shown: false, n: 0 }, p); set({ axCmd: all }); };
       const hasOut = st.st !== 'idle';
@@ -4328,23 +4809,46 @@ class Component extends DCLogic {
     });
     /* ---- diff: Git ↔ working tree, or (from a conflict) the disk ↔ your draft */
     const cmpPath = s.axCmp && repo.files[s.axCmp] && repo.files[s.axCmp].disk ? s.axCmp : null;
-    const dfiles = repo.changed.map((f) => ({ path: f.path, name: f.path.split('/').pop(), dir: f.path.split('/').slice(0, -1).join('/'), add: '+' + f.add, del: '−' + f.del,
-      cls: 'frow d0' + (!cmpPath && s.axDiff === f.path ? ' is-on' : ''), go: () => set({ axDiff: f.path, axCmp: null }) }));
+    const dfiles = repo.changed.map((f) => ({ path: f.path, name: f.path.split('/').pop(), dir: f.path.split('/').slice(0, -1).join('/'),
+      add: f.add === null ? '' : '+' + f.add, del: f.del === null ? '' : '−' + f.del,
+      cls: 'frow d0' + (!cmpPath && s.axDiff === f.path ? ' is-on' : ''),
+      go: () => { set({ axDiff: f.path, axCmp: null }); if (this.dataMode()) this.axRead('d:' + f.path); } }));
     let drows = []; let dnote = ''; let dhead = ''; let dPath = null;
     if (cmpPath) {
       const F = repo.files[cmpPath]; const mine = ((s.axDraft || {})[cmpPath] !== undefined ? s.axDraft[cmpPath].split('\n') : F.lines);
       dhead = F.disk.by + ' ' + F.disk.at + ' 写到磁盘的版本 ↔ 你的草稿 · ' + cmpPath.split('/').pop() + ' 第 ' + F.from + ' 行起';
       drows = [{ hunk: true, line: false, text: '@@ 第 ' + F.from + ' 行起 · 磁盘 ↔ 草稿', cls: 'dl-hunk' }].concat(this.axLineDiff(F.disk.lines, mine, F.from).map((r) => ({ hunk: false, line: true, cls: 'dl-row' + (r[0] === '+' ? ' is-add' : r[0] === '-' ? ' is-del' : ''), sign: r[0] === ' ' ? '' : r[0] === '-' ? '−' : '+', o: r[1] === null ? '' : String(r[1]), n: r[2] === null ? '' : String(r[2]), text: r[3] })));
     } else {
-      const f = repo.changed.filter((x) => x.path === s.axDiff)[0] || repo.changed[0]; dPath = f.path;
-      dhead = 'Git（HEAD）↔ 工作区 · ' + f.path.split('/').pop() + ' · +' + f.add + ' −' + f.del + (f.by ? ' · ' + f.by : '');
-      f.hunks.forEach((h) => {
+      const f = repo.changed.filter((x) => x.path === s.axDiff)[0] || repo.changed[0] || null;
+      if (f) { dPath = f.path;
+        dhead = 'Git（HEAD）↔ 工作区 · ' + f.path.split('/').pop() + (f.add === null ? '' : ' · +' + f.add + ' −' + f.del) + (f.by ? ' · ' + f.by : '');
+      }
+      if (f) f.hunks.forEach((h) => {
         drows.push({ hunk: true, line: false, text: h.head, cls: 'dl-hunk' });
         let o2 = h.oldAt; let n2 = h.newAt;
         h.rows.forEach((r) => { const row = { hunk: false, line: true, cls: 'dl-row' + (r[0] === '+' ? ' is-add' : r[0] === '-' ? ' is-del' : ''), sign: r[0] === ' ' ? '' : r[0] === '-' ? '−' : '+', o: r[0] === '+' ? '' : String(o2), n: r[0] === '-' ? '' : String(n2), text: r[1] };
           if (r[0] !== '+') o2 += 1; if (r[0] !== '-') n2 += 1; drows.push(row); });
       });
-      if (!f.hunks.length) dnote = (f.note ? f.note + '；' : '') + '逐行内容在原型里没有收录。';
+      if (f && !f.hunks.length) dnote = (f.note ? f.note + '；' : '') + '逐行内容在原型里没有收录。';
+      if (this.dataMode() && ptab === 'diff') {
+        const aux = this.auxData();
+        const view = aux && aux.diff ? aux.diff.view : null;
+        const checked = this.auxCheckedNote().replace(/^ · /, '');
+        if ((aux && aux.error && aux.tab === 'diff') || f === null) {
+          /* READS-3/SPEC-16: a failed Diff read writes its text here, never 还没接通 over an empty list */
+          dnote = this.auxFileNote(repo);
+          drows = [];
+        } else if (view !== null && view.path === f.path && view.hunks !== null) {
+          dnote = view.note === '' ? checked : checked === '' ? view.note : view.note + ' · ' + checked;
+        } else if (view !== null && view.path === f.path) {
+          dnote = view.note + this.auxCheckedNote();
+          drows = [];
+        } else {
+          /* 点行后的读还没回来：不画旧行、不写旧注 */
+          dnote = '';
+          drows = [];
+        }
+      }
     }
     /* ---- quotes in the composer */
     const quotes = (s.quotes || []).map((q) => ({ id: q.id, path: q.path, lines: q.a === null ? '整个文件' : q.a === q.b ? '第 ' + q.a + ' 行' : '第 ' + q.a + '–' + q.b + ' 行',
@@ -4358,10 +4862,18 @@ class Component extends DCLogic {
       tabs: tabs, isFiles: ptab === 'files', isCmd: isCmdTab, isDiff: ptab === 'diff', isFile: !!fp, isTool: ptab === 'files' || isCmdTab || ptab === 'diff' || !!fp,
       newOpen: !!s.axNew, toggleNew: () => set({ axNew: !cur().axNew }), newItems: newItems,
       maxLabel: s.axMax ? '还原右栏' : '放大右栏', isMax: !!s.axMax, notMax: !s.axMax, toggleMax: () => set({ axMax: !cur().axMax, panel: true }),
-      hide: () => set({ panel: false, axMax: false, axNew: false }),
-      fileRows: rows, fileNote: 'coding-platform · 分支 feat/reliability-and-structure · 改动 ' + repo.changed.length + ' 个文件',
+      hide: () => { set({ panel: false, axMax: false, axNew: false }); if (this.dataMode()) actions.readMore({ auxTab: null }); },
+      fileRows: rows, fileNote: this.dataMode() ? this.auxFileNote(repo)
+        : 'coding-platform · 分支 feat/reliability-and-structure · 改动 ' + repo.changed.length + ' 个文件',
       fp: fp || { rows: [], parts: [] },
-      cmds: cmds, cmdNote: '命令在 Host 的工作区里运行；这里不是终端，没有输入。',
+      cmds: cmds, cmdNote: this.dataMode()
+        ? (() => { const aux = this.auxData(); if (aux && aux.error) return aux.error.text;
+          const cmd = aux && aux.commands;
+          if (!cmd) return '';   /* 命令页还没读到（切页签的那一下）：什么都不写，同 auxFileNote */
+          if (!cmd.rows.length) return '这个工作区还没有登记的检查命令。初始化或采用计划时批准的检查，会列在这里。';
+          if (!cmd.allowed) return '这个工作区没有开“跑命令”的授权：命令能看，不能在这里运行。';
+          return '命令在 Host 的工作区里运行；这里不是终端，没有输入。'; })()
+        : '命令在 Host 的工作区里运行；这里不是终端，没有输入。',
       dfiles: dfiles, drows: drows, dhead: dhead, dnote: dnote, hasDnote: !!dnote, isCmp: !!cmpPath, backToGit: () => set({ axCmp: null }),
       /* Diff's head: the file shown in Git ↔ 工作区 opens as its page (from Main's review) */
       dOpenShow: ptab === 'diff' && !!dPath, dOpen: () => { if (dPath) this.axOpenFile(dPath); }, dOpenTip: dPath ? '在文件页里打开 ' + dPath : '',

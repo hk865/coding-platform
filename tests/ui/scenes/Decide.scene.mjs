@@ -59,17 +59,90 @@ const recoveryOf = (noticeId) => (noticeId === CONFLICT_NOTICE
   ? structuredClone(CONFLICT_RECOVERY)
   : structuredClone(HAVE.routes['knowledge/recovery-items']));
 
+/** 两页读同样的候选形状，各自保有自己的目标版本和写入结果。 */
+export function candidateScene(goalPin, workspaceId, conflictOnFirstAdoption = false) {
+  const subject = { kind: 'goal', goalRef: goalPin.ref };
+  const entries = ['candidate', 'stale'].map((status, index) => {
+    const ref = { aggregateType: 'PlanProposal', projectId: goalPin.ref.projectId, workspaceId,
+      proposalId: 'scene-check-reports-' + status };
+    const cardKey = JSON.stringify({ kind: 'candidate', goalRef: goalPin.ref, proposalRef: ref });
+    const revision = index + 2;
+    const pins = [goalPin, { ref, revision }, { ref: { aggregateType: 'PlanRevision',
+      projectId: ref.projectId, planId: 'scene-previous-plan' }, revision: 1 }];
+    const card = { cardKey, subject, source: { kind: 'candidate', key: cardKey, subject, pins }, state: 'waiting_answer',
+      requestRef: null, objects: [], options: [], answer: null, application: null, openedAt: null,
+      taskRef: null, runRef: null, readOnly: false, candidateStatus: status, staleReason: index ? '来源已撤回' : null,
+      actions: ['answer', index ? 'regenerate' : 'adopt', 'abandon'],
+      proposedChecks: [{ checkId: 'report-check', command: 'npm run check:reports' }] };
+    const draft = { stages: [{ stageId: 'reports', title: '报告' }], obligations: [],
+      tasks: [{ stageId: 'reports', taskId: 'report-check', title: '核对报告目录' }] };
+    const proposal = { ref, revision, status: 'candidate', draft,
+      reason: { text: index ? '原先要求把报告移回旧目录。' : '报告已经移到新目录，需要一起更新检查。' } };
+    return { card, proposal };
+  });
+  return {
+    waiting: () => entries.filter((entry) => entry.proposal.status === 'candidate').map((entry) => entry.card),
+    reply(route, input) {
+      const ref = route === 'plans/proposal' ? input : input?.proposalRef;
+      const entry = entries.find(({ proposal }) => proposal.ref.proposalId === ref?.proposalId);
+      if (!entry) return undefined;
+      const { card, proposal } = entry;
+      if (route === 'plans/proposal') return { status: 'ready', value: proposal };
+      if (route === 'decisions/candidate-card') return { status: 'ready', value: { card,
+        diagnosis: [], exactReview: { status: 'ready', value: { status: 'decided', verdict: 'pass', findings: [] } },
+        exportRead: { status: 'ready', stages: [{ state: 'written', path: 'reports/任务书.md' }] },
+        standardChange: { status: 'ready', value: null } } };
+      if (route !== 'plans/apply' && route !== 'plans/abandon') return undefined;
+      if (route === 'plans/apply' && conflictOnFirstAdoption) {
+        conflictOnFirstAdoption = false;
+        return { status: 'rejected', code: 'revision_conflict', reason: 'the plan changed' };
+      }
+      proposal.status = route === 'plans/apply' ? 'accepted' : 'not_adopted';
+      return committedAnswer(proposal);
+    },
+  };
+}
+
+const firstStop = HAVE.routes['decisions/queue'].value.waitingAnswer[0];
+const goalPin = firstStop.source.pins.find((pin) => pin.ref.aggregateType === 'Goal');
+const candidates = candidateScene(goalPin, HAVE.routes.bootstrap.workspaces[0].scope.workspaceId, true);
+const interruptKey = 'scene-interrupted_pending_resume';
+const interrupted = { ...firstStop, cardKey: interruptKey, taskRef: null, runRef: null, objects: [],
+  source: { ...firstStop.source, key: interruptKey, pins: [goalPin] } };
+/** 截图可复用的有话状态。草稿由输入事件产生，只写在当前打开的停止卡上。 */
+export async function fillStopNote(page) {
+  await page.locator('#dc-answer').fill('报告改到 reports/');
+}
+
+const oldConflict = HAVE.routes['decisions/queue'].value.answeredPendingApplication[0];
+const conflictKey = 'scene-wait-for-earlier-goal';
+const conflict = { ...oldConflict, cardKey: conflictKey, source: { ...oldConflict.source, key: conflictKey },
+  state: 'waiting_answer', actions: ['answer'], answer: null, application: null, answerMessageRef: null };
+let conflictAnswer = null;
+
 export const scene = {
   now: HAVE.now,
   routes: HAVE.routes,
   reply(route, input, body) {
     const winput = body && body.request ? body.request.input : (input ?? null);
+    const candidate = candidates.reply(route, winput);
+    if (candidate !== undefined) return candidate;
     if (route === 'decisions/queue') {
       const queue = structuredClone(HAVE.routes['decisions/queue']);
+      queue.value.waitingAnswer.push(...candidates.waiting(), interrupted);
+      if (conflictAnswer === null) queue.value.waitingAnswer.push(conflict);
+      else if (conflictAnswer.state === 'applied') queue.value.history.unshift(conflictAnswer);
+      else queue.value.answeredPendingApplication.unshift(conflictAnswer);
       if (S.answered.size > 0) {
         queue.value.waitingAnswer = queue.value.waitingAnswer.filter((card) => !S.answered.has(card.cardKey));
       }
       if (S.seen) queue.value.notices = queue.value.notices.filter((notice) => !NOTICE_KEYS.includes(notice.itemKey));
+      queue.value.counts.waitingAnswer = queue.value.waitingAnswer.length;
+      queue.value.counts.answeredPendingApplication = queue.value.answeredPendingApplication.length;
+      if (input?.sections?.includes('history')) {
+        queue.value.waitingAnswer = [];
+        queue.value.notices = [];
+      }
       return queue;
     }
     if (route === 'knowledge/recovery-items') {
@@ -82,6 +155,13 @@ export const scene = {
     }
     if (route === 'decisions/answer') {
       const key = winput && winput.source ? winput.source.key : '';
+      if (key === conflictKey) {
+        const applied = conflictAnswer !== null;
+        conflictAnswer = { ...conflict, state: applied ? 'applied' : 'answered_pending_application',
+          answer: { decision: { selection: winput.selection }, respondedAt: HAVE.now, bodyRef: null },
+          actions: [], readOnly: true };
+        return { status: 'ready', value: { answer: committedAnswer(), state: applied ? 'applied' : 'application_not_recorded' } };
+      }
       S.answered.add(key);
       return { status: 'committed', value: { answer: { status: 'committed' } } };
     }

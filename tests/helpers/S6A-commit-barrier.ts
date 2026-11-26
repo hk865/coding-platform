@@ -28,6 +28,19 @@
  *     matching commit runs at once, `reached` resolves after the real commit
  *     has answered, and the caller gets that real receipt (or throw) unchanged
  *     only after `release()`. A pre-commit `hold` never stands in for it.
+ *   - `releasedCommitCheck`: a wrapper outside the barrier that must look at a
+ *     `hold`'s commit once more when the hold lets it go (the S6A host world's
+ *     crash stop, tests/helpers/S6A-host-fixture.ts; FLK rework ruling 5) runs
+ *     the commit inside `releasedCommitCheck.run(check, …)`. After `release()`
+ *     and before the real commit, the held commit calls `check`; a throw
+ *     refuses it there and the caller gets that throw. A `holdAfter` commit
+ *     has already run when it is held, so it never calls `check`.
+ *   - `onHeld(listener)`: the listener is called, in the held commit's own
+ *     async context, each time a commit starts waiting at a `hold` or a
+ *     `holdAfter`, with a probe that answers true until that hold is
+ *     released (the S6A host world uses it to tell a Kernel run held at a
+ *     named hold; FLK rework ruling 6). It returns the call that removes the
+ *     listener; `reset()` leaves listeners in place.
  *   - A commit that no open hold matches goes straight to the real commit,
  *     also while another commit is held.
  *   - `failReads(refKey, effect)` → `{ calls, release }`. Every `readMany` that
@@ -38,6 +51,14 @@
  *   - `failCommitOnce(match)` → `{ release }`. The first matching commit throws
  *     an I/O error instead of reaching the store, so it does not land; every
  *     other commit is the real one.
+ *   - `failCommitLandLater(match)` → `{ land }`. The first matching commit
+ *     throws the same I/O error to its caller, but the barrier keeps it:
+ *     `land()` runs it on the real store then and answers the real receipt
+ *     (a write that lands after its caller was told it failed).
+ *   - `watch(match)` → `{ commits }`. Counts without changing anything: every
+ *     commit `match` accepts that reaches the barrier from then on (failed,
+ *     held or straight through) is kept as a copy, in arrival order, until
+ *     `reset()` forgets the watch.
  *   - `reset()` releases every held commit, forgets every hold, disarms every
  *     fault and returns the labels of the holds that were still unreleased
  *     (`[]` when the test released everything). Call it before closing the
@@ -84,6 +105,7 @@
  * platform's, and any a helper builds directly); without a hold or a fault
  * they behave exactly as the real ones.
  */
+import { AsyncLocalStorage } from 'node:async_hooks';
 import type {
   GoalRecordTransactionPort, PreparedCommit, StoreCommitReceipt,
 } from '../../src/core/record-store/ports.js';
@@ -94,6 +116,9 @@ type InMemoryModule = typeof import('../../src/core/record-store/in-memory-recor
 type SqliteModule = typeof import('../../src/core/record-store/sqlite-record-store.js');
 
 export type CommitMatch = (commit: PreparedCommit) => boolean;
+
+/** The check a `hold`'s commit runs after its release and before the real commit (see the header). */
+export const releasedCommitCheck = new AsyncLocalStorage<() => void>();
 
 export type CommitHold = {
   /** Resolves with a copy of the held prepared commit once one matches (after it ran, for `holdAfter`). */
@@ -108,6 +133,15 @@ type ReadFault = { calls(): number; release(): void };
 /** A one-shot commit fault; `release()` disarms it if it has not fired. */
 type CommitFault = { release(): void };
 
+type RealCommit = (input: PreparedCommit) => Promise<StoreCommitReceipt>;
+
+/** `failCommitLandLater`: the failed commit, kept until `land()` runs it on the real store. */
+type LateCommit = { land(): Promise<StoreCommitReceipt> };
+
+/** `watch`: copies of the matching commits that reached the barrier, in arrival order. */
+type CommitWatch = { commits(): PreparedCommit[] };
+type WatchEntry = { readonly match: CommitMatch; readonly seen: PreparedCommit[] };
+
 type HoldEntry = {
   readonly label: string;
   readonly match: CommitMatch;
@@ -121,13 +155,27 @@ type HoldEntry = {
 };
 
 type ReadFaultEntry = { readonly refKey: string; readonly always: boolean; calls: number; released: boolean };
-type CommitFaultEntry = { readonly match: CommitMatch; readonly afterCommit: boolean; fired: boolean; released: boolean };
+type CommitFaultEntry = { readonly match: CommitMatch; readonly afterCommit: boolean; fired: boolean; released: boolean;
+  /** `failCommitLandLater`: keeps the failed commit for `land()`. */
+  readonly keep?: (commit: PreparedCommit, real: RealCommit) => void };
 
 export class CommitBarrier {
   private entries: HoldEntry[] = [];
   private readFaults: ReadFaultEntry[] = [];
   private commitFaults: CommitFaultEntry[] = [];
+  private watches: WatchEntry[] = [];
   private created = 0;
+  private readonly heldListeners = new Set<(holding: () => boolean) => void>();
+
+  /** Hear each commit that starts waiting at a hold, in that commit's async context (see the header). */
+  onHeld(listener: (holding: () => boolean) => void): () => void {
+    this.heldListeners.add(listener);
+    return () => { this.heldListeners.delete(listener); };
+  }
+
+  private heard(entry: HoldEntry): void {
+    for (const listener of this.heldListeners) listener(() => !entry.released);
+  }
 
   /** Hold the first commit `match` accepts until `release()`; `label` names it in reports. */
   hold(match: CommitMatch, label?: string): CommitHold {
@@ -172,6 +220,26 @@ export class CommitBarrier {
     return this.addCommitFault(match, true);
   }
 
+  /**
+   * Fail the first commit `match` accepts before it reaches the store, as `failCommitOnce` does, and keep it: `land()`
+   * runs it on the real store then (waiting until it has failed) and answers the real receipt.
+   */
+  failCommitLandLater(match: CommitMatch): LateCommit {
+    let keep!: (commit: PreparedCommit, real: RealCommit) => void;
+    const kept = limitHold(new Promise<{ commit: PreparedCommit; real: RealCommit }>(resolve => {
+      keep = (commit, real) => resolve({ commit, real });
+    }), 'S6A commit barrier: the commit failCommitLandLater keeps');
+    this.commitFaults.push({ match, afterCommit: false, fired: false, released: false, keep });
+    return { land: async () => { const { commit, real } = await kept; return real(commit); } };
+  }
+
+  /** Keep a copy of every commit `match` accepts that reaches the barrier from now on (failed, held or not). */
+  watch(match: CommitMatch): CommitWatch {
+    const entry: WatchEntry = { match, seen: [] };
+    this.watches.push(entry);
+    return { commits: () => [...entry.seen] };
+  }
+
   private addCommitFault(match: CommitMatch, afterCommit: boolean): CommitFault {
     const entry: CommitFaultEntry = { match, afterCommit, fired: false, released: false };
     this.commitFaults.push(entry);
@@ -188,7 +256,7 @@ export class CommitBarrier {
     if (left.length > 0) throw new Error(`S6A commit barrier: holds left unreleased: ${left.join(', ')}`);
   }
 
-  /** Release every held commit, forget every hold and fault; returns the hold labels that were still unreleased. */
+  /** Release every held commit, forget every hold, fault and watch; returns the hold labels that were still unreleased. */
   reset(): string[] {
     const left = this.unreleased();
     for (const entry of this.entries) { entry.released = true; entry.open(); }
@@ -196,6 +264,7 @@ export class CommitBarrier {
     this.entries = [];
     this.readFaults = [];
     this.commitFaults = [];
+    this.watches = [];
     this.created = 0;
     return left;
   }
@@ -215,6 +284,7 @@ export class CommitBarrier {
   /** The wrapped `records.commit` body: fail or hold a matching commit, otherwise run the real one. */
   async pass(input: PreparedCommit, real: (input: PreparedCommit) => Promise<StoreCommitReceipt>):
     Promise<StoreCommitReceipt> {
+    for (const watch of this.watches) if (watch.match(input)) watch.seen.push(structuredClone(input));
     const fault = this.commitFaults.find(candidate => !candidate.released && !candidate.fired && candidate.match(input));
     if (fault !== undefined) {
       fault.fired = true;
@@ -222,6 +292,7 @@ export class CommitBarrier {
         await real(input);
         throw new Error('S6A commit barrier: injected commit result loss after the commit');
       }
+      fault.keep?.(structuredClone(input), real);
       throw new Error('S6A commit barrier: injected commit I/O failure');
     }
     const entry = this.entries.find(candidate => !candidate.matched && candidate.match(input));
@@ -234,11 +305,14 @@ export class CommitBarrier {
       const answer = real(held);
       await answer.catch(() => undefined);
       entry.resolveReached(structuredClone(held));
+      this.heard(entry);
       await entry.gate;
       return answer;
     }
     entry.resolveReached(structuredClone(held));
+    this.heard(entry);
     await entry.gate;
+    releasedCommitCheck.getStore()?.();
     return real(held);
   }
 }

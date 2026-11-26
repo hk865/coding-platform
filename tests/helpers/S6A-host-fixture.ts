@@ -25,7 +25,8 @@
  *   entry, `src/core/agent-runtime/observed-model-run.ts`), installed while a host world is open. It forwards the
  *   real call unchanged inside an async context naming the run's Kernel Session, which the router reads; it is
  *   also where gate (d) and the tool holds sit, and it injects the Runner's no-op retry wait (`retryDelay`) so a
- *   real-Host row with retryable failures does not sit out the production 2/4/8/16 s.
+ *   real-Host row with retryable failures does not sit out the production 2/4/8/16 s. It also registers each run
+ *   (its Host and run id) until the run returns, for the crash check below (FLK rework ruling 6).
  * - Gates (rule sheet A3: each holds one real step and then lets it go on unchanged), independent per Session:
  *   (a) the claim commit of a Query on a Session (`r5b-query-execution:claimed:`), so after an `assigned` commit
  *   the round is not yet claimed; (b) the bind-prepared commit (`…:prepared:`), so the round is claimed and not yet
@@ -44,16 +45,28 @@
  *   still the world's live one, so after a crash or a reopen a gate not reached yet never catches a step of the new
  *   Host (or of the abandoned one). A step that already arrived stays held until its gate is released.
  * - Crash and restart (SQLite; rule sheet A2 v3, the `restart({ crash: true })` shape of tests/scenarios/harness.ts):
- *   `crash()` abandons the running Host (no `close`; it keeps whatever it holds), rewrites the lock to an exited
- *   process (`writeStaleLock`) and starts a new Host on the same directory through the base world's `reopen`.
- *   A peer start (`crash({ keepLease: true })`) skips the stale-lock write: the abandoned Host's live lock still
- *   names this process, and the new Host starts `held_by_other` (HL-02, a second workbench on one data directory).
- *   The abandoned Host is closed only by `close()`, after every gate of the world is released. Call `crash()` only
- *   while nothing of the old Host runs on (the rule of tests/scenarios/harness.ts:32; an entered commit of the old
- *   Host keeps waiting at its gate, as at :1068): the abandoned Host keeps its in-memory lease and drivers, and a
- *   held step stops that step only, not the Host's other loops (the request driver is off unless the world's
- *   `extraHostOptions` name `requestDriver: 'on'`, see the base world). A Host with a wake loop of its own is not stopped by
- *   holding one Session's step.
+ *   `crash()` stops the running Host's writes, abandons it (no `close`; it keeps whatever it holds), rewrites the lock
+ *   to an exited process (`writeStaleLock`) and starts a new Host on the same directory through the base world's
+ *   `reopen`. A crashed process writes nothing more: every record store the Host built at its start fails each commit that
+ *   arrives after the crash with an I/O error (`stopsAtCrash`; one already under way goes on), so the old Host's
+ *   timers, drivers and late steps stop at their next write, a request still open on it ends with that failure as
+ *   a dead process's would, and the new Host alone moves the records the row reads. Its artifact body store (the
+ *   bodies the ledger points into, `src/composition/create-platform.ts:1289`) fails each put after the crash the same
+ *   way (`bodiesStopAtCrash`). A step held at a gate stays held (its commit arrived before the crash); a commit held at
+ *   a `before` hold of the commit barrier is looked at once more when the row lets it go and is refused then too
+ *   (FLK rework ruling 5), while a `holdAfter` commit has already landed and keeps its result. A row that races the
+ *   old Host's held commit against the new Host's write on purpose says so with `crash({ heldCommitsRace: true })`:
+ *   the commits the old Host had held before the crash then reach the store on release and production's
+ *   compare-and-swap decides between the two writers (the S7B2-R two-version race). A write stop cannot stop a Kernel
+ *   run the old Host had entered and not held, so the row crashes only once that run has ended or while a gate of
+ *   the row holds it (the rule of tests/scenarios/harness.ts:32): `crash()` first looks at the Kernel runs the
+ *   Kernel entry registered, and if one of this Host's is still going and no gate holds it (the Kernel entry,
+ *   model and tool gates, or a commit-barrier hold or K3 tool seam its own step waits at), it throws naming the
+ *   cell, the Host and the run, and crashes nothing (FLK rework ruling 6).
+ *   A peer start (`crash({ keepLease: true })`) is no crash of the old Host: it keeps running as the lease holder (its
+ *   live lock still names this process), its writes are not stopped, and the new Host starts `held_by_other` (HL-02,
+ *   a second workbench on one data directory). The abandoned Host is closed only by `close()`, after every gate of
+ *   the world is released.
  * - The Host setting `automation.resumeOnStartup` through its route `automation/save` (takes effect at the next
  *   start). A person's prompt pack through PC-2's routes: `prompts/packs/create`, `prompts/templates/read|save`,
  *   and the selection `models/save` with `promptPack` + `models/select` on a model of the Host's own catalog
@@ -72,13 +85,17 @@
  * Session field is written by hand and nothing is asserted by reading the store.
  */
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { dirname, join } from 'node:path';
-import { vi } from 'vitest';
+import { realpathSync } from 'node:fs';
+import { basename, dirname, join } from 'node:path';
+import { expect, vi } from 'vitest';
 import * as kernelModule from '../../vendor/coding-agent/dist/public-api.js';
 import type {
   ModelClientPort, ModelRequest, ToolCall, ToolDefinition,
 } from '../../vendor/coding-agent/dist/public-api.js';
 import * as hostModule from '../../src/app/host.js';
+import * as sqliteStoreModule from '../../src/core/record-store/sqlite-record-store.js';
+import * as sqliteBodyModule from '../../src/core/record-store/sqlite-body-store.js';
+import type { CloseableRawArtifactStore } from '../../src/core/record-store/sqlite-body-store.js';
 import type { LocalWorkbenchHost, LocalWorkbenchHostOptions } from '../../src/app/host.js';
 import { PLATFORM_TOKEN_HEADER } from '../../src/app/core-http-types.js';
 import { createHostCoreCallContext } from '../../src/app/core-call-context.js';
@@ -93,7 +110,7 @@ import type { SessionRef, WorkspaceScope } from '../../src/contracts/core/identi
 import type { CoreCallContext } from '../../src/contracts/core/call-context.js';
 import type { ReadResult } from '../../src/contracts/core/results.js';
 import type { QueryJobRef } from '../../src/contracts/query-job.js';
-import type { PreparedCommit } from '../../src/core/record-store/ports.js';
+import type { PreparedCommit, StoreCommitReceipt } from '../../src/core/record-store/ports.js';
 import type { RequestCoreViewV1 } from '../../src/core/work-graph/model/request-contracts.js';
 import type { SessionCard, SessionCreateOperationRecord } from '../../src/core/work-graph/model/session-contracts.js';
 import { ROLE_LINE_STEP_KEYS } from '../../src/core/work-graph/state/role-line-action.js';
@@ -102,7 +119,8 @@ import { deferred, driveWorkflow, writeStaleLock, type Deferred } from './A2-res
 import {
   AG2B_WORK_TASK_ID, ag2bPlanDraft, createAG2bSession, graphWrite, plain, startLinesEnded,
 } from './AG2b-collaboration-fixture.js';
-import { commitBarrier, type CommitMatch } from './S6A-commit-barrier.js';
+import { onToolSeamHeld } from './K3-tool-seams.js';
+import { commitBarrier, releasedCommitCheck, type CommitMatch } from './S6A-commit-barrier.js';
 import { seedS6AMemory, type S6AGovernance, type S6AMemoryWorld } from './S6A-memory-fixture.js';
 import {
   openS6ARequestWorld, S6A_GOAL_1, S6A_SCOPE, S6A_SECRETARY_PROFILE_ID, S6A_SECRETARY_ROLE, S6A_SECRETARY_ROLE_BINDING,
@@ -201,21 +219,39 @@ export function dropCommitOf(input: { requestRoot?: QueryJobRef; from?: SessionR
 // The Kernel entry (one delegating spy shared by every open host world)
 // ---------------------------------------------------------------------------
 
-type RunScope = { kernelSessionId: string | undefined; served: 'session' | 'world' | null };
+/**
+ * One Kernel run the Kernel entry let in, registered there from its entry until it returns (FLK rework ruling 6):
+ * its execution identity (null when the platform gives the Kernel none, as a summary run), its Kernel Session and
+ * store, its Host and the named gates that stopped it. The spy is shared by every Host, so the Host is the one whose
+ * model client the run calls: each Host's Runtime builds one client per binding through the provider registry this
+ * fixture patches per Host (`patchOptions`; `src/app/runtime-configuration.ts:478`), and the Kernel reaches that
+ * client only through the run's own registry (`src/core/agent-runtime/observed-model-run.ts:372`), so `routed`
+ * names the Host at the run's first model call, refused or not. `holds`: one probe per gate that held the run, true
+ * until that gate is released.
+ */
+type KernelRun = {
+  runId: string | null; kernelSessionId: string | undefined; kernelStore: string;
+  host: HostInstance | null; holds: (() => boolean)[];
+};
+const kernelRuns = new Set<KernelRun>();
+
+type RunScope = { kernelSessionId: string | undefined; served: 'session' | 'world' | null; run: KernelRun };
 const runScope = new AsyncLocalStorage<RunScope>();
 
 /** `active`: the Host the gate was set on is still the world's live Host (checked when a step arrives). */
 type EntryHold = {
-  owner: number; kernelSessionId: string; active: () => boolean; matched: boolean;
+  owner: number; kernelSessionId: string; active: () => boolean; matched: boolean; released: boolean;
   reached: Deferred<S6AKernelEntry>; gate: Deferred;
 };
 type ToolHold = {
-  owner: number; kernelSessionId: string; toolName: string; active: () => boolean; matched: boolean;
+  owner: number; kernelSessionId: string; toolName: string; active: () => boolean; matched: boolean; released: boolean;
   reached: Deferred<S6AToolCall>; gate: Deferred;
 };
 const entryHolds: EntryHold[] = [];
 const toolHolds: ToolHold[] = [];
 let kernelUsers = 0;
+/** Remove the listeners that mark a run whose own step waits at a commit-barrier hold or a K3 tool seam. */
+let unwatchHolds: (() => void)[] | null = null;
 
 type RunCodingAgent = typeof kernelModule.runCodingAgent;
 type RunInput = Parameters<RunCodingAgent>[0];
@@ -225,6 +261,7 @@ function heldTool(tool: ToolDefinition, hold: ToolHold): ToolDefinition {
   return { ...tool, handler: { ...real, execute: async (call: Readonly<ToolCall>, options) => {
     if (!hold.matched && hold.active()) {
       hold.matched = true;
+      runScope.getStore()?.run.holds.push(() => !hold.released);
       hold.reached.resolve({ callId: call.callId, name: call.name, arguments: structuredClone(call.arguments) });
       await hold.gate.promise;
     }
@@ -237,30 +274,43 @@ function installKernelEntry(): void {
   const real: RunCodingAgent = kernelModule.runCodingAgent;
   vi.spyOn(kernelModule, 'runCodingAgent').mockImplementation(async (input: RunInput) => {
     const kernelSessionId = input.sessionId;
-    const entry = kernelSessionId === undefined ? undefined
-      : entryHolds.find(hold => !hold.matched && hold.active() && hold.kernelSessionId === kernelSessionId);
-    if (entry !== undefined && kernelSessionId !== undefined) {
-      entry.matched = true;
-      entry.reached.resolve({ kernelSessionId, runId: input.executionIdentity?.runId ?? null });
-      await entry.gate.promise;
+    const run: KernelRun = { runId: input.executionIdentity?.runId ?? null, kernelSessionId,
+      kernelStore: input.config.storage.databasePath, host: null, holds: [] };
+    kernelRuns.add(run);
+    try {
+      const entry = kernelSessionId === undefined ? undefined
+        : entryHolds.find(hold => !hold.matched && hold.active() && hold.kernelSessionId === kernelSessionId);
+      if (entry !== undefined && kernelSessionId !== undefined) {
+        entry.matched = true;
+        run.holds.push(() => !entry.released);
+        entry.reached.resolve({ kernelSessionId, runId: run.runId });
+        await entry.gate.promise;
+      }
+      // A tool hold armed for this Session before the run enters wraps that one real tool; nothing else changes.
+      const holds = toolHolds.filter(hold => !hold.matched && hold.active() && hold.kernelSessionId === kernelSessionId);
+      const additional = input.additionalTools;
+      const forwarded: RunInput = holds.length === 0 || additional === undefined ? input : {
+        ...input,
+        additionalTools: workspace => additional(workspace).map(tool => {
+          const hold = holds.find(candidate => candidate.toolName === tool.name && !candidate.matched);
+          return hold === undefined ? tool : heldTool(tool, hold);
+        }),
+      };
+      return await runScope.run({ kernelSessionId, served: null, run },
+        () => real({ ...forwarded, retryDelay: async () => {} }));
+    } finally {
+      kernelRuns.delete(run);
     }
-    // A tool hold armed for this Session before the run enters wraps that one real tool; nothing else changes.
-    const holds = toolHolds.filter(hold => !hold.matched && hold.active() && hold.kernelSessionId === kernelSessionId);
-    const additional = input.additionalTools;
-    const forwarded: RunInput = holds.length === 0 || additional === undefined ? input : {
-      ...input,
-      additionalTools: workspace => additional(workspace).map(tool => {
-        const hold = holds.find(candidate => candidate.toolName === tool.name && !candidate.matched);
-        return hold === undefined ? tool : heldTool(tool, hold);
-      }),
-    };
-    return runScope.run({ kernelSessionId, served: null }, () => real({ ...forwarded, retryDelay: async () => {} }));
   });
 }
 
 function acquireKernelEntry(): void {
   kernelUsers += 1;
   installKernelEntry();
+  // A step of a run (a commit its tools or input supply make, a tool call) waiting at a commit-barrier hold or at a
+  // K3 tool seam the row armed (tests/helpers/K3-tool-seams.ts) holds that run.
+  const held = (holding: () => boolean): void => { runScope.getStore()?.run.holds.push(holding); };
+  unwatchHolds ??= [commitBarrier.onHeld(held), onToolSeamHeld(held)];
 }
 
 function releaseKernelEntry(owner: number): void {
@@ -270,6 +320,10 @@ function releaseKernelEntry(owner: number): void {
   kernelUsers = Math.max(0, kernelUsers - 1);
   if (kernelUsers === 0 && vi.isMockFunction(kernelModule.runCodingAgent)) {
     vi.mocked(kernelModule.runCodingAgent).mockRestore();
+  }
+  if (kernelUsers === 0) {
+    for (const unwatch of unwatchHolds ?? []) unwatch();
+    unwatchHolds = null;
   }
 }
 
@@ -303,7 +357,9 @@ class SessionScript {
 }
 
 /** A model hold: the next model request of one Kernel Session (any model serving it) on the Host it was set on. */
-type ModelHold = { active: () => boolean; matched: boolean; reached: Deferred<ModelRequest>; gate: Deferred };
+type ModelHold = {
+  active: () => boolean; matched: boolean; released: boolean; reached: Deferred<ModelRequest>; gate: Deferred;
+};
 
 /** Waits for a held step's release; the model call's own cancellation ends the wait. */
 async function heldUntilRelease(gate: Promise<void>, signal: AbortSignal): Promise<void> {
@@ -319,8 +375,50 @@ async function heldUntilRelease(gate: Promise<void>, signal: AbortSignal): Promi
   }
 }
 
-/** One Host start of the world. */
-type HostInstance = { index: number; abandoned: boolean; crashOnClose: boolean; keepsLease?: true };
+/**
+ * One Host start of the world. `crashed`: `crash()` stopped its writes (a peer start does not). `heldCommitsRace`:
+ * the crash let the commits it had held at a `before` hold reach the store on release. `kernelStores`: the Kernel
+ * store paths the Host was given, canonical as the Runtime passes them to the Kernel (`canonicalKernelStore`).
+ */
+type HostInstance = {
+  index: number; abandoned: boolean; crashed: boolean; crashOnClose: boolean; keepsLease?: true; heldCommitsRace?: true;
+  kernelStores: ReadonlySet<string>;
+};
+
+/** A Kernel store path as the Kernel store locator hands it on (`src/core/agent-runtime/kernel-store-locator.ts:42`). */
+const canonicalKernelStore = (path: string): string => join(realpathSync(dirname(path)), basename(path));
+
+/**
+ * A record store the Host built, which fails every commit that arrives after the Host's crash with an I/O error:
+ * the crashed Host writes nothing more. A commit that arrived before the crash and waits at a `before` hold of the
+ * commit barrier is checked again when the hold lets it go (`releasedCommitCheck`, FLK rework ruling 5), unless the
+ * row races it on purpose. The store builds `records` from closures without `this` (as the commit barrier relies on),
+ * so the spread keeps every other method.
+ */
+function stopsAtCrash<B extends { records: { commit(input: PreparedCommit): Promise<StoreCommitReceipt> } }>(
+  backend: B, instance: HostInstance): B {
+  const real = backend.records;
+  const crashedCommit = () => new Error(`S6A: Host ${instance.index} has crashed; its store takes no more commits`);
+  const released = (): void => {
+    if (instance.crashed && instance.heldCommitsRace !== true) throw crashedCommit();
+  };
+  return { ...backend, records: { ...real, commit: async (input: PreparedCommit) => {
+    if (instance.crashed) throw crashedCommit();
+    return releasedCommitCheck.run(released, () => real.commit(input));
+  } } };
+}
+
+/**
+ * The artifact body store the Host built (`src/composition/create-platform.ts:1289`), which fails every put after the
+ * Host's crash with an I/O error, as `stopsAtCrash` fails a commit (FLK rework ruling 5). Its methods are closures
+ * without `this`, so the spread keeps `read` and `close`.
+ */
+function bodiesStopAtCrash(store: CloseableRawArtifactStore, instance: HostInstance): CloseableRawArtifactStore {
+  return { ...store, put: async input => {
+    if (instance.crashed) throw new Error(`S6A: Host ${instance.index} has crashed; its body store takes no more puts`);
+    return store.put(input);
+  } };
+}
 
 export type S6AAbandonedCall = { instance: number; request: ModelRequest };
 
@@ -394,8 +492,10 @@ export type S6AHostWorld = S6ARequestWorld & {
     unreleased(): string[];
   };
   /** SQLite: abandon the running Host (stale lock) and start a new one on the same directory. `keepLease: true`
-   *  keeps the abandoned Host's live lock, so the new Host starts `held_by_other` instead of taking the lease over. */
-  crash(options?: S6AReopenOptions & { keepLease?: true }): Promise<void>;
+   *  keeps the abandoned Host's live lock, so the new Host starts `held_by_other` instead of taking the lease over.
+   *  `heldCommitsRace: true` lets the commits the old Host had held at a `before` hold reach the store when the row
+   *  releases them, so production's compare-and-swap decides between them and the new Host's writes. */
+  crash(options?: S6AReopenOptions & { keepLease?: true; heldCommitsRace?: true }): Promise<void>;
   /** The Host's consume barrier (SR9 §2.4): resolves after the next real `consumeIdle` pass settles. */
   consumeBarrier(): Promise<void>;
   /** The Host's `automation.resumeOnStartup` through `automation/save` (used by the next start). */
@@ -469,11 +569,13 @@ export async function openS6AHostWorld(options: S6AHostWorldOptions): Promise<S6
 
   const routed = (instance: HostInstance, fallback: ModelClientPort): ModelClientPort => ({
     async *stream(request, streamOptions) {
+      const scope = runScope.getStore();
+      // The run calling this Host's model client is this Host's run (see `KernelRun`).
+      if (scope !== undefined) scope.run.host ??= instance;
       if (instance.abandoned) {
         abandonedCalls.push({ instance: instance.index, request: structuredClone(request) });
         throw new Error(`S6A: the abandoned Host ${instance.index} started a model call after its crash`);
       }
-      const scope = runScope.getStore();
       if (scope?.kernelSessionId !== undefined) {
         const log = boundaryLog.get(scope.kernelSessionId) ?? [];
         log.push({ request: structuredClone(request) as ModelRequest, signal: streamOptions.signal });
@@ -483,6 +585,7 @@ export async function openS6AHostWorld(options: S6AHostWorldOptions): Promise<S6
         : modelHolds.get(scope.kernelSessionId)?.find(candidate => !candidate.matched && candidate.active());
       if (hold !== undefined) {
         hold.matched = true;
+        scope!.run.holds.push(() => !hold.released);
         hold.reached.resolve(structuredClone(request) as ModelRequest);
         await heldUntilRelease(hold.gate.promise, streamOptions.signal);
       }
@@ -563,10 +666,30 @@ export async function openS6AHostWorld(options: S6AHostWorldOptions): Promise<S6
     await previous;
     const real = hostModule.createLocalWorkbenchHost;
     const wrapper: typeof real = async hostOptions => {
-      const instance: HostInstance = { index: instances.length + 1, abandoned: false, crashOnClose: false };
+      const instance: HostInstance = { index: instances.length + 1, abandoned: false, crashed: false, crashOnClose: false,
+        kernelStores: new Set((hostOptions.kernelStores?.entries ?? [])
+          .map(entry => canonicalKernelStore(entry.databasePath))) };
       instances.push(instance);
       const database = hostOptions.storage.kind === 'sqlite' ? hostOptions.storage.directory : null;
-      return crashable(await real(patchOptions(hostOptions, instance)), instance, database);
+      // Installed over whatever builds stores now (a world's own spy too, `tests/helpers/S7C-member-fixture.ts:183`)
+      // and put back after the start, as the Host factory is below.
+      const buildStore = sqliteStoreModule.createSqliteRecordBackend;
+      const stoppable: typeof buildStore = storeOptions => stopsAtCrash(buildStore(storeOptions), instance);
+      Object.defineProperty(sqliteStoreModule, 'createSqliteRecordBackend',
+        { value: stoppable, configurable: true, writable: true });
+      // The body store the same way (FLK rework ruling 5); the platform builds it at its start, beside the records.
+      const buildBodies = sqliteBodyModule.createSqliteRawArtifactStore;
+      const stoppableBodies: typeof buildBodies = path => bodiesStopAtCrash(buildBodies(path), instance);
+      Object.defineProperty(sqliteBodyModule, 'createSqliteRawArtifactStore',
+        { value: stoppableBodies, configurable: true, writable: true });
+      try {
+        return crashable(await real(patchOptions(hostOptions, instance)), instance, database);
+      } finally {
+        Object.defineProperty(sqliteStoreModule, 'createSqliteRecordBackend',
+          { value: buildStore, configurable: true, writable: true });
+        Object.defineProperty(sqliteBodyModule, 'createSqliteRawArtifactStore',
+          { value: buildBodies, configurable: true, writable: true });
+      }
     };
     Object.defineProperty(hostModule, 'createLocalWorkbenchHost',
       { value: wrapper, configurable: true, writable: true });
@@ -645,6 +768,26 @@ export async function openS6AHostWorld(options: S6AHostWorldOptions): Promise<S6
   let workPlanAdopted = false;
   let closed = false;
 
+  /**
+   * FLK rework ruling 6: the one part of a running Host the write stop cannot stop is a Kernel run it had entered
+   * and not held. Before anything changes, a crash looks at the runs the Kernel entry registered; one of this Host's
+   * that is still going while no gate holds it fails the crash, naming the cell, the Host and the run. A run that has
+   * called no model yet has no Host named; one on this Host's Kernel store is counted as this Host's, the world's only
+   * Host running then (an abandoned Host's run let in after its crash calls its own, refusing client first).
+   * The check runs at the crash because that is when the fact holds: it names the very crash call, leaves the old
+   * Host running and the world closable as usual, and lets no later assertion of the row bury it.
+   */
+  const refuseCrashWhileRunsGoOn = (crashed: HostInstance): void => {
+    const going = [...kernelRuns].filter(run => run.holds.every(holding => !holding())
+      && (run.host === crashed || (run.host === null && crashed.kernelStores.has(run.kernelStore))));
+    if (going.length === 0) return;
+    const cell = expect.getState().currentTestName ?? 'the cell';
+    const named = going.map(run => `${run.runId ?? 'with no platform run id'} (Kernel Session `
+      + `${run.kernelSessionId ?? 'none'})`).join(', ');
+    throw new Error(`S6A: ${cell} crashed Host ${crashed.index} while its Kernel run ${named} still went on and no `
+      + 'gate of the row held it; crash once that run has ended or while a gate holds it');
+  };
+
   const world = Object.create(base) as S6AHostWorld;
   const extra: Omit<S6AHostWorld, keyof S6ARequestWorld> & Pick<S6ARequestWorld, 'reopen' | 'makeUnavailableSecretary' | 'close'> = {
     scripted: {
@@ -668,10 +811,11 @@ export async function openS6AHostWorld(options: S6AHostWorldOptions): Promise<S6
       async beforeKernel(session) {
         const active = gateScope();
         const hold: EntryHold = { owner, kernelSessionId: await kernelSessionOf(session), active, matched: false,
-          reached: deferred<S6AKernelEntry>(), gate: deferred() };
+          released: false, reached: deferred<S6AKernelEntry>(), gate: deferred() };
         entryHolds.push(hold);
         return register(`before the Kernel entry on ${session.label} #${++gateSeq}`, hold.reached.promise,
-          () => hold.gate.resolve(), () => hold.gate.reject(new Error('S6A: the world is closed')));
+          () => { hold.released = true; hold.gate.resolve(); },
+          () => { hold.released = true; hold.gate.reject(new Error('S6A: the world is closed')); });
       },
       beforeDrop: (input = {}) => commitGate(dropCommitOf({
         ...(input.requestRoot === undefined ? {} : { requestRoot: input.requestRoot }),
@@ -680,20 +824,23 @@ export async function openS6AHostWorld(options: S6AHostWorldOptions): Promise<S6
       async modelRequest(session) {
         const active = gateScope();
         const key = await kernelSessionOf(session);
-        const hold: ModelHold = { active, matched: false, reached: deferred<ModelRequest>(), gate: deferred() };
+        const hold: ModelHold = { active, matched: false, released: false, reached: deferred<ModelRequest>(),
+          gate: deferred() };
         const list = modelHolds.get(key) ?? [];
         list.push(hold);
         modelHolds.set(key, list);
         return register(`model request on ${session.label} #${++gateSeq}`, hold.reached.promise,
-          () => hold.gate.resolve(), () => hold.gate.reject(new Error('S6A: the world is closed')));
+          () => { hold.released = true; hold.gate.resolve(); },
+          () => { hold.released = true; hold.gate.reject(new Error('S6A: the world is closed')); });
       },
       async toolCall(session, toolName) {
         const active = gateScope();
         const hold: ToolHold = { owner, kernelSessionId: await kernelSessionOf(session), toolName, active, matched: false,
-          reached: deferred<S6AToolCall>(), gate: deferred() };
+          released: false, reached: deferred<S6AToolCall>(), gate: deferred() };
         toolHolds.push(hold);
         return register(`tool ${toolName} on ${session.label} #${++gateSeq}`, hold.reached.promise,
-          () => hold.gate.resolve(), () => hold.gate.reject(new Error('S6A: the world is closed')));
+          () => { hold.released = true; hold.gate.resolve(); },
+          () => { hold.released = true; hold.gate.reject(new Error('S6A: the world is closed')); });
       },
       unreleased: () => gates.filter(entry => !entry.released).map(entry => entry.label),
     },
@@ -702,9 +849,14 @@ export async function openS6AHostWorld(options: S6AHostWorldOptions): Promise<S6
       if (world.backend !== 'sqlite') throw new Error('S6A: a crash restarts the Host on the same directory (SQLite only)');
       const live = instances.at(-1);
       if (live === undefined) throw new Error('S6A: the world has no Host');
-      const { keepLease, ...reopen } = reopenOptions;
+      const { keepLease, heldCommitsRace, ...reopen } = reopenOptions;
+      if (keepLease !== true) refuseCrashWhileRunsGoOn(live);
       live.crashOnClose = true;
       if (keepLease === true) live.keepsLease = true;
+      else {
+        live.crashed = true;
+        if (heldCommitsRace === true) live.heldCommitsRace = true;
+      }
       await hostStart(() => base.reopen(reopen));
     },
     reopen: reopenOptions => hostStart(() => base.reopen(reopenOptions)),

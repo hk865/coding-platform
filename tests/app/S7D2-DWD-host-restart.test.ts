@@ -7,13 +7,15 @@
  * `workspaces/remove` is not published (404 `not_found`), so the first removal never reaches the settings save.
  * After WD lands GREEN because the route commits the mark, maps the failed persist to `unavailable`, and the
  * restart's restore loop drops the descriptor. Crash entry: `world.base.world.crash()`
- * (`S6A-host-fixture.ts:695`).
+ * (`S6A-host-fixture.ts:695`), once the join's region round has ended (public `sessions/read` of its line), so no
+ * Kernel run of the old Host goes on through it (the S6A world's crash check).
  */
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { S6A_SCOPE } from '../helpers/S6A-request-fixture.js';
+import { waitFor } from '../scenarios/harness.js';
 import type { DwdRemovalResponse } from '../helpers/S7D2-DWD-world.js';
 import {
   blockSettingsSave, cancelSecondGoal, fullJoin, openDwdWorld, remove, snapshotWorkspaces, unblockSettingsSave,
@@ -36,6 +38,8 @@ describe('WDT-10 a removal whose settings save fails is not restored after the H
       await cancelSecondGoal(world);
       const oldScope = world.second.scope;
       const root = await world.secondRoot();
+      const region = (await world.join())?.explorations?.find(entry => entry.segment === 'region');
+      if (region === undefined) throw new Error('WDT-10: the join has no region exploration');
       const failed = await (async (): Promise<DwdRemovalResponse> => {
         await blockSettingsSave(settingsDirectory);
         try { return await remove(world, 'remove'); } finally { await unblockSettingsSave(settingsDirectory); }
@@ -45,6 +49,13 @@ describe('WDT-10 a removal whose settings save fails is not restored after the H
       // Same detached-drive race as WDT-09: the removal ends a running join (failed) or skips an ended one
       // (completed, wd-build.frozen.md:385); it must never leave it running, and the restart keeps what it found.
       expect(['failed', 'completed']).toContain(marked.phase);
+      // Lead ruling 11-27 (FLK, crash timing): this is a restart after the removal, so the row crashes once the join's
+      // region round has ended (its line no longer holds that QueryRun). The removal can end the join while that
+      // round, which no gate holds, still unwinds.
+      await waitFor(async () => (await world.base.world.readSession(region.sessionRef)).record.occupancy,
+        occupancy => occupancy === null || occupancy.kind !== 'execution'
+          || occupancy.executionRef.runId !== region.queryRunRef.runId,
+        'WDT-10: the join region round has ended');
       await world.base.world.crash();
       expect(await fullJoin(world, oldScope)).toMatchObject({ phase: marked.phase, revision: marked.revision });
       const scopes = (await snapshotWorkspaces(world)).map(workspace => workspace.scope.workspaceId);

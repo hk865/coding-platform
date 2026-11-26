@@ -45,7 +45,8 @@ export type GoalControlDependencies = {
 type HostActor = { kind: 'human' | 'system'; id: string };
 
 const GOAL_CONTROL_IDENTITY_PREFIX = 'goal-control:';
-const MAX_GOAL_CONTROL_REASON_BYTES = 2048;
+/** The longest Goal-control reason; a partial acceptance's rationale has the same bound. */
+export const MAX_GOAL_CONTROL_REASON_BYTES = 2048;
 
 function reject(code: CoreError, reason: string, current?: VersionPin[]): CoreRejection {
   return { status: 'rejected', code, reason, ...(current === undefined ? {} : { current }) };

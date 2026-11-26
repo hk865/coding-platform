@@ -12,13 +12,20 @@ import type { SessionMessageRef } from '../../../contracts/core/session-message.
 import { boundedTo, type BoundedTextV1 } from '../../../contracts/continuation-brief.js';
 import type { RunRef } from '../../../contracts/dispatch.js';
 import type { GoalRef } from '../../../contracts/ledger.js';
-import type { SessionMailboxPort, SessionMessage } from '../model/communication-contracts.js';
+import { rejected } from '../../../contracts/core/rejections.js';
+import { isUserMessageRecipient } from '../../../contracts/core/session-message.js';
+import type { OrderedLookupRequest, RecordOrderedLookupPort } from '../../record-store/lookup-ports.js';
+import type { GoalPersonWordsV1, SessionMailboxPort, SessionMessage } from '../model/communication-contracts.js';
 import type { ExecutionReadPort } from '../model/execution-read-contracts.js';
 import { storeFailureToRejection } from '../persistence/read-result-failures.js';
+import { decodeSessionMessageRecord, S7A2_COPY_INTERVENTION_BY_GOAL_LOOKUP }
+  from '../sessions/message-record-codecs.js';
 import { hostContextIn, PERSON_WORDS_MAX } from './plan-lineage.js';
 
 /** 最多列这么多条，其余只计数。 */
 export const GOAL_PERSON_INTERVENTIONS_MAX = 10;
+/** 参谋、秘书下一轮看的人话条数：参谋规划轮在 128k 档本来就紧，3 条最多 3,000 字。 */
+export const GOAL_PERSON_WORDS_SHOWN = 3;
 /** 一个 Run 页和一条收件箱页都用公开读口的上限。 */
 const INTERVENTION_PAGE_LIMIT = 100;
 
@@ -109,4 +116,55 @@ export async function readGoalPersonInterventions(ctx: CoreCallContext, deps: {
     items.push({ ...item, text: boundedTo(body.value.text, PERSON_WORDS_MAX) });
   }
   return { status: 'ready', value: { items, omitted: accepted.length - kept.length } };
+}
+
+/**
+ * 这个目标里人直接对各条线说过的话，给参谋、秘书下一轮看：最近 `GOAL_PERSON_WORDS_SHOWN` 条，旧的在前，每条前
+ * `PERSON_WORDS_MAX` 字。不含本轮自己的线收到的（那句话就在本轮的输入里）、撤回的、发给人而不是线的，也不含转发出来的
+ * 副本（`originalRef` 非空：那不是人此时对这条线说的话）。按目标查人发的信用现成的有序索引，新的先读，凑够就停。只放进
+ * 下一轮的输入，不叫醒谁、不发信；读失败原样返回。
+ */
+export async function readGoalPersonWords(ctx: CoreCallContext, deps: {
+  records: RecordOrderedLookupPort;
+  messages: Pick<SessionMailboxPort, 'readMessageBody'>;
+}, input: { goalRef: GoalRef; workspaceId: string; exceptLine: SessionRef }): Promise<ReadResult<GoalPersonWordsV1>> {
+  const newestFirst: { message: SessionMessage; recipient: SessionRef }[] = [];
+  let after: OrderedLookupRequest['after'];
+  while (newestFirst.length < GOAL_PERSON_WORDS_SHOWN) {
+    let page: Awaited<ReturnType<RecordOrderedLookupPort['lookupOrdered']>>;
+    try {
+      page = await deps.records.lookupOrdered({ index: S7A2_COPY_INTERVENTION_BY_GOAL_LOOKUP,
+        values: [input.goalRef.projectId, input.workspaceId, input.goalRef.goalId, 'human'], direction: 'desc',
+        ...(after === undefined ? {} : { after }), limit: INTERVENTION_PAGE_LIMIT });
+    } catch (error) {
+      return storeFailureToRejection(error);
+    }
+    if (page.status !== 'ready') return storeFailureToRejection(page);
+    for (const record of page.value.records) {
+      const decoded = decodeSessionMessageRecord(record);
+      if (decoded.status !== 'decoded') {
+        return rejected('unavailable', `the person's message ${record.refKey} is damaged: ${decoded.reason}`);
+      }
+      const message = decoded.value;
+      const recipient = message.recipient;
+      // U1: a forwarded copy keeps the person's sender and body but is a line's re-send, not words the person said to
+      // that line now. Counting it would also push the original out of the latest three.
+      if (message.originalRef !== null) continue;
+      if (message.withdrawnAt !== null || isUserMessageRecipient(recipient)
+        || recipient.sessionId === input.exceptLine.sessionId) continue;
+      newestFirst.push({ message, recipient });
+      if (newestFirst.length === GOAL_PERSON_WORDS_SHOWN) break;
+    }
+    if (page.value.next === null) break;
+    after = page.value.next;
+  }
+  const items: GoalPersonWordsV1['items'] = [];
+  for (const { message, recipient } of newestFirst.reverse()) {
+    const body = await deps.messages.readMessageBody(hostContextIn(ctx, message.ref.workspaceId),
+      { messageRef: message.ref, part: 'message' });
+    if (body.status !== 'ready') return body;
+    items.push({ recipient: { projectId: recipient.projectId, sessionId: recipient.sessionId },
+      sentAt: message.createdAt, text: boundedTo(body.value.text, PERSON_WORDS_MAX) });
+  }
+  return { status: 'ready', value: { items } };
 }

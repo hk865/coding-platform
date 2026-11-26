@@ -241,12 +241,15 @@ describe('XWS2A: the join survives a restart and a main-workspace line works the
     const world = await opened();
     await world.waitCoarseAnswered();
     const adviser = world.base.lines.adviser;
-    // A second ws1 line with a queued inquiry: the page's other candidate.
+    // A second ws1 line with a queued inquiry: the page's other candidate. The message names Goal 1: a person's
+    // message that names no Goal on a line that never did Work stays off the page.
     const other = await world.base.world.createWorkSession('xa17-other');
     const sent = await world.base.world.post('messages/send', graphWrite(S6A_SCOPE, {
       recipient: other.ref, text: 'XA-17 queued inquiry', entry: 'person_intervention', needsReply: true,
+      goalRef: world.base.goal,
     }, 'xa17-message', []));
     expect((sent.body as { status?: string }).status).toBe('committed');
+    const queuedMessage = valueOf<SessionMessage>(sent.body, 'committed', 'the XA-17 queued inquiry');
     // Hold the main adviser's ws2 Run at its model request: its ws1 line is occupied while the Run is in ws2.
     const gate = await world.base.world.gates.modelRequest(adviser);
     const running = world.workRun({ label: 'xa17', replies: [{ kind: 'text', text: 'XA-17 held' }] });
@@ -258,9 +261,12 @@ describe('XWS2A: the join survives a restart and a main-workspace line works the
     expect(page.status).toBe('ready');
     if (page.status !== 'ready') throw new Error(`XA-17: the consumable page is not ready: ${JSON.stringify(page)}`);
     const busy = page.value.items.find(item => item.session.sessionId === adviser.ref.sessionId);
+    expect(busy, 'the occupied adviser line is on the page').toBeDefined();
     expect(busy?.busy).not.toBeNull();
     const queued = page.value.items.find(item => item.session.sessionId === other.ref.sessionId);
+    expect(queued, 'the ws1 line with the queued inquiry is on the page').toBeDefined();
     expect(queued?.nextMessage).not.toBeNull();
+    expect(queued?.nextMessage?.messageRef).toEqual(queuedMessage.ref);
     gate.release();
     await running;
   }, 180_000);

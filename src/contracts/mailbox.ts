@@ -16,6 +16,19 @@ import type { RoleBindingRefV1, RunRef, SourceRefV1, TaskTriple } from './dispat
 import type { GoalRef } from './ledger.js';
 import type { QueryJobAnswerRef, QueryJobRef, QueryRunRef } from './query-job.js';
 
+/**
+ * DESIGN §1.9 (Q20): a project's default reply deadline in minutes, for a send
+ * that asks for a reply and names no deadline. The factory value is one day
+ * (slice-7-SPEC, the user's 10-15 answer (a)); `reply-deadline/save` stores a
+ * project's own value.
+ */
+export const DEFAULT_REPLY_DEADLINE_MINUTES = 1440;
+/**
+ * The largest saved default: one year. Without a bound a huge value would
+ * overflow the frozen deadline instant and refuse every later reply-asking send.
+ */
+export const MAX_REPLY_DEADLINE_MINUTES = 525_600;
+
 /** Trusted Host sender: a real human/system identity, never fabricated per recipient. */
 export type MessageHostSenderRecord = {
   kind: 'host';

@@ -1,9 +1,9 @@
 /**
  * Formal Task/Goal completion admission.
  *
- * `completeTaskFromHost` / `completeGoalFromHost` are the trusted Host entries
- * over the ONE `backend.records` instance passed in by `createGoalService`. Each
- * one:
+ * `completeTaskFromHost` / `completeGoalFromHost` / `acceptPartialResultFromHost`
+ * are the trusted Host entries over the ONE `backend.records` instance passed in
+ * by `createGoalService`. Each one:
  *   1. binds the real Host actor/scope and isolates the request;
  *   2. restores the ORIGINAL receipt (identity/fingerprint lookup) BEFORE any
  *      current-state read, so a replay returns the original value/cursor;
@@ -12,8 +12,8 @@
  *   4. folds the ONE effective-evidence set and calls the pure completion policy,
  *      which answers the facts the machines judge;
  *   5. asks the state machine (§4 TASK-14/15/24 `transitionTask`, §2 GOAL-07/08
- *      `transitionGoal`), whose record constructors build the TaskReduction /
- *      GoalPhase (§14.1);
+ *      and GOAL-07P `transitionGoal`), whose record constructors build the
+ *      TaskReduction / GoalPhase (§14.1);
  *   6. commits the formal reduction/phase + one replay event + receipt ONCE with
  *      the local guards covering the whole read set.
  * The machines' guards also run after each read through their exported
@@ -46,7 +46,10 @@ import type {
   DecodeResult, EncodedRecord, GoalRecordTransactionPort, PreparedCommit, RecordGuard, StoreCommitReceipt,
 } from '../../record-store/ports.js';
 import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
-import { goalCompletionProblem, goalStateOf, transitionGoal, type GoalGuardContext } from '../state/goal-machine.js';
+import {
+  goalCompletionProblem, goalPhaseWriteProblem, goalStateOf, transitionGoal,
+  type GoalGuardContext, type GoalMachineState, type GoalTransition,
+} from '../state/goal-machine.js';
 import {
   taskCompletionFoldProblem, taskCompletionProjectionProblem, taskCompletionRoundProblem, taskMachineStateOf, transitionTask,
   type TaskPhaseFacts,
@@ -62,14 +65,15 @@ import {
 } from '../persistence/evidence-record-codecs.js';
 import { evidenceApplicabilityWithBasis, evidenceBindingFor, selectEffectiveEvidenceSet } from './evidence-coverage.js';
 import {
-  bindTrustedContext, isolateWrite, isRecord, loadReplayEvent, mapStoreFailure, mergeGuards, nonEmpty,
+  bindTrustedContext, isolateWrite, isRecord, loadReplayEvent, mapStoreFailure, mergeGuards, nonEmpty, operatorProblem,
 } from './execution-entry-service.js';
+import { MAX_GOAL_CONTROL_REASON_BYTES } from './goal-control.js';
 import { decodeRun } from '../materials/run-snapshot-decoder.js';
 import { evaluateGoalCompletion, evaluateTaskCompletion } from './completion-policy.js';
 import {
-  GOAL_COMPLETED_EVENT_TYPE, TASK_COMPLETED_EVENT_TYPE, completionEventFromEvent, encodeCompletionEvent,
-  encodeGoalPhaseSnapshot, encodeTaskReductionSnapshot,
-  type CompletionEvent, type GoalCompletedEvent, type TaskCompletedEvent,
+  GOAL_COMPLETED_EVENT_TYPE, GOAL_PARTIALLY_ACCEPTED_EVENT_TYPE, TASK_COMPLETED_EVENT_TYPE, completionEventFromEvent,
+  encodeCompletionEvent, encodeGoalPhaseSnapshot, encodeTaskReductionSnapshot,
+  type CompletionEvent, type GoalPhaseEvent, type TaskCompletedEvent,
 } from './completion-record-codecs.js';
 import { taskPhaseFactsOf } from './task-phase-facts.js';
 import type { GoalTaskPort } from '../model/task-contracts.js';
@@ -82,10 +86,14 @@ export type CompletionDependencies = {
   records: Records;
   now(): string;
   eventId(): string;
+  /** The Host's configured operator: the only actor that accepts a partial result (GOAL-07P). */
+  operatorActor?: HostActor;
 };
 
 const TASK_IDENTITY_PREFIX = 'r3e-complete-task:';
 const GOAL_IDENTITY_PREFIX = 'r3e-complete-goal:';
+/** Its own prefix: one requestId never replays a completion as a partial acceptance, or the reverse. */
+const GOAL_ACCEPT_PARTIAL_IDENTITY_PREFIX = 'goal-accept-partial:';
 
 // -------------------------------------------------------------------------- //
 // Small pure helpers                                                          //
@@ -486,6 +494,149 @@ export async function completeTaskFromHost(
 }
 
 // -------------------------------------------------------------------------- //
+// The two GoalPhase writes: their shared replay, reads and commit             //
+// -------------------------------------------------------------------------- //
+
+type TrustedCall = Extract<ReturnType<typeof bindTrustedContext>, { ok: true }>;
+type GoalPhaseWriteResult = Awaited<ReturnType<GoalTaskPort['completeGoal']>>;
+
+/** What a GoalPhase write read, in `readGoalPhaseWriteInputs` order. */
+type GoalPhaseWriteInputs = {
+  plan: PlanRevisionSnapshot;
+  facts: CanonicalTaskFacts;
+  /** The GoalPhase record key; the commit guards it at the revision the machine names. */
+  phaseRefKey: string;
+  pinned: { expectedGoalRevision: number; expectedGoalPhaseRevision: number };
+  goalState: GoalMachineState;
+  goalCtx: GoalGuardContext;
+};
+
+/** The original GoalPhase of a request already committed under this identity; null when there is none. */
+async function goalPhaseReplay(records: Records, identity: string, fingerprint: string): Promise<GoalPhaseWriteResult | null> {
+  const lookup = await lookupReceipt(records, identity, fingerprint);
+  if (lookup.status === 'failed') return lookup.rejection;
+  if (lookup.status === 'absent') return null;
+  const replayed = await replayEvent(records, lookup.receipt, identity, fingerprint);
+  if (replayed.status !== 'committed') return replayed;
+  return { status: 'committed', value: replayed.value as GoalPhaseSnapshot, replayed: true, cursor: replayed.cursor };
+}
+
+/**
+ * The reads both GoalPhase writes share (GOAL-07/08, GOAL-07P): the Goal, then
+ * the guards that hold before the Plan is read (workspace, Goal pin, pointer:
+ * `goalPhaseWriteProblem` without facts; a stale Goal pin names Goal@R), the
+ * active Plan, its canonical task facts and the GoalPhase, and the guard
+ * context with the pure `evaluateGoalCompletion`.
+ */
+async function readGoalPhaseWriteInputs(
+  records: Records, trusted: TrustedCall, goalRef: GoalRef, goalPhaseRef: GoalPhaseRef,
+  pins: Exclude<CheckedTargetPins, CoreRejection>,
+): Promise<GoalPhaseWriteInputs | CoreRejection> {
+  const goalRead = await readGoal(records, goalRef);
+  if (goalRead.status !== 'ready') return mapRejected(goalRead);
+  const goal = goalRead.goal;
+  const pinned = { expectedGoalRevision: pins.goalPin.revision, expectedGoalPhaseRevision: pins.targetPin.revision };
+  const goalInWorkspace = goal.workspaceRef.workspaceId === trusted.scope.workspaceId;
+  const admitted = goalPhaseWriteProblem(goalStateOf(goal, null), pinned, { goalInWorkspace, completion: null });
+  if (admitted?.ok === false) {
+    return reject(admitted.code, admitted.detail,
+      admitted.reason === 'stale' ? [{ ref: goalRef, revision: goal.revision }] : undefined);
+  }
+  // `goalPhaseWriteProblem` refused a Goal without an adopted Plan above.
+  const activeRef = goal.activePlanRevision!;
+  const planRead = await readPlan(records, activeRef);
+  if (planRead.status !== 'ready') return mapRejected(planRead);
+  const plan = planRead.plan;
+  if (plan.goalRef.projectId !== goalRef.projectId || plan.goalRef.goalId !== goalRef.goalId) {
+    return notFound('the active Plan belongs to another Goal');
+  }
+
+  const factsRead = await readCanonicalTaskFacts(records, goalRef, plan);
+  if (factsRead.status !== 'ready') return mapRejected(factsRead);
+  const facts = factsRead.value;
+
+  const phaseRead = await readGoalPhase(records, goalPhaseRef);
+  if (phaseRead.status !== 'ready') return mapRejected(phaseRead);
+
+  return { plan, facts, phaseRefKey: phaseRead.guard.refKey, pinned, goalState: goalStateOf(goal, phaseRead.snapshot),
+    goalCtx: { callerClass: reworkActorClassOf(trusted.ctx.principal, trusted.actor), scopePinsAgree: true, goalInWorkspace,
+      completion: evaluateGoalCompletion({ plan, taskFacts: facts }) } };
+}
+
+/**
+ * A refusal after the GoalPhase read: the Goal pin held, so a stale refusal is the GoalPhase's and names GoalPhase@r,
+ * or GoalPhase@0 when no record exists yet (the expression `goal-control.ts` uses for an unbuilt record).
+ */
+function goalPhaseStageRejection(
+  refused: Extract<GoalTransition, { ok: false }>, inputs: GoalPhaseWriteInputs, goalPhaseRef: GoalPhaseRef,
+): CoreRejection {
+  const stored = inputs.goalState.goalPhase;
+  return reject(refused.code, refused.detail, refused.reason === 'stale'
+    ? [{ ref: goalPhaseRef, revision: stored?.revision ?? 0 }] : undefined);
+}
+
+/**
+ * The commit both GoalPhase writes share: the record is the transition's
+ * `next.goalPhase`, each guard effect names one CAS guard of the read set, and
+ * the GoalPhase, its event and the receipt commit ONCE; a commit that throws is
+ * recovered by its identity. Only a completion reads the pinned policy, so only
+ * it passes `policyGuards`.
+ */
+async function commitGoalPhaseWrite(deps: CompletionDependencies, write: {
+  operation: 'completeGoal' | 'acceptPartialResult';
+  eventType: GoalPhaseEvent['eventType'];
+  transition: Extract<GoalTransition, { ok: true }>;
+  inputs: GoalPhaseWriteInputs;
+  goalRef: GoalRef;
+  trusted: TrustedCall;
+  identity: string;
+  fingerprint: string;
+  policyGuards?: readonly RecordGuard[];
+}): Promise<GoalPhaseWriteResult> {
+  const { operation, transition, inputs, goalRef, identity, fingerprint } = write;
+  const goalPhase = transition.next.goalPhase;
+  if (goalPhase === null) throw new Error(`${operation} must write the GoalPhase`);
+  const guards = mergeGuards(transition.effects.flatMap((effect): readonly RecordGuard[] => {
+    if (effect.kind === 'write_goal_phase' || effect.kind === 'append_event') return [];
+    if (effect.kind !== 'guard') throw new Error(`${operation} has no ${effect.kind} effect`);
+    const guard = effect.guard;
+    switch (guard.target) {
+      case 'goal': return [{ refKey: refKeyOf(goalRef) as string, expectedRevision: guard.expectedRevision }];
+      case 'plan_revision': return [{ refKey: refKeyOf(guard.ref) as string, expectedRevision: inputs.plan.revision }];
+      case 'goal_phase': return [{ refKey: inputs.phaseRefKey, expectedRevision: guard.expectedRevision }];
+      case 'pinned_policy':
+        if (write.policyGuards === undefined) throw new Error(`${operation} read no pinned policy`);
+        return write.policyGuards;
+      case 'task_facts': return inputs.facts.guards;
+      default: throw new Error(`${operation} has no ${guard.target} guard`);
+    }
+  }));
+  if (!guards.ok) return guards.rejection;
+
+  const occurredAt = deps.now();
+  const event: GoalPhaseEvent = { eventId: deps.eventId(), eventType: write.eventType,
+    schemaVersion: 1, occurredAt, identityKey: identity, actor: write.trusted.actor, fingerprint, goalRef, result: goalPhase };
+  const prepared: PreparedCommit = { identityKey: identity, fingerprint, guards: guards.guards,
+    records: [encodeGoalPhaseSnapshot(goalPhase)], claims: [], indexGuards: [], indexChanges: [],
+    events: [encodeCompletionEvent(event)] };
+  try {
+    if (write.trusted.signal.aborted) return cancelled(`the ${operation} request was cancelled before commit`);
+    const receipt = await deps.records.commit(prepared);
+    if (receipt.status !== 'committed') return mapStoreFailure(receipt);
+    if (receipt.replayed) {
+      const replayed = await replayEvent(deps.records, receipt, identity, fingerprint);
+      if (replayed.status !== 'committed') return replayed;
+      return { status: 'committed', value: replayed.value as GoalPhaseSnapshot, replayed: true, cursor: replayed.cursor };
+    }
+    return { status: 'committed', value: goalPhase, replayed: false, cursor: receipt.cursor };
+  } catch (error) {
+    const recovered = await commitOrRecover(deps.records, prepared, identity, fingerprint, error);
+    if (recovered.status !== 'committed') return recovered;
+    return { status: 'committed', value: recovered.value as GoalPhaseSnapshot, replayed: true, cursor: recovered.cursor };
+  }
+}
+
+// -------------------------------------------------------------------------- //
 // The trusted Host Goal completion entry                                      //
 // -------------------------------------------------------------------------- //
 
@@ -519,105 +670,91 @@ export async function completeGoalFromHost(
     fingerprint = fingerprintOf({ kind: 'r3e-complete-goal', goalRef, expected: owned.expected });
   } catch { return invalid('the completeGoal request is not canonicalizable JSON'); }
 
-  const lookup = await lookupReceipt(deps.records, identity, fingerprint);
-  if (lookup.status === 'failed') return lookup.rejection;
-  if (lookup.status === 'found') {
-    const replayed = await replayEvent(deps.records, lookup.receipt, identity, fingerprint);
-    if (replayed.status !== 'committed') return replayed;
-    return { status: 'committed', value: replayed.value as GoalPhaseSnapshot, replayed: true, cursor: replayed.cursor };
-  }
+  const replay = await goalPhaseReplay(deps.records, identity, fingerprint);
+  if (replay !== null) return replay;
 
   const pins = checkTargetPins(owned.expected, goalRef, goalPhaseRef, 'GoalPhase');
   if ('status' in pins) return pins;
   if (signal.aborted) return cancelled('the completeGoal request was cancelled before reading');
 
-  const goalRead = await readGoal(deps.records, goalRef);
-  if (goalRead.status !== 'ready') return mapRejected(goalRead);
-  const goal = goalRead.goal;
-  // GOAL-07/08: workspace, Goal pin and pointer before the Plan is read (the
-  // facts, the GoalPhase and the reduction are not read yet and hold).
-  const pinned = { expectedGoalRevision: pins.goalPin.revision, expectedGoalPhaseRevision: pins.targetPin.revision };
-  const goalInWorkspace = goal.workspaceRef.workspaceId === scope.workspaceId;
-  const admitted = goalCompletionProblem(goalStateOf(goal, null), pinned, { goalInWorkspace, completion: null });
-  if (admitted?.ok === false) {
-    return reject(admitted.code, admitted.detail,
-      admitted.reason === 'stale' ? [{ ref: goalRef, revision: goal.revision }] : undefined);
-  }
-  // GOAL-07/08 refused a Goal without an adopted Plan above.
-  const activeRef = goal.activePlanRevision!;
-  const planRead = await readPlan(deps.records, activeRef);
-  if (planRead.status !== 'ready') return mapRejected(planRead);
-  const plan = planRead.plan;
-  if (plan.goalRef.projectId !== goalRef.projectId || plan.goalRef.goalId !== goalRef.goalId) {
-    return notFound('the active Plan belongs to another Goal');
-  }
+  const inputs = await readGoalPhaseWriteInputs(deps.records, ownedCtx, goalRef, goalPhaseRef, pins);
+  if ('status' in inputs) return inputs;
+  // GOAL-07/08 judge the GoalPhase pin, then the reduction, before the pinned policy is read.
+  const decided = goalCompletionProblem(inputs.goalState, inputs.pinned, inputs.goalCtx);
+  if (decided?.ok === false) return goalPhaseStageRejection(decided, inputs, goalPhaseRef);
 
-  const factsRead = await readCanonicalTaskFacts(deps.records, goalRef, plan);
-  if (factsRead.status !== 'ready') return mapRejected(factsRead);
-  const facts = factsRead.value;
-
-  const phaseRead = await readGoalPhase(deps.records, goalPhaseRef);
-  if (phaseRead.status !== 'ready') return mapRejected(phaseRead);
-
-  const goalState = goalStateOf(goal, phaseRead.snapshot);
-  const goalCtx: GoalGuardContext = { callerClass: reworkActorClassOf(ownedCtx.ctx.principal, actor),
-    scopePinsAgree: true, goalInWorkspace, completion: evaluateGoalCompletion({ plan, taskFacts: facts }) };
-  // GOAL-07/08 judge the GoalPhase pin, then the reduction, before the pinned
-  // policy is read; the Goal pin held above, so a stale refusal is the GoalPhase's.
-  const decided = goalCompletionProblem(goalState, pinned, goalCtx);
-  if (decided?.ok === false) {
-    const stored = goalState.goalPhase;
-    return reject(decided.code, decided.detail, decided.reason === 'stale' && stored !== null
-      ? [{ ref: goalPhaseRef, revision: stored.revision }] : undefined);
-  }
-
-  const policyRead = await readPinnedCompletionPolicy(deps.records, plan.effectiveCompletionPolicy);
+  const policyRead = await readPinnedCompletionPolicy(deps.records, inputs.plan.effectiveCompletionPolicy);
   if (policyRead.status !== 'resolved') return mapRejected(policyRead);
 
   // GOAL-07 (no GoalPhase) / GOAL-08 (one for an older plan): the machine
   // builds GoalPhase COMPLETED@revision+1 (§14.1) and names the commit's guards.
-  const completed = transitionGoal(goalState, { type: 'goal_completed', ...pinned, reducedAt: deps.now() }, goalCtx);
+  const completed = transitionGoal(inputs.goalState, { type: 'goal_completed', ...inputs.pinned, reducedAt: deps.now() },
+    inputs.goalCtx);
   if (!completed.ok) return reject(completed.code, completed.detail);
-  const goalPhase = completed.next.goalPhase;
-  if (goalPhase === null) throw new Error('goal_completed must write the GoalPhase');
-  // The record is `next.goalPhase` and the GoalCompleted event is built below;
-  // each guard effect names one CAS guard of the read set.
-  const guards = mergeGuards(completed.effects.flatMap((effect): readonly RecordGuard[] => {
-    if (effect.kind === 'write_goal_phase' || effect.kind === 'append_event') return [];
-    if (effect.kind !== 'guard') throw new Error(`goal_completed has no ${effect.kind} effect`);
-    const guard = effect.guard;
-    switch (guard.target) {
-      case 'goal': return [{ refKey: refKeyOf(goalRef) as string, expectedRevision: guard.expectedRevision }];
-      case 'plan_revision': return [{ refKey: refKeyOf(guard.ref) as string, expectedRevision: plan.revision }];
-      case 'goal_phase': return [{ refKey: phaseRead.guard.refKey, expectedRevision: guard.expectedRevision }];
-      case 'pinned_policy': return policyRead.guards;
-      case 'task_facts': return facts.guards;
-      default: throw new Error(`goal_completed has no ${guard.target} guard`);
-    }
-  }));
-  if (!guards.ok) return guards.rejection;
+  return commitGoalPhaseWrite(deps, { operation: 'completeGoal', eventType: GOAL_COMPLETED_EVENT_TYPE,
+    transition: completed, inputs, goalRef, trusted: ownedCtx, identity, fingerprint, policyGuards: policyRead.guards });
+}
 
-  const occurredAt = deps.now();
-  const event: GoalCompletedEvent = { eventId: deps.eventId(), eventType: GOAL_COMPLETED_EVENT_TYPE,
-    schemaVersion: 1, occurredAt, identityKey: identity, actor, fingerprint, goalRef, result: goalPhase };
-  const prepared: PreparedCommit = { identityKey: identity, fingerprint, guards: guards.guards,
-    records: [encodeGoalPhaseSnapshot(goalPhase)], claims: [], indexGuards: [], indexChanges: [],
-    events: [encodeCompletionEvent(event)] };
-  try {
-    if (signal.aborted) return cancelled('the completeGoal request was cancelled before commit');
-    const receipt = await deps.records.commit(prepared);
-    if (receipt.status !== 'committed') return mapStoreFailure(receipt);
-    if (receipt.replayed) {
-      const replayed = await replayEvent(deps.records, receipt, identity, fingerprint);
-      if (replayed.status !== 'committed') return replayed;
-      return { status: 'committed', value: replayed.value as GoalPhaseSnapshot, replayed: true, cursor: replayed.cursor };
-    }
-    return { status: 'committed', value: goalPhase, replayed: false, cursor: receipt.cursor };
-  } catch (error) {
-    const recovered = await commitOrRecover(deps.records, prepared, identity, fingerprint, error);
-    if (recovered.status !== 'committed') return recovered;
-    return { status: 'committed', value: recovered.value as GoalPhaseSnapshot, replayed: true, cursor: recovered.cursor };
+// -------------------------------------------------------------------------- //
+// The trusted Host partial-acceptance entry                                   //
+// -------------------------------------------------------------------------- //
+
+/**
+ * Trusted Host partial-acceptance entry (GOAL-07P, G6): the configured operator
+ * ends the Goal with what its active plan has formally satisfied, writing a
+ * rationale. The steps of `completeGoalFromHost` plus the rationale and the
+ * operator; `meta.expected` pins exactly the Goal and the GoalPhase (0 when
+ * none is stored). It never reads the completion policy.
+ */
+export async function acceptPartialResultFromHost(
+  deps: CompletionDependencies,
+  ctx: CoreCallContext,
+  request: Parameters<GoalTaskPort['acceptPartialResult']>[1],
+): ReturnType<GoalTaskPort['acceptPartialResult']> {
+  const ownedCtx = bindTrustedContext(ctx);
+  if (!ownedCtx.ok) return ownedCtx.rejection;
+  const { scope, actor, signal } = ownedCtx;
+  const owned = isolateWrite(request);
+  if (!owned.ok) return owned.rejection;
+  const raw = owned.input as unknown;
+  if (!isRecord(raw) || !isRecord(raw['goalRef']) || raw['goalRef']['aggregateType'] !== 'Goal'
+    || !nonEmpty(raw['goalRef']['projectId']) || !nonEmpty(raw['goalRef']['goalId'])) {
+    return invalid('acceptPartialResult requires a complete GoalRef');
   }
+  const rationale = raw['rationale'];
+  if (!nonEmpty(rationale) || Buffer.byteLength(rationale, 'utf8') > MAX_GOAL_CONTROL_REASON_BYTES) {
+    return invalid(`acceptPartialResult requires a rationale of 1 to ${MAX_GOAL_CONTROL_REASON_BYTES} UTF-8 bytes`);
+  }
+  const goalRef = raw['goalRef'] as unknown as GoalRef;
+  if (goalRef.projectId !== scope.projectId) return forbidden('the partial acceptance is outside the trusted Host project scope');
+  // G6 (product rule): only the person, as the configured operator, accepts a partial result; never an automation.
+  const notOperator = operatorProblem(actor, deps.operatorActor, 'accept a partial result');
+  if (notOperator !== null) return notOperator;
+  const goalPhaseRef: GoalPhaseRef = { aggregateType: 'GoalPhase', projectId: goalRef.projectId, goalId: goalRef.goalId };
+
+  let identity: string;
+  let fingerprint: string;
+  try {
+    identity = identityKeyOf(GOAL_ACCEPT_PARTIAL_IDENTITY_PREFIX, actor, scope.projectId, scope.workspaceId, owned.requestId);
+    fingerprint = fingerprintOf({ kind: 'goal-accept-partial', goalRef, rationale, expected: owned.expected });
+  } catch { return invalid('the acceptPartialResult request is not canonicalizable JSON'); }
+
+  const replay = await goalPhaseReplay(deps.records, identity, fingerprint);
+  if (replay !== null) return replay;
+
+  const pins = checkTargetPins(owned.expected, goalRef, goalPhaseRef, 'GoalPhase');
+  if ('status' in pins) return pins;
+  if (signal.aborted) return cancelled('the acceptPartialResult request was cancelled before reading');
+
+  const inputs = await readGoalPhaseWriteInputs(deps.records, ownedCtx, goalRef, goalPhaseRef, pins);
+  if ('status' in inputs) return inputs;
+  // GOAL-07P: the machine judges the GoalPhase pin, nothing missing and the open executions, and builds
+  // GoalPhase ACCEPTED_PARTIAL@revision+1 with the evidence refs of what is satisfied.
+  const accepted = transitionGoal(inputs.goalState, { type: 'goal_partially_accepted', ...inputs.pinned,
+    reducedAt: deps.now(), rationale, acceptedBy: { kind: 'human', id: actor.id } }, inputs.goalCtx);
+  if (!accepted.ok) return goalPhaseStageRejection(accepted, inputs, goalPhaseRef);
+  return commitGoalPhaseWrite(deps, { operation: 'acceptPartialResult', eventType: GOAL_PARTIALLY_ACCEPTED_EVENT_TYPE,
+    transition: accepted, inputs, goalRef, trusted: ownedCtx, identity, fingerprint });
 }
 
 // -------------------------------------------------------------------------- //

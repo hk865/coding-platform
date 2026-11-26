@@ -20,20 +20,20 @@ const PACK: ResolvedPromptPackV1 = PLATFORM_PROMPT_PACK_V1;
 // The five Skills after the P2 rewrite; every digest below is the merged template file's own sha256.
 const V2_TEMPLATES = {
     'base': 'cee15946501a2db933e00e1ea9954e8332542ab130268cd32c6962c91061958c',
-    'skill-platform-work': 'efc4b4271039125cc2e87c6bff36d86e033d2ca32697e83116e696db7a721e12',
-    'skill-platform-secretary': 'eb6dc54774b250b7bb022245f3783b91b42cb812d74d11595edaf6b217cc08cd',
-    'skill-platform-adviser': '4cc218521264b9c96960ac5b3ffdfe6815a838be16ccd123da49ae7a841a1d6a',
+    'skill-platform-work': '09c7bd509c006205eb99ce699dede5c31dd783580dfb30cc834086cd0f6b2047',
+    'skill-platform-secretary': '31f121ff3cf1c558f9d23affc170f88408f8c29ed99d81304d3bd09176c4aa6a',
+    'skill-platform-adviser': '37a81d972c2b96514a7a1edfeef7539d742ca0831ee75a5d32b5af382ee8bb78',
     'skill-platform-scribe': '9050ace0cf231d3caa36c5d8016e03e637b36a844281d9fc9a6ffff539b9d657',
-    'skill-platform-reviewer': 'ff28c4a70368a6c321019d758180a7c7c71ab194fc5e62a6c847572c8655f10d',
+    'skill-platform-reviewer': '2a7f0abb14ff6702d5d1951d0062798cb1337b1dd4782ba6b5bba6108688ad58',
 } as const;
 
 /** The five rewritten Skill texts with every block present, hand-written as one whole digest each. */
 const V1_SKILL_DIGESTS = {
-    'skill-platform-work': '19e676317516b2d20fe9b28df43dd0b106eff0f6dfb6aeb3ab205992c803c1e8',
-    'skill-platform-secretary': 'ee2329dccae857e77d8dcbd614d6091144041ba7209950df6a8d715bd9a6b656',
-    'skill-platform-adviser': '3e3886856373fd91bb95f14004e4fe6f28ffbb9e4bf94381e2e063a054032291',
+    'skill-platform-work': '369d27b23e48e389a1d5ee5a8834499a4c27397163f762be8f53b5feb8c3d08d',
+    'skill-platform-secretary': '191222787f6d52752cabc8c18c37f9cbf5d162e45b0e176d214c24f51c03f9cf',
+    'skill-platform-adviser': '125f31954a1312b61b7f6f7d7d10476179d73532d07b66dc1f915cdfbdfb6e3d',
     'skill-platform-scribe': '5322ad792ec968e91fdacef87caa585fbe0b94c31e33740941692a680e6097f5',
-    'skill-platform-reviewer': '72fec1ba0f0677467a7a6f76ae1f70fcf5e4525d8fe32179e01b614e3294397f',
+    'skill-platform-reviewer': '910a470de221f1730a196d25ce27095b2652754eea476546930def7082a9b358',
 } as const;
 
 /** Every tool a Skill sentence names; all present, so no block is omitted. */
@@ -46,7 +46,7 @@ const NAMED_SKILL_TOOLS = [
     'dispatch_task', 'hold_claim', 'release_hold', 'request_stop',
     'assign_module_maintainer', 'create_member', 'propose_architecture_revision', 'propose_role_split',
     'submit_command_rerun_advice', 'submit_plan_round', 'submit_scribe_review', 'submit_unknown_call_advice',
-    'search', 'code_index', 'run_readonly_command',
+    'search', 'code_index', 'run_readonly_command', 'project_source',
 ] as const;
 
 describe('platform prompt pack v2 (rulings 17–18)', () => {
@@ -105,6 +105,7 @@ describe('platform prompt pack v2 (rulings 17–18)', () => {
         // no key or version is read from the manifest or the generated origins.
         expect(PACK.origins).toEqual({
             'initial-planning-answer': { packId: 'platform', version: 16, mentionsTools: [] },
+            'planning-answer-text': { packId: 'platform', version: 1, mentionsTools: [] },
             'consultation-received-input': { packId: 'platform', version: 1, mentionsTools: [] },
             'user-decision-response': { packId: 'platform', version: 1, mentionsTools: [] },
             'message-delivery': { packId: 'platform', version: 1, mentionsTools: [] },

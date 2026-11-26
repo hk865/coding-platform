@@ -183,7 +183,7 @@ describe('a change that adds a second open required goal gate is refused', () =>
       + 'goal gate. Keep one: leave out the new gate and let the new obligation list only the new work tasks (an adopted '
       + 'gate keeps exactly the obligations that list it), or, if the person '
       + 'changed what the goal must meet, list the adopted gate (ag2b-gate) with its own taskId and disposition '
-      + '"superseded" and replacedByTaskId naming the new gate; a task you leave out of a segment stays as it is and stays active';
+      + '"superseded" and replacedByTaskId naming the new gate; a task you leave out of a segment stays as it is and is not dropped';
     const draft = plPlanChangeDraft(plan, goal, { planId: 'cpl-r45-change', tasks: [...plan.tasks, gate],
       assignments: plan.assignments ?? [], obligations: [...plan.obligations, obligation] });
     const { proposal, applied } = await proposeApply(main, goal, plan.ref, draft, 'r45');

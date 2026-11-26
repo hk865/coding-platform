@@ -13,8 +13,8 @@ import { ag2bPlanDraft, graphWrite, plain } from '../../helpers/AG2b-collaborati
 import { completeS7BGoal } from '../../helpers/S7B-V-fixture.js';
 import { draftFrom } from '../../scenarios/support/common.js';
 import { click } from './E3N-interact.js';
-import { bootE3N, callsTo, countRoute, descendants, hasClass, turns, type PageLog } from './E3N-page.js';
-import { findButton, type BootedPage } from './boot-page.js';
+import { bootE3N, callsTo, countRoute, descendants, hasClass, quietPage, textOf, turns, type PageLog } from './E3N-page.js';
+import { findButton, findClass, type BootedPage } from './boot-page.js';
 import type { FakeElement } from './dom.js';
 
 /**
@@ -200,6 +200,9 @@ export async function e3gSettled(log: PageLog, card: boolean): Promise<void> {
   await turns(() => countRoute(log, 'goals/list') === 2
     && countRoute(log, 'goals/conflicts') === 2
     && countRoute(log, 'architecture/read') === (card ? 2 : 0), 3_000);
+  /* The same second read now also reads each Goal's `tasks/query` and each
+     RUNNING Goal's driver; a local row's baseline is after every one landed. */
+  await quietPage(log);
 }
 
 /**
@@ -226,6 +229,24 @@ export function e3gGoalRows(root: FakeElement): FakeElement[] {
   const list = descendants(root).find((element) => hasClass(element, 'gx-list')
     && element.getAttribute('role') === 'list');
   return list === undefined ? [] : descendants(list).filter((element) => element.getAttribute('role') === 'listitem');
+}
+
+/** The row's `button.gx-name`, the one that opens it. */
+export function rowButton(row: FakeElement): FakeElement | undefined {
+  return descendants(row).find((element) => element.tagName.toLowerCase() === 'button' && hasClass(element, 'gx-name'));
+}
+
+/** The expanded row's `dl.kv` pairs, in template order. */
+export function pairsOf(root: FakeElement): Array<{ key: string; value: string }> {
+  const dl = findClass(root, 'kv');
+  if (dl === undefined) return [];
+  const pairs: Array<{ key: string; value: string }> = [];
+  for (const child of descendants(dl)) {
+    const tag = child.tagName.toLowerCase();
+    if (tag === 'dt') pairs.push({ key: textOf(child), value: '' });
+    else if (tag === 'dd' && pairs.length > 0) pairs[pairs.length - 1]!.value = textOf(child);
+  }
+  return pairs;
 }
 
 /**

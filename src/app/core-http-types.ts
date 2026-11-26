@@ -198,6 +198,7 @@ export type CoreRouteSuffix =
   | 'completion-policies/activate'
   | 'completion-policies/read'
   | 'goals/create'
+  | 'goals/accept-partial'
   | 'goals/read'
   | 'architecture/adopt-initial'
   | 'architecture/revise'

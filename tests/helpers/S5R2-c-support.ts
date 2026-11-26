@@ -80,7 +80,7 @@ export async function assembleS5R2C(f: S5DecisionFixture) {
     },
   } satisfies MessageDutiesFactsPort);
   const mailbox: SessionMailboxDependencies = { records: f.records, sessions, executions, roles, materials,
-    defaultInquiryDeadlineMs: 86_400_000,
+    defaultInquiryDeadlineMs: () => 86_400_000,
     queryRounds: createQueryRoundResolver({ records: f.records, duties: unknownSessionDuty, bodies: f.bodies }),
     systemActor: f.operatorActor, now: f.now, newId: f.newId, duties };
   // Match create-platform.ts:628: both the message owner and Workflow receive

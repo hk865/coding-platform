@@ -315,7 +315,7 @@ export async function openK3ReviewCardWorld(
   const sessions = createSessionDirectory({ records: decisionRecords,
     knowledge: knowledgeLinesOver(decisionRecords), lookups: fixture.records, duty: unknownSessionDuty });
   const mailboxDeps: SessionMailboxDependencies = {
-    defaultInquiryDeadlineMs: 86_400_000,
+    defaultInquiryDeadlineMs: () => 86_400_000,
     records: decisionRecords, materials, now: () => T, newId: nextDecisionId,
     systemActor: fixture.operatorActor,
     queryRounds: createQueryRoundResolver({ records: decisionRecords, duties: unknownSessionDuty, bodies: fixture.bodies }),

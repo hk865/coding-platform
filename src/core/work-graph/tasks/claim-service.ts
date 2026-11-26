@@ -101,6 +101,7 @@ import {
 import { deriveFuturePlanDelta } from './plan-validation.js';
 import type { PlanProposal } from '../model/plan-contracts.js';
 import { goalStartPolicy } from '../state/goal-settings-machine.js';
+import { goalStateOf } from '../state/goal-machine.js';
 import type { SessionMessage } from '../model/communication-contracts.js';
 import { sessionMessageRefKey } from '../sessions/message-record-codecs.js';
 import { taskRequeueRefProblem } from '../persistence/rework-codecs.js';
@@ -1248,6 +1249,18 @@ export function createTaskClaimService(deps: TaskClaimGoalSettingsDependencies):
     if (scopeCtx.signal.aborted) return reject('cancelled', 'the Task claim was cancelled during the goal read');
     const goal: GoalSnapshot = goalRead.goal;
     if (goal.workspaceRef.workspaceId !== scope.workspaceId) return forbidden('the Goal belongs to another workspace');
+    // A formal result on the ACTIVE Plan (GOAL-18 `COMPLETED` or GOAL-19
+    // `ACCEPTED_PARTIAL`) ends the Goal: a claim selected before the result was
+    // written must not open a Run. A result on an older Plan does not end the
+    // Goal (B3); the phase read joins this claim's commit, so a result written
+    // after the read loses the commit instead of slipping through.
+    const ownPhaseRef = { aggregateType: 'GoalPhase' as const, projectId: input.goalRef.projectId, goalId: input.goalRef.goalId };
+    const ownPhaseRead = await readGoalPhase(records, ownPhaseRef);
+    if (ownPhaseRead.status !== 'ready') return mapReaderRejection(ownPhaseRead);
+    if (scopeCtx.signal.aborted) return reject('cancelled', 'the Task claim was cancelled during the GoalPhase read');
+    if (goalStateOf(goal, ownPhaseRead.snapshot).completion === 'for_active') {
+      return busy('the Goal already has a formal result for its active Plan');
+    }
     // Slice 5 §3.1 S5-AU-01 / rule 5: a Goal waiting for a predecessor starts no
     // new modifying work. The read versions join this claim's commit CAS, so a
     // settings change after this read makes the claim lose (SS13); an existing
@@ -1674,6 +1687,7 @@ export function createTaskClaimService(deps: TaskClaimGoalSettingsDependencies):
     //    first-wins/last-wins locally.
     const merged = mergeGuards([
       { refKey: refKeyOf(input.goalRef), expectedRevision: goal.revision },
+      ownPhaseRead.guard,
       ...waitingGuards,
       { refKey: workspaceKey, expectedRevision: workspaceRecord.revision },
       { refKey: refKeyOf(input.planRef), expectedRevision: plan.revision },

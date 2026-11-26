@@ -25,7 +25,9 @@ import type { UncommittedFileListV1, UncommittedFileV1 } from '../../contracts/w
 import type { CheckHostActor } from '../../contracts/verification.js';
 import { asText } from '../values.js';
 import { goalHref, type NavData } from './nav.js';
-import { taskProgressOf } from './goals.js';
+import { goalTaskIdsOf, taskProgressOf } from './goals.js';
+import type { AuxPanelData } from './aux-panel.js';
+import { splitWorkspacePath } from '../../contracts/workspace-path.js';
 import { briefRowsOf } from './member.js';
 import { WITNESS_CHECK_WORD } from './chain.js';
 import {
@@ -119,6 +121,11 @@ export type DoneRequirement = {
 
 export type DoneFileRow = {
   key: string;
+  /** The canonical path `architecture/change-scope` gave (a non-main workspace's is prefixed). */
+  path: string;
+  /** The main workspace's plain path when this file has a module (`file.moduleRef`), so
+   * the architecture map can select it; `null` for another workspace or no module. */
+  archPath: string | null;
   rel: string;
   certainty: 'definite' | 'possible';
   state: 'uncommitted' | 'clean' | 'unknown';
@@ -194,6 +201,12 @@ export type DoneDeliveryCard = {
 
 export type DoneData = {
   nav: NavData;
+  /** C1: the right panel's current tab read (`readPageAux`), `null` when closed. */
+  aux: AuxPanelData | null;
+  /** C3: the main workspace's paths this Goal changed, for the architecture map's 当前工作. */
+  archChanged: string[];
+  /** C2: the Tasks the task map draws (`goalTaskIdsOf`). */
+  mapTaskIds: string[];
   inboxRows: { href: string; title: string; sq: string; name: string; n: string }[];
   blank: DoneBlank;
   delivery: DoneDelivery | null;
@@ -211,6 +224,8 @@ export type DoneData = {
 /** The route values `readDone` read, in §2.2's order. */
 export type DoneSource = {
   nav: NavData;
+  /** C1: the right panel's current tab read; `null` when the panel is closed. */
+  aux: AuxPanelData | null;
   deliveryState: DoneDeliveryState;
   round: DoneRoundRead | null;
   policy: DonePolicyRead | null;
@@ -331,6 +346,8 @@ function filesSectionOf(source: DoneSource): DoneFilesSection {
     delTotal = delTotal === null || del === null ? null : delTotal + del;
     const row: DoneFileRow = {
       key: scopePath + '/' + file.path,
+      path: file.path,
+      archPath: file.moduleRef !== null && splitWorkspacePath(file.path).workspaceId === null ? file.path : null,
       rel: file.path + (file.certainty === 'possible' ? '（可能）' : ''),
       certainty: file.certainty,
       state,
@@ -562,6 +579,12 @@ export function adaptDone(source: DoneSource): DoneData {
     : nav.goals.length === 0 ? 'no_goal' : 'no_completed_goal';
   return {
     nav,
+    aux: source.aux,
+    archChanged: source.changeScope.files
+      .map((file) => splitWorkspacePath(file.path))
+      .filter((file) => file.workspaceId === null)
+      .map((file) => file.path),
+    mapTaskIds: goalTaskIdsOf(nav.tasks),
     inboxRows: inboxRowsOf(nav),
     blank,
     delivery,

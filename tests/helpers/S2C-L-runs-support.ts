@@ -302,7 +302,7 @@ export function createRunSupport(base: TaskClaimFixture): RunSupport {
   function mailboxService(): ReturnType<typeof createSessionMailbox> {
     const materials = createMaterialService({ bodies, authority: createMaterialRecordReaders(records).authority, now });
     return createSessionMailbox({ records, sessions: base.sessionsPort, executions: createRunStateReader({ records }),
-      defaultInquiryDeadlineMs: 86_400_000,
+      defaultInquiryDeadlineMs: () => 86_400_000,
       queryRounds: createQueryRoundResolver({ records, duties: unknownSessionDuty, bodies }),
       roles: createRoleConfigurationService({ records, now, eventId }), materials,
       systemActor: { kind: 'system', id: 's2c-l-query' }, now, newId: eventId });
@@ -311,7 +311,7 @@ export function createRunSupport(base: TaskClaimFixture): RunSupport {
   async function beginConsultationCopy(asked: SessionRef, requestId: string): Promise<{ copy: SessionRef; queryRunRef: QueryRunRef }> {
     const materials = createMaterialService({ bodies, authority: createMaterialRecordReaders(records).authority, now });
     const mailbox = createSessionMailbox({ records, sessions: base.sessionsPort, executions: createRunStateReader({ records }),
-      defaultInquiryDeadlineMs: 86_400_000,
+      defaultInquiryDeadlineMs: () => 86_400_000,
       queryRounds: createQueryRoundResolver({ records, duties: unknownSessionDuty, bodies }),
       roles: createRoleConfigurationService({ records, now, eventId }), materials,
       systemActor: { kind: 'system', id: 's2c-l-query' }, now, newId: eventId });

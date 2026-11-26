@@ -1,12 +1,12 @@
 import { afterAll, afterEach, describe, expect, it } from 'vitest';
-import { findButton, findClass, findElement } from './helpers/boot-page.js';
+import { findClass, findElement } from './helpers/boot-page.js';
 import {
   bootE3N, bootMainCard, callsTo, countRoute, descendants, hasClass, quietPage, sentWrite, settledN, textOf, userTexts, waitFor,
 } from './helpers/E3N-page.js';
 import { click, notConnected, pressEnter } from './helpers/E3N-interact.js';
 import { E3N_BUDGET_TITLES, E3N_INTERRUPTED_TITLE, openW1 } from './helpers/E3N-world.js';
 import { openE3GW1 } from './helpers/E3G-world.js';
-import { card, cardButton, cardTitle, inboxRow, labelled, rowMeta, typeInto } from './helpers/E3D-page.js';
+import { card, cardButton, cardTitle, inboxRow, labelled, openFromGoalBar, rowMeta, typeInto } from './helpers/E3D-page.js';
 import { openBudgetWorld, openInterruptedWorld, openOldAnswerWorld, seePlanAdoptionsVia } from './helpers/E3D-world.js';
 import { cleanupScenarios } from '../scenarios/harness.js';
 import { plain } from '../helpers/AG2b-collaboration-fixture.js';
@@ -14,7 +14,6 @@ import { S6A_SCOPE, S6A_WORK_ROLE, type S6ARequestWorld } from '../helpers/S6A-r
 import { s6aCardsWorkspace } from '../helpers/S6A-cards-fixture.js';
 import { adoptS6BPlan, governS6B } from '../helpers/S6B1-fixture.js';
 import type { BootedPage } from './helpers/boot-page.js';
-import type { FakeElement } from './helpers/dom.js';
 
 /**
  * E3U T-A06–T-A10, T-A15 (test sheet e3main-a-tests §1.1, §1.2): the decision
@@ -41,15 +40,6 @@ async function waitingCards(world: { post(route: string, body: unknown): Promise
   return read.value.waitingAnswer;
 }
 
-/** Opens the first card of the Goal from the goal bar's `需要你决定 n` (`n` checked when the row names it). */
-async function openFromGoalBar(page: BootedPage, n: number | null): Promise<void> {
-  const decide = (): FakeElement | undefined => findButton(findClass(page.root, 'goalbar') ?? page.root, '需要你决定');
-  await waitFor(() => decide() !== undefined);
-  if (n !== null) await waitFor(() => textOf(decide()) === `需要你决定 ${n}`);
-  click(decide()!);
-  await waitFor(() => card(page.root) !== undefined);
-}
-
 async function askOnCard(page: BootedPage, text: string): Promise<void> {
   click(cardButton(page.root, '问秘书')!);
   await waitFor(() => card(page.root) === undefined && labelled(page.root, '发送') !== undefined);
@@ -64,8 +54,12 @@ describe('E3U Main decision card', () => {
     try {
       /* 具名改坏: `Main.dc.html` 的 `gb.openDecide` 保持空函数；卡断言红。 */
       await openFromGoalBar(page, 1);
-      /* S1: the card's path is drawn not connected. */
-      notConnected(findClass(card(page.root)!, 'ellipsis')!);
+      /* B9: this card names a Task through its Task pin, so its path is live and
+         opens the task map (goal card B, B9's first locate rule). */
+      const path = findClass(card(page.root)!, 'ellipsis')!;
+      expect(hasClass(path, 'is-off')).toBe(false);
+      expect(path.getAttribute('title')).toBe('在任务图里看');
+      expect(path.getAttribute('aria-disabled')).toBe('false');
       /* 具名改坏: `mainRenderVals` 删掉 `composerOpen` 的覆盖；卡开着时输入区断言红。 */
       expect(findElement(page.root, (element) => element.getAttribute('id') === 'composer-input')).toBeUndefined();
       expect(textOf(findClass(card(page.root)!, 'lvl'))).toBe('要决定');

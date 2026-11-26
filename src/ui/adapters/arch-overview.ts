@@ -174,8 +174,9 @@ export type ArchExploreRow = {
   projectId: string;
   workspaceId: string;
   workspaceName: string;
-  /** `cold_start` says 正在初始化; `workspace_join` says the workspace is 正在探索. */
-  kind: 'cold_start' | 'workspace_join';
+  /** `cold_start` says 正在初始化; `workspace_join` says the workspace is 正在探索;
+   * `exploration_followup` (only `continue`) says a follow-up exploration is held. */
+  kind: 'cold_start' | 'workspace_join' | 'exploration_followup';
   /** The ruled caption line. */
   text: string;
   /** Stop while the operation runs, continue once it waits. */
@@ -421,6 +422,10 @@ function isColdStartOf(operationId: string, projectId: string): boolean {
 function isJoinOf(operationId: string, workspaceId: string): boolean {
   return operationId === 'workspace_join:' + workspaceId;
 }
+/** An exploration follow-up's operation id (state/exploration-followup.ts `explorationFollowUpOperationRef`). */
+function isFollowUp(operationId: string): boolean {
+  return operationId.startsWith('exploration_followup:');
+}
 
 /** One workspace's name for the rows; the page's own project name is the fallback. */
 function workspaceNameOf(source: ArchOverviewSource, workspaceId: string): string {
@@ -428,20 +433,26 @@ function workspaceNameOf(source: ArchOverviewSource, workspaceId: string): strin
 }
 
 /** The ruled caption and button of one unfinished exploration. A `phase` of `accepted` or
- * `running` means undone; `result.status === 'waiting'` means the person stopped it. */
+ * `running` means undone; `result.status === 'waiting'` means the person stopped it, or (a
+ * follow-up) a round of it ended before it ran. */
 function exploreRowsOf(source: ArchOverviewSource): ArchExploreRow[] {
   const out: ArchExploreRow[] = [];
+  const named = Object.keys(source.workspaceNames ?? {}).length > 1;
   for (const [workspaceId, entries] of Object.entries(source.operations)) {
     const name = workspaceNameOf(source, workspaceId);
+    let mainHeld = false;
+    let followUpHeld = false;
     for (const entry of entries) {
       const row = asRecord(entry);
       const phase = asText(row.phase);
       if (phase !== 'accepted' && phase !== 'running') continue;
       const operationId = asText(asRecord(row.operation).operationId);
+      const stopped = asText(asRecord(row.result).status) === 'waiting';
+      if (isFollowUp(operationId)) { if (stopped) followUpHeld = true; continue; }
       const cold = isColdStartOf(operationId, source.scope.projectId);
       const join = isJoinOf(operationId, workspaceId);
       if (!cold && !join) continue;
-      const stopped = asText(asRecord(row.result).status) === 'waiting';
+      if (stopped) mainHeld = true;
       out.push({
         projectId: source.scope.projectId, workspaceId, workspaceName: name,
         kind: cold ? 'cold_start' : 'workspace_join',
@@ -450,6 +461,17 @@ function exploreRowsOf(source: ArchOverviewSource): ArchExploreRow[] {
           : name + '加入中：' + (stopped ? '探索已停下，可以继续。' : '正在探索。'),
         action: stopped ? 'continue' : 'stop',
         actionLabel: stopped ? '继续探索' : '停止探索',
+      });
+    }
+    /* P6I r3: a held follow-up (再深一层, 不对重新提) has no stop or continue of its own; the
+       workspace's continue releases it once no held join or cold start of that workspace comes
+       first (`exploration-control.ts` `continueTarget`), so its row shows only then. One row per
+       workspace: each continue releases one held follow-up, and the reread shows the next. */
+    if (followUpHeld && !mainHeld) {
+      out.push({
+        projectId: source.scope.projectId, workspaceId, workspaceName: name, kind: 'exploration_followup',
+        text: (named ? name + '：' : '') + '跟进探索已停下，可以继续。',
+        action: 'continue', actionLabel: '继续探索',
       });
     }
   }

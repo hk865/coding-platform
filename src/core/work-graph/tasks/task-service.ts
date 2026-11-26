@@ -36,7 +36,7 @@ import { isRecord as isRecordValue, nonEmpty as isNonEmptyString, parseObject } 
 import type { GoalRecordTransactionPort, RecordGuard } from "../../record-store/ports.js";
 import type { RecordLookupPort } from "../../record-store/lookup-ports.js";
 import type { CompletionDependencies } from "./completion.js";
-import { completeGoalFromHost, completeTaskFromHost } from "./completion.js";
+import { acceptPartialResultFromHost, completeGoalFromHost, completeTaskFromHost } from "./completion.js";
 import { setGoalControlFromHost } from "./goal-control.js";
 import type { CreateGoalInput, GoalService, GoalServiceDependencies, GoalTaskPort, GraphWrite } from "../model/task-contracts.js";
 import { compareCallerGoalPins, compileGoalCreate, goalCreateFingerprint, goalCreateIdentityKey, goalRefFor, normalizeCallerGoalPins, projectRefFor, workspaceRefFor } from "../persistence/commit-compiler.js";
@@ -441,7 +441,8 @@ async function createGoalFromHost(
 export function createGoalService(deps: GoalServiceDependencies): GoalService {
   const completionDeps: CompletionDependencies | null = typeof deps.records.lookup === "function"
     ? { records: deps.records as GoalRecordTransactionPort & RecordLookupPort,
-        now: deps.now, eventId: deps.eventId }
+        now: deps.now, eventId: deps.eventId,
+        ...(deps.operatorActor === undefined ? {} : { operatorActor: deps.operatorActor }) }
     : null;
   const tasks: GoalTaskPort = {
     createGoal: (ctx, request) => createGoalFromHost(deps, ctx, request),
@@ -453,6 +454,11 @@ export function createGoalService(deps: GoalServiceDependencies): GoalService {
       ? Promise.resolve({ status: "rejected", code: "unsupported",
           reason: "Goal completion requires a RecordStore with the exact lookup capability" })
       : completeGoalFromHost(completionDeps, ctx, request),
+    // GOAL-07P (G6): the person's partial acceptance, over the same records.
+    acceptPartialResult: (ctx, request) => completionDeps === null
+      ? Promise.resolve({ status: "rejected", code: "unsupported",
+          reason: "a partial acceptance requires a RecordStore with the exact lookup capability" })
+      : acceptPartialResultFromHost(completionDeps, ctx, request),
     // A.2 step 5.5 (G7): GOAL-04…06 over the same records.
     setGoalControl: (ctx, request) => setGoalControlFromHost(deps, ctx, request),
   };

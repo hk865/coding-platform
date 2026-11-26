@@ -12,7 +12,7 @@ import type { SessionRef } from '../../contracts/core/identity.js';
 import type { DecisionSubjectV1 } from '../../contracts/goal-decisions.js';
 import type { QueryJobRef, QueryRunRef, RequestReferenceV1 } from '../../contracts/query-job.js';
 import type { RunRef } from '../../contracts/dispatch.js';
-import type { TaskGraph, TaskRow } from '../../contracts/task-graph.js';
+import type { TaskGraph } from '../../contracts/task-graph.js';
 import type { SessionMessageRef } from '../../contracts/core/session-message.js';
 import type { UnknownCallReviewRef } from '../../contracts/unknown-call-review.js';
 import type { RunStepsReadV1 } from '../../contracts/run-steps.js';
@@ -21,13 +21,13 @@ import type { SessionMessageReadV1, MessageBody } from '../../contracts/mailbox.
 import type { GoalCopyDraftResultV1, GoalCopyConfirmResultV1 } from '../../contracts/goal-card.js';
 import type { ControlIntentRef, ControlIntentSnapshotV1 } from '../../contracts/control-intent.js';
 import { asRecord, asText } from '../values.js';
-import { holdKindWordOf, localShortAt, planRefText, planVersionText, stopRunText, stopWordOf } from './task-map.js';
+import { holdKindWordOf, localShortAt, planRefText, planVersionText, stopRunText } from './task-map.js';
 import {
   runStepsHeadOf, runStepsOf, runStepsSentenceOf, runStepsTimeOf, type RunStepView,
 } from './run-steps.js';
 import { subjectGoalId, adaptDecide, answerBodyViewOf, cardFromOf, cardReplyOf, cardStateWordOf, FAILURE_WORD,
   type DecideCardReply, type DecideData, type DecideRow, type DecisionCardV1, type DecisionQueueReadV1 } from './decide.js';
-import { AUTONOMY_TEXT, taskProgressOf } from './goals.js';
+import { AUTONOMY_TEXT, goalCauseSentenceOf, taskProgressOf, taskRowIn, taskTitleOf } from './goals.js';
 import {
   messageBodyKey, messageFlagsOf, runWordOf, type MemberCopySource, type MemberLine, type MemberWriteBasis,
 } from './member.js';
@@ -115,6 +115,8 @@ export type MainLogRow = {
   /** The request root, only for the page to drop a local pending bubble it has
    * already read back; never drawn. */
   root: string;
+  /** The original request to continue when revising this round's ideas. */
+  requestRoot: QueryJobRef;
   /** The round this row belongs to; Main's plan card 采用 uses it for
    * `selectIdea`. Not drawn. */
   round: QueryJobRef | null;
@@ -223,6 +225,7 @@ export type MainData = NavData & {
   decisions: DecideData | null;
   /** Time order, oldest first (the prototype draws the newest at the bottom). */
   conversation: MainLogRow[];
+  recipientNote: string;
   /** The last page's `next`; non-null is what draws “更早”. */
   older: MainPageCursorV1 | null;
   /** null = the 轨迹 tab was not opened. */
@@ -455,14 +458,15 @@ export function lastAnsweredRoundOf(
 }
 
 function logRowOf(
-  root: string,
+  requestRoot: QueryJobRef,
   fields: Pick<MainLogRow, 'text'>
   & Partial<Pick<MainLogRow, 'isUser' | 'isAgent' | 'isRun' | 'quotes' | 'ideas' | 'round' | 'selectable' | 'run' | 'to' | 'toKey'>>,
 ): MainLogRow {
   const quotes = fields.quotes ?? [];
   const ideas = fields.ideas ?? [];
   return {
-    root,
+    root: requestRootKey(requestRoot),
+    requestRoot,
     round: fields.round ?? null,
     selectable: fields.selectable === true,
     isSys: false,
@@ -481,6 +485,12 @@ function logRowOf(
     hasIdeas: ideas.length > 0,
     run: fields.run ?? null,
   };
+}
+
+export function recipientNoteOf(ref: SessionRef | null, nav: NavData): string {
+  if (ref === null) return '等空闲的秘书接手';
+  const name = lineNameOfSession(nav.lines, ref) || lineNameOfSession(nav.archived, ref);
+  return '将交给 ' + (name || '秘书');
 }
 
 /** M1: the request's own line, or the sentence saying why there is none. The
@@ -517,7 +527,7 @@ export function conversationOf(pages: readonly MainPageV1[], nav: NavData): Main
   }
   const rows: MainLogRow[] = [];
   for (const request of requests.reverse()) {
-    const root = requestRootKey(request.requestRoot);
+    const root = request.requestRoot;
     const lastAnswered = lastAnsweredRoundOf(request);
     const to = toOf(request, nav);
     let firstRow = true;
@@ -689,55 +699,6 @@ export function lvRecordOf(f: {
   };
 }
 
-/** The one task lookup by id, shared by every sentence that names a Task. */
-function taskRowIn(tasks: TaskGraph | readonly TaskRow[] | null, taskId: string): TaskRow | null {
-  const rows: readonly TaskRow[] | null = tasks === null ? null
-    : 'tasks' in tasks ? tasks.tasks : tasks;
-  return rows === null ? null : rows.find((task) => task.ref.taskId === taskId) ?? null;
-}
-
-function taskTitleOf(tasks: TaskGraph | readonly TaskRow[] | null, taskId: string, fallback: string): string {
-  const row = taskRowIn(tasks, taskId);
-  return row === null ? fallback : row.definition.title;
-}
-
-/** 5.5-4: the one sentence of a display cause. `code` is the `GoalDisplayCauseV1`
- * union; an unknown code has no sentence rather than a guessed one. */
-function causeSentenceOf(cause: Record<string, unknown>, tasks: TaskGraph | null): string {
-  const code = asText(cause.code);
-  const taskName = (taskId: string): string => taskTitleOf(tasks, taskId, '一个任务');
-  if (code === 'initial_plan_pending') return '第一版计划等你确认';
-  if (code === 'change_pending') return '有一份计划改动等你决定';
-  if (code === 'unknown_outcome') return '「' + taskName(asText(cause.taskId)) + '」有一步不知道做完没有，等核对';
-  if (STOP_CAUSE_CODES.has(code)) {
-    const taskId = asText(cause.taskId);
-    const row = taskRowIn(tasks, taskId);
-    if (row === null) return '「一个任务」停下了';
-    const word = stopWordOf(asRecord(row) as Record<string, unknown>, code);
-    return '「' + row.definition.title + '」：' + (word === '' ? '停下了' : word);
-  }
-  if (code === 'required_task_deferred') return '必需的任务被延后了，没有别的必需工作可做';
-  if (code === 'interrupted_pending_resume') return '主机重启时中断了，等你继续';
-  if (code === 'task_failed') return '「' + taskName(asText(cause.taskId)) + '」失败';
-  if (code === 'task_blocked') return '「' + taskName(asText(cause.taskId)) + '」受阻';
-  if (code === 'no_dispatchable_work') return '没有能领取的必需任务';
-  if (code === 'auto_rework_pending') return '「' + taskName(asText(cause.taskId)) + '」等待推进';
-  if (code === 'auto_rework_count') {
-    return '「' + taskName(asText(cause.taskId)) + '」自动返工第 ' + String(cause.n) + ' 次（'
-      + String(cause.n) + '/' + String(cause.cap) + '）';
-  }
-  if (code === 'gate_verifying') return '「' + taskName(asText(cause.gateTaskId)) + '」正在验收';
-  if (code === 'gate_fix_in_progress') return '「' + taskName(asText(cause.gateTaskId)) + '」验收没过，正在修';
-  if (code === 'awaiting_gate') return '等「' + taskName(asText(cause.gateTaskId)) + '」验收';
-  return '';
-}
-
-/** The eight GOAL-30 stop codes; `unknown_outcome` is GOAL-23's own sentence. */
-const STOP_CAUSE_CODES = new Set([
-  'auto_rework_cap_reached', 'no_new_basis', 'gate_needs_fix', 'verification_uncovered',
-  'budget_exhausted', 'task_cancelled', 'task_paused', 'not_reworkable',
-]);
-
 const INTENT_WORD: Record<string, string> = { pause: '暂停', cancel: '取消', resume: '继续', steer: '改向' };
 const INTENT_STATUS_WORD: Record<string, string> = {
   queued: '排队', applied: '已生效', outcome_unknown: '结果未知', superseded: '已被替代',
@@ -813,7 +774,7 @@ export function goalBarTextOf(
     tip.push('暂停期间仍可问一问、查找、起草和答卡；不会开始修改、不放行等着发的工作，也不会自己继续。');
   }
   for (const cause of facts.causes) {
-    const sentence = causeSentenceOf(cause, tasks);
+    const sentence = goalCauseSentenceOf(cause, tasks);
     if (sentence !== '') tip.push(sentence);
   }
   for (const stop of facts.runStops) tip.push(runStopSentenceOf(stop, display.phase, tasks));
@@ -829,7 +790,7 @@ export function goalBarTextOf(
     why = '只读可用';
   } else if (['NEEDS_DECISION', 'BLOCKED', 'FAILED', 'CHANGE_PENDING', 'PLANNING'].includes(display.phase)
     && facts.cause !== null) {
-    why = causeSentenceOf(facts.cause, tasks);
+    why = goalCauseSentenceOf(facts.cause, tasks);
   } else {
     why = '';
   }
@@ -1355,6 +1316,7 @@ export function adaptMain(input: {
   older: MainPageCursorV1 | null; track: MainTrackRow[] | null;
   line?: MainLineRecord | null; aux?: AuxPanelData | null;
   requestFeedback: MainRequestFeedback | null;
+  recipientNote?: string;
   retry?: boolean;
   /** M2: the one on-demand answer body this read fetched, by cardKey; `null`
    * is that read's failure, absent is not read. */
@@ -1383,6 +1345,7 @@ export function adaptMain(input: {
     retry: input.retry === true,
     decisions: input.decisions,
     conversation: conversationOf(input.pages, input.nav),
+    recipientNote: input.recipientNote ?? '',
     older: input.older,
     track: input.track,
     progress: taskProgressOf(input.nav.tasks),

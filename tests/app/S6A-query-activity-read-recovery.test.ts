@@ -119,8 +119,9 @@ describe('the Query activity of the recovery write paths', () => {
       const submitted = queued(await world.submit({ commandId: 'qrr03-submit', goalId: S6A_GOAL_1.goalId,
         text: 'QRR-03 request', recipient: a }));
       await terminal.reached;
-      // The Host is abandoned with that commit still waiting; the next Host reconciles on the same directory.
-      await world.crash({ extraHostOptions: { requestDriver: 'on' } });
+      // The Host is abandoned with that commit still waiting; the next Host reconciles on the same directory. The old
+      // commit reaches the store when released, so production replays or refuses it (FLK rework ruling 5).
+      await world.crash({ extraHostOptions: { requestDriver: 'on' }, heldCommitsRace: true });
       const settled = await readQuery(world.ag2b, submitted.round);
       expect(settled.job.job.status).toBe('answered');
       expect(settled.job.job.closeReason).toBeNull();

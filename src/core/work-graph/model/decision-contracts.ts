@@ -97,6 +97,9 @@ export interface MessageDutiesFactsPort {
 export interface CandidateRequestFactsPort {
   readCandidateRequestFacts(ctx: CoreCallContext, input: {
     requestRef: QueryJobRef; goalRef: GoalRef;
+    /** Abandonment only (lead 11-27): a withdrawn source message still names the Query's source. Withdrawal
+     *  changes whether the source is still there, not that it was this request's source. */
+    withdrawnSourceCounts?: boolean;
   }): Promise<ReadResult<{
     root: boolean; initiatedByOperator: boolean;
     currentSecretary: SessionRef | null; guards: readonly RecordGuard[];
@@ -336,8 +339,8 @@ export interface GoalSettingsPort {
   }>): Promise<WriteResult<{ goals: GoalSnapshot[] }>>;
 }
 
-// Four values of `GoalDisplayPhase`; `null` means the row needs `goals/display`.
-export type GoalListPhaseV1 = 'PLANNING' | 'PAUSED' | 'CANCELLED' | 'COMPLETED';
+// Five values of `GoalDisplayPhase`; `null` means the row needs `goals/display`.
+export type GoalListPhaseV1 = 'PLANNING' | 'PAUSED' | 'CANCELLED' | 'COMPLETED' | 'ACCEPTED_PARTIAL';
 
 /** One `goals/list` row: the narrow settings/display facts, not a second Goal snapshot. */
 export type GoalListRowV1 = {
@@ -348,6 +351,12 @@ export type GoalListRowV1 = {
   order: number; autonomy: GoalSettingsV1['autonomy']; waitForGoalRef: GoalRef | null;
   activePlanRevision: PlanRevisionRef | null;
   display: { phase: GoalListPhaseV1 | null };
+  /**
+   * The COMPLETED Goal this Goal's work was added after: a person spoke new work on that Goal's line and this Goal was
+   * confirmed from the request (`tasks/goal-origin.ts`); null for every other Goal. The completed Goal's own "added
+   * after" side is the same list read the other way.
+   */
+  followsCompletedGoal: GoalRef | null;
 };
 
 /** The whole workspace's Goals in one stable window; no page cursor. */

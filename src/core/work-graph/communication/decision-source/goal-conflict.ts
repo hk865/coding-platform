@@ -3,10 +3,10 @@ import type { CoreCallContext } from '../../../../contracts/core/call-context.js
 import type { ReadResult } from '../../../../contracts/core/results.js';
 import type { DecisionObjectV1, DecisionOptionV1, DecisionSourceIdentityV1,
   GoalDecisionBasisV1, GoalFootprintV1 } from '../../../../contracts/goal-decisions.js';
-import { canonicalJson, type JsonValue } from '../../../../contracts/fingerprint.js';
 import { rejectedWithCurrent } from '../../../../contracts/core/rejections.js';
 import type { GoalRef, GoalSnapshot } from '../../../../contracts/ledger.js';
 import { goalConflictFacts } from '../../state/goal-settings-machine.js';
+import { goalStateOf } from '../../state/goal-machine.js';
 import { plannedFootprintOf } from '../../model/architecture-footprint.js';
 import type { GoalFootprintReadPort } from '../../model/decision-contracts.js';
 import { decodeGoalPhaseSnapshot } from '../../tasks/completion-record-codecs.js';
@@ -51,10 +51,8 @@ async function goalTerminal(support: SourceReadSupport, goal: GoalSnapshot): Pro
   const phaseRef = { aggregateType: 'GoalPhase' as const, projectId: goal.ref.projectId, goalId: goal.ref.goalId };
   const decoded = await support.readDecoded(phaseRef, decodeGoalPhaseSnapshot, 'GoalPhase');
   if (decoded.status === 'ready') {
-    // §4.3 line 829: only a completion of the CURRENT active Plan is terminal.
-    const completedPlanIsActive = goal.activePlanRevision !== null
-      && canonicalJson(decoded.value.planRef as unknown as JsonValue) === canonicalJson(goal.activePlanRevision as unknown as JsonValue);
-    return { cancelled: false, completed: decoded.value.phase === 'COMPLETED' && completedPlanIsActive };
+    // §4.3 line 829: only a result (COMPLETED or ACCEPTED_PARTIAL) of the CURRENT active Plan is terminal.
+    return { cancelled: false, completed: goalStateOf(goal, decoded.value).completion === 'for_active' };
   }
   // §8.2 data row: only an absent GoalPhase means no recorded completion.
   if (decoded.status === 'not_found' || (decoded.status === 'rejected' && decoded.code === 'not_found')) {

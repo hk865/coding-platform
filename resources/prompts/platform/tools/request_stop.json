@@ -1,5 +1,5 @@
 {
-  "description": "叫停：请这个任务正在跑的 Run 收尾停下；受理时冻结 Run、租约、控制指针和来源，需人批时先出卡。谁能用：本轮挂了本工具的秘书、参谋；秘书请求轮可用。让出等回复的 Run 也受理；没有在跑的 Run → invalid：没有在跑的运行；要先别领用 hold_claim；要取消请交候选。不用消息代替叫停，不用叫停代替取消；人已接手或已经停过不再叫。参数：taskRef 是任务三元组；reason 非空，写停在哪、把做到一半的东西交代清楚。回执：released 是放行；holdReasonId 有值才写了暂缓；person_stopped 表示人已接手、没写暂缓也没送停；run_ended 表示写了暂缓、没送停；notSent 为空表示待送。第二张叫停回 busy，带原卡引用和版本；Run 已暂停或正在停也回 busy。",
+  "description": "叫停：请这个任务正在跑的 Run 收尾停下；受理时冻结 Run、租约、控制指针和来源，需人批时先出卡。让出等回复的 Run 也受理；没有在跑的 Run → invalid：没有在跑的运行；要先别领用 hold_claim；要取消请交候选。不用消息代替叫停，不用叫停代替取消；人已接手或已经停过不再叫。参数：taskRef 是任务三元组；reason 非空，写停在哪、把做到一半的东西交代清楚。回执：released 是放行；holdReasonId 有值才写了暂缓；person_stopped 表示人已接手、没写暂缓也没送停；run_ended 表示写了暂缓、没送停；notSent 为空表示待送。第二张叫停回 busy，带原卡引用和版本；Run 已暂停或正在停也回 busy。",
   "parameters": {
     "taskRef": "要叫停的任务三元组。",
     "taskRef.projectId": "任务的项目 id。",

@@ -1,5 +1,5 @@
 {
-  "description": "暂缓领取：给这个任务放下一条暂缓原因，让目标循环先不领它，直到有人点名撤掉；只挡下一次领取；要在跑的 Run 收尾用 request_stop。谁能用：本轮挂了本工具的秘书、参谋；秘书请求轮可用。原因：agent|stop|scribe_stop。失效：同来源、在暂缓之后提交、动到本任务的候选了结时，agent/stop 失效；书记原因不随候选失效。同一放置线、同一来源的原因还在生效时回 unchanged，沿用原 reasonId。参数：taskRef 是任务三元组；reason 非空，写清为什么现在别领、等什么。回执：committed（带 value.hold、value.revision、value.reasonId）表示放下了。",
+  "description": "暂缓领取：给这个任务放下一条暂缓原因，让目标循环先不领它，直到有人点名撤掉；只挡下一次领取；要在跑的 Run 收尾用 request_stop。原因：agent|stop|scribe_stop。失效：同来源、在暂缓之后提交、动到本任务的候选了结时，agent/stop 失效；书记原因不随候选失效。同一放置线、同一来源的原因还在生效时回 unchanged，沿用原 reasonId。参数：taskRef 是任务三元组；reason 非空，写清为什么现在别领、等什么。回执：committed（带 value.hold、value.revision、value.reasonId）表示放下了。",
   "parameters": {
     "taskRef": "要暂缓的任务三元组。",
     "taskRef.projectId": "任务的项目 id。",

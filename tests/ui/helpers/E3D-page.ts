@@ -1,7 +1,7 @@
 import { expect } from 'vitest';
-import { bootPage, findClass, findElement, type BootedPage } from './boot-page.js';
+import { bootPage, findButton, findClass, findElement, type BootedPage } from './boot-page.js';
 import type { FakeElement } from './dom.js';
-import { CORE, descendants, hasClass, lineRows, routeOf, textOf } from './E3N-page.js';
+import { CORE, descendants, hasClass, lineRows, routeOf, textOf, waitFor } from './E3N-page.js';
 import { click } from './E3N-interact.js';
 
 /**
@@ -175,6 +175,21 @@ export function rowMeta(row: FakeElement | undefined): string {
 /** The open decision card (`section.decision`). */
 export function card(root: FakeElement): FakeElement | undefined {
   return findElement(root, (element) => element.tagName.toLowerCase() === 'section' && hasClass(element, 'decision'));
+}
+
+/** The Goal bar's 需要你决定 opens the Goal's first card (or the `n`-th, when named). */
+export async function openFromGoalBar(page: BootedPage, n: number | null = null): Promise<void> {
+  const decide = (): FakeElement | undefined => findButton(findClass(page.root, 'goalbar') ?? page.root, '需要你决定');
+  await waitFor(() => decide() !== undefined);
+  if (n !== null) await waitFor(() => textOf(decide()) === `需要你决定 ${n}`);
+  click(decide()!);
+  await waitFor(() => card(page.root) !== undefined);
+}
+
+/** The open right-panel detail's title; '' while no detail is drawn. */
+export function detailTitle(root: FakeElement): string {
+  const detail = findClass(root, 'detail');
+  return detail === undefined ? '' : textOf(findClass(detail, 'd-title'));
 }
 
 export function cardTitle(root: FakeElement): string {

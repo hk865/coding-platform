@@ -1,5 +1,5 @@
 {
-  "description": "Ask the owner to open a successor VerificationRound after a finalized round of your Goal. Call it from your round's tool context when your grant includes request_recheck and the round's result should be examined again; the owner applies the same admission and shared cap as an automatic recheck and does not run the check itself. Under every-step confirmation the call returns a rework-request card instead of opening the round, and the person's approval applies it as an agent. Parameters name the predecessor round and the reason; onlyIfSourceChanged narrows admission to a source that changed, and acknowledgement is set only when this request answers a Session message.",
+  "description": "Ask the owner to open a successor VerificationRound after a finalized round of your Goal. The owner applies the same admission and shared cap as an automatic recheck and does not run the check itself. Under every-step confirmation the call returns a rework-request card instead of opening the round, and the person's approval applies it as an agent. Parameters name the predecessor round and the reason; onlyIfSourceChanged narrows admission to a source that changed.",
   "parameters": {
     "predecessorRoundRef": "The finalized round whose successor should run.",
     "predecessorRoundRef.aggregateType": "Always \"VerificationRound\".",
@@ -11,10 +11,10 @@
     "predecessorRoundRef.roundId": "The round id.",
     "onlyIfSourceChanged": "When true, the owner opens a successor only if the source changed since the predecessor; omit for the owner's default.",
     "reason": "Why the result should be examined again; the owner's reason text.",
-    "acknowledgement": "The Session message this request answers, when it is an answer to a message; omit otherwise.",
+    "acknowledgement": "The Session message this answers; omit unless the request answers one.",
     "basisMessage": "A question your line can read that another line formally answered, as the new basis; judge yourself whether the answer gives one, else omit. A Session message only, not an artifact.",
-    "expected": "The exact W1 version pins the caller saw for this recheck; omit a pin rather than guessing a fresh revision. The predecessor round revision comes from its own `look_graph` VerificationRound card (the Task card's `checks` relation names the rounds), not from the Goal or Task card. The optional TaskReworkRefusal pin is the current reverify refusal record, when one was shown.",
-    "expected[].ref": "One of the caller-visible refs this recheck pins: VerificationRound | TaskReworkRefusal (reverify).",
-    "expected[].revision": "The exact version the caller saw for `ref`; the owner rejects a mismatch with the current record."
+    "expected": "Exact W1 pins; omit rather than guess a fresh revision. Read the predecessor round revision from its own VerificationRound card (the Task card's checks relation names the rounds), not from the Goal or Task card; the optional TaskReworkRefusal pin is the current reverify refusal.",
+    "expected[].ref": "VerificationRound | TaskReworkRefusal (reverify).",
+    "expected[].revision": "The exact version the caller saw; a mismatch is rejected with the current record."
   }
 }

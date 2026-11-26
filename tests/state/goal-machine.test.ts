@@ -42,6 +42,7 @@ import type { TransitionRejectReason } from '../../src/core/work-graph/state/tra
 // The enumerations below moved from `goal-machine.ts` in A.2 step 4: no production code enumerates them.
 const GOAL_EVENT_TYPES: readonly GoalEvent['type'][] = Object.freeze([
   'goal_created', 'plan_adopted', 'goal_pause_requested', 'goal_resume_requested', 'goal_cancel_requested', 'goal_completed',
+  'goal_partially_accepted',
 ]);
 
 const GOAL_DISPLAY_PHASES: readonly GoalDisplayPhase[] = Object.freeze([
@@ -113,7 +114,8 @@ function stateOf(desiredState: GoalDesiredState, variant: Variant): GoalMachineS
 
 function completionFacts(plan: PlanRevisionRef, overrides: Partial<GoalCompletionFacts> = {}): GoalCompletionFacts {
   return { plan: { ref: plan, planRevision: plan.planId === 'plan-1' ? 1 : 2 }, evaluation: { completed: true, reasons: [] },
-    requiresReviewer: false, adoptedTaskReductions: [REDUCTION], satisfiedObligationIds: ['ob-1'], ...overrides };
+    unsettledExecutions: [], requiresReviewer: false, adoptedTaskReductions: [REDUCTION], satisfiedObligationIds: ['ob-1'],
+    ...overrides };
 }
 function ctxFor(state: GoalMachineState, overrides: Partial<GoalGuardContext> = {}): GoalGuardContext {
   return { callerClass: 'human', scopePinsAgree: true, goalInWorkspace: true,
@@ -132,6 +134,12 @@ function controlEvent(type: 'goal_pause_requested' | 'goal_resume_requested' | '
 function completeEvent(state: GoalMachineState, reducedAt = T1): GoalEvent {
   return { type: 'goal_completed', expectedGoalRevision: state.goal?.revision ?? 1,
     expectedGoalPhaseRevision: state.goalPhase?.revision ?? 0, reducedAt };
+}
+/** GOAL-07P: the person's rationale and who accepted (`GoalHostActorRef` may be a system actor, so not `HUMAN`). */
+const PARTIAL = { rationale: 't-b waits: the external API is not open', acceptedBy: { kind: 'human' as const, id: 'operator' } };
+function acceptPartialEvent(state: GoalMachineState, reducedAt = T1): GoalEvent {
+  return { type: 'goal_partially_accepted', expectedGoalRevision: state.goal?.revision ?? 1,
+    expectedGoalPhaseRevision: state.goalPhase?.revision ?? 0, reducedAt, ...PARTIAL };
 }
 
 const g = (guard: Extract<GoalEffect, { kind: 'guard' }>['guard']): GoalEffect => ({ kind: 'guard', guard });
@@ -280,6 +288,7 @@ const EVENTS = {
   resume: (state: GoalMachineState): GoalEvent => controlEvent('goal_resume_requested', state),
   cancel: (state: GoalMachineState): GoalEvent => controlEvent('goal_cancel_requested', state),
   complete: (state: GoalMachineState): GoalEvent => completeEvent(state),
+  acceptPartial: (state: GoalMachineState): GoalEvent => acceptPartialEvent(state),
 } satisfies Record<string, (state: GoalMachineState) => GoalEvent>;
 type EventName = keyof typeof EVENTS;
 
@@ -297,6 +306,8 @@ const SOURCE_STALE = no('stale', 'revision_conflict', 'the source plan is not th
 const ADOPT_CANCELLED = no('illegal', 'invalid', 'the Goal is cancelled; its plan can no longer change');
 const NOT_ACTIVE_COMPLETE = (ds: GoalDesiredState): Expected =>
   no('guard_failed', 'busy', `the Goal is ${ds}; a Goal that is not active is not completed`);
+/** GOAL-07P with nothing required missing (the default facts): the platform completes it instead. */
+const NOTHING_MISSING = no('illegal', 'invalid', 'nothing required is missing; the platform records the completion instead');
 
 type ControlName = 'pause' | 'resume' | 'cancel';
 const TARGET: Record<ControlName, GoalDesiredState> = { pause: 'paused', resume: 'active', cancel: 'cancelled' };
@@ -348,6 +359,8 @@ function rowsFor(ds: GoalDesiredState): Record<Variant, Record<EventName, Expect
       adoptFuture: cancelled ? ADOPT_CANCELLED : SOURCE_STALE,
       ...controlRows(ds, 'NoPlan'),
       complete: notActive ? NOT_ACTIVE_COMPLETE(ds) : no('guard_failed', 'incomplete', 'the Goal has no adopted Plan to complete'),
+      acceptPartial: notActive ? NOT_ACTIVE_COMPLETE(ds)
+        : no('guard_failed', 'incomplete', 'the Goal has no adopted Plan to complete'),
     },
     Planned: {
       created: CREATED_OVER(null),
@@ -359,6 +372,7 @@ function rowsFor(ds: GoalDesiredState): Record<Variant, Record<EventName, Expect
       // GOAL-07
       complete: notActive ? NOT_ACTIVE_COMPLETE(ds)
         : ok(goalStateOf(planned, phaseFor(P1, 1, null, T1)), completeEffects(planned.revision, P1, null)),
+      acceptPartial: notActive ? NOT_ACTIVE_COMPLETE(ds) : NOTHING_MISSING,
     },
     DoneActive: {
       created: CREATED_OVER(PHASE_P1),
@@ -368,6 +382,8 @@ function rowsFor(ds: GoalDesiredState): Record<Variant, Record<EventName, Expect
       ...controlRows(ds, 'DoneActive'),
       // §2.4: no second completion for the same plan.
       complete: notActive ? NOT_ACTIVE_COMPLETE(ds) : no('guard_failed', 'busy', 'the Goal is already completed for its active Plan'),
+      acceptPartial: notActive ? NOT_ACTIVE_COMPLETE(ds)
+        : no('guard_failed', 'busy', 'the Goal is already completed for its active Plan'),
     },
     DoneOther: {
       created: CREATED_OVER(PHASE_P1),
@@ -378,6 +394,7 @@ function rowsFor(ds: GoalDesiredState): Record<Variant, Record<EventName, Expect
       // GOAL-08
       complete: notActive ? NOT_ACTIVE_COMPLETE(ds)
         : ok(goalStateOf(doneOther, phaseFor(P2, 2, 1, T1)), completeEffects(doneOther.revision, P2, 1)),
+      acceptPartial: notActive ? NOT_ACTIVE_COMPLETE(ds) : NOTHING_MISSING,
     },
   };
 }
@@ -392,6 +409,7 @@ const TABLE: Record<StateName, Record<EventName, Expected>> = {
     resume: NO_GOAL_COMPLETE,
     cancel: NO_GOAL_COMPLETE,
     complete: NO_GOAL_COMPLETE,
+    acceptPartial: NO_GOAL_COMPLETE,
   },
 };
 for (const ds of DESIRED) {
@@ -420,6 +438,28 @@ describe('§2 transitionGoal: every (state, event) pair', () => {
       });
     }
   }
+
+  it('GOAL-07P accepts the satisfied part when something required is missing, and waits for an unsettled execution', () => {
+    const missing = { evaluation: { completed: false, reasons: ['required task t-b is not formally satisfied'] } };
+    const partialPhase = (plan: PlanRevisionRef, planRevision: number, previousRevision: number | null) =>
+      buildGoalPhaseSnapshot({ ref: PHASE_REF, previousRevision, planRef: plan, planRevision, adoptedTaskReductions: [REDUCTION],
+        satisfiedObligationIds: ['ob-1'], reducedAt: T1, partialAcceptance: PARTIAL });
+    for (const [name, plan, planRevision, previous] of [['activePlanned', P1, 1, null], ['activeDoneOther', P2, 2, 1]] as const) {
+      const state = deepFreeze(STATES[name]!);
+      const goal = state.goal!;
+      // GOAL-07P: ACCEPTED_PARTIAL@previous+1; `completeEffects` without the pinned policy, under its own event.
+      expectResult(transitionGoal(state, acceptPartialEvent(state), ctxFor(state, { completion: completionFacts(plan, missing) })),
+        ok(goalStateOf(goal, partialPhase(plan, planRevision, previous)), [
+          { kind: 'write_goal_phase' }, { kind: 'append_event', eventType: 'GoalPartiallyAccepted' },
+          g({ target: 'goal', expectedRevision: goal.revision }), g({ target: 'plan_revision', ref: plan }),
+          g({ target: 'goal_phase', expectedRevision: previous }), g({ target: 'task_facts' }),
+        ]));
+      const running = 'task t-a: run r-1 has not ended';
+      const unsettled = completionFacts(plan, { evaluation: { completed: false, reasons: [running] }, unsettledExecutions: [running] });
+      expectResult(transitionGoal(state, acceptPartialEvent(state), ctxFor(state, { completion: unsettled })),
+        no('guard_failed', 'busy', `an execution is not settled yet: ${running}`));
+    }
+  });
 
   it('a legal transition never mutates its inputs and returns whole next records', () => {
     const state = deepFreeze(STATES['pausedPlanned']!);
@@ -1025,10 +1065,15 @@ describe('§2.1 reduceGoalDisplay: one case per priority row', () => {
       .toEqual({ phase: 'RUNNING', row: 'GOAL-27', cause: null });
   });
 
-  it('GOAL-19 ACCEPTED_PARTIAL is declared and never produced', () => {
+  it('GOAL-19 holds when the active plan’s GoalPhase is a partial acceptance', () => {
     expect(GOAL_DISPLAY_PHASES).toContain('ACCEPTED_PARTIAL');
     expect(GOAL_DISPLAY_ROWS).toContain('GOAL-19');
-    expect(reduceGoalDisplay(facts()).phase).not.toBe('ACCEPTED_PARTIAL');
+    expect(headline(facts({ partialAcceptance: PARTIAL }))).toEqual({ phase: 'ACCEPTED_PARTIAL', row: 'GOAL-19', cause: null });
+    // GOAL-17 comes first.
+    expect(headline(facts({ partialAcceptance: PARTIAL, desiredState: 'cancelled' })).phase).toBe('CANCELLED');
+    // GOAL-18 comes first.
+    expect(headline(facts({ partialAcceptance: PARTIAL, completion: { status: 'recorded', selectedPlanMatches: true } })).phase)
+      .toBe('COMPLETED');
   });
 
   it('a desired state or Goal node outside the closed unions is unreachable, never RUNNING (§1.1 never switches)', () => {

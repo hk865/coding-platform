@@ -21,7 +21,8 @@
  * re-read failed, the caller cancelled) and an incomplete frozen ticket is
  * `interrupted` (VR-13); the runner still returns the original refusal. A
  * result whose record fails on a stale pin or an unavailable report store is
- * retried a bounded number of times with the same request id (VD-10).
+ * retried a bounded number of times with the same request id (VD-10); when every
+ * attempt is refused the runner interrupts its own window (`result_not_recorded`).
  */
 import { messageOf } from '../../contracts/error-message.js';
 import type { CoreError, CoreRejection, ReadResult, WriteResult } from '../../contracts/core/results.js';
@@ -148,9 +149,9 @@ export function createRegisteredCheckRunner(deps: RegisteredCheckRunnerDependenc
      * VD-10: record the occurred result; a stale pin or an unavailable report
      * store is retried under a refreshed pin with the same request id. A retry
      * that meets `idempotency_conflict` means an earlier attempt committed: the
-     * round is read again instead. When the attempts run out the window stays
-     * executing until the start-up reconcile interrupts it (VR-04; VR-06,
-     * booking the stored report, is deleted, GAP-24).
+     * round is read again instead. When the attempts run out the runner
+     * interrupts the window itself (`interruptUnrecorded`); the stored report is
+     * never booked (VR-06 is deleted, GAP-24).
      */
     async function recordResult(
         ctx: CoreCallContext, roundRef: VerificationRoundRef, checkId: string, invocationId: string,
@@ -173,8 +174,33 @@ export function createRegisteredCheckRunner(deps: RegisteredCheckRunnerDependenc
             if (check === undefined || check.phase !== 'executing' || check.invocationId !== invocationId) return reread;
             pin = { ref: reread.value.ref, revision: reread.value.revision };
         }
-        // Every attempt ended in a retryable refusal: the last one is the answer.
-        return last as CoreRejection;
+        // Every attempt ended in a retryable refusal, and the last read still has this invocation executing.
+        return await interruptUnrecorded(ctx, roundRef, checkId, invocationId, pin, last as CoreRejection);
+    }
+
+    /**
+     * VD-10: the check ran, but its result was refused through every retry. The runner interrupts its own window once
+     * (`result_not_recorded`) under the round as it read it last, so the check does not stay executing until a restart
+     * and the Task can be checked again in a successor round. A refused interrupt reads the round once more: another
+     * write may have ended this invocation after that last read (the result itself landed, or the start-up reconcile
+     * interrupted it), and then the persisted round is the answer. While it is still executing, or the read fails, the
+     * window stays for the start-up reconcile (VR-04) and the result's refusal is the answer.
+     */
+    async function interruptUnrecorded(
+        ctx: CoreCallContext, roundRef: VerificationRoundRef, checkId: string, invocationId: string,
+        pin: { ref: RoundSnapshot['ref']; revision: number }, refusal: CoreRejection,
+    ): Promise<ReadResult<RoundSnapshot>> {
+        if (deps.evidence.interruptCheck === undefined) return refusal;
+        const interrupted = await deps.evidence.interruptCheck(ctx, {
+            input: { roundRef, checkId, invocationId, cause: 'result_not_recorded' },
+            meta: { requestId: `r3e-check-interrupt-${invocationId}`, expected: [pin] },
+        });
+        if (interrupted.status === 'committed') return { status: 'ready', value: interrupted.value };
+        const reread = await deps.evidence.readVerification(ctx, roundRef);
+        if (reread.status !== 'ready') return refusal;
+        const check = reread.value.checks.find(candidate => candidate.checkId === checkId);
+        const ended = check?.invocationId === invocationId && (check.phase === 'finished' || check.phase === 'interrupted');
+        return ended ? reread : refusal;
     }
 
     /**

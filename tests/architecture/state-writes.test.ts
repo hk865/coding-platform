@@ -156,7 +156,7 @@ const PROTECTED_TYPES: readonly ProtectedType[] = [
   { file: 'src/contracts/line.ts', name: 'LineSnapshot', kind: 'record',
     fields: ['status', 'closedAt'], use: 'state/line-machine.ts newLineRecord, nextLineIdentity, nextLineClosed' },
   { file: 'src/contracts/goal-phase.ts', name: 'GoalPhaseSnapshot', kind: 'record',
-    fields: ['phase', 'planRef', 'adoptedTaskReductions'], use: 'state/goal-machine.ts buildGoalPhaseSnapshot' },
+    fields: ['phase', 'planRef', 'adoptedTaskReductions', 'partialAcceptance'], use: 'state/goal-machine.ts buildGoalPhaseSnapshot' },
   { file: 'src/core/work-graph/model/plan-contracts.ts', name: 'PlanProposal', kind: 'record',
     fields: ['status', 'requestRef', 'notAdopted'], use: PROPOSAL_USE },
   { file: 'src/core/work-graph/state/plan-machine.ts', name: 'CandidatePlanProposal', kind: 'record',

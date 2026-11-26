@@ -37,6 +37,7 @@ import {
 import { GOAL_BY_WORKSPACE_INDEX } from '../tasks/plan-readers.js';
 import { decodeGoalPhaseSnapshot } from '../tasks/completion-record-codecs.js';
 import { goalConflictFacts } from '../state/goal-settings-machine.js';
+import { goalStateOf } from '../state/goal-machine.js';
 import { mapExecutedFilesToModules, plannedFootprintOf } from '../model/architecture-footprint.js';
 import { catalogForWorkspace } from '../../../contracts/workspace-catalog.js';
 import { goalDecisionBasis } from '../tasks/goal-basis.js';
@@ -172,16 +173,18 @@ export type GoalTerminalState = { cancelled: boolean; completed: boolean };
 
 /**
  * §4.3: a Goal is terminal when its desired state is `cancelled` or a formal
- * `GoalPhase` snapshot proves it `COMPLETED`. Absence is a real "not terminal";
- * a failed or corrupt GoalPhase read is RETURNED (`unavailable`), never turned
- * into the false fact "not terminal" that would resurface a waiting card.
+ * `GoalPhase` snapshot for its active plan ends it: `COMPLETED`, or
+ * `ACCEPTED_PARTIAL` by the person (G6), which also sets `partial`. Absence is
+ * a real "not terminal"; a failed or corrupt GoalPhase read is RETURNED
+ * (`unavailable`), never turned into the false fact "not terminal" that would
+ * resurface a waiting card.
  */
 export async function readGoalTerminalState(
   records: DecisionReadRecordsPort,
   goal: GoalSnapshot,
-): Promise<ReadResult<GoalTerminalState>> {
+): Promise<ReadResult<GoalTerminalState & { partial: boolean }>> {
   if (goal.desiredState === 'cancelled') {
-    return { status: 'ready', value: { cancelled: true, completed: false } };
+    return { status: 'ready', value: { cancelled: true, completed: false, partial: false } };
   }
   const refKey = canonicalJson({ aggregateType: 'GoalPhase', projectId: goal.ref.projectId,
     goalId: goal.ref.goalId } as unknown as JsonValue);
@@ -193,15 +196,15 @@ export async function readGoalTerminalState(
   }
   if (read.status !== 'ready') return storeFailureToRejection(read);
   const record = read.value.records.find((candidate) => candidate.refKey === refKey);
-  if (record === undefined) return { status: 'ready', value: { cancelled: false, completed: false } };
+  if (record === undefined) return { status: 'ready', value: { cancelled: false, completed: false, partial: false } };
   const decoded = decodeGoalPhaseSnapshot(record);
   if (decoded.status !== 'decoded') {
     return { status: 'rejected', code: 'unavailable', reason: `GoalPhase: ${decoded.reason}` };
   }
-  // §4.3 line 829 (lead, accept review NEW-2): only a completion of the CURRENT active Plan is a terminal fact.
-  const completedPlanIsActive = goal.activePlanRevision !== null
-    && canonicalJson(decoded.value.planRef as unknown as JsonValue) === canonicalJson(goal.activePlanRevision as unknown as JsonValue);
-  return { status: 'ready', value: { cancelled: false, completed: decoded.value.phase === 'COMPLETED' && completedPlanIsActive } };
+  // §4.3 line 829 (lead, accept review NEW-2): only a result of the CURRENT active Plan is a terminal fact.
+  const completed = goalStateOf(goal, decoded.value).completion === 'for_active';
+  return { status: 'ready', value: { cancelled: false, completed,
+    partial: completed && decoded.value.phase === 'ACCEPTED_PARTIAL' } };
 }
 
 // -------------------------------------------------------------------------- //

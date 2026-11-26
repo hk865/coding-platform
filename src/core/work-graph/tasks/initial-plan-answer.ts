@@ -83,6 +83,8 @@ export async function proveInterventionSource(input: {
   query: QueryJobSnapshot;
   goalRef: GoalRef;
   selector: SessionMessageRef | null;
+  /** Abandonment only: the source as admitted, so a withdrawn message still proves it (lead 11-27). */
+  withdrawnCounts?: boolean;
 }): Promise<ReadResult<InterventionSourceProof | null>> {
   const execution = input.query.job.intent.execution;
   if (execution.kind !== 'intervention_planning') {
@@ -111,8 +113,8 @@ export async function proveInterventionSource(input: {
     && canonicalJson(message.goalRef as unknown as JsonValue) !== canonicalJson(input.goalRef as unknown as JsonValue)) {
     return { status: 'ready', value: null };
   }
-  // A withdrawn message is never an admitted source.
-  if (messageConsumptionProblem(message) !== null) return { status: 'ready', value: null };
+  // A withdrawn message is never an admitted source; abandonment alone asks whether it WAS the source.
+  if (input.withdrawnCounts !== true && messageConsumptionProblem(message) !== null) return { status: 'ready', value: null };
   // The stored facts that make a message an intervention source: a person's
   // direct intervention (the Host-written `entry`), an agent line's own message
   // (a work/query/secretary round), or a platform message that wakes the line.

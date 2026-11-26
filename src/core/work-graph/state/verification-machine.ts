@@ -80,7 +80,10 @@ export type RoundGapV1 = RoundSnapshot['gaps'][number];
 export type CheckPhase = RoundCheckSnapshot['phase'];
 export type CheckSourceStatus = RoundCheckSnapshot['sourceStatus'];
 /** Same union as `evidence-record-codecs.ts:57`; also the written `incompleteCause`. */
-export type CheckInterruptionCause = Extract<RoundCheckIncompleteCause, 'host_restart' | 'ticket_invalid'>;
+export type CheckInterruptionCause = Extract<RoundCheckIncompleteCause, 'host_restart' | 'ticket_invalid' | 'result_not_recorded'>;
+/** The causes only an `interrupted` check carries; a finished check never does. */
+const INTERRUPTION_CAUSES: ReadonlySet<RoundCheckIncompleteCause> = new Set<CheckInterruptionCause>(
+  ['host_restart', 'ticket_invalid', 'result_not_recorded']);
 /** Same union as `evidence-record-codecs.ts:59` (VD-6). */
 export type CheckAbandonCause = 'caller_cancelled' | 'root_changed' | 'permission_changed' | 'read_failed';
 /** The persisted domain events of the round (`evidence-record-codecs.ts:44-53`). */
@@ -370,6 +373,8 @@ export type CheckEvent =
   | { kind: 'check_interrupted'; checkId: string; invocationId: string; cause: 'host_restart'; hostInstanceId: string }
   /** VR-13 (P): the runner's ticket is incomplete; `ticketProblem` is the proof (`check-execution.ts:108-109`). */
   | { kind: 'check_interrupted'; checkId: string; invocationId: string; cause: 'ticket_invalid'; ticketProblem: string | null }
+  /** VD-10 (P): the runner ran the check, but its result was refused through every retry. */
+  | { kind: 'check_interrupted'; checkId: string; invocationId: string; cause: 'result_not_recorded' }
   /** VR-05 (P): `provenNotStarted` is false once `execute` may have been called (VD-6). */
   | { kind: 'check_abandoned'; checkId: string; invocationId: string; cause: CheckAbandonCause; provenNotStarted: boolean };
 
@@ -1059,7 +1064,7 @@ function changedCheck(check: RoundCheckSnapshot, change: CheckPhaseChange): Roun
       return { ...check, phase: 'executing', invocationId: change.invocationId };
     case 'finished': {
       const cause = change.incompleteCause ?? null;
-      if (cause !== null && (change.outcome !== 'INCONCLUSIVE' || cause === 'host_restart' || cause === 'ticket_invalid')) {
+      if (cause !== null && (change.outcome !== 'INCONCLUSIVE' || INTERRUPTION_CAUSES.has(cause))) {
         throw new Error(`a finished ${change.outcome} check cannot carry the cause ${cause}`);
       }
       const finished: RoundCheckSnapshot = { ...check, phase: 'finished', outcome: change.outcome,
@@ -1780,6 +1785,11 @@ export function transitionCheck(state: RoundSnapshot, event: CheckEvent, ctx: Ro
           }
           // VR-13: the ticket comes deterministically from the frozen values, so
           // the check never runs again in this round (D-12, VD-6).
+          break;
+        case 'result_not_recorded':
+          // VD-10: the check ran, but its result never reached the ledger. The runner closes its own window instead
+          // of leaving it executing until a restart; the check runs again only in a successor round, which counts
+          // like any automatic reverify (a store that keeps refusing must not loop without a cap).
           break;
         default: return unreachable(event, 'interruption cause');
       }

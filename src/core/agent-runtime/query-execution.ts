@@ -16,7 +16,9 @@ import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { PreparedQueryExecution, PreparedQueryManifestV1 } from '../../contracts/core/prepared-execution.js';
 import type { CoreRejection, ReadResult } from '../../contracts/core/results.js';
 import type { ModelCallAccess, RunRef } from '../../contracts/dispatch.js';
-import { queryExecutionBindingOf, type QueryModelUsageV1, type QueryRunRef } from '../../contracts/query-job.js';
+import {
+  queryExecutionBindingOf, STOPPED_BEFORE_ENTRY, type QueryModelUsageV1, type QueryRunRef,
+} from '../../contracts/query-job.js';
 import {
   checkReviewSubjectOfText, commandRerunAdviceSubjectOfText, unknownCallAdviceSubjectOfText,
 } from '../../contracts/plan-round.js';
@@ -75,7 +77,7 @@ import { planningNoteAdmission, secretaryNoteAdmission } from '../work-graph/sta
 import { sessionHistoryDecision } from './context-history-facts.js';
 import type { RuntimeSourceCaptureFactory } from './source-tool-ports.js';
 import type {
-  CancelQueryExecutionRequest, CancelQueryExecutionResultV1,
+  CancelQueryExecutionRequest, CancelQueryExecutionResultV1, CloseUnenteredQueryRequest,
   ResolvedRuntimeConfiguration, RuntimeExecutionDependencies, StartQueryExecutionRequest,
 } from './execution-contracts.js';
 import type {
@@ -87,7 +89,8 @@ import type { RawArtifactRecord } from '../record-store/body-ports.js';
 
 export type QueryExecutionDriverPort = {
   start(ctx: CoreCallContext, request: StartQueryExecutionRequest): Promise<ReadResult<QueryExecutionRecord>>;
-  cancel(request: CancelQueryExecutionRequest): ReadResult<CancelQueryExecutionResultV1>;
+  cancel(ctx: CoreCallContext, request: CancelQueryExecutionRequest): Promise<ReadResult<CancelQueryExecutionResultV1>>;
+  closeUnentered(ctx: CoreCallContext, request: CloseUnenteredQueryRequest): Promise<ReadResult<QueryExecutionRecord>>;
 };
 
 const BUILTIN_TOOL_NAMES = new Set<string>(['read', 'write', 'shell']);
@@ -245,6 +248,31 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
   // QueryRunRef's canonical JSON; memory only. A Turn is listed from its `entered` write on: aborting a start before
   // that would leave the QueryRun `entering` with nothing in this Host to move it again (exploration-control.ts L5).
   const enteredTurns = new Map<string, AbortController>();
+
+  /**
+   * P6I: end an attempt that waits before entry (claimed or prepared: it holds its Session, no Kernel Turn exists
+   * yet) through the start-up reconcile's not-entered row (Q-01), `reason` as its close message. The write pins
+   * `revision`, one at which the caller saw the Run claimed or prepared: an attempt that moved on since (prepared by
+   * another pass, entering) answers `revision_conflict` instead of being closed. An `entering` Run is never ended
+   * here: it may already have its Kernel Turn, and Q-02 needs a real Kernel probe. The identity is the whole
+   * QueryRunRef and the revision, so two Jobs that share a run id never share a close.
+   */
+  async function endBeforeEntry(ctx: CoreCallContext, queryRunRef: QueryRunRef, revision: number, reason: string):
+    Promise<ReadResult<QueryExecutionRecord>> {
+    const reconcile = deps.queryExecution?.reconcileQueryRun;
+    if (reconcile === undefined || deps.hostInstanceId === undefined) {
+      return rejected('unsupported', 'ending a Query before entry needs the Query reconcile writer and this Host instance');
+    }
+    const written = await reconcile(ctx, {
+      // Q-01 reads no Kernel probe; the owner passes `probe` on only for an `entering` Run.
+      input: { queryRunRef, hostInstanceId: deps.hostInstanceId, probe: 'ready', inputsConfirmed: true,
+        result: { kind: 'not_entered' }, endedBeforeEntry: reason },
+      meta: { requestId: `query-ended-before-entry:${sha256Hex(canonicalJson(queryRunRef as unknown as JsonValue))}:${
+        String(revision)}`, expected: [{ ref: queryRunRef, revision }] },
+    });
+    return written.status === 'committed' ? { status: 'ready', value: written.value } : written;
+  }
+
   return {
     async start(ctx: CoreCallContext, request: StartQueryExecutionRequest): Promise<ReadResult<QueryExecutionRecord>> {
       if (deps.queryExecution === undefined) return rejected('unsupported', 'startQuery requires the trusted QueryExecutionPort');
@@ -1238,12 +1266,38 @@ export function createQueryExecutionDriver(deps: RuntimeExecutionDependencies): 
             notEnteredCloseMessage: 'aborted_before_entry' });
       }
     },
-    cancel(request) {
+    async cancel(ctx, request) {
       const ref = isRecord(request) ? request.queryRunRef : undefined;
       if (!isRecord(ref)) return rejected('invalid', 'queries/cancel requires a queryRunRef');
       const stop = enteredTurns.get(canonicalKey(ref));
-      stop?.abort();
-      return { status: 'ready', value: { stop: stop === undefined ? 'not_running' : 'stopping' } };
+      if (stop !== undefined) {
+        stop.abort();
+        return { status: 'ready', value: { stop: 'stopping' } };
+      }
+      // P6I R3: a round claimed or prepared but not entered has no Turn to abort; it is closed before entry, the same
+      // way a refused preparation is. The Run is read as stored, so an unclaimed one answers too; one that is not
+      // claimed or prepared (not claimed yet, entering, ended) has nothing to stop here. A failed read is returned.
+      const readRun = deps.queryExecution?.readQueryRunState;
+      if (readRun === undefined) return rejected('unsupported', 'queries/cancel needs the trusted QueryRun state read');
+      const read = await readRun(ctx, ref as QueryRunRef);
+      if (read.status === 'not_found') return { status: 'ready', value: { stop: 'not_running' } };
+      if (read.status !== 'ready') return read;
+      const phase = read.value.run.executionState?.phase;
+      if (phase !== 'claimed' && phase !== 'prepared') return { status: 'ready', value: { stop: 'not_running' } };
+      const ended = await endBeforeEntry(ctx, read.value.ref, read.value.revision, STOPPED_BEFORE_ENTRY);
+      return ended.status === 'ready' ? { status: 'ready', value: { stop: 'stopped' } } : ended;
+    },
+    async closeUnentered(ctx, request) {
+      // P6I R2: only the claimed attempt whose preparation was refused is closed. A Run another pass prepared (or
+      // moved on) since is not this refusal's to close: `revision_conflict`, and the caller reads it again.
+      const readRun = deps.queryExecution?.readQueryRunState;
+      if (readRun === undefined) return rejected('unsupported', 'closing a refused Query needs the trusted QueryRun state read');
+      const read = await readRun(ctx, request.queryRunRef);
+      if (read.status !== 'ready') return read;
+      if (read.value.revision !== request.claimedRevision || read.value.run.executionState?.phase !== 'claimed') {
+        return rejected('revision_conflict', 'the QueryRun moved on since its preparation was refused');
+      }
+      return endBeforeEntry(ctx, request.queryRunRef, request.claimedRevision, request.reason);
     },
   };
 }

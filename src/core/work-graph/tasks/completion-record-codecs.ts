@@ -5,8 +5,9 @@
  *  - the `TaskReductionSnapshot@1` ENCODER (the schema stays registered ONLY by
  *    `plan-readers.ts::PLAN_STATE_RECORD_SCHEMAS`; it is never re-registered);
  *  - the `GoalPhaseSnapshot@1` codec;
- *  - the `TaskCompleted` / `GoalCompleted` replay events carrying the ORIGINAL
- *    returned value so a receipt replay restores value/cursor.
+ *  - the `TaskCompleted` / `GoalCompleted` / `GoalPartiallyAccepted` replay
+ *    events carrying the ORIGINAL returned value so a receipt replay restores
+ *    value/cursor.
  *
  * Runtime imports are deliberately limited to the fingerprint/pure-structure
  * helpers; readers/DTOs are type-imported, which keeps
@@ -36,6 +37,7 @@ export const GOAL_PHASE_SNAPSHOT_SCHEMA_ID = 'GoalPhaseSnapshot@1' as const;
 
 export const TASK_COMPLETED_EVENT_TYPE = 'TaskCompleted' as const;
 export const GOAL_COMPLETED_EVENT_TYPE = 'GoalCompleted' as const;
+export const GOAL_PARTIALLY_ACCEPTED_EVENT_TYPE = 'GoalPartiallyAccepted' as const;
 export const COMPLETION_EVENT_SCHEMA_VERSION = 1 as const;
 
 /** Trusted Host actor for a committed completion operation. */
@@ -57,16 +59,18 @@ export type TaskCompletedEvent = CompletionEventBase & {
   taskRef: TaskTriple;
   result: TaskReductionSnapshot;
 };
-export type GoalCompletedEvent = CompletionEventBase & {
-  eventType: typeof GOAL_COMPLETED_EVENT_TYPE;
+/** The two Goal-result events carry the same payload: the GoalPhase they wrote. */
+export type GoalPhaseEvent = CompletionEventBase & {
+  eventType: typeof GOAL_COMPLETED_EVENT_TYPE | typeof GOAL_PARTIALLY_ACCEPTED_EVENT_TYPE;
   goalRef: GoalRef;
   result: GoalPhaseSnapshot;
 };
-export type CompletionEvent = TaskCompletedEvent | GoalCompletedEvent;
+export type CompletionEvent = TaskCompletedEvent | GoalPhaseEvent;
 
 export const COMPLETION_EVENT_TYPES: readonly CompletionEvent['eventType'][] = [
   TASK_COMPLETED_EVENT_TYPE,
   GOAL_COMPLETED_EVENT_TYPE,
+  GOAL_PARTIALLY_ACCEPTED_EVENT_TYPE,
 ];
 
 // -------------------------------------------------------------------------- //
@@ -144,11 +148,24 @@ function taskReductionProblem(value: unknown): string | null {
   return null;
 }
 
+/** G6: a partial acceptance names its non-empty rationale and the human who accepted. */
+function partialAcceptanceProblem(value: unknown): string | null {
+  if (!isRecord(value) || !hasOnlyKeys(value, ['rationale', 'acceptedBy']) || !nonEmpty(value['rationale'])) {
+    return 'GoalPhaseSnapshot partialAcceptance must carry a non-empty rationale';
+  }
+  const acceptedBy = value['acceptedBy'];
+  if (!isRecord(acceptedBy) || !hasOnlyKeys(acceptedBy, ['kind', 'id']) || acceptedBy['kind'] !== 'human'
+    || !nonEmpty(acceptedBy['id'])) {
+    return 'GoalPhaseSnapshot partialAcceptance must be accepted by a human';
+  }
+  return null;
+}
+
 /** Structural validation of one GoalPhaseSnapshot body. */
 function goalPhaseProblem(value: unknown): string | null {
   if (!isRecord(value)) return 'GoalPhaseSnapshot must be an object';
   if (!hasOnlyKeys(value, ['ref', 'revision', 'schemaVersion', 'planRef', 'planRevision', 'phase',
-    'adoptedTaskReductions', 'satisfiedObligationIds', 'reducedAt'])) {
+    'adoptedTaskReductions', 'satisfiedObligationIds', 'reducedAt', 'partialAcceptance'])) {
     return 'GoalPhaseSnapshot carries unknown fields';
   }
   if (refProblem(value['ref'], 'GoalPhase', ['projectId', 'goalId']) !== null) return 'GoalPhaseSnapshot ref is incomplete';
@@ -156,7 +173,14 @@ function goalPhaseProblem(value: unknown): string | null {
   if (value['schemaVersion'] !== 1) return 'GoalPhaseSnapshot schemaVersion must be 1';
   if (planRefProblem(value['planRef']) !== null) return 'GoalPhaseSnapshot planRef must be a PlanRevisionRef';
   if (!isSafeRevision(value['planRevision'])) return 'GoalPhaseSnapshot planRevision must be a positive integer';
-  if (value['phase'] !== 'COMPLETED') return 'GoalPhaseSnapshot phase must be COMPLETED';
+  if (value['phase'] === 'COMPLETED') {
+    if (value['partialAcceptance'] !== undefined) return 'a COMPLETED GoalPhaseSnapshot carries no partialAcceptance';
+  } else if (value['phase'] === 'ACCEPTED_PARTIAL') {
+    const partial = partialAcceptanceProblem(value['partialAcceptance']);
+    if (partial !== null) return partial;
+  } else {
+    return 'GoalPhaseSnapshot phase must be COMPLETED or ACCEPTED_PARTIAL';
+  }
   if (!Array.isArray(value['adoptedTaskReductions'])) return 'GoalPhaseSnapshot adoptedTaskReductions must be an array';
   for (const entry of value['adoptedTaskReductions']) {
     if (!isRecord(entry) || taskReductionRefProblem(entry['ref']) !== null || !isSafeRevision(entry['revision'])) {
@@ -273,7 +297,7 @@ function validateCompletionEvent(event: EncodedDomainEvent): DecodeResult<Encode
 }
 
 /**
- * The ONE completion registration: `GoalPhaseSnapshot@1` plus the two
+ * The ONE completion registration: `GoalPhaseSnapshot@1` plus the three
  * completion replay events. `TaskReductionSnapshot@1` stays exclusively in
  * `PLAN_STATE_RECORD_SCHEMAS`.
  */

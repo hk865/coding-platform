@@ -17,8 +17,8 @@ import { canonicalKey, sameJson } from '../../../contracts/fingerprint.js';
 import type { AdoptedArchitecture, ArchitectureCatalogPinV1 } from '../../../contracts/architecture-catalog.js';
 import type { ArchitectureProposalBatchRef, ArchitectureProposalRef } from '../../../contracts/architecture-proposal.js';
 import {
-  queryJobRefFor, type QueryJobAnswerRef, type QueryJobAnswerSnapshot, type QueryJobIntentV1, type QueryJobRef,
-  type QueryJobSnapshot, type QueryRunRef, type QueryRunSnapshot,
+  endedOnPurposeBeforeEntry, queryJobRefFor, type QueryJobAnswerRef, type QueryJobAnswerSnapshot, type QueryJobIntentV1,
+  type QueryJobRef, type QueryJobSnapshot, type QueryRunRef, type QueryRunSnapshot,
 } from '../../../contracts/query-job.js';
 import type { RoleLineDutyV1, RoleScopeV1 } from '../../../contracts/role-lines.js';
 import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
@@ -43,7 +43,7 @@ import {
   type RoleLineActionV1, type WorkspaceJoinActionV1,
 } from '../state/role-line-action.js';
 import {
-  DEFAULT_EXPLORATION_DEPTH, explorationDepthOf, plannedExplorationRounds,
+  DEFAULT_EXPLORATION_DEPTH, explorationDepthOf, holdOnEndedRound, plannedExplorationRounds,
 } from '../state/exploration-control.js';
 import { skipRegions } from '../state/cold-start.js';
 import type { ExplorationFollowUpActionV1 } from '../state/exploration-followup.js';
@@ -250,7 +250,8 @@ type DriveResultV1 = ReadResult<ColdStartDriveResultV1>;
 /** One drive's facts: the call, the stored record and its action. */
 type AtV1 = { ctx: CoreCallContext; input: DriveInputV1; op: RoleLineOperationV1; action: ColdStartActionV1 };
 /** One exploration round's end (rulings 4, 5): `not_entered` reopens; answered, failed or cancelled has ended. */
-type EndingV1 = { kind: 'ended' } | { kind: 'running' } | { kind: 'reopen'; entry: ColdStartExplorationQueryRefV1 };
+type EndingV1 = { kind: 'ended' } | { kind: 'running' } | { kind: 'reopen'; entry: ColdStartExplorationQueryRefV1 }
+  | { kind: 'hold'; entry: ColdStartExplorationQueryRefV1; reason: string };
 
 /** The common payload of the three shared exploration phases: the fields a cold start and a join both keep. */
 type RoleExplorationActionV1 = RoleLineActionV1 & {
@@ -413,8 +414,9 @@ export async function openExploration(deps: ColdStartServiceDeps, at: RoleExplor
 }
 
 /** Rulings 4, 5: the group's last round. `not_entered` (a restart before entry, the handoff fence) did nothing and
- *  opens round n on the same line and message; any other close has ended and is not retried. A pending round is
- *  claimed on its line and handed to the stage driver, which runs it detached. */
+ *  opens round n on the same line and message; a round the Host ended on purpose before entry holds the exploration
+ *  instead (P6I M1); any other close has ended and is not retried. A pending round is claimed on its line and handed
+ *  to the stage driver, which runs it detached. */
 /** The region a round explores; old records stored it only in the QueryJob id's `region:` segment. */
 export function regionOfRound(entry: ColdStartExplorationQueryRefV1, projectId: string): ModuleRef | null {
   if (entry.region !== undefined && entry.region !== null) return { ...entry.region };
@@ -480,6 +482,12 @@ export async function endingOf(deps: ColdStartServiceDeps, at: RoleExplorationAt
   // a plain answered round is done, but an answered round carrying a reason is the person's “try again”.
   const reproposed = entry.reopen !== undefined && entry.reopen.reason !== null;
   if (job.status === 'answered' && !reproposed) return endedRound(deps, at, entry);
+  // P6I M1: a round the Host ended on purpose before entry (a lasting preparation refusal, a stop) is not a lost
+  // attempt: the same refusal or stop would end every new round the same way. The exploration waits for the person
+  // (`holdOnEndedRound`); a restart's `not_entered` and a round already marked to reopen keep the rule below.
+  if (job.status === 'closed' && entry.reopen === undefined && endedOnPurposeBeforeEntry(job.closeReason)) {
+    return { status: 'ready', value: { kind: 'hold', entry, reason: job.closeReason!.message } };
+  }
   if ((job.status === 'answered' || job.status === 'closed')
     && (reproposed || entry.reopen !== undefined || job.closeReason?.code === 'not_entered')) {
     const card = await deps.sessions.readSession(at.ctx, entry.sessionRef, 'project');
@@ -574,6 +582,9 @@ export function createRoleExplorationPhases(deps: ColdStartServiceDeps): {
     if (end.value.kind === 'reopen') {
       return call.write(ctx, at, appendExploration(action, end.value.entry) as RoleExplorationActionV1);
     }
+    if (end.value.kind === 'hold') {
+      return call.write(ctx, at, holdOnEndedRound(action, end.value.entry, end.value.reason) as RoleExplorationActionV1);
+    }
     if (end.value.kind === 'running') return stopExploration(at);
     // d31: the round ending is not the approval either; 8C's apply moves the adopted pin past the route's pin.
     const window = await readCurrentCatalogWindow(deps.records, at.input.projectId, { lines: deps.knowledge, caller: ctx });
@@ -657,6 +668,9 @@ export function createRoleExplorationPhases(deps: ColdStartServiceDeps): {
       if (end.status !== 'ready') return end;
       if (end.value.kind === 'reopen') {
         return call.write(ctx, at, appendExploration(action, end.value.entry));
+      }
+      if (end.value.kind === 'hold') {
+        return call.write(ctx, at, holdOnEndedRound(action, end.value.entry, end.value.reason) as RoleExplorationActionV1);
       }
       if (end.value.kind === 'running') unfinished = true;   // every region line still claims and starts this pass
       if (end.value.kind === 'ended' && explorationDepthOf(action) === 3) {
@@ -817,6 +831,11 @@ export function createColdStartService(deps: ColdStartServiceDeps): ColdStartSer
     }
     const problem = coldStartPhaseProblem(action);
     if (problem !== null) return rejected('invalid', problem);
+    // P6I: a held exploration (the person's stop, a round ended before entry) is judged on this read, not on the
+    // caller's earlier one, so a hold written in between never opens a round.
+    if (action.result?.status === 'waiting') {
+      return { status: 'ready', value: { phase: action.phase, revision: op.revision, completed: false } };
+    }
     const at: AtV1 = { ctx, input, op, action };
     switch (action.phase) {
       case 'candidates': return candidatesPhase(at);

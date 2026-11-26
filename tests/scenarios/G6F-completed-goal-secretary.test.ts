@@ -76,7 +76,7 @@ describe('G6F F4: the secretary input names a completed Goal\'s phase and the re
     const { world, goalRef, requestRef, input } = await completedGoalRound();
     const round = sectionLines(input, '## This round');
     const namesGoal = (line: string) => line.includes(goalRef.goalId) || /(目标|goal)\s*1(?!\d)/i.test(line);
-    expect(round.some(line => namesGoal(line) && /completed|已完成/i.test(line) && /goal[ -]?card|目标卡/i.test(line)),
+    expect(round.some(line => namesGoal(line) && /ended|已结束/i.test(line) && /goal[ -]?card|目标卡/i.test(line)),
       round.join('\n')).toBe(true);
     const read = ready<Record<string, unknown>>(await world.post('requests/read',
       plain(S6A_SCOPE, { requestRoot: requestRef })), 'requests/read');

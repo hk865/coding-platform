@@ -31,6 +31,8 @@ import type { SystemRoundV1 } from '../../../contracts/plan-round.js';
 import type { MessageBody, SessionMessageReadPageV1, SessionMessageReadV1 } from '../../../contracts/mailbox.js';
 import type { QueryJobAnswerRef, QueryJobRef, QueryRunRef } from '../../../contracts/query-job.js';
 import type { GoalRef } from '../../../contracts/ledger.js';
+import type { PlatformDutyV1 } from '../../../contracts/platform-duty.js';
+import type { BoundedTextV1 } from '../../../contracts/continuation-brief.js';
 import type {
   DecisionSourceV1, NoticePositionV1,
 } from '../../../contracts/goal-decisions.js';
@@ -120,6 +122,29 @@ export function consultationFacts(message: SessionMessage, part: 'message' | 're
 export function interventionGoalRefOf(message: SessionMessage): GoalRef | null {
   return message.goalRef ?? (message.taskRef === null ? null
     : { aggregateType: 'Goal', projectId: message.taskRef.projectId, goalId: message.taskRef.goalId });
+}
+
+/**
+ * R1: a person's message on a line with this duty opens a planning round only, so its Goal can come only from the
+ * message itself and never from the line's latest Work. The consumable view keeps such a Goal-less message in the box
+ * and the intervention dispatch reads its Goal the same way; one predicate keeps the two from drifting.
+ */
+export function planningDutyOnly(duty: PlatformDutyV1 | null): boolean {
+  return duty === 'adviser' || duty === 'reviewer';
+}
+
+/** One thing the person said directly to a line of a Goal: the line, when, and the first characters of the words. */
+export type GoalPersonWordV1 = { recipient: SessionRef; sentAt: string; text: BoundedTextV1 };
+export type GoalPersonWordsV1 = { items: GoalPersonWordV1[] };
+
+/**
+ * What the person said directly to the lines of one Goal (`tasks/person-interventions.ts` `readGoalPersonWords`),
+ * which the adviser's planning round and the secretary's round on that Goal read: the latest few, oldest first, never
+ * the round's own line. The Goal's workspace is where the person's messages are sent.
+ */
+export interface GoalPersonWordsReadPort {
+  readGoalPersonWords(ctx: CoreCallContext, input: { goalRef: GoalRef; workspaceId: string; exceptLine: SessionRef }):
+    Promise<ReadResult<GoalPersonWordsV1>>;
 }
 
 /** The one wait-consumed unique slot; the acceptance claim's key and the reader's key are the same. */
@@ -612,8 +637,11 @@ export type SessionMailboxDependencies = {
   systemActor: Extract<ActorRef, { kind: 'human' | 'system' }>;
   now(): string;
   newId(): string;
-  /** Injected by the composition root: 86,400,000 ms. Absent: a NEW inquiry send is `unsupported`; old paths unchanged. */
-  defaultInquiryDeadlineMs?: number;
+  /**
+   * The project's default reply deadline in ms, read once per reply-asking send that names no deadline (the
+   * composition root reads the Host's project setting, 24 hours by default). Absent: such a send has no deadline.
+   */
+  defaultInquiryDeadlineMs?: () => number;
   /** The one resolver; called only after a receipt miss; absent: a NEW secretary path is `unsupported`. */
   secretaryRounds?: SecretaryQueryRunPort;
   /** 问答轮身份（`tasks/query-round.ts`），`query_run` 调用方的唯一身份读：发信、回复、撤回收任何已进入的问答轮（请求轮

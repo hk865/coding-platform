@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { findClass } from './helpers/boot-page.js';
 import type { FakeElement } from './helpers/dom.js';
 import { click } from './helpers/E3N-interact.js';
-import { descendants, hasClass, lineRows, onMain, quietPage, textOf, thread, waitFor } from './helpers/E3N-page.js';
+import { descendants, hasClass, lineRows, onBoard, onMain, quietPage, textOf, thread, waitFor } from './helpers/E3N-page.js';
 import { lineOrder } from './helpers/E3N-world.js';
 import { bootMemberAt, memberSearch } from './helpers/E3M-world.js';
 import {
@@ -115,6 +115,28 @@ describe('E3U 1A row ① Member Run steps and Main path', () => {
       expect(findClass(page.root, 'fp-path')!.getAttribute('title')).toBe(READ_ONE);
       expect(textOf(findClass(page.root, 'fp-path'))).toBe(READ_ONE);
       expect(textOf(findClass(page.root, 'fcode'))).toContain('AG2B_ISOLATED_SOURCE');
+    }, { search: '?goal=' + goalId });
+  }, 180_000);
+
+  it('the Plan line view draws the same Run block by steps', async () => {
+    const index = (await lineOrder(posting, S6A_SCOPE)).indexOf(line.ref.sessionId);
+    expect(index).toBeGreaterThanOrEqual(0);
+    await onBoard('Plan', fixture!.world, async (page, log): Promise<void> => {
+      await waitFor(() => railButton(page.root, index) !== undefined);
+      click(railButton(page.root, index)!);
+      await waitFor(() => findClass(page.root, 'lv-headbar') !== undefined);
+      await quietPage(log);
+      const lineThread = findClass(page.root, 'lv-thread');
+      expect(lineThread, 'the line view thread').toBeDefined();
+      await waitFor(() => runRows(lineThread!).length > 0);
+      const runRow = runRows(lineThread!)[0]!;
+      expect(textOf(runRow)).toContain('已读取 2 个文件、编辑 1 个文件、运行命令 1 次');
+      await openRun(lineThread!);
+      await waitFor(() => stepVerbs(lineThread!).length === 4);
+      expect(stepVerbs(lineThread!)).toEqual(['读取', '读取', '编辑', '运行命令']);
+      const editObj = findClass(stepOfVerb(lineThread!, '编辑')!, 'step-obj')!;
+      expect(editObj.tagName.toLowerCase()).toBe('span');
+      expect(hasClass(editObj, 'is-path')).toBe(true);
     }, { search: '?goal=' + goalId });
   }, 180_000);
 

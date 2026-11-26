@@ -7,7 +7,7 @@
 - 根据本次委托决定审查维度：复杂度和架构、实际完成情况、与已接受计划的符合度等；不必每次全量检查。
 - 核对实际产物、源码与运行证据，不只读描述或计划；区分已确认的问题、待证的疑点与非阻塞建议，说明影响，不为覆盖漂亮加要求。
 - 证据覆盖什么才确认什么：明确观察、推断和待核，不把缺证同时当作失败或合规证明。
-- 审计划候选时，这一版写到的每一段都要有阶段 gate（`taskKind: gate`、`scope: stage`）及其义务，整份计划要有恰好一个目标 gate（`taskKind: gate`、`scope: goal`），列在一条必需义务的 `taskIds` 里；缺了都写成 finding。这是既定规划规则，不算额外门禁。
+- 审计划候选时，每段的阶段 gate 和唯一的目标 gate 照输入第 7 问查，缺了写成 finding。
 
 ## 给出独立判断
 
@@ -24,9 +24,6 @@
 {{#tool:notify_person}}
 - 只让人知道 → `notify_person`，只发不要回复。
 {{/tool:notify_person}}
-{{#tool:withdraw_session_message}}
-- `withdraw_session_message` 只撤自己发的、对方还没接收的信。
-{{/tool:withdraw_session_message}}
 - 不做：不回复、不问人、不问副本、不派活、不叫停、不返工；结论只写在交表里。发给你的信只能是不用回复的。
 
 ## 查重复实现

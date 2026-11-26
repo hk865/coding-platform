@@ -36,7 +36,7 @@ describe('E3M-5 another line inside the Member page', () => {
       /* 具名改坏: lv 头拿 `sessionId` 当名字；本行的 `执行者` 红。 */
       expect(lineHeadTitle(page.root)).toBe('执行者');
       /* lead 11-10: the back row names this page's own line, `s7c-module`, by its nav name (`lines/list` `name.primary`, its Task `s7c-m1`'s title). */
-      expect(textOf(findClass(page.root, 'lv-back'))).toBe('回到 Independent work s7c-m1');
+      expect(textOf(findClass(page.root, 'lv-back'))).toBe('回到 Independent work s7c-m1 等 1 项');
     } finally {
       await page.restore();
     }

@@ -8,6 +8,7 @@ import type {
 import type { SessionFactsPort } from '../core/work-graph/model/session-facts-contracts.js';
 import type { NodeDetailReadPort } from '../core/work-graph/model/work-line-contracts.js';
 import { canonicalKey } from '../contracts/fingerprint.js';
+import { STOPPED_BEFORE_ENTRY } from '../contracts/query-job.js';
 import { interventionClosingNoticeRequestId,
   type InterventionClosingReasonV1 } from '../business/workflow/intervention.js';
 import { readDisconnectFacts,
@@ -55,10 +56,11 @@ const NO_REPLY_SLOT_CLOSING_NOTICE_TEXTS = {
  * The `no_answer` ending: the other side ended this round without a reply. Only the person's B20 source is withdrawn
  * afterwards; an agent's message is not withdrawn (its sender's wait expires on its own), so only that source says so.
  */
-function noAnswerText(withdrawSource: boolean): string {
-  return withdrawSource
-    ? '对方这一轮结束，没有回复。这条消息已撤回。请补充要求后重新发送。'
-    : '对方这一轮结束，没有回复。请补充要求后重新发送。';
+function noAnswerText(withdrawSource: boolean, notStarted: string | undefined): string {
+  // P6I: a round the Host ended on purpose before it entered never ran; the notice says so and why.
+  const ending = notStarted === undefined ? '对方这一轮结束，没有回复。'
+    : `这一轮没能开始：${notStarted === STOPPED_BEFORE_ENTRY ? '已被停下' : notStarted}。`;
+  return withdrawSource ? `${ending}这条消息已撤回。请补充要求后重新发送。` : `${ending}请补充要求后重新发送。`;
 }
 
 /** The ONE Host closing notice of an intervention: the fixed text, the original line, the frozen source part and
@@ -71,8 +73,10 @@ export function interventionClosingNoticeRequest(input: {
   hasReplySlot: boolean;
   /** The person's B20 source is withdrawn after the notice; every other source is not. */
   withdrawSource?: boolean;
+  /** A `no_answer` round the Host ended on purpose before entry: its close message (P6I). */
+  notStarted?: string;
 }): SessionMessageSendInputV1 {
-  const text = input.reason === 'no_answer' ? noAnswerText(input.withdrawSource === true)
+  const text = input.reason === 'no_answer' ? noAnswerText(input.withdrawSource === true, input.notStarted)
     : input.hasReplySlot ? MESSAGE_ROUND_CLOSING_NOTICE_TEXTS[input.reason]
     : NO_REPLY_SLOT_CLOSING_NOTICE_TEXTS[input.reason];
   return systemNotifyRequest({ recipient: input.recipient, text,

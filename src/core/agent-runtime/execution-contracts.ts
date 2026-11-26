@@ -70,7 +70,8 @@ import type { ModelRequestPort, ModelRequestReadPort } from '../work-graph/tasks
 import type { MainSurfaceReadPort } from '../work-graph/views/main-surface-read-model.js';
 import type { PlanTaskPort } from '../work-graph/model/plan-contracts.js';
 import type { ControlObservationPort, RunControlPort } from '../work-graph/tasks/control-contracts.js';
-import type { SessionMessageCommandPort, SystemRoundSourceReadPort } from '../work-graph/model/communication-contracts.js';
+import type { GoalPersonWordsReadPort, SessionMessageCommandPort, SystemRoundSourceReadPort }
+  from '../work-graph/model/communication-contracts.js';
 import type { DecisionMessagePort } from '../work-graph/model/decision-contracts.js';
 import type { ActionRequestPort, ClaimHoldPort } from '../work-graph/model/action-request-contracts.js';
 import type { SessionDirectoryPort } from '../work-graph/model/session-contracts.js';
@@ -128,10 +129,19 @@ export type StartQueryExecutionRequest = {
   requestId: string;
 };
 export type ObserveQueryExecutionRequest = { queryRunRef: QueryRunRef };
-/** 121-112 "人随时能停": stop one running Query round. */
+/** 121-112 "人随时能停": stop one Query round, entered or not yet entered. */
 export type CancelQueryExecutionRequest = { queryRunRef: QueryRunRef };
-/** `stopping`: the entered Turn was told to stop. `not_running`: this Host runs no entered Turn of that QueryRun. */
-export type CancelQueryExecutionResultV1 = { stop: 'stopping' | 'not_running' };
+/**
+ * `stopping`: the entered Turn was told to stop. `stopped` (P6I R3): the round was claimed or prepared and had not
+ * entered; it is now closed before entry. `not_running`: there is nothing of that QueryRun to stop here (not claimed
+ * yet, entering, or already ended).
+ */
+export type CancelQueryExecutionResultV1 = { stop: 'stopping' | 'stopped' | 'not_running' };
+/**
+ * P6I R2: close a claimed QueryRun that never entered the Kernel; `reason` becomes its close message. Only while the
+ * Run is still `claimed` at `claimedRevision`, the claimed revision whose preparation was refused.
+ */
+export type CloseUnenteredQueryRequest = { queryRunRef: QueryRunRef; claimedRevision: number; reason: string };
 
 // ------------------------------------------------------------------------ //
 // Trusted Host bindings                                                      //
@@ -317,6 +327,9 @@ export type RuntimeExecutionDependencies = {
   secretaryFacts?: SecretaryPreparationFactsPort;
   /** The note memory-material read the notes already share; absent fails a secretary round closed. */
   memoryMaterial?: NoteMemoryMaterialPort;
+  /** The person's words to a Goal's other lines; absent fails an adviser's planning round and a secretary Goal
+   *  round closed. */
+  personWords?: GoalPersonWordsReadPort;
   sessions: SessionDirectoryPort;
   materials: MaterialPort;
   bodies: Pick<RawArtifactStorePort, 'put' | 'read'>;

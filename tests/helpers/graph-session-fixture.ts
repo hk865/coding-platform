@@ -44,6 +44,7 @@ import { PLAN_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/plan-
 import { CONTROL_RECORD_SCHEMAS } from '../../src/core/work-graph/persistence/control-record-codecs.js';
 import { PLAN_GOVERNANCE_RECORD_SCHEMAS, PLAN_STATE_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/plan-readers.js';
 import { TASK_CLAIM_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/claim-record-codecs.js';
+import { COMPLETION_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/completion-record-codecs.js';
 import { UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS } from '../../src/core/work-graph/tasks/unknown-call-review-codecs.js';
 import { ROLE_RECORD_SCHEMAS } from '../../src/core/work-graph/configuration/role-record-codecs.js';
 import { materialRecordSchemas } from '../../src/core/work-graph/materials/record-readers.js';
@@ -263,6 +264,7 @@ export async function createGraphSessionFixture(kind: GraphFixtureKind = 'memory
       ...SESSION_LIFECYCLE_RECORD_SCHEMAS.records,
       ...PLAN_STATE_RECORD_SCHEMAS.records,
       ...TASK_CLAIM_RECORD_SCHEMAS.records,
+      ...COMPLETION_RECORD_SCHEMAS.records,
       ...UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS.records,
       ...ROLE_RECORD_SCHEMAS.records,
       ...ROLE_LINE_RECORD_SCHEMAS.records,
@@ -280,6 +282,7 @@ export async function createGraphSessionFixture(kind: GraphFixtureKind = 'memory
       ...KNOWLEDGE_RECORD_SCHEMAS.events,
       ...SESSION_LIFECYCLE_RECORD_SCHEMAS.events,
       ...TASK_CLAIM_RECORD_SCHEMAS.events,
+      ...COMPLETION_RECORD_SCHEMAS.events,
       ...UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS.events,
       ...ROLE_RECORD_SCHEMAS.events,
       ...ROLE_LINE_RECORD_SCHEMAS.events,
@@ -298,6 +301,7 @@ export async function createGraphSessionFixture(kind: GraphFixtureKind = 'memory
       ...(UNKNOWN_CALL_REVIEW_RECORD_SCHEMAS.lookups ?? []),
       ...(KNOWLEDGE_RECORD_SCHEMAS.lookups ?? []),
       ...(LINE_RECORD_SCHEMAS.lookups ?? []),
+      ...(COMPLETION_RECORD_SCHEMAS.lookups ?? []),
     ],
   };
   let failWrite = false;

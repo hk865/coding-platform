@@ -1,5 +1,5 @@
 {
-  "description": "回复：回一条发给你的、要回复的消息。回复不叫醒对方，对方在下一个安全点或下一轮看到。谁能用：本轮挂了回复工具、你是实际收件人；审阅者、副本没有回复工具。什么时候用：这条要回复，而它不是这一轮的来源、副本问件或卡。不能用来做什么：不答人出的卡（the reply tool cannot answer a card）；不回不要回复的消息；不回副本问件；不回这一轮的来源——本轮结论即回复，要先说进度另发一条。参数：messageRef 完整消息引用；expectedRevision 是你读到时的 revision；text 非空；拒绝写 reject:true 和 reason，不带 text。回执：committed 表示写进回复槽；revision_conflict 时按带回的当前值重读。会被拒：已经回过（already has a response）；这条消息不要回复（这条消息不要回复；要说话另发一条）；这是这一轮的来源（这条消息由这一轮的结论回复；要先说进度，另发一条不要回复的）。",
+  "description": "回复：回一条发给你的、要回复的消息。回复不叫醒对方，对方在下一个安全点或下一轮看到。你是实际收件人；审阅者、副本没有回复工具。什么时候用：这条要回复，而它不是这一轮的来源、副本问件或卡。不能用来做什么：不答人出的卡（the reply tool cannot answer a card）；不回不要回复的消息；不回副本问件；不回这一轮的来源——本轮结论即回复，要先说进度另发一条。参数：messageRef 完整消息引用；expectedRevision 是你读到时的 revision；text 非空；拒绝写 reject:true 和 reason，不带 text。回执：committed 表示写进回复槽；revision_conflict 时按带回的当前值重读。",
   "parameters": {
     "messageRef": "要回复的消息，完整引用。",
     "messageRef.aggregateType": "固定写 \"SessionMessage\"。",

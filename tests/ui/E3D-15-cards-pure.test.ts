@@ -96,3 +96,125 @@ describe('E3D-15 cards', () => {
     expect((same.card as DecideCard).facts.find((fact) => fact.k === '请求时的计划版本')?.v).toBe('计划第 2 版');
   });
 });
+
+/* GAPA1 1b T9 (frozen card A §1b): the explanation box's action table. Each
+   stop action says which of the step's fields the box words go to:
+   `note` (requeue, task-level continue, reverify, note), `reason` (attest,
+   defer, cancel, restore, fix), or `null` (the Goal-level continue, the
+   withdraw, 去主对话说). `noteBox` is true only on `goal_cause` cards that
+   carry an action; conflict and candidate cards have no box.
+   Today red: `wordsField` and `noteBox` do not exist yet. */
+const GAPA_GOAL = { aggregateType: 'Goal' as const, projectId: 'p', goalId: 'g' };
+const GAPA_GOAL_PIN = { ref: GAPA_GOAL, revision: 2 };
+const GAPA_TASK = { projectId: 'p', goalId: 'g', taskId: 't' };
+const GAPA_TASK_PIN = { ref: { aggregateType: 'Task' as const, projectId: 'p', goalId: 'g', taskId: 't' } };
+
+function gapaStopCard(stop: string | null, extra: Partial<DecisionCardV1> = {}): DecisionCardV1 {
+  const key = stop === null ? '{"kind":"goal_cause","code":"interrupted_pending_resume"}' : '';
+  return makeCard({
+    cardKey: 'stop', state: 'waiting_answer', actions: ['answer'], taskRef: GAPA_TASK,
+    source: { kind: 'goal_cause', key, subject: { kind: 'goal', goalRef: GAPA_GOAL },
+      pins: [GAPA_GOAL_PIN] },
+    ...extra,
+  });
+}
+
+function gapaStopRow(stop: string, extra: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    ref: GAPA_TASK_PIN.ref, definition: { title: 't', taskKind: 'work' }, effectivePhase: 'blocked',
+    disposition: 'active', phaseCause: {},
+    failure: {
+      automation: { verdict: { kind: 'stopped', reason: stop, detail: { operation: 'reverify' } } },
+      requeueActors: ['human'], reverifyActors: ['human'], round: { ordinal: 1 },
+    },
+    ...extra,
+  };
+}
+
+function gapaCardView(card: DecisionCardV1, graph: Record<string, unknown> | null): DecideCard {
+  const data = adaptDecide({
+    ...sourceOf([], graph === null ? {} : { g: graph }),
+    queue: [{ ...makeQueue([]), waitingAnswer: [card] }],
+  }, { ...UI, tab: 'open', selectedCardKey: card.cardKey });
+  if (data.card === null) throw new Error('GAPA1 T9: the stop card did not open');
+  return data.card;
+}
+
+/** Every action's `wordsField`, primary included. */
+function gapaWords(view: DecideCard): Record<string, unknown> {
+  const acts = [...view.acts, ...(view.primary === null ? [] : [view.primary])] as
+    Array<{ key: string; wordsField?: unknown }>;
+  return Object.fromEntries(acts.map((act) => [act.key, act.wordsField]));
+}
+
+describe('GAPA1 1b T9 the explanation box action table', () => {
+  it.each([
+    ['auto_rework_cap_reached', gapaStopCard('auto_rework_cap_reached', { withdrawableChecks: ['c1'] }),
+      gapaStopRow('auto_rework_cap_reached'),
+      { requeue: 'note', defer: 'reason', cancel: 'reason', fix: 'reason', reverify: 'note', withdraw: null }],
+    ['no_new_basis', gapaStopCard('no_new_basis', { withdrawableChecks: ['c1'] }), gapaStopRow('no_new_basis'),
+      { note: 'note', requeue: 'note', defer: 'reason', cancel: 'reason', withdraw: null }],
+    ['unknown_outcome', gapaStopCard('unknown_outcome'), gapaStopRow('unknown_outcome'),
+      { attest: 'reason', defer: 'reason', cancel: 'reason' }],
+    ['task_paused', gapaStopCard('task_paused'), gapaStopRow('task_paused'),
+      { continue: 'note', cancel: 'reason', defer: 'reason' }],
+    ['task_cancelled', gapaStopCard('task_cancelled'), gapaStopRow('task_cancelled'),
+      { restore: 'reason', defer: 'reason', cancel: 'reason' }],
+    ['verification_uncovered', gapaStopCard('verification_uncovered'), gapaStopRow('verification_uncovered'),
+      { speak: null, defer: 'reason', cancel: 'reason' }],
+  ] as const)('T9 %s names each action’s words field', (_label, card, row, expected) => {
+    /* 具名改坏（每个表项一条，删哪一条哪个表项红）: requeue/note/reverify/continue 改成
+       'reason'，attest/defer/cancel/restore/fix 改成 'note'，withdraw/speak 改成 'note'；
+       目标级 continue 改成 'note' 时下面那一行红。 */
+    expect(gapaWords(gapaCardView(card, { tasks: [row] }))).toEqual(expected);
+  });
+
+  it('T9 the Goal-level continue is null and the card keeps a box', () => {
+    const view = gapaCardView(gapaStopCard(null), null);
+    expect(gapaWords(view)).toEqual({ continue: null });
+    expect((view as unknown as { noteBox?: boolean }).noteBox).toBe(true);
+  });
+
+  it.each([
+    ['a conflict card', makeCard({ cardKey: 'conflict', source: { kind: 'goal_conflict', key: '',
+      subject: { kind: 'goal', goalRef: GAPA_GOAL }, pins: [GAPA_GOAL_PIN] } })],
+    ['a candidate card', { ...makeCard({ cardKey: 'candidate', actions: ['answer', 'adopt', 'abandon'],
+      source: { kind: 'candidate', key: 'candidate', subject: { kind: 'goal', goalRef: GAPA_GOAL },
+        pins: [GAPA_GOAL_PIN] } }), candidateStatus: 'candidate' } as unknown as DecisionCardV1],
+  ] as const)('T9 %s has no explanation box', (_label, card) => {
+    const view = gapaCardView(card, null);
+    expect((view as unknown as { noteBox?: boolean }).noteBox).toBe(false);
+  });
+});
+
+/* GAPA1 1a T4 (frozen card A §1a): the stale candidate still draws 采用, greyed,
+   with one of the four reason sentences as its tip. One entry per literal; each
+   entry fails alone when the mapping falls back to 已过期.
+   具名改坏: 把 `staleReason` 原样当提示 → 前三条红；把每条都写“已过期” → 第四条之外全红。 */
+describe('GAPA1 1a T4 the stale candidate tip', () => {
+  it.each([
+    ['basedOn is not the active Plan pointer', '计划已经变了，这份候选不能直接采用'],
+    ['来源已撤回', '来源已撤回'],
+    ['来源不可读', '来源暂时读不到'],
+    ['something else', '已过期'],
+  ] as const)('T4 %s reads as %s', (reason, tip) => {
+    const goalRef = { aggregateType: 'Goal' as const, projectId: 'p', goalId: 'g' };
+    const card = {
+      ...makeCard({ cardKey: 'candidate', state: 'waiting_answer', actions: ['answer', 'regenerate', 'abandon'],
+        source: { kind: 'candidate', key: 'candidate', subject: { kind: 'goal', goalRef },
+          pins: [{ ref: goalRef, revision: 2 },
+            { ref: { aggregateType: 'PlanProposal', projectId: 'p', workspaceId: 'w', proposalId: 'proposal-1' },
+              revision: 3 }] } }),
+      candidateStatus: 'stale', staleReason: reason,
+    } as unknown as DecisionCardV1;
+    const data = adaptDecide({ ...sourceOf([]),
+      queue: [{ ...makeQueue([]), waitingAnswer: [card] }] },
+    { ...UI, tab: 'open', selectedCardKey: 'candidate' });
+    const view = data.card as DecideCard;
+    const adopt = [...view.acts, ...(view.primary === null ? [] : [view.primary])]
+      .find((act) => act.label === '采用');
+    expect(adopt, 'the stale candidate still draws 采用').toBeDefined();
+    expect(adopt!.off).toBe('true');
+    expect(adopt!.tip).toBe(tip);
+  });
+});

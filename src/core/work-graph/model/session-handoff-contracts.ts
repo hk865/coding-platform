@@ -89,6 +89,9 @@ export type HandoffProgressV1 = {
   /** The trigger the operation was accepted with; the automatic identity is frozen at accept. */
   trigger: HandoffTriggerV1;
   successor: SessionRef | null; archived: boolean; noticeItemKey: string | null; lastRefusal: string | null;
+  /** P6I: why this drive stopped without a write (`HandoffAdvanceStopV1.reason`, e.g. an understanding round ended
+   *  before entry); absent when the drive did not stop that way. */
+  stopped?: string;
 };
 
 /**

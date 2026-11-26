@@ -51,7 +51,7 @@ export function realOwners(f: S5DecisionFixture, duties: readonly PlatformDutyV1
   const readers = createMaterialRecordReaders(records);
   const materials = createMaterialService({ bodies: f.bodies, authority: readers.authority, now });
   const deps: SessionMailboxDependencies = {
-    defaultInquiryDeadlineMs: 86_400_000,
+    defaultInquiryDeadlineMs: () => 86_400_000,
     records, materials, now, newId, systemActor: f.operatorActor,
     sessions: createSessionDirectory({ records,
       knowledge: knowledgeLinesOver(records), lookups: records, duty: unknownSessionDuty }),

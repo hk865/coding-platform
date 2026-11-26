@@ -43,6 +43,7 @@ import type {
   PlanStage, PlanTaskAssignment, RuntimeTask,
 } from '../../../contracts/plan.js';
 import type { RoundSnapshot, VerificationRoundRef } from '../../../contracts/verification.js';
+import { isRequestRound } from '../../../contracts/query-job.js';
 import type { AdoptedArchitecture, ModuleDefinition } from '../../../contracts/architecture-catalog.js';
 import { catalogForWorkspace } from '../../../contracts/workspace-catalog.js';
 import { displayProjectPath, isSafeProjectPath, normalizeRequestProjectPath, splitWorkspacePath } from '../../../contracts/workspace-path.js';
@@ -569,7 +570,12 @@ export function createGraphContextReader(deps: GraphContextReaderDependencies): 
     if (job.job.runRef === null || canonicalJson(job.job.runRef as unknown as JsonValue) !== runKey) {
       return rejected('forbidden', 'the QueryJob does not bind the requested QueryRun');
     }
-    if (job.job.goalId !== (goal === null ? null : goal.goalId)) {
+    // A Query reads its own Goal's graph. The secretary's project-level round (a request round whose Query has no
+    // Goal) reads every Goal of its workspace, read only: its request may already have a confirmed Goal, and the
+    // secretary answers about any Goal of the workspace (decision 121-111: a read that protects nothing is not
+    // refused). The Goal must still be in the round's workspace (below).
+    const projectSecretaryRound = job.job.goalId === null && isRequestRound(job);
+    if (!projectSecretaryRound && job.job.goalId !== (goal === null ? null : goal.goalId)) {
       return rejected('forbidden', 'the QueryJob does not belong to the requested Goal');
     }
     const state = run.run.executionState;

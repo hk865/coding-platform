@@ -23,8 +23,9 @@
  *   `messages/withdraw`.
  * - `complete`: each work Task of the goal's Plan gets a Work line (`sessions/create`) with one scripted text reply,
  *   and the Host's check configuration is registered (a Host input, rule sheet A8, as
- *   `tests/helpers/S7B-V-fixture.ts:26–:27`); then `workflow/advance` from `select_work` is driven with no stop
- *   (`driveWorkflow`) until it performs `complete_goal`. No in-process `completeGoal`.
+ *   `tests/helpers/S7B-V-fixture.ts:26–:27`); then the step waits until `goals/display` reads `COMPLETED`: the goals
+ *   are Goal-card goals, so the platform started their driver when `plan` adopted their first plan, and that driver
+ *   runs the Tasks and performs `complete_goal`. No in-process `completeGoal`, no second driver.
  * No record, context or store is read or written; a step that answers anything but its success throws naming the
  * answer, except the raw reads and writes the rows assert themselves.
  */
@@ -41,7 +42,6 @@ import type {
 import type { RequestReadV1 } from '../../src/core/work-graph/views/main-surface-read-model.js';
 import type { RoleLineOperationReadV1 } from '../../src/core/work-graph/views/role-line-operations-read.js';
 import { waitFor } from '../scenarios/harness.js';
-import { driveWorkflow, type AdvanceValue } from './A2-restart-fixture.js';
 import { ag2bChecksConfiguration, graphWrite } from './AG2b-collaboration-fixture.js';
 import { secretaryAnswer } from './S6A-history-fixture.js';
 import { S6A_SCOPE, S6A_WORK_ROLE, type S6ABackend, type S6ASession } from './S6A-request-fixture.js';
@@ -106,8 +106,8 @@ export type S7D2QueueWorld = S7D2RoleLineWorld & {
   pause(goal: GoalRef): Promise<void>;
   resume(goal: GoalRef): Promise<void>;
   cancel(goal: GoalRef): Promise<void>;
-  /** The goal's planned work done and `complete_goal` performed through `workflow/advance` (see the header). */
-  complete(goal: GoalRef, label: string): Promise<AdvanceValue[]>;
+  /** The goal's planned work done and `complete_goal` performed by the goal's own driver (see the header). */
+  complete(goal: GoalRef, label: string): Promise<void>;
   withdraw(message: SessionMessage, label: string): Promise<void>;
 };
 
@@ -271,12 +271,9 @@ export async function openS7D2QueueWorld(options: S7D2QueueWorldOptions): Promis
             tasks: [row.ref] });
           await host.scripted.script(await sessionOf(host, line), [{ kind: 'text', text: `S7D2 queue ${label} work` }]);
         }
-        const steps = await driveWorkflow(host.ag2b, { schemaVersion: 1, goalRef: ref, flowId: `s7d2-queue-${label}`,
-          sessionHint: null, kind: 'select_work' });
-        if (!steps.some(step => step.receipt?.kind === 'complete_goal')) {
-          throw new Error(`S7D2 queue: the Workflow did not perform complete_goal for ${ref.goalId}: ${JSON.stringify(steps.at(-1))}`);
-        }
-        return steps;
+        await waitFor(() => route<{ display: { phase: string } }>('goals/display', { goalRef: ref },
+          `the display of ${ref.goalId}`), read => read.display.phase === 'COMPLETED',
+        `S7D2 queue: ${ref.goalId} completed by its driver`);
       },
       async withdraw(message, label) { await withdrawS7A2Message(host, message, label); },
     };

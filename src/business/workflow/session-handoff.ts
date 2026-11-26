@@ -43,7 +43,8 @@ export function createSecretaryHandoffWorkflow(deps: HandoffCompositeDependencie
     return { status: 'ready', value: read.value as SessionOperationRecordOf<HandoffActionV1> };
   }
 
-  async function progressOf(ctx: CoreCallContext, ref: OperationRef): Promise<ReadResult<HandoffProgressV1>> {
+  async function progressOf(ctx: CoreCallContext, ref: OperationRef, stopped?: string):
+    Promise<ReadResult<HandoffProgressV1>> {
     const read = await deps.operations.getSessionOperation(ctx, ref);
     if (read.status !== 'ready') return read;
     const record = read.value;
@@ -53,7 +54,8 @@ export function createSecretaryHandoffWorkflow(deps: HandoffCompositeDependencie
     return { status: 'ready', value: { operation: record.ref as OperationRef, revision: record.revision,
       stage: progress.stage, phase, trigger: record.action.input.trigger, successor: successorOf(record.action),
       archived: progress.stage === 'notice' || progress.stage === 'finished',
-      noticeItemKey: progress.noticeItemKey, lastRefusal: progress.lastRefusal?.reason ?? null } };
+      noticeItemKey: progress.noticeItemKey, lastRefusal: progress.lastRefusal?.reason ?? null,
+      ...(stopped === undefined ? {} : { stopped }) } };
   }
 
   /**
@@ -176,7 +178,16 @@ export function createSecretaryHandoffWorkflow(deps: HandoffCompositeDependencie
           if (coverage.status !== 'ready') {
             return coverage.status === 'rejected' ? coverage : unavailable('the coverage read is not ready');
           }
-          if (coverage.value.lastRound?.queryJobId === last.round.queryJobId) {
+          // P6I: a round the Host ended on purpose before entry has ended too, though it never becomes `lastRound`.
+          let ended = coverage.value.lastRound?.queryJobId === last.round.queryJobId;
+          if (!ended) {
+            const stopped = await deps.facts.readRoundStop(savedCtx, { round: last.round });
+            if (stopped.status !== 'ready') {
+              return stopped.status === 'rejected' ? stopped : unavailable('the understanding round read is not ready');
+            }
+            ended = stopped.value !== null;
+          }
+          if (ended) {
             const closed = await deps.requests.closeUnderstanding(
               handoffContextOf(savedCtx, HANDOFF_SYSTEM_PRINCIPAL),
               { round: last.round, commandId: last.command.commandId });
@@ -202,8 +213,9 @@ export function createSecretaryHandoffWorkflow(deps: HandoffCompositeDependencie
       const result = await deps.handoff.advanceHandoff(ctx, { kind: 'continue', operation: input.operation,
         expectedRevision: record.revision });
       if (result.status === 'rejected') return result;
-      // L1: a stopped continue writes nothing and this branch calls no child; the drive only re-reads the progress.
-      if (result.status === 'stopped') return progressOf(ctx, input.operation);
+      // L1: a stopped continue writes nothing and this branch calls no child; the drive re-reads the progress and
+      // hands the stop's reason on (P6I: an understanding round ended before entry is only known from it).
+      if (result.status === 'stopped') return progressOf(ctx, input.operation, result.reason);
       const value = result.value;
       if (value.stop === 'finished') return progressOf(ctx, input.operation);
       const stage = value.write.stage;

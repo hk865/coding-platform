@@ -33,7 +33,9 @@
  * successor, no split, its goal link open. D — a crash after the `planned`, `admitted`, `created`, `linked` write, or
  * after the child's reservation with the cap then full, resumes on the new Host to `done` with one new line; a crash
  * before the `linked` move after L1 lost `src` ends the split `failed` with
- * `{code:'not_found',reason:'the split source no longer holds the kept region'}`.
+ * `{code:'not_found',reason:'the split source no longer holds the kept region'}`. E — the source's card moves between
+ * the link's read and its commit (in use the source's own Run ends there): the link reads again and the split ends
+ * done with the child region on the new line.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { SessionRef } from '../../src/contracts/core/identity.js';
@@ -55,7 +57,7 @@ import { valueOf } from '../helpers/S6B3-fixture.js';
 import { sendS7A2PersonMessage } from '../helpers/S7A2-fixture.js';
 import { jsonOf } from '../helpers/S7C-member-fixture.js';
 import {
-  freezeS7D2SplitAfter, holdS7D2SplitReserved, linkS7D2Scopes, openS7D2ProjectWorld, openTargetsOf,
+  freezeS7D2SplitAfter, holdS7D2SplitReserved, holdS7D2SplitStep, linkS7D2Scopes, openS7D2ProjectWorld, openTargetsOf,
   runS7D2Work, type S7D2ProjectWorld,
 } from '../helpers/S7D2-role-line-world.js';
 import { waitFor } from './harness.js';
@@ -77,6 +79,8 @@ type SplitRow = Extract<RoleLineOperationReadV1, { action: 'role_line' }>;
 const SPLIT_TOOLS = ['read', 'send_session_message', 'create_member', 'propose_role_split', 'record_note'] as const;
 const NOT_STRICT = 'the move is not a strict subrange of the caller line';
 const REASON = 'RL-13: src/a carries a burden of its own';
+/** The stored failure of a split whose source gave up the kept region (D6's expectation, v4 :2492–:2493). */
+const KEPT_LOST = { code: 'not_found', reason: 'the split source no longer holds the kept region' };
 
 async function openWorld(backend: S6ABackend, tools: boolean): Promise<S7D2ProjectWorld> {
   const handle = await openS7D2ProjectWorld({ backend, extraHostOptions: { scribeReminderPeriodMs: 25 },
@@ -301,6 +305,101 @@ describe('RL-13 B: at the open cap', () => {
     expect(holdings(after, await newLineOf(handle, end))).toBe(1);
     expect(after.duties.adviser.reservations).toEqual([]);
   }, 300_000);
+});
+
+describe('RL-13 E: the source line\'s card moves while the split links', () => {
+  /*
+   * The link pins the source's card so that a scope change after its read never opens the child region on stale
+   * facts; a card that moved meanwhile is read again and the move judged anew. In use the source's own Work Run ends
+   * right after its tool call and moves the card; here the source takes the sibling region `src/b`, which leaves the
+   * kept `src` and the moved `src/a` as they were. Gates: the tool call stays after its `planned` write, so the
+   * Host's lifecycle pass alone drives the split (a raised adviser cap wakes it), and that pass's link commit waits
+   * until the source's card has moved. Named mutation: the link ends the split failed on the source pin's
+   * `revision_conflict` -> `phase: 'failed'`, red.
+   */
+  it('RL-13 E (memory): the source card moves between the link\'s read and its commit; the split still ends done',
+    async () => {
+      const handle = await openWorld('memory', true);
+      const source = handle.regionAdviser;
+      const [task] = await planOnL1(handle, 's7d2-rl13-e', ['rl13-e-1']);
+      const toolCall = holdS7D2SplitStep('planned', 'after');
+      const link = holdS7D2SplitStep('linked', 'before');
+      const run = splitRun(handle, task!, 'rl13-e', handle.modules.child.moduleId, [splitCall('rl13-e-split', 'src/a')]);
+      await toolCall.reached;
+      await handle.setOpen('adviser', (await handle.allocation()).duties.adviser.limit + 1, 's7d2-rl13-e-cap');
+      await link.reached;
+      const read = (await handle.readCard(source)).record.revision;
+      await linkS7D2Scopes(handle.world, { line: source, label: 'rl13-e-sibling',
+        targets: [{ kind: 'module', ref: handle.modules.sibling }] });
+      expect((await handle.readCard(source)).record.revision).toBeGreaterThan(read);
+      link.release();
+      const end = await splitEnd(handle);
+      expect(end).toMatchObject({ phase: 'completed', actionPhase: 'done', result: { status: 'done', reason: null } });
+      expect(openTargetsOf(await handle.readCard(await newLineOf(handle, end))).filter(target => target.kind === 'module'))
+        .toEqual([{ kind: 'module', ref: handle.modules.child }]);
+      toolCall.release();
+      await run;
+    }, 300_000);
+
+  /*
+   * Lead ruling 11-27 (FLK item 9): E's stop, but the source gives up the kept `src` itself (D6's
+   * change), so nothing may open `src/a` on the new line. The source pin turns the held commit into a conflict, the
+   * read again finds the kept region gone and the split ends failed. Named mutation: the link's commit drops the
+   * source pin -> the held commit lands, the split ends done with `src/a` on the new line, red (E stays green).
+   */
+  it('RL-13 E2 (memory): the source drops the kept src between the link\'s read and its commit; the split ends not_found',
+    async () => {
+      const handle = await openWorld('memory', true);
+      const [task] = await planOnL1(handle, 's7d2-rl13-e2', ['rl13-e2-1']);
+      const toolCall = holdS7D2SplitStep('planned', 'after');
+      const link = holdS7D2SplitStep('linked', 'before');
+      const run = splitRun(handle, task!, 'rl13-e2', handle.modules.child.moduleId, [splitCall('rl13-e2-split', 'src/a')]);
+      await toolCall.reached;
+      await handle.setOpen('adviser', (await handle.allocation()).duties.adviser.limit + 1, 's7d2-rl13-e2-cap');
+      await link.reached;
+      expect((await handle.changeScope({ session: handle.regionAdviser, scope: [], requestId: 's7d2-rl13-e2-drop-src' }))
+        .result).toMatchObject({ status: 'committed' });
+      link.release();
+      const end = await splitEnd(handle);
+      expect(end).toMatchObject({ phase: 'failed' });
+      expect((await operationOf<RoleLineOperationV1>(handle, end.operation)).failure).toEqual(KEPT_LOST);
+      expect(openTargetsOf(await handle.readCard(await newLineOf(handle, end))).filter(target => target.kind === 'module'))
+        .toEqual([]);
+      toolCall.release();
+      await run;
+    }, 300_000);
+
+  /*
+   * Lead ruling 11-27 (FLK item 4): the tool's own link meets a conflict after another driver has ended
+   * the split failed; reading the split again answers that stored failure, never `accepted`. Gates: the tool call
+   * stays after its `planned` write while the Host's pass (woken by a raised cap) drives the split to `created` and
+   * stays after that write; the tool, let go, reads the split at `created` and links it, and its link commit waits.
+   * Meanwhile the source drops the kept `src` (D6's change) and the Host's next pass ends the split failed. Named
+   * mutation: the read again goes on from a `failed` split as `done` -> the tool answers `accepted`, red.
+   */
+  it('RL-13 E3 (memory): the tool\'s link conflicts after the Host ended the split failed; the tool answers that failure',
+    async () => {
+      const handle = await openWorld('memory', true);
+      const [task] = await planOnL1(handle, 's7d2-rl13-e3', ['rl13-e3-1']);
+      const toolCall = holdS7D2SplitStep('planned', 'after');
+      const hostCreated = holdS7D2SplitStep('created', 'after');
+      const toolLink = holdS7D2SplitStep('linked', 'before');
+      const run = splitRun(handle, task!, 'rl13-e3', handle.modules.child.moduleId, [splitCall('rl13-e3-split', 'src/a')]);
+      await toolCall.reached;
+      await handle.setOpen('adviser', (await handle.allocation()).duties.adviser.limit + 1, 's7d2-rl13-e3-cap');
+      await hostCreated.reached;
+      toolCall.release();
+      await toolLink.reached;
+      expect((await handle.changeScope({ session: handle.regionAdviser, scope: [], requestId: 's7d2-rl13-e3-drop-src' }))
+        .result).toMatchObject({ status: 'committed' });
+      hostCreated.release();
+      const end = await splitEnd(handle);
+      expect(end).toMatchObject({ phase: 'failed' });
+      expect((await operationOf<RoleLineOperationV1>(handle, end.operation)).failure).toEqual(KEPT_LOST);
+      toolLink.release();
+      await run;
+      expect(await resultOf(handle, 'rl13-e3-split')).toEqual({ status: 'rejected', ...KEPT_LOST });
+    }, 300_000);
 });
 
 describe('RL-13 C: the maintenance page', () => {

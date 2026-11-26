@@ -5,8 +5,8 @@
  * 真实 python3 和 libclang 18 的默认位置（同 tests/data/cpp-source-index.test.ts:54–57），只在 WSL 跑。
  * 两次 `lookup` 都是 `mode: 'write'`（W11“写” :294：读和写用同一个复用判断）。
  */
-import { createHash } from 'node:crypto';
-import { readdir } from 'node:fs/promises';
+import { createHash, randomUUID } from 'node:crypto';
+import { readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
 import { createNativeSingleFile, type NativeLookupV1 } from '../../src/core/workspace/native-single-file.js';
@@ -111,20 +111,37 @@ it('WN-R1-02 a candidate header over the read limit leaves the parse not exact',
   expect(await lookup(GATE_CPP, 'write')).toMatchObject({ status: 'parsed', exact: false });
 }, 60000);
 
+/**
+ * /tmp 里留着的翻译单元抄了 `marker` 的 `platform-cpp-single-` 目录（单文件模式把源文字抄进 `unit-` 子目录的 `main`）。
+ * /tmp 整台机器共用，别的测试文件、别的树的 C++ 进程也在这里建同一前缀的目录，只有这一行自己的进程抄过这个记号。
+ */
+async function scratchHolding(marker: string): Promise<string[]> {
+  const found: string[] = [];
+  for (const name of (await readdir('/tmp')).filter(entry => entry.startsWith('platform-cpp-single-'))) {
+    // 别的进程的目录可能正被它自己删掉：读不到的就不是这一行的。
+    const units = await readdir(join('/tmp', name)).catch(() => [] as string[]);
+    for (const unit of units.filter(entry => entry.startsWith('unit-'))) {
+      const copy = await readFile(join('/tmp', name, unit, 'main'), 'utf8').catch(() => '');
+      if (copy.includes(marker)) found.push(name);
+    }
+  }
+  return found;
+}
+
 it('WN-R1-04 closing the port lets the C++ process remove its scratch directory', async () => {
   // 起进程的环境只有 PATH、LANG（analysis-runner.ts:132），脚本的 `tempfile` 用 /tmp，不是 vitest 的 TMPDIR。
-  const scratch = async () => (await readdir('/tmp')).filter(name => name.startsWith('platform-cpp-single-'));
-  const before = new Set(await scratch());
-  const { port, lookup } = await cppWorld([['include/gate.hpp', '#pragma once\n#define GATE_ON 1\n'], ['src/gate.cpp', GATE_CPP]], ['include']);
-  expect(await lookup(GATE_CPP, 'write')).toMatchObject({ status: 'parsed', exact: true });
+  const marker = `// WN-R1-04 ${randomUUID()}`;
+  const text = `${GATE_CPP}${marker}\n`;
+  const { port, lookup } = await cppWorld([['include/gate.hpp', '#pragma once\n#define GATE_ON 1\n'], ['src/gate.cpp', text]], ['include']);
+  expect(await lookup(text, 'write')).toMatchObject({ status: 'parsed', exact: true });
   // 进程活着：它的临时目录在（单文件模式的 `TemporaryDirectory`，留着的翻译单元的源文字副本都在里面）。
-  const mine = (await scratch()).filter(name => !before.has(name));
+  const mine = await scratchHolding(marker);
   expect(mine.length).toBeGreaterThan(0);
   await port.close();
   // 改坏（8E-2 :280 “Host 关闭时停掉”）：close 不关输入、直接 SIGKILL → 脚本的 `finally`、`with` 都不跑，
   // 目录留在 /tmp，这一条红。
-  const after = new Set(await scratch());
-  expect(mine.filter(name => after.has(name))).toEqual([]);
+  const left = new Set(await readdir('/tmp'));
+  expect(mine.filter(name => left.has(name))).toEqual([]);
 }, 60000);
 
 it('WN-R1-05 a Python name span covers every identifier character', async () => {

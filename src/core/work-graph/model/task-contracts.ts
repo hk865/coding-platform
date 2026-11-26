@@ -82,6 +82,17 @@ export interface GoalTaskPort {
     request: GraphWrite<{ goalRef: GoalRef }>,
   ): Promise<WriteResult<GoalPhaseSnapshot>>;
   /**
+   * GOAL-07P (G6): the person ends the Goal with what its active plan has
+   * formally satisfied; the GoalPhase becomes ACCEPTED_PARTIAL with the
+   * rationale (non-empty, at most 2048 UTF-8 bytes) and the satisfied parts as
+   * evidence refs. Only the configured operator. `meta.expected` pins exactly
+   * the Goal and its GoalPhase (0 = none stored).
+   */
+  acceptPartialResult(
+    ctx: CoreCallContext,
+    request: GraphWrite<{ goalRef: GoalRef; rationale: string }>,
+  ): Promise<WriteResult<GoalPhaseSnapshot>>;
+  /**
    * A.2 step 5.5 (G7, D-9): the Goal's desired state. `meta.expected` pins
    * exactly the Goal and its GoalPhase (0 = none stored); both are required
    * (HANDOFF decision 29, `invalid` otherwise). The commit stops new claims,
@@ -106,6 +117,8 @@ export type GoalServiceDependencies = {
   records: GoalRecordTransactionPort & Partial<RecordLookupPort>;
   now(): string;
   eventId(): string;
+  /** The Host's configured operator; without one a partial acceptance is `unsupported`. */
+  operatorActor?: { kind: 'human' | 'system'; id: string };
 };
 
 /** The service surface published by `tasks/task-service.ts`. */

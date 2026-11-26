@@ -14,7 +14,7 @@
 - `identity.ts` — 作用域、版本 pin、命令元数据，以及 `SessionRef`、`ModuleRef`、`WorkLinkTarget`、`RoleConfigurationRef` 等身份。
 - `operations.ts` — `OperationRef`：跨 Store 与 Kernel 效果的操作身份。
 - `prepared-execution.ts` — 准备执行清单：`PreparedTaskManifestV1`、`PreparedQueryManifestV1`、`UnknownCallReviewInputV1` 与 `renderUnknownCallReviewZh`。
-- `rejections.ts` — 拒绝结果构造器：`rejected`、`rejectedWithCurrent`、`rejectedWithNonEmptyCurrent`、`okFalse`。
+- `rejections.ts` — 拒绝结果构造器：`rejected`、`rejectedWithCurrent`、`rejectedWithNonEmptyCurrent`、`okFalse`，以及持久拒绝 `lastingRejection` 和它的判别 `isLastingRejection`（P6I：再试也只会被同样拒绝的，在拒绝的来源处标上）。
 - `results.ts` — 结果词汇：`CoreError`（唯一的运行时列表 `CORE_ERRORS`）、`CoreRejection`、`ReadResult`、`WriteResult`、`ReadStamp`、`Page`、`OperationReceipt`。`CoreRejection` 可带可选的 `detail`（满额事实 `CapacityAtCapDetailV1`），只有满额拒绝携带。
 - `session-archive.ts` — 不可变归档请求 `SessionArchiveRequestV1`、秘书归档条件 `SessionArchiveConditionV1`（`src/contracts/core/session-archive.ts:27`）与 `deriveArchiveStepCommitIdentityV1`。
 - `session-message.ts` — `SessionMessageRef` 完整地址、通信意图、用户/决策消息与 `isUserMessageRecipient`；7A-1 加效果证明 `ApplicationProofV1`（`src/contracts/core/session-message.ts:114`）、发送拒绝 `SendRejectionV1`（`:122`）、发布状态 `MessageReleaseV1`（`:127`）、派送三元组 `MessageDeliveryStateV1`（`:129`）、读处置 `MessageReadDispositionV1`（`:135`，`offerable`/`answered`/`copy`/`withdrawn`/`delivered`/`undelivered`）与正式无回答的读侧事实 `MessageRoundEndingV1`（`:146`，`{ kind: 'no_answer' }`，和回复、撤回、Kernel 接受分开）；收尾通知的理由 `INTERVENTION_CLOSING_REASONS`/`InterventionClosingReasonV1`（`:150`/`:153`）、固定平台身份 `PLATFORM_NOTICE_ACTOR`（`:161`）和确定性请求号 `interventionClosingNoticeRequestId`（`:169`）的唯一正本，Workflow 的 `intervention.ts`/`contracts.ts` 只转出。
@@ -29,7 +29,9 @@
 | `rejected` **正本** | `src/contracts/core/rejections.ts:5` | 生成不带 `current` 的领域拒绝 `{status,code,reason}`。 | Core 端口返回失败、且没有要回传的当前版本时。 |
 | `rejectedWithCurrent` | `src/contracts/core/rejections.ts:13` | 生成拒绝；调用方传了 `current` 就保留（含空数组）。 | 调用方明确区分“传了空数组”和“没传”时。 |
 | `rejectedWithNonEmptyCurrent` | `src/contracts/core/rejections.ts:22` | 生成拒绝；只在 `current` 非空时附带。 | 修订冲突等只回传实际观察到的非空版本集时。 |
-| `okFalse` | `src/contracts/core/rejections.ts:33` | 生成 `{ok:false,code,reason}` 结果。 | 返回布尔式结果而不是 `ReadResult`/`WriteResult` 的读/查询端口。 |
+| `okFalse` | `src/contracts/core/rejections.ts:52` | 生成 `{ok:false,code,reason}` 结果。 | 返回布尔式结果而不是 `ReadResult`/`WriteResult` 的读/查询端口。 |
+| `lastingRejection` | `src/contracts/core/rejections.ts:38` | 生成带 `lasting: true` 的拒绝：同样的输入再试只会被同样拒绝（模板渲染不出、选定的提示词 pack 或目录不在、冻结的输入超上限）。 | 拒绝的来源确知它不会自己变好时；配置还没有（没配密钥、没有匹配的绑定）、冲突和读失败不标。 |
+| `isLastingRejection` | `src/contracts/core/rejections.ts:47` | 判一个结果带不带持久标，参数是整个结果。 | Query 阶段驱动决定关掉一轮还是接着等；不要按裸拒绝码另判。 |
 | `CoreError` | `src/contracts/core/results.ts:16` | 关闭的端口失败词汇（拒绝形状见 `CoreRejection`）。 | 声明端口失败码；不要另造同义词或把损坏折叠成普通失败。 |
 | `CORE_ERRORS` **正本** | `src/contracts/core/results.ts:24` | 端口失败码的唯一运行时列表，顺序同 `CoreError`；它由以 `CoreError` 为键的表取键，少一个失败码就编译不过。 | 运行时校验失败码（如读回存储的失败）；不要再另写一份失败码列表。 |
 | `ReadResult` | `src/contracts/core/results.ts:33` | 区分 `ready`、`not_found`、带真实戳的 `not_ready` 与拒绝。 | 所有读取端口；失败读取不得变成空事实。 |

@@ -16,18 +16,21 @@ import { parseInitialPlanningResponseV2 } from '../../../contracts/initial-plann
 import { interventionPlanningQueryRefs, queryJobRefFor, type QueryRunRef } from '../../../contracts/query-job.js';
 
 import type { SessionAvailability } from '../state/session-availability.js';
+import { isEndedGoalDisplayPhase } from '../state/goal-machine.js';
 import type { SessionCard, SessionDirectoryPort, SessionPageRequest } from '../model/session-contracts.js';
 import type { SessionMailboxPort } from '../model/communication-contracts.js';
-import { consultationFacts, interventionGoalRefOf, type SessionMessage } from '../model/communication-contracts.js';
+import { consultationFacts, interventionGoalRefOf, planningDutyOnly, type SessionMessage }
+  from '../model/communication-contracts.js';
 import type { ExecutionReadPort } from '../model/execution-read-contracts.js';
 import type { PlanTaskPort } from '../model/plan-contracts.js';
 import type { UnknownCallReviewReadPort } from '../model/unknown-call-review-contracts.js';
 import type { QueryJobPort } from '../queries/contracts.js';
 import type {
-  DeliveryEligibilityFactsPort, SessionFactsPort, SessionSettlementDuePort,
+  DeliveryEligibilityFactsPort, SessionFactsPort, SessionFactsV1, SessionSettlementDuePort,
 } from '../model/session-facts-contracts.js';
 import { deliveryEligibility, isMessageAgentSender, isSecretaryRequestMessage, isWaitMessage,
   waitFactsOfRecord, waitStateOf } from '../state/message-machine.js';
+import type { DutyRecipientDependencies } from '../sessions/duty-recipient.js';
 import { plainSessionRefKey } from '../sessions/session-record-codecs.js';
 import { compareSessionInputCandidates, sessionMessageRefKey } from '../sessions/message-record-codecs.js';
 import { chainTailIsSource, hostContextIn, interventionProposalRefOf, interventionQueryWorkspaceOf, overlapNoteOf,
@@ -120,10 +123,17 @@ export type ConsumableSessionsDependencies = {
   /** The fixed closing notice of a finished round, by its frozen source and part; never a second notice identity. */
   closingNotice?: InterventionClosingNoticeRead;
   /**
-   * The line's own bound wait: the Run that yielded on it (`SessionFactsV1.wait`). An optional fact that keeps an
-   * ordinary wake in the box while the line is waiting; absent keeps today's idle-line behavior.
+   * The line's own facts: the Run that yielded on a bound wait (`SessionFactsV1.wait`) keeps an ordinary wake in the
+   * box, and a line with no Work (`latestWork`) keeps a person's message that names no Goal there. Optional; absent
+   * the line is idle and has done no Work.
    */
   sessionFacts?: Pick<SessionFactsPort, 'readSessionFacts'>;
+  /**
+   * R1: the line's duty, through the same resolver `handleIntervention` reads. A person's Goal-less message on an
+   * adviser or reviewer line stays in the box even when the line has Work history, because that line plans only and
+   * can never take the Goal from its latest Work. Absent keeps today's path: a line with Work still offers it.
+   */
+  sessionDuty?: Pick<DutyRecipientDependencies, 'dutyOfRole'>;
   /**
    * The overlap gates' saved `noteRequest.messageRef`: an optional fact that classifies a gate's note as the
    * platform's note round. Absent keeps today's ordinary-wake classification.
@@ -176,21 +186,45 @@ export function createConsumableSessions(deps: ConsumableSessionsDependencies):
 
   /**
    * The kinds that open a new round of their own. A person's B20 `person_message` takes its new-Goal branch, and
-   * `action_request`/`notify` open no turn. A completed Goal holds every one of these kinds (`newRoundHeld`); a line's
-   * bound wait holds only the agent's `agent_wake` and `decision_answer`, and the platform's `system_round` still opens.
+   * `action_request`/`notify` open no turn. An ended Goal (COMPLETED or ACCEPTED_PARTIAL) holds every one of these
+   * kinds (`newRoundHeld`); a line's bound wait holds only the agent's `agent_wake` and `decision_answer`, and the
+   * platform's `system_round` still opens.
    */
   const isNewRoundKind = (kind: ConsumableSessionKindV1): boolean =>
     kind === 'agent_wake' || kind === 'system_round' || kind === 'decision_answer';
 
   /**
    * Whether an ordinary wake must stay in the box for this candidate: no Goal and a line that yielded on a wait both
-   * leave the wake queued. A completed Goal is `newRoundHeld`'s, which every new non-B20 round shares. An existing
+   * leave the wake queued. An ended Goal is `newRoundHeld`'s, which every new non-B20 round shares. An existing
    * Query's resume is not a new wake and does not call this.
    */
   async function ordinaryWakeHeld(message: SessionMessage,
     lineBoundWait: () => Promise<ReadResult<boolean>>): Promise<ReadResult<boolean>> {
     if (interventionGoalRefOf(message) === null) return ready(true);
     return lineBoundWait();
+  }
+
+  /**
+   * R1: whether a person's message that names no Goal or Task stays in the box. It does when `handleIntervention`
+   * cannot find a Goal for it and would answer `queued` on every pass, because offering it would put it first on
+   * every pass and hold every later round on the line. That is a line that never did Work (an adviser's, reviewer's
+   * or secretary's, or an executor that never claimed a task), and also an adviser or reviewer line with Work
+   * history: that duty opens planning rounds only, so it reads the Goal from the message and never from its latest
+   * Work. An executor line that has done Work keeps it: its Goal comes from that Work. The message stays readable
+   * and unanswered, and a later Work round on the line still takes it as input.
+   */
+  async function personMessageWithoutGoalHeld(ctx: CoreCallContext, message: SessionMessage,
+    lineFacts: () => Promise<ReadResult<SessionFactsV1 | null>>): Promise<ReadResult<boolean>> {
+    if (interventionGoalRefOf(message) !== null) return ready(false);
+    const facts = await lineFacts();
+    if (facts.status !== 'ready') return facts;
+    if (facts.value === null || facts.value.latestWork === null) return ready(true);
+    // No duty resolver means the narrow stand-in cannot tell the duties apart; keep today's offer and let the
+    // dispatch answer, as `handleIntervention` does for an uninstalled or `unknown` duty.
+    if (deps.sessionDuty === undefined) return ready(false);
+    const duty = await deps.sessionDuty.dutyOfRole(ctx, facts.value.session.role);
+    if (duty.status !== 'ready') return duty;
+    return ready(planningDutyOnly(duty.value === 'unknown' ? null : duty.value));
   }
 
   /**
@@ -201,14 +235,15 @@ export function createConsumableSessions(deps: ConsumableSessionsDependencies):
    */
   async function newRoundHeld(ctx: CoreCallContext, offer: CandidateOffer): Promise<ReadResult<boolean>> {
     if (!isNewRoundKind(offer.kind)) return ready(false);
-    return goalCompletedOf(ctx, offer.message);
+    return goalEndedOf(ctx, offer.message);
   }
 
   /**
-   * Whether the message's Goal is complete. The Goal display's `phase` is the existing completion fact that
-   * `handleIntervention` also reads; without the optional display read today's classification stays.
+   * Whether the message's Goal has ended (COMPLETED, or ACCEPTED_PARTIAL by the person). The Goal display's `phase` is
+   * the existing completion fact that `handleIntervention` also reads; without the optional display read today's
+   * classification stays.
    */
-  async function goalCompletedOf(ctx: CoreCallContext, message: SessionMessage): Promise<ReadResult<boolean>> {
+  async function goalEndedOf(ctx: CoreCallContext, message: SessionMessage): Promise<ReadResult<boolean>> {
     const display = deps.plans.queryGoalDisplay;
     const goalRef = interventionGoalRefOf(message);
     if (display === undefined || goalRef === null) return ready(false);
@@ -216,7 +251,7 @@ export function createConsumableSessions(deps: ConsumableSessionsDependencies):
     if (goalWorkspace.status !== 'ready') return goalWorkspace;
     const read = await display(hostContextIn(ctx, goalWorkspace.value), { goalRef });
     if (read.status !== 'ready') return read;
-    return ready(read.value.display.phase === 'COMPLETED');
+    return ready(isEndedGoalDisplayPhase(read.value.display.phase));
   }
 
   /**
@@ -592,18 +627,20 @@ export function createConsumableSessions(deps: ConsumableSessionsDependencies):
     Promise<ReadResult<OfferSet>> {
     // The mailbox ports take a plain SessionRef; the record's ref carries `aggregateType` for the store.
     const session: SessionRef = { projectId: record.ref.projectId, sessionId: record.ref.sessionId };
-    // The one bound-wait read of this line, taken only when a new round needs it; a line with no such offer
-    // never reads the facts. Absent the optional fact the line is never waiting.
-    const lineFacts = deps.sessionFacts;
-    let lineWait: Promise<ReadResult<boolean>> | null = null;
-    const lineBoundWait = (): Promise<ReadResult<boolean>> => {
-      if (lineFacts === undefined) return Promise.resolve(ready(false));
-      lineWait ??= (async () => {
-        const read = await lineFacts.readSessionFacts(ctx, session);
-        if (read.status !== 'ready') return read;
-        return ready(read.value.wait !== null);
-      })();
-      return lineWait;
+    // The one read of this line's facts, taken only when an offer needs it (a new round against a bound wait, a
+    // person's message that names no Goal); a line with no such offer never reads them. Absent the optional fact
+    // the line is never waiting and has done no Work.
+    const factsPort = deps.sessionFacts;
+    let lineRead: Promise<ReadResult<SessionFactsV1 | null>> | null = null;
+    const lineFacts = (): Promise<ReadResult<SessionFactsV1 | null>> => {
+      if (factsPort === undefined) return Promise.resolve(ready(null));
+      lineRead ??= factsPort.readSessionFacts(ctx, session);
+      return lineRead;
+    };
+    const lineBoundWait = async (): Promise<ReadResult<boolean>> => {
+      const facts = await lineFacts();
+      if (facts.status !== 'ready') return facts;
+      return ready(facts.value !== null && facts.value.wait !== null);
     };
     const offers: CandidateOffer[] = [];
     let inboxCursor: string | undefined;
@@ -631,12 +668,17 @@ export function createConsumableSessions(deps: ConsumableSessionsDependencies):
         if (offer.status !== 'ready') return offer;
         if (offer.value !== null) {
           // A line that yielded on a bound wait takes no new agent round: the Host refuses it, so offering it would
-          // hold the queue head forever. A person's B20 claim is the one source that may consume the wait and is
-          // never held here; the platform's own system round (`refine:` and the rest) is its loop, not mail between
+          // hold the queue head forever. A person's B20 claim is the one source that may consume the wait and is never
+          // held for the wait; the platform's own system round (`refine:` and the rest) is its loop, not mail between
           // lines, and still opens beside the wait as before P2 (lead 11-23, P-A 2). These holds select the queue
           // head only; an existing Query's resume (`resumeOfferOf`) is not a new wake.
           if (offer.value.kind === 'agent_wake') {
             const held = await ordinaryWakeHeld(message, lineBoundWait);
+            if (held.status !== 'ready') return held;
+            if (held.value) continue;
+          }
+          if (offer.value.kind === 'person_message') {
+            const held = await personMessageWithoutGoalHeld(ctx, message, lineFacts);
             if (held.status !== 'ready') return held;
             if (held.value) continue;
           }

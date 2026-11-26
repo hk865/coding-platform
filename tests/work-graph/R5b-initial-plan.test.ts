@@ -364,6 +364,9 @@ it('keeps the old v2 plan compatible and recovers the optional setup proposal fr
   expect(INITIAL_COORDINATION_RESPONSE_GUIDE).toContain('checks');
 });
 
-/** The current platform guide, rendered for the read-only tools this chain grants. */
-const INITIAL_COORDINATION_RESPONSE_GUIDE = renderTemplate(PLATFORM_PROMPT_PACK_V1,
-  'initial-planning-answer', {}, ['read', 'project_source']).text;
+/** The current platform guide: the shared guide then the text-only guide, as the
+ * text path appends both with one blank line between them. */
+const INITIAL_COORDINATION_RESPONSE_GUIDE = [
+  renderTemplate(PLATFORM_PROMPT_PACK_V1, 'initial-planning-answer', {}, ['read', 'project_source']).text,
+  renderTemplate(PLATFORM_PROMPT_PACK_V1, 'planning-answer-text', {}, ['read', 'project_source']).text,
+].join('\n\n');

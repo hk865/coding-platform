@@ -25,7 +25,7 @@ const SKILL = 'PC_CUSTOM_SKILL_V1';
 const SKILL_SOURCE = `skill:pc-custom@sha256:${sha(SKILL)}`;
 const TEMPLATE_IDS = {
   work: ['work-input', 'base', ...DELIVERY_SET_IDS],
-  query: ['initial-planning-answer', 'query-planning-input', 'base', ...DELIVERY_SET_IDS],
+  query: ['initial-planning-answer', 'planning-answer-text', 'query-planning-input', 'base', ...DELIVERY_SET_IDS],
 } as const;
 
 function section(kind: string, id: string, source: string, content: string): string {

@@ -1,5 +1,5 @@
 {
-  "description": "发信：给另一条线发一条 Session 消息。谁能用：本轮挂了发信工具；审阅者只发不要回复的信（C23）。要回复时省略 wake 或填 true；只有不要回复的信才写 wake:false：要回复又写不叫醒会被拒——a message that needs a reply must wake the recipient; drop wake:false or set needsReply:false。什么时候用：向负责的参谋上报、请一条线定或做、交接事情；下一步真依赖对方才叫醒。不用消息代替叫停（消息不会暂缓），问副本用 ask_copy，不发确认。参数：needsReply 默认 false，只写 waitAfterSend:true 时按真处理；waitAfterSend 只有做事轮能为 true，问答轮不能等；deadlineMs 要回复且未填时用平台默认期限（现在 24 小时），显式期限优先，从发出时算；其余参数见下。回执：committed 表示存下了；要回复的信对方在下一轮或下一个安全点处理。写了 waitAfterSend:true 的回执是等待，不是普通 committed。",
+  "description": "发信：给另一条线发一条 Session 消息。审阅者只发不要回复的信（C23）。要回复时省略 wake 或填 true；只有不要回复的信才写 wake:false：要回复又写不叫醒会被拒——a message that needs a reply must wake the recipient; drop wake:false or set needsReply:false。什么时候用：向负责的参谋上报、请一条线定或做、交接事情；下一步真依赖对方才叫醒。不用消息代替叫停（消息不会暂缓），问副本用 ask_copy，不发确认。重问同一件事时填 followupOf 指向原消息；写 waitAfterSend:true 的那一组调用里只放这一条。参数：needsReply 默认 false，只写 waitAfterSend:true 时按真处理；waitAfterSend 只有做事轮能为 true，问答轮不能等；deadlineMs 要回复且未填时用项目设置的默认期限（出厂 24 小时），显式期限优先，从发出时算；其余参数见下。回执：committed 表示存下了；要回复的信对方在下一轮或下一个安全点处理。写了 waitAfterSend:true 的回执是等待，不是普通 committed。",
   "parameters": {
     "recipient": "收件线引用；从 look_graph 的线节点上取。",
     "recipient.projectId": "收件线所在的项目 id。",
@@ -17,6 +17,6 @@
     "followupOf.projectId": "那条消息的项目 id。",
     "followupOf.workspaceId": "那条消息的工作区 id。",
     "followupOf.messageId": "那条消息的 id。",
-    "deadlineMs": "等回复的期限，可选；大于零的毫秒数；要回复且未填时用平台默认期限（现在 24 小时），显式期限优先；从发出时算。"
+    "deadlineMs": "等回复的期限，可选；大于零的毫秒数；要回复且未填时用项目设置的默认期限（出厂 24 小时），显式期限优先；从发出时算。"
   }
 }

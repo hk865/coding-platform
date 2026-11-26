@@ -6,8 +6,16 @@
  *   --scene tests/ui/scenes/Plan.scene.mjs --query '?goal=scene-goal'
  */
 import { readFileSync } from 'node:fs';
+import { sceneLine } from './scene-line.mjs';
 
 const HAVE = JSON.parse(readFileSync(new URL('./Plan.scene.json', import.meta.url), 'utf8'));
+/* 5b's right panel reads, answered as the Main scene answers them (the same e3w-scene workspace). */
+const MAIN = JSON.parse(readFileSync(new URL('./Main.scene.json', import.meta.url), 'utf8'));
+const AUX = ['graph/hover', 'architecture/read', 'architecture/work-scope', 'files/list', 'files/read',
+  'files/uncommitted', 'verification/installed-checks'];
+const LINE = sceneLine({ projectId: 'e3w-scene', workspaceId: 'e3w-scene', goalId: 'scene-goal',
+  sessionId: 'scene-executor', name: '执行者 · 场景线' });
+HAVE.routes['lines/list'].value.rows[1] = LINE.lineRow;
 const qr = (job, run) => ({ aggregateType: 'QueryRun', projectId: 'e3w-scene', workspaceId: 'e3w-scene', queryJobId: job, runId: run });
 const MR = structuredClone(HAVE.routes['main/read']);
 for (const request of MR.value.requests) for (const round of request.rounds) {
@@ -45,6 +53,8 @@ export const scene = {
   now: HAVE.now,
   routes: { ...HAVE.routes, 'main/read': MR },
   reply(route, input) {
+    const line = LINE.reply(route, input);
+    if (line !== undefined) return line;
     if (route === 'main/read') return MR;
     if (route === 'executions/steps') {
       const run = input?.ref?.runId;
@@ -55,6 +65,7 @@ export const scene = {
     }
     if (route === 'executions/running-commands') return { status: 'ready', value: { items: [RUNNING] } };
     if (route === 'queries/cancel') return { status: 'ready', value: { cancelled: true } };
+    if (AUX.includes(route)) return MAIN.routes[route];
     return HAVE.routes[route];
   },
 };

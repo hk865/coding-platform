@@ -2,7 +2,8 @@ import { afterAll, describe, expect, it } from 'vitest';
 import { bootPage, findClass, findElement } from './helpers/boot-page.js';
 import type { FakeElement } from './helpers/dom.js';
 import {
-  auxPanel, auxTab, bootE3N, descendants, forwardPage, hasClass, newPageLog, quietPage, routeOf, textOf, treeNames,
+  auxPanel, auxTab, bootE3N, descendants, forwardPage, hasClass, newPageLog, quietPage, routeOf, textOf, treeFileNames,
+  treeNames,
 } from './helpers/E3N-page.js';
 import { click } from './helpers/E3N-interact.js';
 import { openE3GW1, type E3GWorld } from './helpers/E3G-world.js';
@@ -65,17 +66,6 @@ function searchNote(root: FakeElement): string {
     (element) => element.tagName.toLowerCase() === 'label' && hasClass(element, 'search'));
   const note = search === undefined ? undefined : findClass(search, 'note');
   return note === undefined ? '' : textOf(note);
-}
-
-/** The file rows the architecture tree draws (leaf `.nb` rows), sorted; module
- * branches use `.tr-lb`, and a closed group's rest hangs on comb squares. */
-function treeFileNames(root: FakeElement): string[] {
-  const panel = auxPanel(root);
-  if (panel === undefined) return [];
-  return descendants(panel)
-    .filter((element) => element.tagName.toLowerCase() === 'button' && hasClass(element, 'nb'))
-    .map((element) => textOf(findClass(element, 'tr-name')))
-    .sort();
 }
 
 describe('E3D-17 the Decide right panel', () => {

@@ -279,7 +279,6 @@ export function secretaryRolePayload(role: SecretaryRoleSample): string {
   const binding = [
     '## Runtime binding',
     `roleBinding: ${JSON.stringify({ policyRevision: role.policyRevision, tools: [...role.tools], writeScope: [] })}`,
-    `tools: ${role.tools.join(', ') || NONE}`,
     `writeScope: ${NONE}`,
   ].join('\n');
   const specification = [

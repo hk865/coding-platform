@@ -20,6 +20,15 @@ const POLL_MS = 20_000;
 const HOLD_MS = 30 * 60_000;
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const keyOf = value => JSON.stringify(value);
+/**
+ * P6I r3: a QueryRunRef's key, its five fields in one fixed order. A claim keeps the ref its caller sent
+ * (`query-execution.ts:1311`), so a Session's occupancy can name the same Run with its fields in another order, and
+ * `JSON.stringify` of the two refs would then differ.
+ */
+const QUERY_RUN_FIELDS = ['aggregateType', 'projectId', 'workspaceId', 'queryJobId', 'runId'];
+export const queryRunKey = ref => JSON.stringify(QUERY_RUN_FIELDS.map(field => ref?.[field] ?? null));
+/** A cancelled ref's key: a QueryRun's by `queryRunKey`, a Work Run's as read. */
+const cancelKey = ref => (ref?.aggregateType === 'QueryRun' ? queryRunKey(ref) : keyOf(ref));
 /** The meter's key of one project scope (`inFlight({ scopes })` takes these). */
 export const scopeKey = scope => `${scope.projectId}/${scope.workspaceId}`;
 const sessionRefOf = ref => ({ projectId: ref.projectId, sessionId: ref.sessionId });
@@ -44,22 +53,100 @@ class Meter {
     this.host = host;
     this.budget = budget;
     this.seen = new Set();
-    /** scopeKey → { queries: running QueryRuns, runs: Work Runs not ended } at the last complete reading. */
+    /**
+     * scopeKey of a Session's workspace → `{ queryRuns, workRuns, scope }`: its QueryRuns running or pending (also those
+     * that run in another workspace) and Work Runs not ended, at the last complete reading.
+     */
     this.inFlight = new Map();
+    /** P6I D1: queryRunKey → that in-flight QueryRun's state at the last complete reading (`#queryState`). */
+    this.queryStates = new Map();
+    /**
+     * P6I r3: queryRunKey → `{ ref, session, last }` of each QueryRun a Session ran in another workspace, kept until its
+     * terminal usage is counted (`#elsewhere`, `#dropCounted`); a Host restart keeps them (same ledger).
+     */
+    this.elsewhere = new Map();
   }
 
-  /** Every page of one paged read; any answer other than `ready` makes the whole reading unusable. */
-  async #all(route, scope, inputAt) {
-    const items = [];
+  /**
+   * P6I D1: one in-flight QueryRun: its phase (null before a claim), whether it waits for a running slot, since when
+   * its `(revision, phase)` has not changed and when this reading saw it (`seenAt`). `since` carries over from the last
+   * complete reading while both stay. `runScope` is the workspace the Run executes in, which a project-level line's
+   * Query may not share with its Session.
+   */
+  #queryState(snapshot, states, seenAt) {
+    const key = queryRunKey(snapshot.ref);
+    const execution = snapshot.run?.executionState;
+    const phase = execution?.phase ?? null;
+    const before = this.queryStates.get(key);
+    const since = before?.revision === snapshot.revision && before.phase === phase ? before.since : seenAt;
+    const state = { ref: snapshot.ref, runScope: { projectId: snapshot.ref.projectId, workspaceId: snapshot.ref.workspaceId },
+      revision: snapshot.revision, phase, since, seenAt, waitsForSlot: (execution?.admissionWait ?? null) !== null };
+    states.set(key, state);
+    return state;
+  }
+
+  /**
+   * Every page of one paged read, each with the time it came back (P6I D1: a Query is seen when its page returns, not
+   * when the whole reading began); any answer other than `ready` makes the whole reading unusable.
+   */
+  async #pages(route, scope, inputAt) {
+    const pages = [];
     let cursor = null;
     do {
       const body = await this.host.client.quiet(route, scope, inputAt(cursor));
       const page = ready(body);
       if (page === null) throw unreadable(route, body);
-      items.push(...page.items);
+      pages.push({ items: page.items, at: Date.now() });
       cursor = page.nextCursor ?? null;
     } while (cursor !== null);
-    return items;
+    return pages;
+  }
+
+  async #all(route, scope, inputAt) {
+    return (await this.#pages(route, scope, inputAt)).flatMap(page => page.items);
+  }
+
+  /**
+   * P6I D1, r3: the QueryRuns this Session ran in another workspace. `sessions/queries` lists Queries by the Run's own
+   * workspace, and only the Session's occupancy names such a Run, only while it runs. So the ref is kept from the first
+   * reading that sees it until its terminal usage is counted (`#dropCounted`), and read by its full ref in the Run's
+   * workspace on every reading, also after the occupancy moved on. Losing it with the occupancy left a request held for
+   * its Query's end uncounted: the meter waited the full 30 minutes and stopped the run (P6I r3 #2).
+   */
+  async #elsewhere(card, scope) {
+    const session = keyOf(sessionRefOf(card.record.ref));
+    const occupancy = card.record.occupancy;
+    const occupying = occupancy?.kind === 'execution' ? occupancy.executionRef : null;
+    if (occupying?.aggregateType === 'QueryRun' && occupying.workspaceId !== scope.workspaceId
+      && !this.elsewhere.has(queryRunKey(occupying))) {
+      this.elsewhere.set(queryRunKey(occupying), { ref: occupying, session, last: null });
+    }
+    const taken = [];
+    for (const [key, entry] of this.elsewhere) {
+      if (entry.session !== session) continue;
+      const { ref } = entry;
+      const body = await this.host.client.quiet('queries/read', { projectId: ref.projectId, workspaceId: ref.workspaceId },
+        { aggregateType: 'QueryJob', projectId: ref.projectId, workspaceId: ref.workspaceId, queryJobId: ref.queryJobId });
+      const read = ready(body);
+      if (read === null) throw unreadable('queries/read', body);
+      // `queries/read` shows only the Job's current attempt: a Run a newer attempt replaced has no public read left from
+      // here, so what it used cannot be counted (the meter's rule for unreadable usage).
+      if (queryRunKey(read.run?.ref) !== key) {
+        throw new BudgetStop('meter', `QueryRun ${ref.queryJobId}/${ref.runId} in workspace ${ref.workspaceId} was replaced by a new attempt before its terminal usage could be read there; the meter cannot count it, so no new work starts`);
+      }
+      entry.last = read.run;
+      taken.push({ snapshot: read.run, seenAt: Date.now() });
+    }
+    return taken;
+  }
+
+  /** P6I r3: a Run read in another workspace is let go once it reads ended and each of its requests is counted. */
+  #dropCounted() {
+    for (const [key, entry] of this.elsewhere) {
+      const run = entry.last?.run;
+      if (!['answered', 'closed'].includes(run?.status)) continue;
+      if ((run.executionState?.requests ?? []).every(request => this.seen.has(`${key}#${request.requestId}`))) this.elsewhere.delete(key);
+    }
   }
 
   /**
@@ -70,13 +157,14 @@ class Meter {
   async #knownEnd(scope, snapshot) {
     if (snapshot.run?.status !== 'closed') return null;
     const ref = snapshot.ref;
-    const body = await this.host.client.quiet('queries/read', scope,
+    // Read in the Run's own workspace, which a project-level line's Query may not share with its Session.
+    const body = await this.host.client.quiet('queries/read', { projectId: ref.projectId, workspaceId: ref.workspaceId },
       { aggregateType: 'QueryJob', projectId: ref.projectId, workspaceId: ref.workspaceId, queryJobId: ref.queryJobId });
     const job = ready(body);
     if (job === null) throw unreadable('queries/read', body);
     const close = job.job?.job?.closeReason?.code;
     if (close === 'failed' && JSON.stringify(job).includes('provider_request_failed')) return 'provider rejection (model_service / provider_request_failed)';
-    if (close === 'cancelled' && this.budget.cancelled.has(keyOf(ref))) return CUT;
+    if (close === 'cancelled' && this.budget.cancelled.has(cancelKey(ref))) return CUT;
     return null;
   }
   /** One complete reading of this Host; nothing is counted unless every read answered. */
@@ -86,19 +174,24 @@ class Meter {
     if (!Array.isArray(boot?.workspaces)) throw unreadable('core/bootstrap', boot);
     const found = [];
     const inFlight = new Map();
+    const queryStates = new Map();
     for (const scope of boot.workspaces.map(entry => entry.scope).filter(scope => scope.projectId !== 'g6-placeholder')) {
-      const busy = { queries: 0, runs: 0, queryRuns: [], workRuns: [], scope };
+      const busy = { queryRuns: [], workRuns: [], scope };
       inFlight.set(scopeKey(scope), busy);
       const cards = await this.#all('sessions/find', scope, cursor =>
         ({ workspace: scope, includeArchived: true, page: { limit: 200, ...(cursor === null ? {} : { cursor }) } }));
-      for (const sessionRef of cards.map(card => sessionRefOf(card.record.ref))) {
-        const snapshots = await this.#all('sessions/queries', scope, cursor =>
-          ({ sessionRef, page: { limit: 100, ...(cursor === null ? {} : { cursor }) } }));
-        for (const snapshot of snapshots) {
+      for (const card of cards) {
+        const sessionRef = sessionRefOf(card.record.ref);
+        const listed = (await this.#pages('sessions/queries', scope, cursor =>
+          ({ sessionRef, page: { limit: 100, ...(cursor === null ? {} : { cursor }) } })))
+          .flatMap(page => page.items.map(snapshot => ({ snapshot, seenAt: page.at })));
+        for (const { snapshot, seenAt } of [...listed, ...await this.#elsewhere(card, scope)]) {
           // A pending QueryRun can still start, so it is in flight too (second review #4).
-          if (snapshot.run?.status === 'running' || snapshot.run?.status === 'pending') { busy.queries += 1; busy.queryRuns.push(snapshot.ref); }
+          if (snapshot.run?.status === 'running' || snapshot.run?.status === 'pending') {
+            busy.queryRuns.push(this.#queryState(snapshot, queryStates, seenAt));
+          }
           for (const request of snapshot.run?.executionState?.requests ?? []) {
-            const key = `${keyOf(snapshot.ref)}#${request.requestId}`;
+            const key = `${queryRunKey(snapshot.ref)}#${request.requestId}`;
             if (this.seen.has(key) || request.usageStatus === 'reserved') continue;
             if (request.usageStatus !== 'reported') {
               // A rejection the Query's own terminal failure proves (lead ruling 11-14 on A1/B1) is a known outcome: the
@@ -141,7 +234,7 @@ class Meter {
       for (const goal of goals) {
         const items = await this.#all('executions/list', scope, afterCursor => ({ goalRef: goal.ref, page: { afterCursor, limit: 100 } }));
         for (const item of items) {
-          if (item.run.status !== 'ended') { busy.runs += 1; busy.workRuns.push(item.run); continue; }
+          if (item.run.status !== 'ended') { busy.workRuns.push(item.run); continue; }
           if (!this.seen.has(keyOf(item.run.ref))) { ended.push(item.run.ref); outcomes.set(keyOf(item.run.ref), item.run.outcome ?? null); }
         }
       }
@@ -155,7 +248,7 @@ class Meter {
           const provenZero = view.usage === null && view.readings?.usage?.tokens === 0 && view.readings.usage.complete === true;
           // A Run the driver itself cancelled that ended `cancelled`: what it reported counts, and the request its cancel
           // cut counts 0 (lead ruling after the real run).
-          const cut = this.budget.cancelled.has(keyOf(view.runRef)) && outcomes.get(keyOf(view.runRef)) === 'cancelled';
+          const cut = this.budget.cancelled.has(cancelKey(view.runRef)) && outcomes.get(keyOf(view.runRef)) === 'cancelled';
           if (!provenZero && view.usage?.complete !== true && !cut) {
             throw new BudgetStop('meter', `Run ${view.runRef.runId} ended with ${view.usage === null ? 'unknown' : 'incomplete'} usage (${
               view.readings?.usage?.reason ?? 'no reason'}); the meter cannot count it, so no new work starts`);
@@ -171,7 +264,9 @@ class Meter {
       this.seen.add(item.key);
       this.budget.count(item, this.host.name);
     }
+    this.#dropCounted();
     this.inFlight = inFlight;
+    this.queryStates = queryStates;
   }
 }
 
@@ -196,7 +291,13 @@ export class Budget {
   watch(host) {
     const meter = this.meters.get(host.dir);
     if (meter === undefined) this.meters.set(host.dir, new Meter(host, this));
-    else meter.host = host;
+    else {
+      meter.host = host;
+      // P6I D1 (S5): a restarted Host's Queries are timed from its own first reading, not across the down time, and the
+      // down Host's in-flight snapshot is dropped, so nothing is judged before the new Host's first complete reading.
+      meter.queryStates = new Map();
+      meter.inFlight = new Map();
+    }
   }
 
   /** A closed Host keeps its counted totals; it is just not polled. */
@@ -208,7 +309,7 @@ export class Budget {
   /** The unit that owns everything counted from this project from now on. */
   /** Record a cancel the driver itself sends (before it is sent), so its cut request is read as a known outcome. */
   markCancelled(ref) {
-    this.cancelled.add(keyOf(ref));
+    this.cancelled.add(cancelKey(ref));
   }
 
   own(scope, unit) {
@@ -248,20 +349,28 @@ export class Budget {
     return { ...sum, spent: sum.input + sum.output };
   }
 
-  /** In flight at the last complete reading, over the given project keys (all of a Host's when `host` is given). */
+  /**
+   * In flight at the last complete reading, over the given project keys (all of a Host's when `host` is given). P6I r3:
+   * a Query is in range by its Session's workspace or its Run's, whichever the caller names (a line's round may run in
+   * another workspace), and is taken once by its `queryRunKey`; the counts are those of the items taken, so a drain of
+   * the Run's workspace never reads zero while that Query runs.
+   */
   inFlight({ scopes = null, host = null }) {
-    const sum = { queries: 0, runs: 0, items: [] };
+    const inRange = key => scopes === null || scopes.includes(key);
+    const queries = new Map();
+    const runs = [];
     for (const meter of this.meters.values()) {
       if (meter.host === null || (host !== null && meter.host !== host)) continue;
       for (const [key, busy] of meter.inFlight) {
-        if (scopes !== null && !scopes.includes(key)) continue;
-        sum.queries += busy.queries;
-        sum.runs += busy.runs;
-        sum.items.push(...busy.queryRuns.map(ref => ({ kind: 'query', scope: busy.scope, host: meter.host, ref })),
-          ...busy.workRuns.map(run => ({ kind: 'run', scope: busy.scope, host: meter.host, run })));
+        for (const query of busy.queryRuns) {
+          if (inRange(key) || inRange(scopeKey(query.runScope))) {
+            queries.set(queryRunKey(query.ref), { kind: 'query', scope: busy.scope, host: meter.host, ...query });
+          }
+        }
+        if (inRange(key)) runs.push(...busy.workRuns.map(run => ({ kind: 'run', scope: busy.scope, host: meter.host, run })));
       }
     }
-    return sum;
+    return { queries: queries.size, runs: runs.length, items: [...queries.values(), ...runs] };
   }
 
   /** One complete reading of every metered Host, then the caps; a failed reading becomes the run-wide `meter` stop. */

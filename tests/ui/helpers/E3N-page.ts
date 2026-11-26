@@ -206,17 +206,24 @@ export async function bootMainCard(h: { readonly host: E3NTarget }, search: stri
   return await bootE3N({ get base() { return h.host.base; }, get token() { return h.host.token; } }, 'Main', { search });
 }
 
-/** E3U Main B: Main on `search` (the S6A worlds' `?goal=ag2b-goal` when not given) in controlled mode (`options` as
+/** E3U pages: `name` on `search` (the S6A worlds' `?goal=ag2b-goal` when not given) in controlled mode (`options` as
  *  `bootE3N`'s), after its first reads settle; the row's `body`, then the page restored. */
-export async function onMain(world: E3NTarget, body: (page: BootedPage, log: PageLog) => Promise<void>,
+export async function onBoard(name: Parameters<typeof bootE3N>[1], world: E3NTarget,
+  body: (page: BootedPage, log: PageLog) => Promise<void>,
   { search = '?goal=ag2b-goal', ...options }: NonNullable<Parameters<typeof bootE3N>[2]> = {}): Promise<void> {
-  const { page, log } = await bootE3N(world, 'Main', { mode: 'controlled', ...options, search });
+  const { page, log } = await bootE3N(world, name, { mode: 'controlled', ...options, search });
   try {
     await quietPage(log);
     await body(page, log);
   } finally {
     await page.restore();
   }
+}
+
+/** E3U Main B: `onBoard` on Main. */
+export async function onMain(world: E3NTarget, body: (page: BootedPage, log: PageLog) => Promise<void>,
+  options: NonNullable<Parameters<typeof bootE3N>[2]> = {}): Promise<void> {
+  return onBoard('Main', world, body, options);
 }
 
 /** E3U Main B: selects the right-panel tab `name`, waits for it and for its reads to settle; returns the log index the click starts at. */
@@ -434,6 +441,37 @@ export function auxTab(root: FakeElement, name: string): FakeElement | undefined
     && textOf(element) === name);
 }
 
+/** The file rows of the right panel's 文件 tree (a folder row carries `aria-expanded`). */
+function auxFileRows(root: FakeElement): FakeElement[] {
+  const tree = findClass(root, 'ftree');
+  return tree === undefined ? [] : descendants(tree).filter((element) => element.tagName.toLowerCase() === 'button');
+}
+
+/**
+ * Opens `path` in the right panel: the 文件 tab, its folders one click each, then
+ * the file, until the file page's code lines are drawn. One implementation for
+ * the Main rows that open `src/module.ts` (E3U main B, GAPB).
+ */
+export async function openAuxFile(page: BootedPage, log: PageLog, path: string): Promise<void> {
+  click(auxTab(page.root, '文件')!);
+  await waitFor(() => auxFileRows(page.root).length > 0);
+  const parts = path.split('/');
+  for (const folder of parts.slice(0, -1)) {
+    const row = auxFileRows(page.root).find((element) => textOf(findClass(element, 'fname')) === folder);
+    if (row === undefined) throw new Error(`E3N: the file tree has no ${folder} folder`);
+    if (row.getAttribute('aria-expanded') !== 'true') click(row);
+  }
+  await waitFor(() => auxFileRows(page.root).some((element) => textOf(findClass(element, 'fname')) === parts.at(-1)));
+  const file = auxFileRows(page.root).find((element) => textOf(findClass(element, 'fname')) === parts.at(-1));
+  if (file === undefined) throw new Error(`E3N: the file tree has no ${path}`);
+  click(file);
+  await waitFor(() => {
+    const code = findClass(page.root, 'fcode');
+    return code !== undefined && descendants(code).some((element) => hasClass(element, 'fl-n'));
+  });
+  await quietPage(log);
+}
+
 /**
  * The name a comb square (`.cc`, the 树 view's 组合方格, S17) carries: the
  * prototype's `taskTip`/`archTip` accessible name is `<name>，<state…>`.
@@ -464,6 +502,17 @@ export function treeNode(root: FakeElement, name: string): FakeElement | undefin
   return panel === undefined ? undefined : descendants(panel).find((element) => (element.tagName.toLowerCase() === 'button'
     && (hasClass(element, 'nb') || hasClass(element, 'tr-lb')) && textOf(findClass(element, 'tr-name')) === name)
     || (isComb(element) && combName(element) === name));
+}
+
+/** The file leaves the architecture tree draws (leaf `.nb` rows), sorted; module
+ * branches use `.tr-lb`, and a closed group's rest hangs on comb squares. */
+export function treeFileNames(root: FakeElement): string[] {
+  const panel = auxPanel(root);
+  if (panel === undefined) return [];
+  return descendants(panel)
+    .filter((element) => element.tagName.toLowerCase() === 'button' && hasClass(element, 'nb'))
+    .map((element) => textOf(findClass(element, 'tr-name')))
+    .sort();
 }
 
 /**

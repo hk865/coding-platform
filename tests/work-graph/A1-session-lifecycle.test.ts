@@ -50,7 +50,7 @@ function planSourceRootFor(fixture: GraphSessionFixture) {
     executions: createRunStateReader({ records: fixture.records }),
     roles: createRoleConfigurationService({ records: fixture.records, now, eventId: randomUUID }), materials,
     queryRounds: createQueryRoundResolver({ records: fixture.records, duties: fixture.duty, bodies }),
-    defaultInquiryDeadlineMs: 86_400_000, systemActor: { kind: 'system', id: 'a1-lineage' }, now, newId: randomUUID });
+    defaultInquiryDeadlineMs: () => 86_400_000, systemActor: { kind: 'system', id: 'a1-lineage' }, now, newId: randomUUID });
   return planSourceRootOf({ messages: mailbox, plans,
     queries: createQueryJobService({ records: fixture.records, now, eventId: randomUUID }) });
 }

@@ -82,7 +82,7 @@ describe('goalGateCountIssue: only newly added open goal gates are refused', () 
     + 'Keep one: leave out the new gate and let the new obligation list only the new work tasks (an adopted gate keeps '
     + 'exactly the obligations that list it), or, if the person changed what the '
     + 'goal must meet, list the adopted gate (G1, G0) with its own taskId and disposition "superseded" and '
-    + 'replacedByTaskId naming the new gate; a task you leave out of a segment stays as it is and stays active';
+    + 'replacedByTaskId naming the new gate; a task you leave out of a segment stays as it is and is not dropped';
   it.each<[string, PlanRevisionSnapshot | null, PlanRevisionDraft, ReadonlySet<string>, PlanValidationError | null]>([
     ['(d) the same two-gate plan carried forward is not re-judged', withG0, targetOf(withG0), new Set(), null],
     ['(e) a third open gate is reported', withG0, targetOf(withG0, [g8b2Gate('G2', 'G2 third gate')]), new Set(),
@@ -97,7 +97,7 @@ describe('goalGateCountIssue: only newly added open goal gates are refused', () 
         + 'leave out the new gate and let the new obligation list only the new work tasks (an adopted gate keeps exactly '
         + 'the obligations that list it), or, if the person changed what the goal must meet, list the adopted gate (G0) '
         + 'with its own taskId and disposition "superseded" and replacedByTaskId naming the new gate; a task you leave '
-        + 'out of a segment stays as it is and stays active' }],
+        + 'out of a segment stays as it is and is not dropped' }],
     ['(g) without executable required work two gates are not judged', null, { ...targetOf(withG0),
       tasks: withG0.tasks.map(task => task.taskKind === 'work' ? { ...task, executionIntent: 'plan_only' as const } : task) },
       new Set(), null],

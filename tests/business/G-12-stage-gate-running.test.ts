@@ -6,11 +6,18 @@
  *
  * On this tree the driver's first target-level advance stops at the documented
  * closure seam (`planCandidates is not wired`, workflow.ts:1581, DR-P4-06).
+ *
+ * The second cell (FLK rework ruling 10; Astra's review, flkcr.out.md:14) runs the same row with the gate's first
+ * check result refused on every attempt: the gate's check ends interrupted (`result_not_recorded`, VD-10), the gate
+ * reads `blocked` between its two rounds and passes in the successor round, so the row's last wait ends only on a
+ * satisfied gate.
  */
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import type { PlanRevisionRef } from '../../src/contracts/plan.js';
+import type { PreparedCommit } from '../../src/core/record-store/ports.js';
 import { driverRead } from '../helpers/DRV-fixture.js';
 import { waitFor } from '../scenarios/harness.js';
+import { commitBarrier } from '../helpers/S6A-commit-barrier.js';
 import { checkConfiguration, ready } from '../helpers/S7A-fixture.js';
 import { OPERATOR, S6A_SCOPE, S6A_WORK_ROLE } from '../helpers/S6A-request-fixture.js';
 import { createS6BLine } from '../helpers/S6B1-fixture.js';
@@ -19,10 +26,56 @@ import {
   adoptPLTwoStageSkeleton, holdPLTaskRequest, openPLWorkflowWorld, satisfyPLTask, type PLWorkflowWorld,
 } from '../helpers/PL-workflow-fixture.js';
 
-let opened: PLWorkflowWorld | null = null;
-afterEach(async () => { await opened?.close(); opened = null; });
+vi.mock('../../src/core/record-store/in-memory-record-store.js', async (importOriginal) =>
+  (await import('../helpers/S6A-commit-barrier.js')).inMemoryBarrierModule(importOriginal));
+vi.mock('../../src/core/record-store/sqlite-record-store.js', async (importOriginal) =>
+  (await import('../helpers/S6A-commit-barrier.js')).sqliteBarrierModule(importOriginal));
 
-it('G-12: the first-stage gate passes while the second-stage Run is entered', async () => {
+let opened: PLWorkflowWorld | null = null;
+afterEach(async () => { commitBarrier.reset(); await opened?.close(); opened = null; });
+
+const GATE = 'pl-gate-pl-stage-1';
+
+type TaskGraph = { tasks: Array<Record<string, unknown>> };
+const phaseOf = (read: TaskGraph, taskId: string) => read.tasks
+  .find(task => (task['ref'] as { taskId?: string }).taskId === taskId)?.['effectivePhase'];
+
+/** The second cell's control of the gate's first round; absent in the first cell. */
+type RefusedGateResult = {
+  /** The row has read the gate's running check and released the second-stage Run. */
+  afterRunning(): void;
+  /** Every read of the row's last wait. */
+  seen(read: TaskGraph): void;
+};
+
+/** The runner's attempts at one result: the first record and two retries (VD-10). */
+const RESULT_ATTEMPTS = 3;
+
+/**
+ * Ruling 10's fault, VD-10's injection (`tests/scenarios/VD10-check-result-not-recorded.test.ts`): the store
+ * refuses the gate's first check result on every attempt; every other write, the interrupt included, lands. Two holds
+ * (A3) fix the times the review names: the interrupt waits until the row has read the gate's running check (the
+ * first cell's own reading) and released the second-stage Run; the interrupted round's finalize waits until the row's
+ * last wait has read the gate `blocked` with pl-d already satisfied, so that reading is reached on every run.
+ */
+function refuseFirstGateResult(): RefusedGateResult {
+  const gateCommit = (eventType: string) => (commit: PreparedCommit) =>
+    commit.events.some(event => event.eventType === eventType) && commit.records.some(record =>
+      record.refKey.includes('"aggregateType":"VerificationRound"') && record.refKey.includes(`"taskId":"${GATE}"`));
+  for (let attempt = 0; attempt < RESULT_ATTEMPTS; attempt += 1) {
+    commitBarrier.failCommitOnce(gateCommit('VerificationCheckResultRecorded'));
+  }
+  const interrupt = commitBarrier.hold(gateCommit('VerificationCheckInterrupted'), 'G-12: the gate check interrupt');
+  const finalize = commitBarrier.hold(gateCommit('VerificationRoundFinalized'), 'G-12: the interrupted gate round');
+  return {
+    afterRunning: () => interrupt.release(),
+    seen: read => {
+      if (phaseOf(read, GATE) === 'blocked' && phaseOf(read, 'pl-d') === 'satisfied') finalize.release();
+    },
+  };
+}
+
+async function g12Row(refused: RefusedGateResult | null): Promise<void> {
   const workflow = opened = await openPLWorkflowWorld({ label: 'pl-g12',
     extraHostOptions: { checks: checkConfiguration({ kind: 'human', id: OPERATOR.id }) } });
   const skeleton = await adoptPLTwoStageSkeleton(workflow.main, workflow.goal, {
@@ -83,19 +136,33 @@ it('G-12: the first-stage gate passes while the second-stage Run is entered', as
     expect(after.outbox.claim.planRef).toEqual(planRef);
   } finally {
     await held.release();
+    refused?.afterRunning();
   }
 
-  // Both steps went on: the gate's check and the held Run's own observation and check.
-  const graphOf = async () => ready<{ tasks: Array<Record<string, unknown>> }>(
+  // Both steps went on: the gate's check and the held Run's own observation and check. The driver runs the gate's
+  // check while the released Run ends on its own, so either may finish first: the row waits for both. A gate between
+  // two rounds (its check interrupted, `blocked`, before the successor round passes) has not ended, so the wait ends
+  // only on a satisfied gate (ruling 10).
+  const graphOf = async () => ready<TaskGraph>(
     await workflow.main.route('tasks/query', { goalRef: workflow.goal }), 'tasks/query');
-  const phaseOf = (read: { tasks: Array<Record<string, unknown>> }, taskId: string) => read.tasks
-    .find(task => (task['ref'] as { taskId?: string }).taskId === taskId)?.['effectivePhase'];
-  const finished = await waitFor(graphOf, read => phaseOf(read, 'pl-d') === 'satisfied',
-    'G-12: the released second-stage Run is observed and checked');
+  const finished = await waitFor(async () => {
+    const read = await graphOf();
+    refused?.seen(read);
+    return read;
+  }, read => phaseOf(read, 'pl-d') === 'satisfied' && phaseOf(read, GATE) === 'satisfied',
+  'G-12: the released second-stage Run is observed and checked, and the gate is satisfied');
   expect(phaseOf(finished, 'pl-d')).toBe('satisfied');
   expect(phaseOf(finished, 'pl-gate-pl-stage-1')).toBe('satisfied');
   const ended = ready<{ run: { status: string }; outbox: { claim: { planRef: PlanRevisionRef } } }>(
     await workflow.world.post('executions/read', { scope: { ...S6A_SCOPE }, input: held.run }), 'executions/read');
   expect(ended.run.status).toBe('ended');
   expect(ended.outbox.claim.planRef, 'G-12: the claim plan pin is not rewritten').toEqual(planRef);
+}
+
+it('G-12: the first-stage gate passes while the second-stage Run is entered', async () => {
+  await g12Row(null);
+});
+
+it('G-12: the gate\'s first check result is refused on every attempt; the row waits through its blocked reading', async () => {
+  await g12Row(refuseFirstGateResult());
 });

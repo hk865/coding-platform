@@ -283,7 +283,7 @@ describe('E3G-2 the conflict card', () => {
       const again = findButton(page.root, '改主意')!;
       /* 具名改坏: 只写 `title` 不写 `is-off`；G19 的 `is-off` 红。 */
       expect(hasClass(again, 'is-off')).toBe(true);
-      expect(again.getAttribute('title')).toBe('还没接通');
+      expect(again.getAttribute('title')).toBe('答过的冲突卡不能重开，接受过的并行风险也撤不掉；任一目标换了计划版本，平台会重新判冲突。');
       expect(again.getAttribute('aria-disabled')).toBe('true');
       /* Let every read in flight land: the count must stay still for 150 ms before it is the baseline. */
       for (let last = -1; last !== log.calls.length;) {

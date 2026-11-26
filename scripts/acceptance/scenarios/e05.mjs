@@ -115,7 +115,9 @@ async function run(ctx, rec) {
   const seedText = '初始化这个项目：在 README.md 末尾加一行“校验规则统一放在 src/rules.js”。检查用 node --test。只改 README.md。';
   rec.facts.userCommand = [seedText];
   const seed = await coldStart(ctx, project, seedText, rec);
-  await waitGoal(ctx, project, seed.goalRef, { timeoutMs: 60 * MINUTE, rec });
+  // E05-D1 (lead 11-26): the seed is a prerequisite, waited for as `int` waits for its first Goal: the person adopts a
+  // candidate card, and a seed that stops is `not-run`, never a fail of E05's first unjudged check.
+  await waitGoal(ctx, project, seed.goalRef, { timeoutMs: 60 * MINUTE, rec, adoptCandidates: true, check: null });
   // Second review #6: the seed's work is not E05's. The person commits what the seed left, and that commit is the
   // fixed baseline every E05 path is compared against.
   const gitRun = args => {

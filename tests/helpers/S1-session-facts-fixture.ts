@@ -230,7 +230,7 @@ export function workHistory(b2: B2ExecutionFixture) {
   const entry = createExecutionEntryService({ records: base.records, reads, roles, bodies: b2.bodies,
     authorizeConfiguration, now, eventId, newId: () => `fx2-entry-${++seq}` });
   const mailbox = createSessionMailbox({ records: base.records, sessions: sessionOwners(base).directory,
-    defaultInquiryDeadlineMs: 86_400_000,
+    defaultInquiryDeadlineMs: () => 86_400_000,
     queryRounds: createQueryRoundResolver({ records: base.records, duties: unknownSessionDuty, bodies: b2.bodies }),
     executions: reads, roles, materials: createMaterialService({ bodies: b2.bodies,
       authority: createMaterialRecordReaders(base.records).authority, now }),

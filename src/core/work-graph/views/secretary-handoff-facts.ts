@@ -14,7 +14,7 @@ import { rejected } from '../../../contracts/core/rejections.js';
 import { messageOf } from '../../../contracts/error-message.js';
 import { canonicalKey } from '../../../contracts/fingerprint.js';
 import type { CurrentPointerRef } from '../../../contracts/note.js';
-import type { QueryJobRef, QueryRunRef } from '../../../contracts/query-job.js';
+import { endedOnPurposeBeforeEntry, type QueryJobRef, type QueryRunRef } from '../../../contracts/query-job.js';
 import type { RecordLookupPort, RecordOrderedLookupPort } from '../../record-store/lookup-ports.js';
 import type { EncodedRecord, GoalRecordTransactionPort } from '../../record-store/ports.js';
 import type { ConditionCheckV1, SecretaryHandoffFactsPort } from '../model/secretary-lifecycle-contracts.js';
@@ -262,7 +262,7 @@ async function briefGoal(reads: SecretaryHandoffFactsReads, ctx: CoreCallContext
 }
 
 export function createSecretaryHandoffFacts(reads: SecretaryHandoffFactsReads):
-  Pick<FactsPort, 'readCoverage' | 'readRoutingSet' | 'readBriefState' | 'checkArchiveCondition'>
+  Pick<FactsPort, 'readCoverage' | 'readRoutingSet' | 'readBriefState' | 'checkArchiveCondition' | 'readRoundStop'>
   & HandoffBriefRefsReadPort {
   /** The brief's saved goal refs: one understanding read per covered goal, the text is never stored. */
   async function readBriefGoalRefs(ctx: CoreCallContext, input: { source: SessionRef; goals: CoverageGoalV1[] }):
@@ -363,6 +363,15 @@ export function createSecretaryHandoffFacts(reads: SecretaryHandoffFactsReads):
         commit: { guards, fence, ledgerHorizon: owned.horizon } } };
     },
 
+    async readRoundStop(_ctx, input): Promise<ReadResult<string | null>> {
+      const read = await readKeyedFact(reads, canonicalKey(input.round), `the understanding round ${input.round.queryJobId}`);
+      if (read.status !== 'ready') return read;
+      if (read.record === null) return { status: 'not_found' };
+      const decoded = decodeQueryJobSnapshot(read.record);
+      if (decoded.status !== 'decoded') return unavailable(`the understanding round is damaged: ${decoded.reason}`);
+      const closeReason = decoded.value.job.closeReason;
+      return { status: 'ready', value: endedOnPurposeBeforeEntry(closeReason) ? closeReason!.message : null };
+    },
     async readCoverage(ctx, input): Promise<ReadResult<CoverageFactsV1>> {
       const raw = input?.source as unknown;
       if (typeof raw !== 'object' || raw === null) return rejected('invalid', 'readCoverage requires a SessionRef');

@@ -298,6 +298,8 @@ async function goalControlPins(world: S6AHostWorld, goal: GoalRef) {
     { ref: { aggregateType: 'GoalPhase' as const, projectId: goal.projectId, goalId: goal.goalId },
       revision: graph.completion?.status === 'recorded' ? graph.completion.snapshot.revision : 0 }];
 }
+// A2-restart-fixture.ts already exports `goalControlPins` for the seeded Goal; the alias keeps one exported name.
+export { goalControlPins as s7aGoalControlPins };
 
 async function controlGoal(world: S6AHostWorld, goal: GoalRef, control: 'pause' | 'resume') {
   const value = committed<GoalControlOutcomeV1>(await world.post('goals/control', graphWrite(S6A_SCOPE, {

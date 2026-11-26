@@ -12,11 +12,11 @@
  */
 
 import { asRecord, asText } from '../values.js';
-import { goalDisplayState, type GoalDisplayPhaseCode } from './task-map.js';
+import { goalDisplayState, lineNameOf, stopWordOf, type GoalDisplayPhaseCode } from './task-map.js';
 import { completionRevisionOf } from './nav.js';
 import type { DecisionSelectionV1, GoalAutonomyV1 } from '../../contracts/goal-decisions.js';
 import type { GoalRef } from '../../contracts/ledger.js';
-import type { TaskGraph } from '../../contracts/task-graph.js';
+import type { TaskGraph, TaskRow } from '../../contracts/task-graph.js';
 
 /** The four expanded-row facts (`Goals.dc.html:128-136`). */
 export type GoalsKv = {
@@ -47,8 +47,16 @@ export type GoalsGoal = {
   statusWord: string;
   /** The board square/state code (`running`, `pending`, `waiting`, …). */
   st: string;
-  /** The row's status line (运行中/规划中/等待中 plus the conflict/wait clause). */
+  /** The row's status line (运行中/规划中/等待中 plus the reason/conflict/wait clause). */
   line: string;
+  /** The display's deciding cause, as the one sentence (empty without one). */
+  why: string;
+  /** Every display cause as a sentence, deduplicated; the expanded row lists them. */
+  whys: string[];
+  /** The driver waits for a reply or new progress (`waiting_for_reply`). */
+  waiting: boolean;
+  /** The wait basis in page words; the five fixed bases are deliberately absent. */
+  waitWhys: string[];
   current: boolean;
   upOff: boolean;
   downOff: boolean;
@@ -95,7 +103,7 @@ export type GoalsConflict = {
   files: GoalsConflictFile[];
   openedAt: string | null;
   options: GoalsConflictOption[];
-  /** The raw `conflicts.labels[].text` for this pair (empty when none). */
+  /** The accepted-risk words for the card's pair (empty when none). */
   labels: string[];
   hitA: GoalsConflictTask[];
   hitB: GoalsConflictTask[];
@@ -162,6 +170,8 @@ export type GoalsInput = {
   lines?: unknown;
   conflicts?: unknown;
   tasks?: Record<string, unknown | null> | null;
+  /** `workflow/driver-read`'s value per Goal id, read only for RUNNING Goals. */
+  drivers?: Record<string, unknown> | null;
   architecture?: unknown;
   projectId?: string;
   scope?: { projectId: string; workspaceId: string } | null;
@@ -261,6 +271,64 @@ export function taskProgressOf(graph: unknown): { done: number; total: number } 
   };
 }
 
+/** The one task lookup by id, shared by every sentence that names a Task. */
+export function taskRowIn(tasks: TaskGraph | readonly TaskRow[] | null, taskId: string): TaskRow | null {
+  const rows: readonly TaskRow[] | null = tasks === null ? null
+    : 'tasks' in tasks ? tasks.tasks : tasks;
+  return rows === null ? null : rows.find((task) => task.ref.taskId === taskId) ?? null;
+}
+
+export function taskTitleOf(tasks: TaskGraph | readonly TaskRow[] | null, taskId: string, fallback: string): string {
+  const row = taskRowIn(tasks, taskId);
+  return row === null ? fallback : row.definition.title;
+}
+
+/** 5.5-4: the one sentence of a display cause. `code` is the `GoalDisplayCauseV1`
+ * union; an unknown code has no sentence rather than a guessed one. The Goal bar
+ * and the Goals page share it, so its words never differ between them. */
+export function goalCauseSentenceOf(cause: Record<string, unknown>, tasks: TaskGraph | null): string {
+  const code = asText(cause.code);
+  const taskName = (taskId: string): string => taskTitleOf(tasks, taskId, '一个任务');
+  if (code === 'initial_plan_pending') return '第一版计划等你确认';
+  if (code === 'change_pending') return '有一份计划改动等你决定';
+  if (code === 'unknown_outcome') return '「' + taskName(asText(cause.taskId)) + '」有一步不知道做完没有，等核对';
+  if (STOP_CAUSE_CODES.has(code)) {
+    const taskId = asText(cause.taskId);
+    const row = taskRowIn(tasks, taskId);
+    if (row === null) return '「一个任务」停下了';
+    const word = stopWordOf(asRecord(row) as Record<string, unknown>, code);
+    return '「' + row.definition.title + '」：' + (word === '' ? '停下了' : word);
+  }
+  if (code === 'required_task_deferred') {
+    const ids = Array.isArray(cause.taskIds) ? cause.taskIds : [];
+    const names = ids.map((id) => '「' + taskName(asText(id)) + '」').join('、');
+    return '必需的任务' + names + '被延后了，没有别的必需工作可做';
+  }
+  if (code === 'interrupted_pending_resume') return '主机重启时中断了，等你继续';
+  if (code === 'task_failed') return '「' + taskName(asText(cause.taskId)) + '」失败';
+  if (code === 'task_blocked') return '「' + taskName(asText(cause.taskId)) + '」受阻';
+  if (code === 'no_dispatchable_work') return '没有能领取的必需任务';
+  if (code === 'auto_rework_pending') {
+    return '「' + taskName(asText(cause.taskId)) + '」等待推进：'
+      + (asText(cause.operation) === 'reverify' ? '自动重新检查' : '自动返工');
+  }
+  if (code === 'auto_rework_count') {
+    const word = asText(cause.operation) === 'reverify' ? '自动重新检查' : '自动返工';
+    return '「' + taskName(asText(cause.taskId)) + '」' + word + '第 ' + String(cause.n) + ' 次（'
+      + String(cause.n) + '/' + String(cause.cap) + '）';
+  }
+  if (code === 'gate_verifying') return '「' + taskName(asText(cause.gateTaskId)) + '」正在验收';
+  if (code === 'gate_fix_in_progress') return '「' + taskName(asText(cause.gateTaskId)) + '」验收没过，正在修';
+  if (code === 'awaiting_gate') return '等「' + taskName(asText(cause.gateTaskId)) + '」验收';
+  return '';
+}
+
+/** The eight GOAL-30 stop codes; `unknown_outcome` is GOAL-23's own sentence. */
+const STOP_CAUSE_CODES = new Set([
+  'auto_rework_cap_reached', 'no_new_basis', 'gate_needs_fix', 'verification_uncovered',
+  'budget_exhausted', 'task_cancelled', 'task_paused', 'not_reworkable',
+]);
+
 function taskIdOf(row: Record<string, unknown>): string {
   return asText(asRecord(row.definition).taskId);
 }
@@ -279,11 +347,61 @@ function goalPinsOf(card: Record<string, unknown>): GoalRef[] {
     .map((ref) => ref as unknown as GoalRef);
 }
 
-function labelOfEntry(entry: unknown, aId: string, bId: string): string {
+/** A label entry's own words: the other Goal's list row gives the number and name,
+ * never the Host's `text` (which prints the internal Goal id). An `otherGoalRef`
+ * outside `goals/list` draws no label. */
+function labelOfEntry(entry: unknown, otherOf: (goalId: string) => GoalBase | undefined): string {
+  const other = otherOf(asText(asRecord(asRecord(entry).otherGoalRef).goalId));
+  return other === undefined ? '' : '与目标 ' + ordinalLabel(other.ordinal, other.objective) + ' 并行，已接受风险';
+}
+
+/** Whether a label entry is the card's pair, in either direction. */
+function namesPair(entry: unknown, aId: string, bId: string): boolean {
   const row = asRecord(entry);
   const first = asText(asRecord(row.goalRef).goalId);
   const second = asText(asRecord(row.otherGoalRef).goalId);
-  return first === aId && second === bId || first === bId && second === aId ? asText(row.text) : '';
+  return first === aId && second === bId || first === bId && second === aId;
+}
+
+/** The wait-basis codes the driver rows name, in the page's words. The five fixed
+ * bases merged into every Goal wait (`plan_adoption`, `plan_change`,
+ * `task_claimable`, `formal_check`, `evidence`) are deliberately absent: the
+ * plan is already adopted and they say nothing about this Goal. */
+const WAIT_BASIS_WORD: Record<string, string> = {
+  plan_candidate_waiting: '你处理计划候选', plan_review_pending: '计划审阅', plan_fix_pending: '计划修正',
+  plan_resume_pending: '计划接着起草', plan_adoption_busy: '采用前受影响的执行停下',
+  abandoned_candidate_reply_pending: '没采用的候选回复完', plan_only: '细化计划', plan_only_task: '细化计划',
+  goal_gate: '目标验收', live_work: '进行中的执行结束', wait_reply: '回复',
+  session_available: '有空的工作线', no_adviser: '参谋线', suggestion_committed: '成员建议有结果',
+  member_creation: '你确认创建成员', member_creation_pending: '你确认创建成员',
+  rework_request: '你确认返工请求', handoff_approval: '你确认交接',
+  automation_confirmation: '你确认自动返工', unknown_call_review: '结果未知的调用核对',
+  claim_hold: '暂缓解除', claim_hold_held: '暂缓解除', claim_hold_stop_pending: '你批准叫停',
+  claim_conflict: '领取冲突解开', overlap_gate_pending: '同模块门放开', node_review_pending: '节点审核',
+  exec_review_pending: '执行审阅', no_review_line: '审阅线', settlement_pending: '审阅结论落实',
+  exec_review_send_refused: '审阅包重新送出', adviser_round_pending: '参谋这一轮',
+  command_rerun_pending: '命令重跑', check_review_pending: '检查批准',
+};
+
+/** The driver's wait state and basis. `waiting_for_reply` is also the Goal's own
+ * registered wait, not only a reply; the basis codes after the colon name the
+ * task/card/sub-kind and are not shown. */
+function driverWaitOf(read: unknown): { waiting: boolean; waitWhys: string[] } {
+  const value = asRecord(read);
+  const state = asText(value.state);
+  const waiting = state === 'waiting_for_reply';
+  const last = asRecord(value.last);
+  const lastValue = asRecord(last.value);
+  const reasons = asRecord(lastValue.waitBasis).reasons;
+  const waitWhys: string[] = [];
+  if ((state === 'waiting_for_reply' || state === 'waiting')
+    && asText(last.status) === 'ready' && asText(lastValue.state) === 'waiting') {
+    for (const reason of Array.isArray(reasons) ? reasons : []) {
+      const word = WAIT_BASIS_WORD[asText(reason).split(':')[0]!];
+      if (word !== undefined && !waitWhys.includes(word)) waitWhys.push(word);
+    }
+  }
+  return { waiting, waitWhys };
 }
 
 /** §2.6 D18/D30: the goal-conflict answer's structured selection. `earlier`/
@@ -387,18 +505,22 @@ export function adaptGoals(input: GoalsInput, selected: string | null): GoalsDat
   }
   const labels = card === null && earlierId === ''
     ? []
-    : labelEntries.map((entry) => labelOfEntry(entry, earlierId, laterId)).filter((text) => text !== '');
+    : labelEntries.filter((entry) => namesPair(entry, earlierId, laterId))
+      .map((entry) => labelOfEntry(entry, (id) => byId.get(id))).filter((text) => text !== '');
   /* D42-3: the accepted parallel risk is a tag on BOTH Goal rows (目标栏 and
     目标卡), not only in the card's done line. Each label names its own Goal. */
   const labelByGoal = new Map<string, string>();
   for (const entry of labelEntries) {
-    const text = labelOfEntry(entry, earlierId, laterId);
+    const text = labelOfEntry(entry, (id) => byId.get(id));
     if (text === '') continue;
     const goalId = asText(asRecord(asRecord(entry).goalRef).goalId);
-    if (goalId !== '') labelByGoal.set(goalId, text);
+    if (goalId === '') continue;
+    const existing = labelByGoal.get(goalId);
+    labelByGoal.set(goalId, existing === undefined ? text : existing + '；' + text);
   }
   const hasConflict = card !== null || labels.length > 0;
   const tasks = input.tasks ?? {};
+  const drivers = input.drivers ?? {};
 
   const overlapFiles = card === null ? [] : (Array.isArray(card.objects) ? card.objects : [])
     .map((entry) => asRecord(entry))
@@ -466,9 +588,8 @@ export function adaptGoals(input: GoalsInput, selected: string | null): GoalsDat
       const row = asRecord(entry);
       const task = asRecord(row.groups).task;
       if (asText(asRecord(task).goalId) !== goalId) continue;
-      const name = asRecord(row.name);
-      const primary = asText(name.primary);
-      if (primary !== '') return primary;
+      const name = lineNameOf(row.name);
+      if (name !== '') return name;
     }
     return '—';
   };
@@ -482,22 +603,40 @@ export function adaptGoals(input: GoalsInput, selected: string | null): GoalsDat
     const other = conflict === null || !conflict.open ? null
       : goal.id === conflict.earlierId ? conflict.laterId
         : goal.id === conflict.laterId ? conflict.earlierId : null;
+    const rawGraph = tasks[goal.id];
+    const graph = rawGraph === undefined || rawGraph === null ? null : rawGraph as TaskGraph;
+    const display = asRecord(displays[goal.id]);
+    const displayBody = asRecord(display.display);
+    const cause = asRecord(displayBody.cause);
+    const why = Object.keys(cause).length === 0 ? '' : goalCauseSentenceOf(cause, graph);
+    const whys: string[] = [];
+    for (const entry of Array.isArray(displayBody.causes) ? displayBody.causes : []) {
+      const sentence = goalCauseSentenceOf(asRecord(entry), graph);
+      if (sentence !== '' && !whys.includes(sentence)) whys.push(sentence);
+    }
+    const wait = driverWaitOf(drivers[goal.id]);
     let line = statusWord;
-    const parallel = labelByGoal.get(goal.id) ?? '';
-    if (other === null && parallel !== '') line += ' · ' + parallel;
+    if (why !== '') line += ' · ' + why;
     if (other !== null) {
       const otherOrdinal = goal.id === conflict!.earlierId ? conflict!.laterOrdinal : conflict!.earlierOrdinal;
       const otherName = goal.id === conflict!.earlierId ? conflict!.laterName : conflict!.earlierName;
       line += ' · 与目标 ' + ordinalLabel(otherOrdinal, otherName) + ' 冲突';
-    } else if (goal.waitForGoalRef !== null) {
+    }
+    const parallel = labelByGoal.get(goal.id) ?? '';
+    if (parallel !== '') line += ' · ' + parallel;
+    if (other === null && goal.waitForGoalRef !== null) {
       const waitId = asText(asRecord(goal.waitForGoalRef).goalId);
       const target = byId.get(waitId);
       line += ' · 等目标 ' + ordinalLabel(target?.ordinal ?? null, target?.objective ?? waitId) + ' 完成';
     }
-    const graph = tasks[goal.id];
+    if (wait.waiting) line += ' · 在等回复或新进展';
     const rows = taskRowsOf(graph);
     const progress = taskProgressOf(graph);
     const changed = new Set(rows.flatMap((row) => plannedFilesOf(row))).size;
+    const tip = goal.objective + '：' + statusWord
+      + (why !== '' ? '，' + why : '')
+      + (n > 0 ? '，需要你决定 ' + String(n) : '')
+      + (wait.waiting ? '，有回复或新进展时平台自己接着推进' : '');
     const last = index === bases.length - 1;
     return {
       id: goal.id,
@@ -512,6 +651,10 @@ export function adaptGoals(input: GoalsInput, selected: string | null): GoalsDat
       statusWord,
       st,
       line,
+      why,
+      whys,
+      waiting: wait.waiting,
+      waitWhys: wait.waitWhys,
       current: goal.id === selected,
       upOff: index === 0,
       downOff: last,
@@ -525,7 +668,7 @@ export function adaptGoals(input: GoalsInput, selected: string | null): GoalsDat
       },
       pos: index + 1,
       sq: 'sq z10 s-' + st,
-      tip: goal.objective + '：' + statusWord + (n > 0 ? '，需要你决定 ' + String(n) : ''),
+      tip,
       upCls: 'btn btn-icon btn-sm' + (index === 0 ? ' is-off' : ''),
       downCls: 'btn btn-icon btn-sm' + (last ? ' is-off' : ''),
       upLabel: index === 0 ? '已经在第 1 位' : '上移：调到第 ' + String(index) + ' 位',
@@ -593,6 +736,13 @@ export function goalTaskTree(goal: { id: string; name: string }, graph: TaskGrap
     stageNode.kids.push({ ...task, stage: stageNode.id });
   }
   return root;
+}
+
+/** The Tasks `goalTaskTree` draws: every row but the cancelled and superseded
+ * ones (`taskStateOf`). The board only asks whether a Task is on the map, so a
+ * cancelled or superseded Task is never offered as a jump (B3, C2). */
+export function goalTaskIdsOf(graph: TaskGraph | null): string[] {
+  return taskRowsOf(graph).filter((row) => taskStateOf(row) !== null).map((row) => taskIdOf(row));
 }
 
 /** §2.3: the catalog → module → file tree before any conflict lighting. Goals

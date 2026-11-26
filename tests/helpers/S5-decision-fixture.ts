@@ -869,7 +869,7 @@ export async function openS5DecisionFixture(kind: S5FixtureKind = 'memory',
   const lineageMailbox = createSessionMailbox({ records, sessions: sessionsPort, executions: reads, roles,
     materials: createMaterialService({ bodies, authority: createMaterialRecordReaders(records).authority, now }),
     queryRounds: createQueryRoundResolver({ records, duties: unknownSessionDuty, bodies }),
-    defaultInquiryDeadlineMs: 86_400_000, systemActor: { ...operatorActor }, now, newId });
+    defaultInquiryDeadlineMs: () => 86_400_000, systemActor: { ...operatorActor }, now, newId });
   const claimService = createTaskClaimService({ records, roles, now, newId,
     planSourceRoot: planSourceRootOf({ messages: lineageMailbox, plans,
       queries: createQueryJobService({ records, now, eventId }) }) });
@@ -1204,7 +1204,7 @@ export async function openS5DecisionFixture(kind: S5FixtureKind = 'memory',
     });
   const messageMaterials = createMaterialService({ bodies, authority: createMaterialRecordReaders(records).authority, now });
   const messageDeps: SessionMailboxDependencies = {
-    defaultInquiryDeadlineMs: 86_400_000,
+    defaultInquiryDeadlineMs: () => 86_400_000,
     records, sessions: sessionsPort, executions: reads, roles, materials: messageMaterials,
     queryRounds: createQueryRoundResolver({ records, duties, bodies }),
     systemActor: { ...operatorActor }, now, newId,

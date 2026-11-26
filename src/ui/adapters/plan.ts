@@ -14,7 +14,7 @@ import type { QueryJobRef } from '../../contracts/query-job.js';
 import type { PlanRevisionDraft } from '../../contracts/plan.js';
 import type { GoalAutonomyV1 } from '../../contracts/goal-decisions.js';
 import { asRecord, asText } from '../values.js';
-import { AUTONOMY_TEXT, taskStageOf } from './goals.js';
+import { AUTONOMY_TEXT, goalTaskIdsOf, taskStageOf } from './goals.js';
 import { decideTextOf, goalControlsOf, type NavInbox } from './nav.js';
 import { gapTextOf } from './task-map.js';
 import {
@@ -111,6 +111,9 @@ export function versionRowsOf(page: { items: { revision: number; at: string | nu
 }
 
 export type PlanData = MainData & {
+  /** The Tasks the right panel's task map draws (`goalTaskIdsOf`); a Task not
+   * here has no node to select (B3). */
+  mapTaskIds: string[];
   goalCard: PlanGoalCard;
   plan: PlanDoc | null;
   versions: PlanVersionRow[];
@@ -182,7 +185,7 @@ export function ideasRoundOf(pages: readonly MainPageRead[]): { request: PlanReq
   return null;
 }
 
-function planChecksOf(draft: PlanRevisionDraft): { k: string; v: string }[] {
+export function planChecksOf(draft: PlanRevisionDraft): { k: string; v: string }[] {
   const checks: { k: string; v: string }[] = [];
   for (const obligation of draft.obligations) {
     if (obligation.verificationRequirements.length === 0) checks.push({ k: obligation.title, v: '' });
@@ -196,7 +199,7 @@ function planChecksOf(draft: PlanRevisionDraft): { k: string; v: string }[] {
 /** A task's stage is `taskStageOf`'s; a task without one (goal scope) is
  * still listed, in a group without a stage name, as the task tree hangs it on
  * its goal (lead 11-12); an undeclared stage is named by its id. */
-function tasksOf(draft: PlanRevisionDraft): { name: string; items: { taskId: string; name: string }[] }[] {
+export function tasksOf(draft: PlanRevisionDraft): { name: string; items: { taskId: string; name: string }[] }[] {
   const groups = draft.stages.map((stage) => ({
     id: stage.stageId, name: stage.title, items: [] as { taskId: string; name: string }[],
   }));
@@ -272,6 +275,7 @@ export function adaptPlan(input: {
   const main = input.main;
   return {
     ...main,
+    mapTaskIds: goalTaskIdsOf(main.tasks),
     goalCard: goalCardOf(input.pages),
     plan: planOf(input.pages, input.cand),
     versions: input.versions,

@@ -39,13 +39,14 @@ import type { SessionRecord } from '../contracts/core/session.js';
 import type { RunRef, RunSnapshot, TaskTriple } from '../contracts/dispatch.js';
 import type { GoalRef, GoalSnapshot } from '../contracts/ledger.js';
 import type { RoundSnapshot } from '../contracts/verification.js';
-import type { QueryRunRef } from '../contracts/query-job.js';
+import { queryJobRefFor, type QueryJobRef, type QueryRunRef } from '../contracts/query-job.js';
 import type { SessionMappingProbe } from '../core/agent-runtime/session-operations.js';
 import type { QueryReconcileReport, RunReconcileReport } from '../core/agent-runtime/run-reconcile.js';
 import type { InterruptCheckInput } from '../core/work-graph/model/evidence-contracts.js';
 import type { QueryExecutionRecord } from '../core/work-graph/queries/contracts.js';
 import type { DecisionMessagePort } from '../core/work-graph/model/decision-contracts.js';
 import type { SessionDirectoryPort } from '../core/work-graph/model/session-contracts.js';
+import type { SessionFactsPort } from '../core/work-graph/model/session-facts-contracts.js';
 import type { SessionHealthResult } from '../core/work-graph/sessions/session-health.js';
 import { isGoalStopCause, isPendingVerdict } from '../core/work-graph/state/goal-machine.js';
 import type { ResumeOnStartupMode } from '../contracts/task-requeue.js';
@@ -94,6 +95,11 @@ export type StartupReconcilePlatform = {
   claimHolds: Pick<ClaimHoldPort, 'readHold'>;
   /** 3.4: a stop intent already `queued` is delivered here and nowhere else. */
   deliverControl: NonNullable<RuntimeExecutionPort['deliverControl']>;
+  /**
+   * Step 3 (lead ruling 11-27, FLK item 1): each line's QueryRuns, page by page, for the earlier answered request
+   * rounds the plan-turn table also gets. Optional: without it only the round each line ran last is handed on.
+   */
+  sessionFacts?: Pick<SessionFactsPort, 'listSessionQueries'>;
   /** Step 6b condition (a): the Task facts and their automation verdicts, read again after steps 1..6. */
   plans: Pick<PlanTaskPort, 'queryTaskGraph'>;
   reconcile: {
@@ -199,6 +205,15 @@ export type StartupReconcileScopeDependencies = {
    * handoff/archive operation once), so a crash resumes instead of waiting for a new commit.
    */
   handoffQueue?: Pick<HandoffQueuePort, 'run'>;
+  /**
+   * Step 3 (P2 §2.6): the Query round each line ran last, and every answered request round with a goal the line ran
+   * before it (lead ruling 11-27, FLK item 1), go to the Host's plan-turn table, which lives in memory. A crash
+   * between a request round's Answer and its candidate write would lose that candidate, also when another round took
+   * the line before the crash; the step 6c traversal writes a missing one once (the write is keyed by the round, so a
+   * written candidate is only read back) and leaves adopting, asking for check approval and running checks to the
+   * normal driver (FLK item 2).
+   */
+  recordPlanTurn?: (ctx: CoreCallContext, round: QueryJobRef) => void;
 };
 
 export type StartupReconcileDependencies = {
@@ -484,8 +499,42 @@ export async function runStartupReconcile(
       const problem = await platform.reconcile.closeQueryLineTurn?.(ctx, queryRunRef) ?? null;
       if (problem !== null) out.problems.push(`${refText(queryRunRef)}: the open Turn stayed (${problem})`);
     };
+    // Lead ruling 11-27 (FLK item 1): the line's answered request rounds with a goal also go to the plan-turn table,
+    // not only the round the line ran last, since another round can take the line while an earlier one's candidate
+    // write still waits in the crashed Host's memory. A dropped or absorbed round never answered, and a round without a goal writes no
+    // candidate; the table's pass reads each round once more and drops what needs no candidate.
+    const recordAnsweredRequestRounds = async (session: SessionRecord): Promise<void> => {
+      const record = deps.recordPlanTurn;
+      const facts = platform.sessionFacts;
+      if (record === undefined || facts === undefined) return;
+      const sessionRef = { projectId: session.ref.projectId, sessionId: session.ref.sessionId };
+      let cursor: string | undefined;
+      for (let page = 0; page < MAX_SESSION_PAGES; page += 1) {
+        const found = await facts.listSessionQueries(ctx, { sessionRef,
+          page: { limit: SESSION_PAGE_LIMIT, ...(cursor === undefined ? {} : { cursor }) } });
+        if (found.status !== 'ready') {
+          out.problems.push(`${refText(sessionRef)}: the line's Query rounds are not readable (${rejectionText(found)})`);
+          return;
+        }
+        for (const { run } of found.value.items) {
+          const state = run.executionState;
+          if (run.outcome !== 'answered' || state === undefined || state.requestProfile === null
+            || state.prepared?.requestEffectiveGoalId == null) continue;
+          record(ctx, { ...run.queryJobRef });
+        }
+        cursor = found.value.nextCursor ?? undefined;
+        if (cursor === undefined) return;
+      }
+      out.problems.push(`${refText(sessionRef)}: the line's Query rounds beyond ${String(MAX_SESSION_PAGES * SESSION_PAGE_LIMIT)} `
+        + 'were not handed to the plan-turn table');
+    };
     for (const session of sessions) {
       const occupancy = session.occupancy;
+      const lineRound = occupancy?.kind === 'execution' ? occupancy.executionRef : session.lastExecutionRef;
+      if (lineRound?.aggregateType === 'QueryRun') {
+        deps.recordPlanTurn?.(ctx, queryJobRefFor(lineRound.projectId, lineRound.workspaceId, lineRound.queryJobId));
+      }
+      await recordAnsweredRequestRounds(session);
       if (occupancy === null || occupancy.kind !== 'execution' || occupancy.executionRef.aggregateType !== 'QueryRun') {
         // A crash between the reconcile and the closure leaves the line free and the Turn open.
         const last = session.lastExecutionRef;

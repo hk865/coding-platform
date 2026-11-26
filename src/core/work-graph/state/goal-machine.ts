@@ -22,7 +22,7 @@
  *
  * Owners: `task-service.ts` (GOAL-01), `plan-service.ts` (GOAL-02/03, the
  * display read `queryGoalDisplay` and the GOAL-29 selection), `goal-control.ts`
- * (GOAL-04…06), `completion.ts` (GOAL-07/08); `src/app/goal-fan-out-driver.ts`
+ * (GOAL-04…06), `completion.ts` (GOAL-07/08, GOAL-07P); `src/app/goal-fan-out-driver.ts`
  * uses the fan-out identities. Rows and their status: spec §15.2/§15.3.
  *
  * Line references (`file.ts:NNN`) cite the code of 2026-10-02 (before A.2 step 3),
@@ -40,7 +40,7 @@ import { canonicalJson, sha256Hex, type JsonValue } from '../../../contracts/fin
 import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
 import type { GoalSettingsV1 } from '../../../contracts/goal-decisions.js';
 import type { LineRef } from '../../../contracts/line.js';
-import type { GoalPhaseRef, GoalPhaseSnapshot } from '../../../contracts/goal-phase.js';
+import type { GoalPartialAcceptanceV1, GoalPhaseRef, GoalPhaseSnapshot } from '../../../contracts/goal-phase.js';
 import type { GoalInterruptionV1 } from '../../../contracts/goal-interruption.js';
 import type { VersionPin } from '../../../contracts/core/identity.js';
 import type {
@@ -169,7 +169,8 @@ export function nextGoalDesiredState(goal: GoalSnapshot, input: {
 
 /**
  * GOAL-07/08: `COMPLETED@previous+1` for the plan it was reduced against (the
- * pre-step-3 `completion.ts:572-582` literal, same key order).
+ * pre-step-3 `completion.ts:572-582` literal, same key order). GOAL-07P: given a
+ * `partialAcceptance`, `ACCEPTED_PARTIAL@previous+1` carrying it instead.
  */
 export function buildGoalPhaseSnapshot(input: {
   ref: GoalPhaseRef;
@@ -180,8 +181,9 @@ export function buildGoalPhaseSnapshot(input: {
   adoptedTaskReductions: readonly { ref: TaskReductionRef; revision: number }[];
   satisfiedObligationIds: readonly string[];
   reducedAt: string;
+  partialAcceptance?: GoalPartialAcceptanceV1;
 }): GoalPhaseSnapshot {
-  return {
+  const completed: Extract<GoalPhaseSnapshot, { phase: 'COMPLETED' }> = {
     ref: input.ref,
     revision: (input.previousRevision ?? 0) + 1,
     schemaVersion: 1,
@@ -192,6 +194,10 @@ export function buildGoalPhaseSnapshot(input: {
     satisfiedObligationIds: [...input.satisfiedObligationIds],
     reducedAt: input.reducedAt,
   };
+  const partial = input.partialAcceptance;
+  if (partial === undefined) return completed;
+  return { ...completed, phase: 'ACCEPTED_PARTIAL',
+    partialAcceptance: { rationale: partial.rationale, acceptedBy: { kind: 'human', id: partial.acceptedBy.id } } };
 }
 
 // -------------------------------------------------------------------------- //
@@ -276,7 +282,8 @@ export type GoalControlRequest = {
  * the command first) and the birth fields: the settings and the two copy
  * fields; `plan_adopted` is the Goal side of PLAN-04/05 (`basedOn`
  * = the candidate's source, `target` = the new PlanRevision); `goal_completed`
- * carries the caller's two pins and the reduction instant.
+ * carries the caller's two pins and the reduction instant; `goal_partially_accepted`
+ * (GOAL-07P, G6) carries them plus the person's rationale and who accepted.
  */
 export type GoalEvent =
   | {
@@ -287,7 +294,11 @@ export type GoalEvent =
   | ({ type: 'goal_pause_requested' } & GoalControlRequest)
   | ({ type: 'goal_resume_requested' } & GoalControlRequest)
   | ({ type: 'goal_cancel_requested' } & GoalControlRequest)
-  | { type: 'goal_completed'; expectedGoalRevision: number; expectedGoalPhaseRevision: number; reducedAt: string };
+  | { type: 'goal_completed'; expectedGoalRevision: number; expectedGoalPhaseRevision: number; reducedAt: string }
+  | {
+    type: 'goal_partially_accepted'; expectedGoalRevision: number; expectedGoalPhaseRevision: number;
+    reducedAt: string; rationale: string; acceptedBy: GoalPartialAcceptanceV1['acceptedBy'];
+  };
 
 /**
  * What `completeGoal` read after the pointer (pre-step-3 `completion.ts:529-569`): the
@@ -298,6 +309,12 @@ export type GoalEvent =
 export type GoalCompletionFacts = {
   plan: { ref: PlanRevisionRef; planRevision: number };
   evaluation: { completed: boolean; reasons: readonly string[] };
+  /**
+   * The already-started side effects not settled yet (a Run not ended or not
+   * reconciled, a Lease still held), the same sentences `evaluation.reasons`
+   * lists for them. GOAL-07P refuses a partial acceptance while any is left.
+   */
+  unsettledExecutions: readonly string[];
   requiresReviewer: boolean;
   adoptedTaskReductions: readonly { ref: TaskReductionRef; revision: number }[];
   satisfiedObligationIds: readonly string[];
@@ -312,9 +329,9 @@ export type GoalGuardContext = {
   callerClass: ReworkActorClass | null;
   /** `goal_created`: `compareCallerGoalPins` found no pin that disagrees with the versions read (`task-service.ts:216-220`). */
   scopePinsAgree: boolean;
-  /** `goal_completed`: the Goal belongs to the trusted workspace (pre-step-3 `completion.ts:522`). */
+  /** `goal_completed`, `goal_partially_accepted`: the Goal belongs to the trusted workspace (pre-step-3 `completion.ts:522`). */
   goalInWorkspace: boolean;
-  /** `goal_completed`: null when the service did not read them (no pointer). */
+  /** `goal_completed`, `goal_partially_accepted`: null when the service did not read them (no pointer). */
   completion: GoalCompletionFacts | null;
 };
 
@@ -342,7 +359,7 @@ export type GoalCommitGuard =
 export type GoalEffect =
   | { kind: 'write_goal' }
   | { kind: 'write_goal_phase' }
-  | { kind: 'append_event'; eventType: 'GoalCreated' | 'GoalCompleted' | 'GoalDesiredStateChanged' }
+  | { kind: 'append_event'; eventType: 'GoalCreated' | 'GoalCompleted' | 'GoalPartiallyAccepted' | 'GoalDesiredStateChanged' }
   | { kind: 'guard'; guard: GoalCommitGuard };
 
 /** `G` as in `GoalMachineState`: only `goal_created` answers the pre-bind record. */
@@ -450,21 +467,25 @@ function onPlanAdopted(state: GoalMachineState, event: Extract<GoalEvent, { type
     [{ kind: 'write_goal' }]);
 }
 
+/** The caller's two pins of a GoalPhase write (GOAL-07/08, GOAL-07P). */
+type GoalPhaseWritePins = Pick<Extract<GoalEvent, { type: 'goal_completed' }>, 'expectedGoalRevision' | 'expectedGoalPhaseRevision'>;
+
 /**
- * The GOAL-07/08 guards of `completeGoalFromHost` in the pre-step-3
- * `completion.ts:519-555` order: workspace, Goal pin, pointer, then the facts'
- * plan, the GoalPhase pin and the reduction. Exported so the owner stops where
- * it always stopped: right after the Goal read, with `completion` null (the
- * facts, the GoalPhase and the reduction are not read yet and hold), and after
- * the GoalPhase read and the pure reduction, before it reads the pinned
- * policy. `transitionGoal` re-runs them, then requires the facts. Step 5.5
- * (§2.4, D-9): a paused or cancelled Goal is not completed (`busy`, first),
- * and a GoalPhase already reduced for the active plan is not completed again
- * (`busy`, after the GoalPhase pin: G6 "归约重复无重复完成事件").
+ * The guards every GoalPhase write shares (GOAL-07/08 completion, GOAL-07P
+ * partial acceptance), in the pre-step-3 `completion.ts:519-555` order:
+ * workspace, Goal pin, pointer, then the facts' plan and the GoalPhase pin.
+ * Exported so both owners stop right after the Goal read, with `completion`
+ * null (the facts and the GoalPhase are not read yet and hold: the answer is
+ * null after the pointer); completion also stops after the GoalPhase read and
+ * the pure reduction, through `goalCompletionProblem`. Step 5.5 (§2.4, D-9): a paused or cancelled Goal is
+ * not written (`busy`, first), and a GoalPhase already written for the active
+ * plan is not written again (`busy`, after the GoalPhase pin: G6
+ * "归约重复无重复完成事件"). The texts say "completed" for both writes; a
+ * caller shows the code, not the text.
  */
-export function goalCompletionProblem(
+export function goalPhaseWriteProblem(
   state: GoalMachineState,
-  event: Pick<Extract<GoalEvent, { type: 'goal_completed' }>, 'expectedGoalRevision' | 'expectedGoalPhaseRevision'>,
+  event: GoalPhaseWritePins,
   ctx: Pick<GoalGuardContext, 'goalInWorkspace' | 'completion'>,
 ): Rejected | null {
   switch (state.node) {
@@ -500,13 +521,46 @@ export function goalCompletionProblem(
   if (state.completion === 'for_active') {
     return reject('guard_failed', 'busy', 'the Goal is already completed for its active Plan');
   }
-  // :548-555
+  return null;
+}
+
+/**
+ * The GOAL-07/08 guards of `completeGoalFromHost`: the shared GoalPhase-write
+ * guards (`goalPhaseWriteProblem`), then the reduction (pre-step-3
+ * `completion.ts:548-555`). `transitionGoal` re-runs them, then requires the facts.
+ */
+export function goalCompletionProblem(
+  state: GoalMachineState,
+  event: GoalPhaseWritePins,
+  ctx: Pick<GoalGuardContext, 'goalInWorkspace' | 'completion'>,
+): Rejected | null {
+  const problem = goalPhaseWriteProblem(state, event, ctx);
+  const facts = ctx.completion;
+  if (problem !== null || facts === null) return problem;
   if (!facts.evaluation.completed) {
     const reasons = [...facts.evaluation.reasons];
     if (facts.requiresReviewer) reasons.push('a required independent review is a hint, not a hard gate');
-    return reject('guard_failed', 'incomplete', `Goal ${goal.ref.goalId} is not complete: ${reasons.join('; ')}`);
+    // `goalPhaseWriteProblem` refused ∅ above; this only narrows the type.
+    return reject('guard_failed', 'incomplete', `Goal ${state.goal!.ref.goalId} is not complete: ${reasons.join('; ')}`);
   }
   return null;
+}
+
+/** The GoalPhase a GOAL-07/08 or GOAL-07P write builds from the active plan's facts, at revision+1. */
+function nextGoalPhaseOf(
+  state: GoalMachineState, goal: GoalSnapshot, facts: GoalCompletionFacts, reducedAt: string,
+  partialAcceptance?: GoalPartialAcceptanceV1,
+): GoalPhaseSnapshot {
+  return buildGoalPhaseSnapshot({
+    ref: { aggregateType: 'GoalPhase', projectId: goal.ref.projectId, goalId: goal.ref.goalId },
+    previousRevision: state.goalPhase?.revision ?? null,
+    planRef: facts.plan.ref,
+    planRevision: facts.plan.planRevision,
+    adoptedTaskReductions: facts.adoptedTaskReductions,
+    satisfiedObligationIds: facts.satisfiedObligationIds,
+    reducedAt,
+    ...(partialAcceptance === undefined ? {} : { partialAcceptance }),
+  });
 }
 
 /**
@@ -526,24 +580,52 @@ function onGoalCompleted(
   if (facts === null) return reject('illegal', 'invalid', 'goal_completed requires the completion facts of the active plan');
   // `goalCompletionProblem` refused ∅ above; this only narrows the type.
   const goal = state.goal!;
-  const persistedPhaseRevision = state.goalPhase?.revision ?? null;
-  const goalPhase = buildGoalPhaseSnapshot({
-    ref: { aggregateType: 'GoalPhase', projectId: goal.ref.projectId, goalId: goal.ref.goalId },
-    previousRevision: persistedPhaseRevision,
-    planRef: facts.plan.ref,
-    planRevision: facts.plan.planRevision,
-    adoptedTaskReductions: facts.adoptedTaskReductions,
-    satisfiedObligationIds: facts.satisfiedObligationIds,
-    reducedAt: event.reducedAt,
-  });
+  const goalPhase = nextGoalPhaseOf(state, goal, facts, event.reducedAt);
   // :584-590
   return accept<GoalMachineState, GoalEffect>(goalStateOf(goal, goalPhase), [
     { kind: 'write_goal_phase' },
     { kind: 'append_event', eventType: 'GoalCompleted' },
     guard({ target: 'goal', expectedRevision: goal.revision }),
     guard({ target: 'plan_revision', ref: facts.plan.ref }),
-    guard({ target: 'goal_phase', expectedRevision: persistedPhaseRevision }),
+    guard({ target: 'goal_phase', expectedRevision: state.goalPhase?.revision ?? null }),
     guard({ target: 'pinned_policy' }),
+    guard({ target: 'task_facts' }),
+  ]);
+}
+
+/**
+ * GOAL-07P (G6, `acceptPartialResultFromHost`): the person ends the Goal with
+ * what its active plan has formally satisfied. After the shared GoalPhase-write
+ * guards: a Goal with nothing missing is completed by the platform, never
+ * accepted partially (`invalid`); an execution not settled yet is a side effect
+ * still open (`busy`, listing it). The commit has no `pinned_policy` guard:
+ * neither refusal reads the completion policy.
+ */
+function onGoalPartiallyAccepted(
+  state: GoalMachineState,
+  event: Extract<GoalEvent, { type: 'goal_partially_accepted' }>,
+  ctx: GoalGuardContext,
+): GoalTransition {
+  const problem = goalPhaseWriteProblem(state, event, ctx);
+  if (problem !== null) return problem;
+  const facts = ctx.completion;
+  if (facts === null) return reject('illegal', 'invalid', 'goal_partially_accepted requires the completion facts of the active plan');
+  if (facts.evaluation.completed) {
+    return reject('illegal', 'invalid', 'nothing required is missing; the platform records the completion instead');
+  }
+  if (facts.unsettledExecutions.length > 0) {
+    return reject('guard_failed', 'busy', `an execution is not settled yet: ${facts.unsettledExecutions.join('; ')}`);
+  }
+  // `goalPhaseWriteProblem` refused ∅ above; this only narrows the type.
+  const goal = state.goal!;
+  const goalPhase = nextGoalPhaseOf(state, goal, facts, event.reducedAt,
+    { rationale: event.rationale, acceptedBy: event.acceptedBy });
+  return accept<GoalMachineState, GoalEffect>(goalStateOf(goal, goalPhase), [
+    { kind: 'write_goal_phase' },
+    { kind: 'append_event', eventType: 'GoalPartiallyAccepted' },
+    guard({ target: 'goal', expectedRevision: goal.revision }),
+    guard({ target: 'plan_revision', ref: facts.plan.ref }),
+    guard({ target: 'goal_phase', expectedRevision: state.goalPhase?.revision ?? null }),
     guard({ target: 'task_facts' }),
   ]);
 }
@@ -635,6 +717,8 @@ export function transitionGoal(
       return onGoalControl(state, event, ctx);
     case 'goal_completed':
       return onGoalCompleted(state, event, ctx);
+    case 'goal_partially_accepted':
+      return onGoalPartiallyAccepted(state, event, ctx);
     default:
       return unreachable(event, 'goal event');
   }
@@ -859,6 +943,15 @@ export type GoalDisplayPhase =
   | 'PLANNING' | 'RUNNING' | 'CHANGE_PENDING' | 'NEEDS_DECISION' | 'BLOCKED' | 'FAILED'
   | 'PAUSED' | 'CANCELLED' | 'COMPLETED' | 'ACCEPTED_PARTIAL';
 
+/**
+ * A Goal whose active plan has a formal result (GOAL-18 COMPLETED or GOAL-19
+ * ACCEPTED_PARTIAL) has ended: it takes no new work. The record-side reading is
+ * `goalStateOf(goal, phase).completion === 'for_active'`.
+ */
+export function isEndedGoalDisplayPhase(phase: GoalDisplayPhase | undefined): boolean {
+  return phase === 'COMPLETED' || phase === 'ACCEPTED_PARTIAL';
+}
+
 /** The rows of the display table, in priority order. */
 export type GoalDisplayRow =
   | 'GOAL-17' | 'GOAL-18' | 'GOAL-19' | 'GOAL-20' | 'GOAL-21' | 'GOAL-22' | 'GOAL-23' | 'GOAL-30'
@@ -894,8 +987,8 @@ export type GoalDisplayFactsV1 = {
   activePlanRef: PlanRevisionRef | null;
   /** `GoalCompletionView` (`plan-contracts.ts:96-98`) without the snapshot. */
   completion: { status: 'not_recorded' } | { status: 'recorded'; selectedPlanMatches: boolean };
-  /** GOAL-19: declared, no writer (D-9), so the input is always null. */
-  partialAcceptance: null;
+  /** GOAL-19: the person's rationale and who accepted; non-null only while the active plan's GoalPhase is ACCEPTED_PARTIAL. */
+  partialAcceptance: GoalPartialAcceptanceV1 | null;
   /** `findPendingProposal` (`plan-readers.ts:441-495`). */
   pendingProposal: { ref: PlanProposalRef; basedOn: PlanRevisionRef | null } | null;
   tasks: readonly GoalDisplayTaskFactsV1[];
@@ -1159,7 +1252,7 @@ export function reduceGoalDisplay(facts: GoalDisplayFactsV1): GoalDisplayV1 {
   if (desiredHit?.row === 'GOAL-17') hit(desiredHit.row, desiredHit.phase, null);
   // GOAL-18
   if (facts.completion.status === 'recorded' && facts.completion.selectedPlanMatches) hit('GOAL-18', 'COMPLETED', null);
-  // GOAL-19: declared only (D-9); the input type is always null, so it never holds.
+  // GOAL-19: the active plan's GoalPhase is a partial acceptance (GOAL-07P); its rationale is read from `tasks/query`.
   if (facts.partialAcceptance !== null) hit('GOAL-19', 'ACCEPTED_PARTIAL', null);
   // GOAL-20
   if (desiredHit?.row === 'GOAL-20') hit(desiredHit.row, desiredHit.phase, null);

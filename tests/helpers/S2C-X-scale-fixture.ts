@@ -217,7 +217,7 @@ function mailboxOver(f: LineFixture, records: GoalRecordTransactionPort & Record
   bodies: RawArtifactStorePort, now: () => string): SessionMessageCommandPort {
   let seq = 0;
   return createSessionMailbox({
-    defaultInquiryDeadlineMs: 86_400_000,
+    defaultInquiryDeadlineMs: () => 86_400_000,
     queryRounds: createQueryRoundResolver({ records, duties: unknownSessionDuty, bodies }),
     records, sessions: f.base.sessionsPort,
     executions: createRunStateReader({ records }),

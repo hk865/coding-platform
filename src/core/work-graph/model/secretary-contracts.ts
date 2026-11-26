@@ -88,8 +88,10 @@ export type SecretaryPreparationFactsV1 = {
   installedChecks: readonly RegisteredCommandCheck[] | null;
   /** Read only when the caller asks (`admission: true`, a plan answer's submit); null otherwise. */
   admission: PlanAdmissionFactsV1 | null;
-  /** `phase` is the formal GoalPhase (`COMPLETED` for the active Plan, `readGoalTerminalState`), else null (G6F F4). */
-  goals: { goalId: string; desiredState: GoalDesiredState; phase: 'COMPLETED' | null; objective: string; ordinal: number | null }[];
+  /** `phase` is the formal GoalPhase for the active Plan (`COMPLETED` or `ACCEPTED_PARTIAL`, `readGoalTerminalState`),
+   *  else null (G6F F4). */
+  goals: { goalId: string; desiredState: GoalDesiredState; phase: 'COMPLETED' | 'ACCEPTED_PARTIAL' | null;
+    objective: string; ordinal: number | null }[];
   executionKind: 'semantic_query' | 'initial_coordination';
   guards: RecordGuard[];
   watermark: CommitCursor | null;

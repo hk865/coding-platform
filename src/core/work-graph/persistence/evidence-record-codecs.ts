@@ -66,7 +66,7 @@ export const VERIFICATION_REVIEW_EVIDENCE_RECORDED_EVENT_TYPE = 'VerificationRev
 export const EVIDENCE_EVENT_SCHEMA_VERSION = 1 as const;
 
 /** Why an executing check was interrupted (written as its `incompleteCause`). */
-export type CheckInterruptionCause = 'host_restart' | 'ticket_invalid';
+export type CheckInterruptionCause = 'host_restart' | 'ticket_invalid' | 'result_not_recorded';
 /** Why a begun check was proven never started and returned to pending (VD-6). */
 export type CheckAbandonCause = 'caller_cancelled' | 'root_changed' | 'permission_changed' | 'read_failed';
 
@@ -99,7 +99,7 @@ export type VerificationRoundEvent =
     | (EvidenceEventBase & { eventType: typeof VERIFICATION_CHECK_BEGUN_EVENT_TYPE; result: CheckExecutionTicket })
     | (EvidenceEventBase & { eventType: typeof VERIFICATION_CHECK_RESULT_RECORDED_EVENT_TYPE; result: RoundSnapshot })
     | (EvidenceEventBase & { eventType: typeof VERIFICATION_ROUND_FINALIZED_EVENT_TYPE; result: FinalizedChecks })
-    /** VR-04 (reconcile, with the reconciling `hostInstanceId`) and VR-13 (`ticket_invalid`, no Host instance). */
+    /** VR-04 (reconcile, with the reconciling `hostInstanceId`); VR-13 and VD-10 (the runner, no Host instance). */
     | (EvidenceEventBase & {
         eventType: typeof VERIFICATION_CHECK_INTERRUPTED_EVENT_TYPE;
         checkId: string;
@@ -542,7 +542,7 @@ export function verificationRoundEventFromEvent(event: EncodedDomainEvent): Deco
     return { status: 'decoded', value: { ...body, result } as unknown as VerificationRoundEvent };
 }
 
-const INTERRUPTION_CAUSES: readonly string[] = ['host_restart', 'ticket_invalid'];
+const INTERRUPTION_CAUSES: readonly string[] = ['host_restart', 'ticket_invalid', 'result_not_recorded'];
 const ABANDON_CAUSES: readonly string[] = ['caller_cancelled', 'root_changed', 'permission_changed', 'read_failed'];
 
 /** The A.2 events carry the written round as `result`; it must be that event's round. */
@@ -570,9 +570,11 @@ function a2RoundEventProblem(body: UnknownRecord): string | null {
             if (round !== null) return round;
             const check = a2CheckOf(body);
             if (typeof check === 'string') return check;
-            if (!INTERRUPTION_CAUSES.includes(body['cause'] as string)) return 'an interruption cause must be host_restart or ticket_invalid';
+            if (!INTERRUPTION_CAUSES.includes(body['cause'] as string)) {
+                return 'an interruption cause must be host_restart, ticket_invalid or result_not_recorded';
+            }
             if (body['cause'] === 'host_restart' ? !nonEmpty(body['hostInstanceId']) : body['hostInstanceId'] !== null) {
-                return 'a host_restart interruption names the reconciling hostInstanceId; ticket_invalid names none';
+                return 'a host_restart interruption names the reconciling hostInstanceId; the runner\'s causes name none';
             }
             if (check['phase'] !== 'interrupted' || check['incompleteCause'] !== body['cause']) {
                 return 'the interrupted check must be interrupted with the event cause';

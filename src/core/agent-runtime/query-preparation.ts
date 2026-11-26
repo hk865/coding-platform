@@ -12,7 +12,6 @@
 import { messageOf } from '../../contracts/error-message.js';
 import { rejected } from '../../contracts/core/rejections.js';
 import { isRecord, nonEmpty } from '../../contracts/validation/common.js';
-import { ARTIFACT_MAX_SIZE_BYTES } from '../../contracts/artifact.js';
 import type { CoreCallContext } from '../../contracts/core/call-context.js';
 import type { PreparedQueryExecution, PreparedQueryManifestV1 } from '../../contracts/core/prepared-execution.js';
 import type { CoreRejection, ReadResult } from '../../contracts/core/results.js';
@@ -69,7 +68,7 @@ import { deriveFuturePlanDelta, type FuturePlanDelta } from '../work-graph/tasks
 import { isQuestionAskRound } from '../work-graph/tasks/request-service.js';
 import { effectiveDuty, queryPlanSummary } from './context-fact-text.js';
 import {
-  promptDeclarationProblem, promptRenderProblem, resolvePromptPack, selectPromptSkills,
+  oversizedBody, promptDeclarationProblem, promptRenderProblem, resolvePromptPack, selectPromptSkills,
   promptTemplatePart, promptTemplateVersion, storePromptTexts, templatesToFreeze,
   trackPromptTexts, type PromptPartsV1,
 } from './prompt-set-texts.js';
@@ -83,7 +82,6 @@ export type QueryPreparationPort = {
 
 /** Exact manifest content type (declared once in contracts, ND-9); the Query writer re-reads the body and requires this. */
 export { QUERY_MANIFEST_CONTENT_TYPE };
-export const MAX_QUERY_MANIFEST_BYTES = ARTIFACT_MAX_SIZE_BYTES;
 
 /**
  * 121-114: the one Query besides the secretary's request round that keeps `create_member`: an adviser's
@@ -643,9 +641,8 @@ export function createQueryPreparation(deps: QueryPreparationDependencies, conte
         // (`unknown-call-reviews/read`), as it is now. A record that moved after
         // the round was sent (the person took it over) is still prepared: the
         // answer names the frozen revision, so the Workflow no longer reads the
-        // round and the owner answers `revision_conflict`. Refusing here would
-        // leave the claimed Query holding the adviser line (`query-stage-driver.ts`
-        // blocks on a preparation `not_found`).
+        // round and the owner answers `revision_conflict`. A refusal here closes
+        // the claimed round before entry (`query-stage-driver.ts`, P6I R2).
         const subject = unknownCallAdviceSubjectOfText(requestQuestion);
         if (subject === null) return rejected('invalid', 'the adviser round names no record subject');
         if (deps.unknownCallReviews === undefined) {
@@ -715,6 +712,10 @@ export function createQueryPreparation(deps: QueryPreparationDependencies, conte
       } else if (!requestRound && execution.kind === 'initial_coordination') {
         const guideProblem = appendGuide('initial-planning-answer', {});
         if (guideProblem !== null) return guideProblem;
+        // The JSON text path also needs the object shape and the optional setup
+        // that a submission tool's schema describes, so it gets the second guide.
+        const textProblem = appendGuide('planning-answer-text', {});
+        if (textProblem !== null) return textProblem;
       }
       // A `planresume:` Query carries only the head and the original Query ref;
       // the original question and the per-card answers are assembled here from
@@ -986,7 +987,8 @@ export function createQueryPreparation(deps: QueryPreparationDependencies, conte
       };
       const storedPrompts = await storePromptTexts(deps.bodies, { kind: 'run', owner: queryRunRef }, promptParts, deps.now());
       if (storedPrompts.status !== 'ready') {
-        return rejected('unavailable', `storing the Query prompt texts failed: ${storedPrompts.reason}`);
+        // The code and a lasting mark (`oversizedBody`) stay; only the reason says where it failed.
+        return { ...storedPrompts, reason: `storing the Query prompt texts failed: ${storedPrompts.reason}` };
       }
       const manifest: PreparedQueryManifestV1 = {
         schemaVersion: 1,
@@ -1029,9 +1031,9 @@ export function createQueryPreparation(deps: QueryPreparationDependencies, conte
         inputDigest,
       };
       const manifestJson = JSON.stringify(manifest);
-      if (Buffer.byteLength(manifestJson, 'utf8') > MAX_QUERY_MANIFEST_BYTES) {
-        return rejected('capacity', `the bounded Query manifest exceeds ${String(MAX_QUERY_MANIFEST_BYTES)} bytes`);
-      }
+      // P6I R2: the frozen input does not fit, and a request's batch only grows.
+      const oversized = oversizedBody(manifestJson, 'the bounded Query manifest');
+      if (oversized !== null) return oversized;
       let stored;
       try {
         stored = await deps.bodies.put({
@@ -1045,8 +1047,7 @@ export function createQueryPreparation(deps: QueryPreparationDependencies, conte
         return rejected('unavailable', `storing the Query manifest failed: ${messageOf(error)}`);
       }
       if (stored.status !== 'ready') {
-        const code = stored.reason !== undefined && stored.reason.includes('size') ? 'capacity' : 'unavailable';
-        return rejected(code, `storing the Query manifest failed: ${stored.reason}`);
+        return rejected('unavailable', `storing the Query manifest failed: ${stored.reason}`);
       }
       const prepared: PreparedQueryExecution = {
         queryRunRef,

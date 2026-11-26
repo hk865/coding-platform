@@ -65,6 +65,7 @@ import { adviserCandidateOf, type AdviserSlotFactsV1 } from './adviser-slots.js'
 import { readOwnerRecord, type OwnerRecordRead } from './owner-record-read.js';
 import { asWriteRejection } from './plan-result-helpers.js';
 import { readGoal, readGoalPhase, readOpenResponsibilityLines } from './plan-readers.js';
+import { goalStateOf } from '../state/goal-machine.js';
 
 export type GoalAdviserQueueDependenciesV1 = {
   records: GoalRecordTransactionPort & RecordLookupPort;      // the queue record + goal/link lookups
@@ -549,15 +550,18 @@ export function createGoalAdviserQueueService(deps: GoalAdviserQueueDependencies
         revision: next.revision });
     }
 
-    // assign: the Goal and its phase (a formally completed goal is never assigned; completion writes only the
-    // GoalPhase, so the Goal revision alone does not fence it), the adviser Session by its own key (it lives in the
-    // main workspace, the goal maybe not), and the responsible link as it is stored now.
+    // assign: the Goal and its phase (a goal with a formal result on its ACTIVE Plan is never assigned; completion
+    // writes only the GoalPhase, so the Goal revision alone does not fence it). A result on an older Plan does not
+    // end the Goal (B3), so a goal that adopted a new Plan is assignable again. The adviser Session by its own key (it
+    // lives in the main workspace, the goal maybe not), and the responsible link as it is stored now.
     const goal = await readGoal(deps.records, input.goalRef);
     if (goal.status !== 'ready') return goal;
     const phase = await readGoalPhase(deps.records,
       { aggregateType: 'GoalPhase', projectId: input.goalRef.projectId, goalId: input.goalRef.goalId });
     if (phase.status !== 'ready') return phase;
-    if (phase.snapshot !== null) return rejected('revision_conflict', 'the goal is formally completed');
+    if (goalStateOf(goal.goal, phase.snapshot).completion === 'for_active') {
+      return rejected('revision_conflict', 'the goal is formally completed');
+    }
     const adviserRead = pinned.adviser !== undefined ? { status: 'ready' as const, value: pinned.adviser }
       : ownerReadValue(await readOwnerRecord({ store: deps.records, refKey: plainSessionRefKey(input.adviser),
         decode: decodeSessionRecord, readError }));
@@ -683,7 +687,7 @@ export function createGoalAdviserQueueService(deps: GoalAdviserQueueDependencies
       const phase = await readGoalPhase(deps.records,
         { aggregateType: 'GoalPhase', projectId: goalRef.projectId, goalId: goalRef.goalId });
       if (phase.status !== 'ready') return phase;
-      if (phase.snapshot !== null) continue;
+      if (goalStateOf(held.goal, phase.snapshot).completion === 'for_active') continue;
       const screening = await goalScreeningOf(ctx, goalRef);
       if (screening.status !== 'ready') return screening;
       heldGoals.push({ goalRef, desiredState: held.goal.desiredState, size: screening.value?.size ?? null });
@@ -958,7 +962,8 @@ export function createGoalAdviserQueueService(deps: GoalAdviserQueueDependencies
       const lines = await readOpenResponsibilityLines(deps.records, goalCtx, { goalRef }, deps.duty);
       if (lines.status !== 'ready') { blocked += 1; continue; }
       const advised = lines.value.some((line) => line.duty === 'adviser');
-      if (goal.desiredState === 'cancelled' || phase.snapshot !== null || advised) {
+      if (goal.desiredState === 'cancelled'
+        || goalStateOf(goal, phase.snapshot).completion === 'for_active' || advised) {
         const queue = await readQueueRecord(deps.records, projectId);
         if (queue.status !== 'ready') { blocked += 1; continue; }
         if (!inQueue(queue.value, goalRef)) continue;

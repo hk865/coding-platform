@@ -163,8 +163,13 @@ export type QueryRecoveryEvent =
   | { kind: 'query_terminal_observed'; terminal: QueryTerminalFact }
   /** R: the start-up reconcile (QRR-03). */
   | { kind: 'query_reconcile_terminal'; hostInstanceId: string; terminal: QueryTerminalFact }
-  /** R: QRR-01 (claimed/prepared) and QRR-02 (entering without a fixed Turn). 新增. */
-  | { kind: 'query_reconcile_not_entered'; hostInstanceId: string; notEnteredCloseMessage?: 'host_restart_before_entry' | 'aborted_before_entry' }
+  /**
+   * R: QRR-01 (claimed/prepared) and QRR-02 (entering without a fixed Turn). 新增. `endedBeforeEntry` (P6I) is the
+   * reason this Host ended the attempt on purpose (a lasting preparation refusal, a person's stop): it is the close
+   * message, and a request round closes with it instead of waiting for a new attempt.
+   */
+  | { kind: 'query_reconcile_not_entered'; hostInstanceId: string; notEnteredCloseMessage?: 'host_restart_before_entry' | 'aborted_before_entry';
+    endedBeforeEntry?: string }
   /** R: QRR-04. 新增. */
   | { kind: 'query_reconcile_interrupted_clean'; hostInstanceId: string; kernelStatus: QueryInterruptedKernelStatus; history: RunExecutionHistoryV1 }
   /** R: QRR-05; `history` is null when the Kernel is not readable (SD-3). 新增. */
@@ -209,6 +214,8 @@ export type QueryRecoveryEffect =
   | { kind: 'end_dropped_round' }
   /** QRR-01/02 on a request round no drop covers: the old Run closes and the Job waits for a new attempt (`newAttempt`). */
   | { kind: 'new_attempt' }
+  /** P6I: a request round ended on purpose before entry closes `not_entered` with that reason (`requestEndedBeforeEntry`). */
+  | { kind: 'end_round_before_entry'; closeMessage: string }
   /** A request round with entry evidence: the Job's `enteredSession` becomes the claimed Session if null (`recordEntered`). */
   | { kind: 'record_entered' };
 
@@ -253,7 +260,9 @@ function releaseKeepingCursor(ctx: QueryRecoveryGuardContext, kernelTurnOpen: bo
  * QRR-01 (claimed/prepared: begin commits `entering` before the Kernel starts,
  * so there is no Turn) and QRR-02 (entering, the probe `ready` and no fixed
  * Turn in the Kernel Store, D-5 by analogy): closed `not_entered`, never
- * re-entered; the Session is released keeping its cursor (SES-09).
+ * re-entered; the Session is released keeping its cursor (SES-09). An attempt
+ * ended on purpose (P6I) closes its request round too: the same preparation
+ * or the same stop would end every new attempt the same way.
  */
 function reconcileNotEntered(state: QueryRecoveryState, event: Extract<QueryRecoveryEvent, { kind: 'query_reconcile_not_entered' }>, ctx: QueryRecoveryGuardContext): QueryRecoveryTransition {
   const admitted = reconcileAdmission(state, 'query_reconcile_not_entered', ctx);
@@ -262,7 +271,11 @@ function reconcileNotEntered(state: QueryRecoveryState, event: Extract<QueryReco
     return reject('guard_failed', 'unavailable', 'an entering QueryRun is proven not entered only by a readable Kernel without its Turn (SD-3)');
   }
   const request = ctx.request ?? null;
+  const ended = event.endedBeforeEntry;
   if (request !== null) {
+    if (ended !== undefined) {
+      return accept(settledState('not_entered'), [{ kind: 'end_round_before_entry', closeMessage: ended }, ...releaseKeepingCursor(ctx, false)]);
+    }
     // A drop that covers the round ends it; otherwise the person's words stay
     // queued on the same Job for a new attempt.
     if (request.coveredByDrop === null) {
@@ -273,7 +286,8 @@ function reconcileNotEntered(state: QueryRecoveryState, event: Extract<QueryReco
       : accept({ ...settledState('not_entered'), jobStatus: 'pending' }, [{ kind: 'new_attempt' }, ...releaseKeepingCursor(ctx, false)]);
   }
   return accept(settledState('not_entered'), [
-    { kind: 'settle_query', settlement: { outcome: 'not_entered', closeMessage: event.notEnteredCloseMessage ?? 'host_restart_before_entry' }, history: { kind: 'unchanged' } },
+    { kind: 'settle_query', settlement: { outcome: 'not_entered',
+      closeMessage: ended ?? event.notEnteredCloseMessage ?? 'host_restart_before_entry' }, history: { kind: 'unchanged' } },
     ...releaseKeepingCursor(ctx, false),
   ]);
 }

@@ -127,6 +127,12 @@ export type HostSettingsSnapshot = {
    * project without an entry uses `defaults`, the factory "auto" for both switches).
    */
   structuralApproval: { saved: Readonly<Record<string, StructuralApprovalV1>>; defaults: StructuralApprovalV1 };
+  /**
+   * DESIGN §1.9 (Q20): each project's default reply deadline in minutes as stored (`saved`, keyed by projectId; a
+   * project without an entry uses `default`, the factory 1440 = 24 hours). A save applies to that project's next
+   * reply-asking send that names no deadline; a message already sent keeps its deadline.
+   */
+  replyDeadline: { saved: Readonly<Record<string, number>>; default: number };
 };
 /**
  * PL/§10.3: the whole `plan-loop-limits` setting. `null` clears the saved table
@@ -176,6 +182,9 @@ export type SaveKnowledgeLocalSettings = { projectId: string; workspaceId: strin
 /** 121-109 (route `structural-approval/save`): one project's two structural switches; `null` restores the factory
  *  default. */
 export type SaveStructuralApprovalSettings = { projectId: string; value: StructuralApprovalV1 | null };
+/** DESIGN §1.9 Q20 (route `reply-deadline/save`): one project's default reply deadline, whole minutes 1..525,600 (one
+ *  year); `null` restores the factory 24 hours. */
+export type SaveReplyDeadlineSettings = { projectId: string; minutes: number | null };
 /** 121-106 (route `workspaces/access`): switch one registered workspace's write and command access. Commands require
  *  write. NET-B adds its network field here later. */
 export type SaveWorkspaceAccess = { scope: CoreScope; writeAllowed: boolean; commandsAllowed: boolean };
@@ -269,6 +278,7 @@ export type SettingsRoutes = {
   'plan-loop-limits/save': { input: SavePlanLoopLimitsSettings; value: HostSettingsSnapshot };
   'knowledge-local': { input: SaveKnowledgeLocalSettings; value: HostSettingsSnapshot };
   'structural-approval/save': { input: SaveStructuralApprovalSettings; value: HostSettingsSnapshot };
+  'reply-deadline/save': { input: SaveReplyDeadlineSettings; value: HostSettingsSnapshot };
   'prompts/packs/list': { input: Record<string, never>; value: PromptPackListV1 };
   'prompts/packs/create': { input: { packId: string }; value: PromptPackCreateV1 };
   'prompts/templates/read': { input: { packId: string; templateId: string }; value: PromptTemplateReadV1 };

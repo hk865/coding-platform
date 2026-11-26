@@ -30,6 +30,7 @@ import type { GraphWrite } from '../../core/work-graph/model/task-contracts.js';
 import type { AbandonedCandidateTailsV1, LatestAgentCandidateV1 } from '../../core/work-graph/tasks/plan-readers.js';
 import type { CandidateChainEndDeps } from '../../core/work-graph/tasks/plan-lineage.js';
 import type { RequestFactsPort } from '../../core/work-graph/tasks/request-facts.js';
+import type { GoalOriginV1 } from '../../core/work-graph/tasks/goal-origin.js';
 import type { StandardChangeFactsV1 } from '../../core/work-graph/views/decision-read-model.js';
 import type { TaskInputUpstreamPort } from '../../core/work-graph/model/context-input-contracts.js';
 import type { HoldBlockerV1 } from '../../core/work-graph/state/task-claim-hold.js';
@@ -262,6 +263,9 @@ export type WorkflowDependencies = {
    *  blocks the selection. Absent skips the trigger (the original no-trigger behavior). */
   copyForwarding?: (ctx: CoreCallContext, input: { goalRef: GoalRef }) =>
     Promise<CoreRejection | null>;
+  /** Where a Goal came from (`tasks/goal-origin.ts`): the line Task choice hands the first plan's tasks to the line
+   *  the person spoke on. Optional: a narrow double has no such fact and chooses as usual. */
+  goalOrigin?: (ctx: CoreCallContext, goalRef: GoalRef) => Promise<ReadResult<GoalOriginV1 | null>>;
   /**
    * §3.15 items 2–4: the one mode decision and bounded collection for a consulted line. Optional so every old
    * composition and narrow double keeps today's boundary-only behavior; CS's composition injects it.
@@ -452,6 +456,12 @@ export type PlanTurnFactsV1 = {
   requestRoot: QueryJobRef;
   /** The Goal id (not the full GoalRef). */
   goalId: string;
+  /**
+   * A call input, never stored: the start-up reconcile's step 6c only writes a missing candidate. Adopting a small
+   * change, asking for its check approval and running its checks stay for the normal driver's next pass (FLK rework
+   * ruling 2).
+   */
+  candidateOnly?: true;
 };
 
 /**
@@ -585,8 +595,9 @@ export type HandleInterventionResultV1 =
     reason: 'answered' | 'invalid_plan' | 'questions' | 'candidate' | 'declined' | 'adopted';
     /** A12: `source` when the chain's tail is another round, whose Answer replies M; this closing writes only R. */
     replySlot?: 'source' }
-  /** The closing's withdraw step: the Query is formally ended without an Answer. */
-  | { status: 'no_answer'; branch: 'no_task' }
+  /** The closing's withdraw step: the Query is formally ended without an Answer. `notStarted` (P6I) is the close
+   *  message when the Host ended it on purpose before it entered, so the person is told it never started. */
+  | { status: 'no_answer'; branch: 'no_task'; notStarted?: string }
   /** The association step of an `answer_ready` closing: the formal Answer is this message's reply. */
   | { status: 'responded'; branch: 'no_task'; answerRef: QueryJobAnswerRef }
   | { status: 'requested'; branch: 'goal_completed'; requestRef: QueryJobRef }

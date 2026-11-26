@@ -59,6 +59,8 @@ describe('E3M-8 the Member page on a waiting line', () => {
       expect(calls).toHaveLength(1);
       expect(calls[0]!.input).toEqual({
         recipient: wait.sender.ref, text: 'E3M wait intervention', entry: 'person_intervention', needsReply: true,
+        // The page subtitle's Goal (the line's own Goal): the person's words count toward it.
+        goalRef: { aggregateType: 'Goal', projectId: 'ag2b-collab-project', goalId: 's7b-goal-e3m-p11-1' },
       });
       expect(receiptBody(booted, 'messages/send')?.['status']).toBe('committed');
       expect(receiptBody(booted, 'messages/send')?.['sendStatus']).toBe('sent');
@@ -199,8 +201,10 @@ describe('E3M-8 the Member page on a waiting line', () => {
       await settle(() => callsOf(log, 'messages/send').length > 0
         && userTexts(page.root).includes('E3M wait intervention'), 5_000);
       expect(callsOf(log, 'messages/send')).toHaveLength(1);
-      /* The page's body carries no pins (the row's premise); P11-1 pins the exact four fields. */
-      expect(callsOf(log, 'messages/send')[0]!.input).not.toHaveProperty('goalRef');
+      /* The page's body names only the page subtitle's Goal, the line's own Goal, and no Task (the row's premise); the
+         claim still goes by the line's recent Work Task. P11-1 pins the exact fields. */
+      expect(callsOf(log, 'messages/send')[0]!.input).toHaveProperty('goalRef',
+        { aggregateType: 'Goal', projectId: 'ag2b-collab-project', goalId: 'e3m-p11-6-goal' });
       expect(callsOf(log, 'messages/send')[0]!.input).not.toHaveProperty('taskRef');
       const person = receiptBody(booted, 'messages/send')?.['value'] as SessionMessage | undefined;
       expect(person, 'the committed person message').toBeDefined();

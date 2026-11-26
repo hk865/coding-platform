@@ -25,7 +25,7 @@ import {
 import { packString } from '../../contracts/prompts/pack-string.js';
 import { consultationFactsLines } from './consultation-facts-text.js';
 import { takesSessionHistoryOf } from './context-history-facts.js';
-import { assembleSecretaryContext } from './context-secretary-recipe.js';
+import { assembleSecretaryContext, personWordsSection } from './context-secretary-recipe.js';
 import { sortedSources } from './context-support.js';
 import type {
   AssembledContextV1, ContextAssembler, ContextAssemblerDependencies, ContextQueryHistoryInputV1,
@@ -185,8 +185,16 @@ export async function assembleQueryContext(
   const intervention = queryKind === 'intervention_planning';
   const planning = intervention || (facts !== null && queryKind === 'initial_coordination');
   const extensions = facts?.extensions ?? projectCards?.[0]?.indexes ?? notImplementedExtensions();
+  // An adviser's planning round also sees what the person said directly to the Goal's other lines.
+  let personWords = '';
+  if (intervention && duty === 'adviser' && goal !== null) {
+    const words = await personWordsSection(deps, ctx, goal, input.facts.record.session, texts);
+    if (words.status !== 'ready') return words;
+    personWords = words.value;
+  }
   const goalText = goal === null ? null
-    : goalPayload(facts?.goal ?? goal, workspace.revision, extensions, texts);
+    : goalPayload(facts?.goal ?? goal, workspace.revision, extensions, texts)
+      + (personWords === '' ? '' : '\n' + personWords);
   const consultationText = input.consultationFacts === undefined ? null
     : consultationFactsLines(input.consultationFacts.facts, input.consultationFacts.resolved, texts);
   // The intervention template has its own `message` slot, so the question leaves the goal section

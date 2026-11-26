@@ -13,6 +13,7 @@ import { RawArtifactBodyStore } from '../core/record-store/body-store.js';
 import { createSqliteRawArtifactStore } from '../core/record-store/sqlite-body-store.js';
 import { createGoalService } from '../core/work-graph/tasks/task-service.js';
 import type { GoalTaskPort, GraphWrite } from '../core/work-graph/model/task-contracts.js';
+import { DEFAULT_REPLY_DEADLINE_MINUTES } from '../contracts/mailbox.js';
 import { COMPLETION_RECORD_SCHEMAS } from '../core/work-graph/tasks/completion-record-codecs.js';
 import { createMaterialRecordReaders, materialRecordSchemas } from '../core/work-graph/materials/record-readers.js';
 import { createMaterialService } from '../core/work-graph/materials/material-service.js';
@@ -330,6 +331,8 @@ import type {
 import {
   GOAL_CONFIRM_SCHEMAS, createGoalConfirmService, createInitializationBindingReader,
 } from '../core/work-graph/tasks/goal-confirm-service.js';
+import { readGoalOrigin } from '../core/work-graph/tasks/goal-origin.js';
+import { readGoalPersonWords } from '../core/work-graph/tasks/person-interventions.js';
 import { GOAL_COPY_RECORD_SCHEMAS, createCopiedInterventionForwarding,
   createGoalCopyService } from '../core/work-graph/tasks/goal-copy-service.js';
 import { createCopyInterventionPorts } from '../core/work-graph/communication/copy-retraction.js';
@@ -602,6 +605,14 @@ export type TargetPlatformOptions = {
    * builds the platform directly).
    */
   planLoopLimits?: () => PlanLoopLimitsV1;
+  /**
+   * DESIGN §1.9 (Q20): the project's live default reply deadline in ms. The
+   * Host reads its last settings snapshot on every call, so a saved value
+   * applies to the next reply-asking send; a message already sent keeps its
+   * frozen deadline. Absent keeps the factory 24 hours (a test that builds the
+   * platform directly).
+   */
+  defaultInquiryDeadlineMs?: () => number;
   /**
    * Host 现在装的每条检查从哪来（现值，每次读）：没过的检查的输出写明出处，接续说明和参谋的偏差轮都用。没给就都写
    * “不明”。
@@ -1356,7 +1367,16 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
     const rawControls = createRunControlService({ records: backend.records, authority: reads.authority,
       reads: executionReader, now, eventId: randomUUID });
     const rawMaterials = createMaterialService({ bodies, authority: reads.authority, now });
-    const rawGoals = createGoalService({ records: backend.records, now, eventId: randomUUID }).tasks;
+    // Slice 5 §3.2: the configured operator is the Host's real start actor. The
+    // production Host injects `operatorActor` from its trusted start snapshot,
+    // never from HTTP JSON or a model tool argument. The checks-executor
+    // fallback remains for independent compositions (the frozen scenario
+    // harness builds one with only `checks`, so removing it would make the
+    // frozen SC01/SC02 answer `unsupported`); see UNSPECIFIED.
+    const operatorActor = options.operatorActor ?? options.checks?.executor;
+    // GOAL-07P: the Goal service admits only this operator to a partial acceptance.
+    const rawGoals = createGoalService({ records: backend.records, now, eventId: randomUUID,
+      ...(operatorActor === undefined ? {} : { operatorActor }) }).tasks;
     const workspace = createWorkspaceTools({ access,
       now, limits: DEFAULT_WORKSPACE_LIMITS,
       ...(options.fileGraph === undefined ? {} : { fileGraph: options.fileGraph }),
@@ -1387,13 +1407,6 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
         encodeSessionOperationRecord(newWorkspaceJoinOperation({ projectId: input.projectId,
           workspaceId: input.workspaceId, occurredAt: input.now,
           ...(input.explorationDepth === undefined ? {} : { depth: input.explorationDepth }) })) });
-    // Slice 5 §3.2: the configured operator is the Host's real start actor. The
-    // production Host injects `operatorActor` from its trusted start snapshot,
-    // never from HTTP JSON or a model tool argument. The checks-executor
-    // fallback remains for independent compositions (the frozen scenario
-    // harness builds one with only `checks`, so removing it would make the
-    // frozen SC01/SC02 answer `unsupported`); see UNSPECIFIED.
-    const operatorActor = options.operatorActor ?? options.checks?.executor;
     const authorizeConfiguration = options.runtime === undefined
       ? undefined : createAuthorizeConfiguration(options.runtime);
     // Slice 1 (spec §0.2 L1, §3.3): the ONE `SessionFactsPort` instance. It is
@@ -1538,10 +1551,19 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       // The Work read stays live (a Host replaced after creation is the next resolution); only the Query branch is
       // overridden, and the override is kept beside the host so a test's live replacement is never overwritten.
       let queryOverride: RuntimeHostBindings['resolveQueryConfiguration'];
+      // P6I: only the line's workspace is needed, so the Session record is read alone. The full card also reads every
+      // work link and answers `capacity` past its window, which a preparation would report as its own refusal.
       const queryBinding = async (ctx: CoreCallContext, input: QueryRuntimeConfigurationInput) => {
-        const card = await sessionDirectory.readSession(ctx, input.sessionRef, 'project');
-        if (card.status !== 'ready') return card;
-        const lineWorkspaceId = card.value.record.workspaceId;
+        const key = sessionAggregateRefKey(plainSessionRefToAggregate(input.sessionRef));
+        const read = await backend.records.readMany([key]);
+        if (read.status !== 'ready') return { status: 'rejected' as const, code: 'unavailable' as const, reason: read.reason };
+        const record = read.value.records.find(entry => entry.refKey === key);
+        if (record === undefined) return { status: 'not_found' as const };
+        const session = decodeSessionRecord(record);
+        if (session.status !== 'decoded') {
+          return { status: 'rejected' as const, code: 'unavailable' as const, reason: `the line Session is damaged: ${session.reason}` };
+        }
+        const lineWorkspaceId = session.value.workspaceId;
         return runtime.resolveQueryConfiguration!(lineWorkspaceId === ctx.workspaceId
           ? ctx : { ...ctx, workspaceId: lineWorkspaceId }, input);
       };
@@ -1633,9 +1655,9 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       // identity port; it never turns a committed send into a second write.
       commitIdentities: rawBackend.commitIdentities,
       systemActor: SYSTEM_ACTOR, now, newId: randomUUID, duties: messageDuties,
-      // An absent duration is the platform's day; the owner keeps no second
-      // default and a caller-named duration always wins.
-      defaultInquiryDeadlineMs: 86_400_000,
+      // An absent duration is the project's default (the factory day without a Host setting); the owner keeps no
+      // second default and a caller-named duration always wins.
+      defaultInquiryDeadlineMs: options.defaultInquiryDeadlineMs ?? (() => DEFAULT_REPLY_DEADLINE_MINUTES * 60_000),
       secretaryRounds: secretaryQueryRun, requestOwners: rawRequestFacts, recipientExecutions, dispatchBasis, queryRounds,
       ...(authorizeConfiguration === undefined ? {} : { runtimeAdmission: { bodies, authorizeConfiguration } }) };
     const mailbox = createSessionMailbox(mailboxDependencies);
@@ -2854,6 +2876,10 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
         // (it needs the note read model); the closure reads the constructed entry at Run start, never before.
         handoffs: (ctx, input) => handoffEntry.requestHandoff(ctx, input),
         memoryMaterial,
+        // The person's words to a Goal's other lines, over the same store and mailbox, for an adviser's planning round
+        // and a secretary Goal round.
+        personWords: { readGoalPersonWords: (ctx, input) =>
+          readGoalPersonWords(ctx, { records: backend.records, messages: mailbox }, input) },
         // C3: the continuation brief's checkpoint uses the SAME workspace reader as the evidence owner.
         workspaceSource: continuationWorkspaceSource, pythonSyntax,
         // A.2 step 5.6: the in-process ends without a Kernel terminal (RUN-16, RUN-23).
@@ -2924,6 +2950,7 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       createGoal: (...args) => trackedCall(() => rawGoals.createGoal(...args), unavailable),
       completeTask: (...args) => trackedCall(() => rawGoals.completeTask(...args), unavailable),
       completeGoal: (...args) => trackedCall(() => rawGoals.completeGoal(...args), unavailable),
+      acceptPartialResult: (...args) => trackedCall(() => rawGoals.acceptPartialResult(...args), unavailable),
       setGoalControl: (...args) => trackedCall(() => rawGoals.setGoalControl(...args), unavailable),
       // The Goal read region's basis route: the SAME instance the graph reader and the mailbox take.
       readDispatchBasis: (...args) => trackedCall(() => dispatchBasis.readDispatchBasis(...args), unavailable),
@@ -3417,6 +3444,10 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       },
       cancelQuery(...args: Parameters<NonNullable<typeof runtime.port.cancelQuery>>) {
         return sessionCall(() => runtime.port.cancelQuery!(...args));
+      },
+      // P6I R2: the close is a write, drained at the platform close like every Query stage (app/README.md MH-07).
+      closeUnenteredQuery(...args: Parameters<NonNullable<typeof runtime.port.closeUnenteredQuery>>) {
+        return sessionCall(() => runtime.port.closeUnenteredQuery!(...args));
       },
     };
     // R5c.1: the raw Runtime surface is the SAME `runtime.port` plus the
@@ -4157,6 +4188,7 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       // the copy owner built above (one port shape: `Promise<CoreRejection | null>`).
       taskInputs: taskInputsOwner,
       copyForwarding: copiedInterventionForwarding.forwardCopiedInterventions,
+      goalOrigin: (callCtx, goalRef) => readGoalOrigin(backend.records, callCtx, goalRef),
       // §3.15 items 2–4: the one consultation mode decision and bounded collection over the SAME plan, execution,
       // mailbox and history owners the rest of the platform reads.
       consultationFacts: createConsultationFactsReader({
@@ -4451,6 +4483,9 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       // (read by the Workflow through the same source-and-part identity the writer uses).
       closingNotice: (ctx, input) => rawWorkflow.closingNotice!(ctx, input),
       sessionFacts,
+      // R1: the same duty resolver the intervention dispatch reads, so the view and the handler agree on which
+      // Goal-less person messages plan only.
+      sessionDuty: { dutyOfRole: (ctx, role) => sessionDutyResolver(role, ctx) },
       overlapGates: { readOverlapGates: (ctx, input) => overlapGates.readOverlapGates(ctx, input) },
       candidateSuccessors: (goalRef) => planReadersOwner.candidateSuccessorsOf(goalRef),
       readReview: (ctx, input) => unknownCallReviews.readReview(ctx, input),

@@ -243,12 +243,14 @@ describe('S7B-2 R entered consumption', () => {
     }
 
     // two-version race (SQLite): the old Host's entered commit and the reopened Host's recovery commit carry one fragment.
+    // Both writers stay: the old Host's held commit reaches the store on release and production's CAS picks the
+    // winner (`heldCommitsRace`, FLK rework ruling 5).
     const entered = commitBarrier.hold(byIdentityPrefix('r5b-query-execution:entered:'), 'v1 entered');
     const recovery = commitBarrier.holdAfter(byIdentityPrefix('a2-query-recovery:'), 'v2 recovery');
     const reply = await replyOrExpireS7B2Round(world, { kind: 'reply', goal: held.goal,
       recipient: held.recipients[0], message: held.messages[0].ref, task: held.tasks[0], label });
     await entered.reached;
-    const crash = world.crash();
+    const crash = world.crash({ heldCommitsRace: true });
     crash.catch(() => undefined);
     await recovery.reached;
     entered.release();

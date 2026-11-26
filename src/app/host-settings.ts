@@ -100,6 +100,7 @@ import type {
 } from './host-settings-types.js';
 import { DEFAULT_WORK_RUN_TOKEN_BUDGET, MAX_WORK_RUN_TOKEN_BUDGET } from './host-settings-types.js';
 import { DEFAULT_COMMAND_REVIEW_LINE_MINUTES } from '../contracts/resource-caps.js';
+import { DEFAULT_REPLY_DEADLINE_MINUTES, MAX_REPLY_DEADLINE_MINUTES } from '../contracts/mailbox.js';
 import type { WorkspaceRemovalKindV1, WorkspaceRemovalViewV1 } from '../contracts/workspace-removal.js';
 
 /** The published settings route set. `SettingsRoutes` stays the type truth. */
@@ -109,6 +110,7 @@ export const SETTINGS_ROUTE_SUFFIXES = [
   'automation/save',
   'resource-caps/save', 'run-budget/save', 'command-review/save', 'plan-loop-limits/save', 'prompts/packs/list', 'prompts/packs/create', 'prompts/templates/read',
   'prompts/templates/save', 'prompts/tools/read', 'prompts/tools/save', 'knowledge-local', 'structural-approval/save',
+  'reply-deadline/save',
 ] as const satisfies readonly SettingsRoute[];
 
 export function isSettingsRoute(value: string): value is SettingsRoute {
@@ -228,6 +230,9 @@ export type HostSettingsPrivateSnapshot = {
   /** 121-109: each project's saved structural auto-approval, by projectId; a project without one uses the factory
    *  default. The Host reads its last copy when a proposal freezes or a note is written. */
   structuralApproval: Readonly<Record<string, StructuralApprovalV1>>;
+  /** Q20: each project's saved default reply deadline in minutes, by projectId; a project without one uses the
+   *  factory default. The Host reads its last copy at each reply-asking send that names no deadline. */
+  replyDeadlineMinutes: Readonly<Record<string, number>>;
 };
 
 /** Trusted facts about one Host-registered workspace, read from the Host. */
@@ -501,6 +506,9 @@ type PersistedSettingsV1 = {
   /** 121-109: each project's structural auto-approval, by projectId. Absent in old files and while no project has
    *  one; absent reads as the empty table. */
   structuralApproval?: Record<string, StructuralApprovalV1>;
+  /** Q20: each project's default reply deadline in minutes, by projectId. Absent in old files and while no project has
+   *  one; absent reads as the empty table. A present but invalid table refuses Host startup. */
+  replyDeadlineMinutes?: Record<string, number>;
 };
 
 const scopeKey = (scope: CoreScope): string => `${scope.projectId}\u0000${scope.workspaceId}`;
@@ -727,6 +735,19 @@ function parseStoredStructuralApproval(value: unknown): Record<string, Structura
   return table;
 }
 
+/** Q20: a saved default reply deadline is a positive safe integer of minutes, at most one year. */
+function isReplyDeadlineMinutes(value: unknown): value is number {
+  return isPos(value) && value <= MAX_REPLY_DEADLINE_MINUTES;
+}
+
+/** Q20: a present table maps each projectId to its minutes; anything else fails Host start-up. */
+function parseStoredReplyDeadlineMinutes(value: unknown): Record<string, number> {
+  if (!isRecord(value)
+    || !Object.entries(value).every(([projectId, minutes]) => projectId.length > 0 && isReplyDeadlineMinutes(minutes)))
+    throw new Error('the private host settings file is invalid');
+  return { ...value } as Record<string, number>;
+}
+
 /** The published/saved tables never share a mutable object with the defaults. */
 const copyPlanLoopLimits = (limits: Readonly<PlanLoopLimitsV1>): PlanLoopLimitsV1 => ({
   ...limits,
@@ -808,7 +829,9 @@ function parsePersisted(text: string): PersistedSettingsV1 {
     ...(raw['knowledgeLocalOnly'] === undefined
       ? {} : { knowledgeLocalOnly: parseStoredKnowledgeLocalOnly(raw['knowledgeLocalOnly']) }),
     ...(raw['structuralApproval'] === undefined
-      ? {} : { structuralApproval: parseStoredStructuralApproval(raw['structuralApproval']) }) };
+      ? {} : { structuralApproval: parseStoredStructuralApproval(raw['structuralApproval']) }),
+    ...(raw['replyDeadlineMinutes'] === undefined
+      ? {} : { replyDeadlineMinutes: parseStoredReplyDeadlineMinutes(raw['replyDeadlineMinutes']) }) };
 }
 
 /** The settings file of one directory: null when it does not exist. A present but unreadable or corrupt file is an
@@ -899,6 +922,10 @@ export async function createHostSettings(
   const knowledgeLocalOnly: Record<RepoKey, true> = { ...persisted.knowledgeLocalOnly };
   /** 121-109: each project's structural auto-approval, by projectId; `structural-approval/save` changes it. */
   const structuralApproval: Record<string, StructuralApprovalV1> = { ...persisted.structuralApproval };
+  /** Q20: each project's default reply deadline in minutes, by projectId; `reply-deadline/save` changes it. The
+   *  null-prototype table makes any projectId (including `__proto__`) an ordinary own key. */
+  const replyDeadlineMinutes: Record<string, number> =
+    Object.assign(Object.create(null) as Record<string, number>, persisted.replyDeadlineMinutes);
   const effectiveWorkRunTokenBudget = (): number => workRunTokenBudget ?? DEFAULT_WORK_RUN_TOKEN_BUDGET;
   const effectivePlanLoopLimits = (): Readonly<PlanLoopLimitsV1> =>
     planLoopLimitSetting ?? DEFAULT_PLAN_LOOP_LIMITS;
@@ -951,6 +978,7 @@ export async function createHostSettings(
     commandReviewLineMinutes: effectiveCommandReviewLine(),
     knowledgeLocalOnly: { ...knowledgeLocalOnly },
     structuralApproval: structuredClone(structuralApproval),
+    replyDeadlineMinutes: { ...replyDeadlineMinutes },
   });
 
   const persist = async (): Promise<void> => {
@@ -961,7 +989,8 @@ export async function createHostSettings(
       ...(planLoopLimitSetting === undefined ? {} : { planLoopLimits: planLoopLimitSetting }),
       ...(commandReviewLineSetting === undefined ? {} : { commandReviewLineMinutes: commandReviewLineSetting }),
       ...(Object.keys(knowledgeLocalOnly).length === 0 ? {} : { knowledgeLocalOnly }),
-      ...(Object.keys(structuralApproval).length === 0 ? {} : { structuralApproval }) };
+      ...(Object.keys(structuralApproval).length === 0 ? {} : { structuralApproval }),
+      ...(Object.keys(replyDeadlineMinutes).length === 0 ? {} : { replyDeadlineMinutes }) };
     await mkdir(settingsDirectory, { recursive: true, mode: 0o700 });
     const temporaryPath = join(settingsDirectory, `.host-settings.${randomUUID()}.tmp`);
     await writeFile(temporaryPath, JSON.stringify(payload), { mode: 0o600 });
@@ -1164,6 +1193,7 @@ export async function createHostSettings(
       default: DEFAULT_COMMAND_REVIEW_LINE_MINUTES,
     },
     structuralApproval: { saved: structuredClone(structuralApproval), defaults: { ...DEFAULT_STRUCTURAL_APPROVAL } },
+    replyDeadline: { saved: { ...replyDeadlineMinutes }, default: DEFAULT_REPLY_DEADLINE_MINUTES },
   });
 
   // Restore every persisted directory registration through the real owners
@@ -1994,8 +2024,7 @@ export async function createHostSettings(
   /**
    * 121-106 item 5, 121-109: save one project's two structural switches (`null` goes back to the factory default),
    * persisted and pushed to the Host like `automation/save`. The Host reads them when a proposal freezes or a note is
-   * written or staged; a card already waiting stays a card (62-6). The setting belongs to a project this Host has
-   * open, so a mistyped id is refused rather than shown as saved.
+   * written or staged; a card already waiting stays a card (62-6).
    */
   async function structuralApprovalRoute(input: unknown): Promise<SettingsResponse<HostSettingsSnapshot>> {
     if (!isRecord(input) || !nonEmpty(input['projectId']) || !('value' in input))
@@ -2003,14 +2032,38 @@ export async function createHostSettings(
     const value = input['value'] === null ? null : structuralApprovalOf(input['value']);
     if (input['value'] !== null && value === null)
       return invalid("value must be null or { proposals, repairs }, each 'auto' or 'ask'");
-    const projectId = input['projectId'];
+    return await saveProjectEntry(structuralApproval, input['projectId'], value);
+  }
+
+  /**
+   * DESIGN §1.9 (Q20): save one project's default reply deadline in whole minutes, at most one year (`null` goes back to
+   * the factory 24 hours), persisted and pushed to the Host like `structural-approval/save`. That project's next
+   * reply-asking send that names no deadline reads it; a message already sent keeps the deadline frozen at its send.
+   */
+  async function replyDeadlineRoute(input: unknown): Promise<SettingsResponse<HostSettingsSnapshot>> {
+    if (!isRecord(input) || !nonEmpty(input['projectId']) || !('minutes' in input))
+      return invalid('reply-deadline/save requires a projectId and minutes');
+    const minutes = input['minutes'];
+    if (minutes !== null && !isReplyDeadlineMinutes(minutes))
+      return invalid(`minutes must be null or a whole number from 1 to ${MAX_REPLY_DEADLINE_MINUTES}`);
+    return await saveProjectEntry(replyDeadlineMinutes, input['projectId'], minutes);
+  }
+
+  /**
+   * One project's entry of a per-project setting table (`null` removes it), persisted and pushed to the Host. The
+   * setting belongs to a project this Host has open, so a mistyped id is refused rather than shown as saved; a failed
+   * write restores the entry.
+   */
+  async function saveProjectEntry<T>(
+    table: Record<string, T>, projectId: string, value: T | null,
+  ): Promise<SettingsResponse<HostSettingsSnapshot>> {
     if (!assembly.listWorkspaces().some(workspace => workspace.scope.projectId === projectId))
       return notFound('the project is not open on this Host');
-    const previous = structuralApproval[projectId];
-    if (value === null) delete structuralApproval[projectId]; else structuralApproval[projectId] = value;
+    const previous = table[projectId];
+    if (value === null) delete table[projectId]; else table[projectId] = value;
     try { await persist(); }
     catch {
-      if (previous === undefined) delete structuralApproval[projectId]; else structuralApproval[projectId] = previous;
+      if (previous === undefined) delete table[projectId]; else table[projectId] = previous;
       return unavailable('the settings file could not be written');
     }
     try { await notify(); }
@@ -2128,6 +2181,7 @@ export async function createHostSettings(
       return { kind: 'rejected', response: notFound('the prompt pack does not exist') };
     const read = await readDiskPromptPack(promptsRoot, packId);
     if (read.status === 'not_found') return { kind: 'rejected', response: notFound('the prompt pack does not exist') };
+    if (read.status === 'unreadable') return { kind: 'rejected', response: unavailable(read.reason) };
     if (read.status === 'rejected')
       return { kind: 'rejected', response: invalidProblems('the prompt pack is invalid', read.problems) };
     return { kind: 'ready', read };
@@ -2148,6 +2202,7 @@ export async function createHostSettings(
   > {
     const read = await readDiskPromptPack(promptsRoot, packId);
     if (read.status === 'not_found') return { kind: 'rejected', response: notFound('the prompt pack does not exist') };
+    if (read.status === 'unreadable') return { kind: 'rejected', response: unavailable(read.reason) };
     const problems = read.status === 'rejected' ? read.problems : [];
     if (read.chain.length === 0 || read.chain[0]?.packId !== packId)
       return { kind: 'rejected', response: invalidProblems('the prompt pack is invalid', problems) };
@@ -2379,6 +2434,7 @@ export async function createHostSettings(
       case 'plan-loop-limits/save': return await savePlanLoopLimitsRoute(input);
       case 'knowledge-local': return await knowledgeLocalRoute(input);
       case 'structural-approval/save': return await structuralApprovalRoute(input);
+      case 'reply-deadline/save': return await replyDeadlineRoute(input);
       case 'prompts/packs/list': return await packsListRoute();
       case 'prompts/packs/create': return await packsCreateRoute(input);
       case 'prompts/templates/read': return await templateReadRoute(input);

@@ -96,9 +96,10 @@ const goalDraftConfirmedCodec = createEventCodec(goalDraftConfirmedFormat);
 /** The one registration group the composition root adds for this event. */
 export const GOAL_CONFIRM_SCHEMAS: RecordBackendSchemas = formatSchemas([goalDraftConfirmedCodec]);
 
-/** The binding reader's one store; the same reader also serves the request facts and the adoption. */
+/** The binding reader's one store; the same reader also serves the request facts, the adoption and a Goal's origin
+ *  (`goal-origin.ts`, which a read-only view passes its own records to). The reader only looks records up. */
 export type InitializationBindingReaderDependencies = {
-  records: GoalRecordTransactionPort & RecordLookupPort;
+  records: Pick<RecordLookupPort, 'lookup'>;
 };
 
 /** The real stores and services this owner is assembled with (`X/create-platform.ts`). */
