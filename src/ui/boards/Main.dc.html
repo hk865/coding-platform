@@ -1347,6 +1347,9 @@ textarea.dc-input { min-height: 52px; }
         </sc-if>
         <!-- 图例 stays in 轨道 too (there it explains the bars, the colours and the calendar) -->
         <sc-if value="{{isLanes}}" hint-placeholder-val="{{ false }}"><span class="sp"></span></sc-if>
+        <sc-if value="{{tpIsArch}}" hint-placeholder-val="{{ false }}">
+          <button class="{{semCls}}" type="button" aria-pressed="{{semOn}}" onClick="{{toggleSem}}" title="Agent 写下的联系和流程，不是代码依赖">语义联系</button>
+        </sc-if>
         <button class="{{legendCls}}" type="button" onClick="{{toggleLegend}}" aria-pressed="{{legend}}">图例</button>
         <sc-if value="{{tpIsTask}}" hint-placeholder-val="{{ true }}">
           <a class="btn-text plink" href="{{taskMapHref}}" title="整页的任务图：依赖图（DAG）、大纲和轨道">
@@ -1579,6 +1582,58 @@ textarea.dc-input { min-height: 52px; }
         </sc-if>
 
         <sc-if value="{{notLanes}}" hint-placeholder-val="{{ true }}">
+        <sc-if value="{{sem.show}}" hint-placeholder-val="{{ false }}">
+          <div class="qlist ov-sem-panel" aria-label="语义联系">
+            <sc-if value="{{sem.hasTitle}}" hint-placeholder-val="{{ false }}">
+              <div class="qmore">{{sem.title}}</div>
+            </sc-if>
+            <sc-if value="{{sem.loading}}" hint-placeholder-val="{{ false }}">
+              <div class="qmore">{{sem.loadingText}}</div>
+            </sc-if>
+            <sc-if value="{{sem.empty}}" hint-placeholder-val="{{ false }}">
+              <div class="qmore">{{sem.emptyText}}</div>
+            </sc-if>
+            <sc-if value="{{sem.error}}" hint-placeholder-val="{{ false }}">
+              <div class="qmore">没读出来：{{sem.errorText}}</div>
+              <button class="btn-text" type="button" onClick="{{sem.retry}}">再读一次</button>
+            </sc-if>
+            <sc-if value="{{sem.cap}}" hint-placeholder-val="{{ false }}">
+              <div class="qmore">{{sem.capText}}</div>
+            </sc-if>
+            <sc-if value="{{sem.blockError}}" hint-placeholder-val="{{ false }}">
+              <div class="qmore">没读出来：{{sem.blockError}}</div>
+              <button class="btn-text" type="button" onClick="{{sem.retry}}">再读一次</button>
+            </sc-if>
+            <sc-if value="{{sem.hasTitle}}" hint-placeholder-val="{{ false }}">
+              <sc-if value="{{sem.hasFlow}}" hint-placeholder-val="{{ false }}">
+                <div class="qmore">{{sem.flowTopic}}
+                  <button class="btn-text" type="button" onClick="{{sem.clearFlow}}" aria-label="取消选中流程" title="取消选中流程">×</button>
+                </div>
+              </sc-if>
+              <sc-for list="{{sem.flows}}" as="f" hint-placeholder-count="2">
+                <div class="qrow" role="button" tabindex="0" aria-pressed="{{f.on}}" onClick="{{f.go}}" onKeyDown="{{f.key}}">
+                  <button class="qname" type="button" onClick="{{f.go}}" onKeyDown="{{f.key}}" title="{{f.name}}">{{f.name}}</button>
+                  <span class="qpath">{{f.note}}</span>
+                  <a class="btn-text plink" href="{{f.href}}" onClick="{{f.stop}}" aria-label="在完整架构图看这条流程" title="在完整架构图看这条流程">
+                    <svg class="ico xs" viewBox="0 0 16 16" aria-hidden="true"><path d="M9.25 2.75h4v4M13.25 2.75 7.75 8.25"></path><path d="M11.75 9.5v3.75h-9V4.25h3.75"></path></svg>
+                  </a>
+                </div>
+              </sc-for>
+              <sc-for list="{{sem.rows}}" as="r" hint-placeholder-count="3">
+                <a class="qrow" href="{{r.href}}" title="{{r.title}}">
+                  <span class="{{r.sq}}" aria-hidden="true"></span>
+                  <span class="qname">{{r.name}}</span>
+                  <span class="qpath">{{r.note}}</span>
+                  <svg class="ico xs" viewBox="0 0 16 16" aria-hidden="true"><path d="M9.25 2.75h4v4M13.25 2.75 7.75 8.25"></path><path d="M11.75 9.5v3.75h-9V4.25h3.75"></path></svg>
+                </a>
+              </sc-for>
+              <div class="qmore">{{sem.more}}</div>
+              <sc-if value="{{sem.hasNotes}}" hint-placeholder-val="{{ false }}">
+                <sc-for list="{{sem.notes}}" as="sn" hint-placeholder-count="2"><div class="qmore">{{sn}}</div></sc-for>
+              </sc-if>
+            </sc-if>
+          </div>
+        </sc-if>
         <sc-if value="{{hasCrumbs}}" hint-placeholder-val="{{ false }}">
           <nav class="crumbs" aria-label="层级">
             <sc-for list="{{crumbs}}" as="c" hint-placeholder-count="2">
@@ -1613,6 +1668,7 @@ textarea.dc-input { min-height: 52px; }
                   </sc-if>
                   <button class="{{r.lb}}" type="button" onClick="{{r.pick}}" onDoubleClick="{{r.pin}}" onContextMenu="{{r.tab}}" onMouseEnter="{{r.hover}}" onMouseLeave="{{unhover}}" onFocus="{{r.hover}}" onBlur="{{unhover}}" aria-expanded="{{r.ex}}">
                     <span class="tr-name">{{r.name}}</span>
+                    <sc-if value="{{r.hasSem}}" hint-placeholder-val="{{ false }}"><span class="tr-n">{{r.sem}}</span></sc-if>
                     <span class="tr-n">{{r.a}}</span>
                     <sc-if value="{{r.hasB}}" hint-placeholder-val="{{ false }}"><span class="tr-n">{{r.b}}</span></sc-if>
                     <sc-if value="{{r.canOpen}}" hint-placeholder-val="{{ false }}">
@@ -1624,6 +1680,7 @@ textarea.dc-input { min-height: 52px; }
                   <button class="{{r.nb}}" type="button" onClick="{{r.pick}}" onDoubleClick="{{r.pin}}" onContextMenu="{{r.tab}}" onMouseEnter="{{r.hover}}" onMouseLeave="{{unhover}}" onFocus="{{r.hover}}" onBlur="{{unhover}}" aria-expanded="{{r.ex}}" title="{{r.title}}">
                     <span class="{{r.nc}}"><span class="{{r.sq}}"></span></span>
                     <span class="tr-name">{{r.name}}</span>
+                    <sc-if value="{{r.hasSem}}" hint-placeholder-val="{{ false }}"><span class="tr-n">{{r.sem}}</span></sc-if>
                     <sc-if value="{{r.hasWhy}}" hint-placeholder-val="{{ false }}"><span class="tr-why">{{r.why}}</span></sc-if>
                     <sc-if value="{{r.canOpen}}" hint-placeholder-val="{{ false }}">
                       <svg class="ico xs tr-chev" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4"></path></svg>
@@ -1641,6 +1698,11 @@ textarea.dc-input { min-height: 52px; }
             </sc-for>
             <sc-if value="{{rel.show}}" hint-placeholder-val="{{ false }}">
               <svg class="deps" aria-hidden="true"><path class="dl" d="{{rel.d}}"></path><path class="dl" d="{{rel.head}}"></path></svg>
+            </sc-if>
+            <sc-if value="{{sem.hasArcs}}" hint-placeholder-val="{{ false }}">
+              <sc-for list="{{sem.arcs}}" as="sa" hint-placeholder-count="2">
+                <svg class="deps ov-sem sem-arc{{sa.cls}}" aria-hidden="true"><path class="ln" d="{{sa.d}}"></path><path class="hd" d="{{sa.head}}"></path></svg>
+              </sc-for>
             </sc-if>
           </div>
           <sc-if value="{{card.show}}" hint-placeholder-val="{{ false }}">
@@ -1896,7 +1958,7 @@ class Component extends DCLogic {
       resolved: {}, dec: null, facts: false, paused: false, cancelled: false, pausedAt: '', cancelledAt: '', confirmCancel: false, stops: [],
       conflict: null, cfPick: null, railArch: false, railOrder: null, askRef: '', askSq: '', panel: true, t21: null,
       ptab: 'task', view: 'tree', aview: 'tree', ascope: 'work', sel: null, asel: null, q: '', aq: '', aconf: false,
-      open: {}, aopen: {}, ofold: {}, drill: null, aroot: 'SYS', hover: null, relHover: null, legend: false, pins: [], extra: []
+      open: {}, aopen: {}, ofold: {}, drill: null, aroot: 'SYS', hover: null, relHover: null, legend: false, semOn: this.semFlowHash(), pins: [], extra: []
     });
     /* §2.1/B-04: a wired page has no sample file page, Diff selection, command
        state or expanded sample folders; the sample mount keeps them. */
@@ -1971,6 +2033,14 @@ class Component extends DCLogic {
         }
       }
       if (Object.keys(patch).length > 0) this.setState(patch);
+    }
+    /* The boot read went to 任务图; a `#flow=` page asks for the architecture tab's
+       semantic read once, then the deep link's flow is selected when it arrives. */
+    if (this.semFlowHash() && this.semOnNow() && this._semFlowRead !== true
+      && this.dataMode() && this.props.actions && typeof this.props.actions.readMore === 'function') {
+      this._semFlowRead = true;
+      this.setState({ ptab: 'arch', panel: true });
+      this.axRead('arch');
     }
     /* a node page (x1, x2 …) belongs to the old scale; the maps and the auxiliary pages (文件, 命令, Diff, file pages) stay */
     /* decision 33: a line the new scale's rail does not have (a synthetic line of the 600 example) closes back to the main
@@ -3131,6 +3201,178 @@ class Component extends DCLogic {
     return { goal: goal, tree: tree, byId: byId, flat: flat, outline: outline, hits: hits, sel: sel, root: root, q: q, conf: !!s.aconf,
       work: work, nWork: workFiles.length, nWorkMods: mods.size,
       crumbs: root.id !== 'SYS' ? this.crumbsOf(byId, root.id) : [] };
+  }
+
+  /* ------------------------------------------------------------ semantic layer (batch 9) */
+  /* The switch is page state only: default off, nothing goes to the URL or either storage.
+     Turning it on or off still calls `readMore` so the shared read loop reruns the tab. */
+  semOnNow() { return (this.state || {}).semOn === true; }
+  /* `#flow=` is the one deep link that opens this layer by itself; the first read at
+     boot went to the task tab, so the page asks for the architecture tab once it can. */
+  semFlowHash() {
+    return typeof location !== 'undefined' && String(location.hash || '').startsWith('#flow=');
+  }
+  toggleSem() {
+    const on = this.semOnNow();
+    /* Turning it on leaves `semFlow` unset so a `#flow=` deep link can still pick its
+       flow from the first semantic read; turning it off withdraws any local selection. */
+    this.setState({ semOn: !on, semFlow: on ? null : undefined, semLoading: !on, semLoadKey: this.props.dataVersion || 0 });
+    this.axRead('arch');
+  }
+  semHref(noteId) {
+    const base = this.props.archHref || 'ArchOverview.dc.html';
+    if (!noteId) return base;
+    return base + (base.indexOf('?') >= 0 ? '&sem=' : '?sem=') + noteId;
+  }
+  semDot(row) {
+    return 'sem-dot ' + (row.result === 'verified' ? 'ok' : row.result === 'broken' ? 'broken'
+      : row.result === 'unverifiable' ? 'grey' : 'none');
+  }
+  semEndName(end) {
+    if (!end) return '';
+    const name = end.moduleName || end.moduleId || '';
+    const file = end.path ? end.path.split('/').pop() : '';
+    return name || file || '?';
+  }
+  semFlowNote(flow) {
+    const parts = [flow.steps.length + ' 步'];
+    if (flow.gapTexts.length) parts.push(flow.gapTexts.length + ' 处接不上');
+    if (flow.notCurrent.length) parts.push(flow.notCurrent.length + ' 步不在了');
+    parts.push(flow.standing === 'eligible' ? '都对得上' : '暂不作数');
+    return parts.join(' · ');
+  }
+  /* The block above the tree and the flow the tree marks. `semFlow` stays undefined
+     until the page chooses one, so a `#flow=` deep link still picks its flow on the
+     first render; `null` (×) means the page chose nothing. */
+  semView(s, isArch) {
+    const aux = this.auxData();
+    const arch = aux && aux.arch ? aux.arch : null;
+    const sd = arch ? arch.semantic : null;
+    const on = (s || {}).semOn === true;
+    const loading = on && (sd === null || (s.semLoading === true && (this.props.dataVersion || 0) === s.semLoadKey));
+    const status = loading ? 'loading' : sd === null ? 'loading' : sd.status;
+    const workOnly = s.ascope !== 'all' && !s.aconf;
+    const workSet = workOnly && arch && arch.work ? arch.work : null;
+    const scoped = (path) => workSet === null || (typeof path === 'string' && path !== '' && workSet.has(path));
+    const links = (sd ? sd.links : []).filter((row) => !workSet
+      || scoped(row.from && row.from.path) || scoped(row.to && row.to.path));
+    const allFlows = sd ? sd.flows : [];
+    const flows = allFlows.filter((flow) => !workSet
+      || flow.steps.some((step) => scoped(step.from && step.from.path) || scoped(step.to && step.to.path)));
+    const choice = s.semFlow === undefined ? (sd ? sd.flowPick : null) : s.semFlow;
+    const norm = (id) => String(id || '').replace(/^f-/, '');
+    const flow = choice ? allFlows.find((row) => norm(row.noteId) === norm(choice)) || null : null;
+    const rankOf = (row) => row.result === 'broken' ? 0 : row.standing === 'ineligible' ? 1 : 2;
+    const sorted = links.slice().sort((a, b) => (rankOf(a) - rankOf(b)) || (a.topic < b.topic ? -1 : 1));
+    const rows = sorted.slice(0, 3).map((row) => ({
+      sq: this.semDot(row),
+      name: row.relationWord + ' · ' + this.semEndName(row.from) + ' → ' + this.semEndName(row.to),
+      note: row.resultWord + (row.standingWhy ? ' · ' + row.standingWhy : '') + ' · ' + row.standingWord,
+      href: this.semHref(row.noteId),
+      title: row.conclusion || row.topic || row.relationWord,
+    }));
+    return {
+      show: isArch && on,
+      hasTitle: status === 'ready',
+      title: workOnly ? '正在处理的文件上：' + links.length + ' 条联系、' + flows.length + ' 条流程'
+        : '整个项目：' + links.length + ' 条联系、' + flows.length + ' 条流程',
+      loading: status === 'loading',
+      loadingText: '正在读联系和流程…',
+      empty: status === 'empty',
+      emptyText: '这个项目还没有写下的联系和流程',
+      error: status === 'error',
+      errorText: sd && sd.errorText ? sd.errorText : '连不上平台（网络断了，或平台没在运行）',
+      retry: () => { this.setState({ semLoading: true, semLoadKey: this.props.dataVersion || 0 }); this.axRead('arch'); },
+      cap: status === 'cap',
+      capText: sd ? sd.capText : '',
+      blockError: sd && sd.status !== 'error' ? (sd.linkError || sd.flowError) : '',
+      hasFlows: flows.length > 0,
+      flows: flows.map((row) => ({
+        name: row.topic,
+        note: this.semFlowNote(row),
+        href: this.semHref(),
+        on: flow !== null && row.noteId === flow.noteId,
+        go: () => this.setState({ semFlow: row.noteId }),
+        key: (e) => { if (e && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); this.setState({ semFlow: row.noteId }); } },
+        stop: (e) => { if (e && e.stopPropagation) e.stopPropagation(); },
+      })),
+      hasRows: rows.length > 0,
+      rows: rows,
+      hasMore: status === 'ready',
+      more: '另 ' + (links.length - rows.length) + ' 条和每条的证据在完整架构图',
+      hasFlow: flow !== null,
+      flowTopic: flow ? flow.topic : '',
+      clearFlow: () => this.setState({ semFlow: null }),
+      flow: flow,
+      arcs: [], hasArcs: false,
+      notes: [], hasNotes: false,
+    };
+  }
+  /* The tree rows the selected flow passes: `第 n 步` after the label, everything else
+     dimmed, and an arc between two existing rows. A step is not drawn when an end is
+     folded into a small square (the note below the list names it). */
+  semMarkRows(rows, sem, pmap, outline) {
+    const flow = sem && sem.flow;
+    if (!flow) return;
+    const rowOf = new Map();
+    rows.forEach((row) => {
+      row.sem = ''; row.hasSem = false;
+      const path = row.node && row.node.path;
+      if (path) rowOf.set(path, row);
+      if (row.node && row.node.id) rowOf.set(row.node.id, row);
+    });
+    /* The receipt's moduleId names the row even when the catalog's module id is not a
+       path (目录允许 id ≠ path, the Main scene is `scene-host`); otherwise walk up the
+       file path to the deepest row that exists. */
+    const rowFor = (end) => {
+      if (!end) return null;
+      if (end.moduleId) { const byId = rowOf.get(end.moduleId); if (byId) return byId; }
+      let at = end.path || '';
+      while (at !== '') {
+        const found = rowOf.get(at);
+        if (found) return found;
+        const cut = at.lastIndexOf('/');
+        if (cut < 0) break;
+        at = at.slice(0, cut);
+      }
+      return null;
+    };
+    const marks = new Map();
+    const addMark = (row, text) => {
+      if (!row) return;
+      marks.set(row, (marks.get(row) || []).concat([text]));
+    };
+    sem.arcs = []; sem.notes = [];
+    flow.steps.forEach((step) => {
+      const n = step.n;
+      if (step.problem === 'not_current') { sem.notes.push('第 ' + n + ' 步不在了'); return; }
+      const fromRow = rowFor(step.from);
+      const toRow = rowFor(step.to);
+      if (!fromRow || !toRow) {
+        const end = !fromRow ? step.from : step.to;
+        sem.notes.push('第 ' + n + ' 步有一头收在小格子里（' + (end ? this.semEndName(end) : '?') + '），没画线');
+        if (fromRow) addMark(fromRow, '第 ' + n + ' 步');
+        if (toRow) addMark(toRow, '第 ' + n + ' 步');
+        return;
+      }
+      if (fromRow.id === toRow.id) { addMark(fromRow, '第 ' + n + ' 步（在模块内部）'); return; }
+      addMark(fromRow, '第 ' + n + ' 步');
+      addMark(toRow, '第 ' + n + ' 步');
+      const a = pmap[fromRow.id]; const b = pmap[toRow.id];
+      if (!a || !b) return;
+      const p = this.relPath(a, b, outline);
+      sem.arcs.push({ cls: ' lit' + (step.item && step.item.standing === 'ineligible' ? ' is-inelig' : ''),
+        d: p.d, head: p.head });
+    });
+    rows.forEach((row) => {
+      const texts = marks.get(row);
+      if (texts && texts.length) {
+        row.sem = texts.join(' · '); row.hasSem = true;
+        row.cls = String(row.cls || '').replace(/ dim\b/g, '');
+      } else if (!/ dim\b/.test(String(row.cls || ''))) row.cls = String(row.cls || '') + ' dim';
+    });
+    sem.hasArcs = sem.arcs.length > 0;
+    sem.hasNotes = sem.notes.length > 0;
   }
 
   /* ------------------------------------------------------------ detail (路径/归属 · 负责的 Agent · 语义 · 关系) */
@@ -4830,6 +5072,8 @@ class Component extends DCLogic {
     let mapPh = ''; let mapQ = ''; let qNote = ''; let onMapQ = noop; let onMapKey = noop; let clearQ = noop; let hasQClear = false;
     let qlist = []; let qmore = '';
     let det = null; let curRoot = null;
+    const sem = this.semView(s, isArch);
+    const semOn = s.semOn === true;
 
     /* map rows get their handlers here; map = 'task' | 'arch' */
     const wire = (v, map) => {
@@ -4867,6 +5111,7 @@ class Component extends DCLogic {
             : () => { const id = (this.state || {})[selKey] === k.id ? null : k.id; set({ [selKey]: id, hover: null, relHover: null }); if (map === 'task') wantDetail(id); },
           pin: pinIt(map, k.id, k.isGroup ? [r.id] : []), tab: tabIt(map, k.id, k.node.name), hover: hoverIt(k.id)
         }));
+        out.sem = ''; out.hasSem = false;
         return out;
       });
     };
@@ -4912,8 +5157,9 @@ class Component extends DCLogic {
       tp = this.tpThumb(v, s, { set: set, map: 'arch' });
       const byId = v.byId; curRoot = v.root;
       rows = wire(v, 'arch');
-      treeCls = 'tree ' + (v.outline ? 'g-outline outline' : 'g-tree') + (v.flat.focus ? ' focus' : '');
+      treeCls = 'tree ' + (v.outline ? 'g-outline outline' : 'g-tree') + (v.flat.focus || sem.flow ? ' focus' : '');
       const pmap = this.posMap(v.flat, v.outline);
+      this.semMarkRows(rows, sem, pmap, v.outline);
       card = cardOf(v, pmap, (n) => this.archCard(v.goal, n));
       const toScope = (k) => () => set({ ascope: k, hover: null });
       scope = { show: true, isWork: v.work, isAll: !v.work, workCls: 'seg-btn' + (v.work ? ' is-on' : ''), allCls: 'seg-btn' + (v.work ? '' : ' is-on'),
@@ -5020,7 +5266,7 @@ class Component extends DCLogic {
       /* G2: the auxiliary area (tab strip, dividers, 文件 / 命令 / Diff / file pages, quotes in the composer) */
       ax: ax,
       /* the 任务图's third view, 轨道 as work lines; the thumbnail's viewport and line (rework 2026-10-06, data/taskpanel.snippet.*) */
-      wl: wl, isLanes: isLanes, notLanes: !isLanes, showSearch: !isLanes, tpHasLanes: isTask, tpIsTask: isTask,
+      wl: wl, isLanes: isLanes, notLanes: !isLanes, showSearch: !isLanes, tpHasLanes: isTask, tpIsTask: isTask, tpIsArch: isArch,
       tpv: tp ? tp.view : { cls: 'tp-view', x: 0, y: 0, down: noop, move: noop, up: noop, wheel: noop },
       tpb: tp ? tp.bar : { show: false, cls: 'tp-hint', text: '', tip: '', canBack: false, back: noop },
       viewLanesCls: 'seg-btn' + (isLanes ? ' is-on' : ''), showLanes: () => set({ view: 'lanes', hover: null, relHover: null }),
@@ -5034,6 +5280,7 @@ class Component extends DCLogic {
       mapPh: mapPh, mapQ: mapQ, onMapQ: onMapQ, onMapKey: onMapKey, hasQNote: !!qNote, qNote: qNote, clearQ: clearQ, hasQClear: hasQClear,
       hasQList: qlist.length > 0, qlist: qlist, hasQMore: !!qmore, qmore: qmore,
       legend: !!s.legend, legendCls: 'seg-btn' + (s.legend ? ' is-on' : ''), toggleLegend: () => set({ legend: !(this.state || {}).legend }),
+      sem: sem, semOn: semOn, semCls: 'seg-btn' + (semOn ? ' is-on' : ''), toggleSem: () => this.toggleSem(),
       hasCrumbs: crumbs.length > 1, crumbs: crumbs,
       treeCls: treeCls, rows: rows, rel: rel,
       card: card, scope: scope, unhover: () => { if ((this.state || {}).hover) set({ hover: null }); },
@@ -5945,7 +6192,8 @@ class Component extends DCLogic {
       const st = this.state || {};
       /* ruling 6: 任务图 keeps the selected task's detail */
       return { auxTab: key, auxPath: key === 'diff' ? st.axDiff || null : null, detailTaskId: key === 'task' ? st.sel || null : null,
-        workOnly: key === 'arch' && st.ascope !== 'all' && !st.aconf };
+        workOnly: key === 'arch' && st.ascope !== 'all' && !st.aconf,
+        semantic: key === 'arch' && st.semOn === true };
     }
     if (key === 'cmd' || /^cmd:/.test(String(key))) {
       return { auxTab: 'commands', auxPath: null, detailTaskId: null, workOnly: false };

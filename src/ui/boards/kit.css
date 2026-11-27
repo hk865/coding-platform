@@ -806,6 +806,8 @@ button.lg-row:hover { color: var(--text); }
 .pt-acts .pt-q { margin-right: 6px; font-size: 12px; white-space: nowrap; }
 /* Diff: .diff-body runs its rows edge to edge, so a note under them ("逐行内容在原型里没有收录") gets the side padding back */
 .diff-body > .pnote { padding: 0 16px; }
+/* a file page's read-failure note sits in .fcode, which also runs edge to edge */
+.fcode > .pnote { padding: 0 16px; }
 /* the split shell keeps the approved ≤ 1240px widths (rail 208, panel 420) until a divider moves: the boards leave the two
    widths unset ("initial", so var() falls back) until then; the ≤ 960px one-column rule of §15 is untouched */
 @media (min-width: 961px) and (max-width: 1240px) {
@@ -1325,3 +1327,28 @@ button.rail-arch-ln.is-current { color: var(--text-strong); background: var(--ac
    its padding, so it reads as one word of it (the brackets stay outside the underline); the record's 需要你决定 mark is a .ref
    as it is */
 .lv-msg .pnote .ref { padding: 0; margin: 0; border-radius: 2px; }
+
+/* ---------------------------------------------------------------- semantic layer (batch 9) */
+/* One rule for both boards: dotted dash = standing, dots on the line = result, round dots = gap. */
+.ov-stage > svg.ov-sem { position: absolute; overflow: visible; pointer-events: none; }
+.ov-sem .ln { fill: none; stroke: var(--text-2); stroke-width: 1.5; stroke-dasharray: 9 3 2 3; stroke-linecap: round; stroke-linejoin: round; }
+.ov-sem .hd { fill: var(--text-2); stroke: none; }
+.ov-sem.is-inelig .ln { stroke: var(--text-4); stroke-width: 1; }
+.ov-sem.is-inelig .hd { fill: var(--text-4); }
+.ov-sem.is-gap .ln { stroke: var(--lit); stroke-width: 2; stroke-dasharray: 0 4; }
+.ov-sem.is-gap .hd { display: none; }
+.ov-sem.lit .ln { stroke: var(--lit); }
+.ov-sem.lit .hd { fill: var(--lit); }
+.ov-sem.is-dim { opacity: .25; }
+.ov-sem-label.is-inelig { opacity: .65; }
+.ov-sem-panel .qname { color: var(--text-2); }
+.ov-sem-panel .d-line { color: var(--text-3); font-size: 12px; line-height: 17px; margin: 4px 0 6px; }
+.sem-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin-right: 5px; vertical-align: middle; background: var(--text-4); }
+.sem-dot.ok { background: #3E9B5A; }
+.sem-dot.broken { background: var(--red-text); }
+.sem-dot.grey { background: #8A8A8A; }
+.sem-dot.none { background: transparent; border: 1px solid var(--text-3); }
+.sem-line { display: inline-block; width: 30px; height: 0; border-top: 1.5px dashed var(--text-2); vertical-align: middle; margin: 0 6px; }
+.sem-line.inelig { border-top-width: 1px; border-top-color: var(--text-4); }
+.sem-line.gap { border-top: 2px dotted var(--lit); }
+.d-file.is-broken { color: var(--red-text); }

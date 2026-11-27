@@ -713,13 +713,14 @@ textarea.dc-input { min-height: 52px; }
               <p class="dc-title">{{det.dispTitle}}</p>
               <p class="dc-line">{{det.dispLine}}</p>
               <div class="dc-field">
-                <label for="tm-disp-note">原因（可选）</label>
-                <textarea id="tm-disp-note" class="dc-input" rows="2" maxlength="2000" placeholder="写下为什么，会记进这次计划改动" value="{{det.dispNote}}" onChange="{{det.dispNoteChange}}"></textarea>
+                <label for="tm-disp-note">{{det.reasonLabel}}</label>
+                <textarea id="tm-disp-note" class="dc-input" rows="2" maxlength="2000" placeholder="{{det.reasonHint}}" aria-required="{{det.reasonRequired}}" disabled="{{det.gateBusy}}" value="{{det.dispNote}}" onChange="{{det.dispNoteChange}}"></textarea>
               </div>
               <div class="dc-foot">
-                <button class="btn btn-sm first" type="button" onClick="{{det.dispKeep}}" onKeyDown="{{det.dispKey}}" ref="{{det.dispKeepRef}}">不了</button>
-                <button class="btn btn-sm btn-primary" type="button" onClick="{{det.dispGo}}" onKeyDown="{{det.dispKey}}">{{det.dispConfirmLabel}}</button>
+                <button class="btn btn-sm first {{det.keepOffClass}}" type="button" disabled="{{det.gateBusy}}" aria-disabled="{{det.gateBusy}}" onClick="{{det.dispKeep}}" onKeyDown="{{det.dispKey}}" ref="{{det.dispKeepRef}}">{{det.keepLabel}}</button>
+                <button class="btn btn-sm btn-primary {{det.confirmOffClass}}" type="button" disabled="{{det.confirmOff}}" aria-disabled="{{det.confirmOff}}" onClick="{{det.dispGo}}" onKeyDown="{{det.dispKey}}">{{det.dispConfirmLabel}}</button>
               </div>
+              <sc-if value="{{det.gateError}}" hint-placeholder-val="{{ false }}"><p class="d-state" role="alert"><span class="tx-failed">{{det.gateError}}</span></p></sc-if>
             </div>
           </sc-if>
           <sc-if value="{{det.actsOpen}}" hint-placeholder-val="{{ true }}">
@@ -731,7 +732,7 @@ textarea.dc-input { min-height: 52px; }
                 <button class="{{det.stopAct.cls}}" type="button" ref="{{det.stopAct.ref}}" disabled="{{det.stopAct.off}}" onClick="{{det.stopAct.go}}">{{det.stopAct.label}}</button>
               </sc-if>
               <sc-for list="{{det.acts}}" as="ac" hint-placeholder-count="2">
-                <button class="{{ac.cls}}" type="button" disabled="{{ac.off}}" onClick="{{ac.go}}" ref="{{ac.ref}}">{{ac.label}}</button>
+                <button class="{{ac.cls}}" type="button" disabled="{{ac.off}}" aria-disabled="{{ac.off}}" onClick="{{ac.go}}" ref="{{ac.ref}}">{{ac.label}}</button>
               </sc-for>
             </div>
           </sc-if>
@@ -754,6 +755,7 @@ class Component extends DCLogic {
       dHover: null, eHover: null, relHover: null, hover: null, open: {}, ofold: {}, nowOpen: false,
       t: null, wlBy: 'role', wlWin: 'today', wlCell: null, wlDay: null, wlClosed: {}, wlArch: false, wlAttn: false, wlPins: [], wlSort: 0, wlSel: null, wHover: null,
       stopConfirm: null, stopBusy: {}, stopError: null, holdBusy: {}, holdError: null,
+      gateBusy: {},
       dispConfirm: null, dispNote: '', dispBusy: {}, dispError: null, backfillBusy: false, backfillError: null };
     this._stopSel = null;
     this._stopShown = false;
@@ -821,6 +823,23 @@ class Component extends DCLogic {
       event.preventDefault();
       close();
     }
+  }
+
+  async confirmGateRelease(gate, confirm, busyIn, withBusy) {
+    const reason = this.state.dispNote;
+    if (this.state.dispConfirm !== confirm || !reason.trim() || busyIn('gateBusy')) return;
+    const pending = { ...confirm, error: '' };
+    this.setState({ dispConfirm: pending, gateBusy: withBusy('gateBusy', true) });
+    let next = null;
+    try {
+      await this.props.actions.releaseOverlapGate(gate, reason);
+    } catch (error) {
+      next = { ...pending, error: error.message };
+    }
+    // A late reply belongs to the reason box that sent it, even after a task switch.
+    const patch = { gateBusy: withBusy('gateBusy', false) };
+    if (this.state.dispConfirm === pending) patch.dispConfirm = next;
+    this.setState(patch);
   }
 
   /* 5.10-3: the dropped list's 恢复 writes at once (it can be cancelled again).
@@ -3254,10 +3273,13 @@ class Component extends DCLogic {
          the facts now. */
       out.fail = (real && real.failure ? real.failure : []).map((f) => ({ k: f.k, v: f.v + (S.live ? '' : '（现在）') }));
       const dispState = (this.state || {}).dispConfirm;
-      const dispTo = dispState && dispState.id === id && S.live ? dispState.to : '';
-      this._dispShown = dispTo !== '';
-      out.dispConfirmOpen = dispTo !== '';
-      out.actsOpen = !stopConfirmOpen && dispTo === '';
+      const confirm = dispState && dispState.id === id && S.live ? dispState : null;
+      const dispTo = confirm?.to ?? '';
+      const overlapGates = real?.overlapGates ?? [];
+      const gate = confirm && overlapGates.find((item) => item.ref.moduleId === confirm.moduleId);
+      this._dispShown = !!(dispTo || gate);
+      out.dispConfirmOpen = this._dispShown;
+      out.actsOpen = !stopConfirmOpen && !out.dispConfirmOpen;
       /* 更多: 必需/可选 and, from the second attempt on, how that attempt came;
          the facts are on the task node already, not waiting for the detail read. */
       const r = this.lastAt(id, this.statesAt(null), 'run');
@@ -3305,6 +3327,7 @@ class Component extends DCLogic {
       if (real && real.holds && real.holds.length) {
         out.rel = out.rel.concat([{ k: '暂缓', items: [], files: [], lines: real.holds.map((h) => h.text), hasText: false, text: '' }]);
       }
+      for (const item of overlapGates) out.rel.push(grp('同模块门', [], item.text));
       if (real && real.dispatch && real.dispatch.lines.length) {
         out.rel = out.rel.concat([{ k: '派活请求', items: [], files: [], lines: real.dispatch.lines, hasText: false, text: '' }]);
       }
@@ -3354,6 +3377,46 @@ class Component extends DCLogic {
           this.setState({ dispConfirm: { id, to }, dispNote: '', stopConfirm: null, dispError: null });
         } });
       });
+      if (S.live) {
+        for (const item of overlapGates) {
+          const off = busyIn('gateBusy');
+          const label = overlapGates.length === 1 ? '放开' : '放开 · ' + item.moduleName;
+          out.acts.push({ label, off, cls: 'btn-text' + (off ? ' is-off' : ''), ref: (el) => {
+            if (el && this._dispKey === id + '|gate|' + item.ref.moduleId) this._dispBtn = el;
+          }, go: (e) => {
+            if (busyIn('gateBusy')) return;
+            this.cancelOpened('disp', e);
+            this._dispKey = id + '|gate|' + item.ref.moduleId;
+            this.setState({ dispConfirm: { id, moduleId: item.ref.moduleId }, dispNote: '' });
+          } });
+        }
+      }
+      if (out.dispConfirmOpen) {
+        out.dispNote = this.state.dispNote;
+        out.dispNoteChange = (e) => this.setState({ dispNote: e.target.value });
+        out.reasonLabel = gate ? '理由（必填）' : '原因（可选）';
+        out.reasonHint = gate ? '写下放开这道门的理由' : '写下为什么，会记进这次计划改动';
+        out.reasonRequired = !!gate;
+        out.keepLabel = gate ? '不放开' : '不了';
+        out.gateBusy = !!gate && busyIn('gateBusy');
+        out.confirmOff = !!gate && (out.gateBusy || !out.dispNote.trim());
+        out.keepOffClass = out.gateBusy ? 'is-off' : '';
+        out.confirmOffClass = out.confirmOff ? 'is-off' : '';
+        out.dispKeep = () => {
+          if (gate && busyIn('gateBusy')) return;
+          this.cancelClosed('disp');
+          this.setState({ dispConfirm: null });
+        };
+        out.dispKey = (e) => this.cancelKey('disp', e, out.dispKeep);
+        out.dispKeepRef = (el) => this.cancelRef('disp', el);
+      }
+      if (gate) {
+        out.dispTitle = '放开同模块门？';
+        out.dispLine = '放开后，这个任务就不用再等模块“' + gate.moduleName + '”。';
+        out.dispConfirmLabel = '放开';
+        out.gateError = confirm.error;
+        out.dispGo = () => this.confirmGateRelease(gate, confirm, busyIn, withBusy);
+      }
       if (dispTo !== '') {
         /* The two running phases stop the affected execution first; the write
            then refuses with busy/stopping_affected_work and a second click. */
@@ -3368,11 +3431,6 @@ class Component extends DCLogic {
               + (gates.length ? gates.join('、') + '（验收）也等它，取消前先确认验收不再需要它。' : '')
             : '恢复后它回到目标里，平台照常安排领取。';
         out.dispConfirmLabel = dispTo === 'deferred' ? '延后任务' : dispTo === 'cancelled' ? '取消任务' : '恢复任务';
-        out.dispNote = (this.state || {}).dispNote || '';
-        out.dispNoteChange = (e) => this.setState({ dispNote: e && e.target ? String(e.target.value) : '' });
-        out.dispKey = (e) => this.cancelKey('disp', e, () => { this.cancelClosed('disp'); this.setState({ dispConfirm: null }); });
-        out.dispKeep = () => { this.cancelClosed('disp'); this.setState({ dispConfirm: null }); };
-        out.dispKeepRef = (el) => this.cancelRef('disp', el);
         out.dispGo = () => {
           const a = this.props.actions;
           if (!a || !a.changeTaskDisposition || busyIn('dispBusy')) return;

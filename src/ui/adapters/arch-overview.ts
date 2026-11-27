@@ -17,12 +17,15 @@ import type {
   ArchitectureChangeScopeV1, ArchitectureFindResultV1, ArchitectureWorkScopeV1,
 } from '../../contracts/architecture-search.js';
 import type { KnowledgeCommitStatus } from '../../contracts/knowledge.js';
-import type { NoteAnchorV1 } from '../../contracts/note.js';
+import type { LinkEvidenceRoleV1, NoteAnchorV1, NoteSourceV1, SemanticRelationV1 } from '../../contracts/note.js';
+import type { SemanticFlowStepV1, SemanticFlowV1, SemanticLinkV1 } from '../../contracts/semantic-layer.js';
+import { PLATFORM_PROMPT_PACK_V1 } from '../../contracts/prompts/platform-pack.generated.js';
 import type { WorkLineListV1 } from '../../contracts/work-line.js';
 import { pathOwnershipOf } from '../../contracts/path-ownership.js';
 import { canonicalJson } from '../../contracts/canonical-json.js';
 import { rawModuleId } from '../../contracts/workspace-module-id.js';
 import { adaptTaskMap, type TaskMapGraphRead } from './task-map.js';
+import { dutyWordOf } from './nav.js';
 import { NOT_CONNECTED_TEXT } from '../not-connected.js';
 import { asRecord, asText } from '../values.js';
 
@@ -92,6 +95,8 @@ export type ArchOverviewSource = {
   operations: Record<string, ArchOperationRow[]>;
   /** `knowledge/status` per workspace, keyed by workspaceId; a failed read's workspace is absent. */
   knowledge: Record<string, KnowledgeCommitStatus>;
+  /** The semantic layer's two reads; null/absent = the switch is off and nothing was read. */
+  semantic?: ArchSemanticRead | null;
 };
 
 /** The model the page's five data entry points read. */
@@ -205,6 +210,7 @@ export type ArchDeepenRow = {
 };
 
 export type ArchOverviewData = {
+  scope: { projectId: string; workspaceId: string };
   repo: ArchRepoModel;
   taskModel: { tasks: ArchTaskModelRow[]; byId: Record<string, ArchTaskModelRow> };
   words: Record<string, string>;
@@ -232,6 +238,8 @@ export type ArchOverviewData = {
   deepen: ArchDeepenRow[];
   /** The one not-connected word. */
   notConnected: string;
+  /** The semantic layer; null when the switch is off. */
+  semantic: ArchSemanticData | null;
 };
 
 export type ArchOverviewUi = {
@@ -243,6 +251,10 @@ export type ArchOverviewUi = {
   workOnly: boolean;
   legend: boolean;
   theme: 'dark' | 'light';
+  /** `?sem=<noteId>`: the deep link's selected link, null when the page did not open on one. */
+  semPick?: string | null;
+  /** `#flow=<id>` on Main: the deep link's selected flow. */
+  flowPick?: string | null;
 };
 
 /** The page's own state words (`ArchOverview.dc.html`'s `words()`); a state
@@ -550,6 +562,349 @@ function deepenRowsOf(source: ArchOverviewSource): ArchDeepenRow[] {
     }
   }
   return out;
+}
+
+
+/* ------------------------------------------------------------------ semantic layer (batch 9) */
+/* The page reads this projection; it is the only place relation, evidence, result and
+   retirement codes become words (README 4.7). `currentEligible` alone decides standing. */
+
+export const EVIDENCE_ROLE_WORD: Record<LinkEvidenceRoleV1, string> = {
+  use: '使用', wire: '接线', register: '登记', emit: '发出', receive: '接收', launch: '启动', entry: '入口',
+};
+
+export const ANCHOR_RETIRED_WORD: Record<'module_removed' | 'interface_removed' | 'file_deleted'
+  | 'task_ended' | 'stage_not_in_current_plan' | 'symbol_missing', string> = {
+  module_removed: '模块不在了', interface_removed: '接口不在了', file_deleted: '文件删了',
+  task_ended: '任务结束了', stage_not_in_current_plan: '阶段不在当前计划里', symbol_missing: '函数找不到了',
+};
+
+export const LINK_RESULT_WORD = {
+  verified: '对得上', broken: '断了', unverifiable: '查不了', unchecked: '这次没核', doubt: '存疑', headless: '没登记',
+} as const;
+
+export const LINK_STANDING_WORD = { eligible: '作数', ineligible: '暂不作数' } as const;
+
+/** The check route's failures; `invalid` is the page's own bug and falls to 这次没核成. */
+export const SEMANTIC_CHECK_FAIL_WORD = {
+  not_found: '平台找不到这条联系，可能刚被撤下或换了新版本',
+  network: '连不上平台（网络断了，或平台没在运行）',
+  other: '这次没核成。',
+} as const;
+
+const RELATION_WORD: Record<SemanticRelationV1, string> = {
+  calls: PLATFORM_PROMPT_PACK_V1.strings['note.relation.calls'] ?? '调用',
+  injects: PLATFORM_PROMPT_PACK_V1.strings['note.relation.injects'] ?? '注入',
+  callback: PLATFORM_PROMPT_PACK_V1.strings['note.relation.callback'] ?? '回调',
+  data: PLATFORM_PROMPT_PACK_V1.strings['note.relation.data'] ?? '数据',
+  message: PLATFORM_PROMPT_PACK_V1.strings['note.relation.message'] ?? '消息',
+  spawns: PLATFORM_PROMPT_PACK_V1.strings['note.relation.spawns'] ?? '起进程',
+};
+
+/** One end as the page prints it. */
+export type ArchSemanticEnd = {
+  moduleId: string | null;
+  moduleName: string;
+  path: string;
+  symbol: string;
+  /** The retired reasons in the page's words; empty when the end is live. */
+  retired: string[];
+  missing: boolean;
+};
+
+export type ArchSemanticEvidence = { role: string; path: string; line: number | null; broken: boolean };
+
+/** One link row; every word is final, the page only arranges it. */
+export type ArchLinkRow = {
+  noteId: string;
+  version: number | null;
+  relation: SemanticRelationV1;
+  relationWord: string;
+  from: ArchSemanticEnd;
+  to: ArchSemanticEnd;
+  via: ArchSemanticEnd | null;
+  keyText: string;
+  evidence: ArchSemanticEvidence[];
+  /** `headless` is `version: null`; `doubt` is the unchecked `refs_pending`. */
+  /** The receipt's own fields, kept verbatim (the page reads only these for standing). */
+  currentEligible: boolean;
+  freshness: 'fresh' | 'stale' | 'unchecked';
+  state: 'accepted' | 'reviewed' | 'pending_review' | null;
+  verification: SemanticLinkV1['verification'];
+  fromStatus: 'live' | 'retired';
+  toStatus: 'live' | 'retired';
+  fromRetired: Array<'module_removed' | 'interface_removed' | 'file_deleted'
+    | 'task_ended' | 'stage_not_in_current_plan' | 'symbol_missing'>;
+  toRetired: Array<'module_removed' | 'interface_removed' | 'file_deleted'
+    | 'task_ended' | 'stage_not_in_current_plan' | 'symbol_missing'>;
+  result: keyof typeof LINK_RESULT_WORD;
+  resultWord: string;
+  resultText: string;
+  standing: 'eligible' | 'ineligible';
+  standingWord: string;
+  standingWhy: string;
+  freshWord: string;
+  topic: string;
+  conclusion: string;
+  author: string;
+  flowTopics: string[];
+};
+
+/** One flow step; the page prints `stepText` and `word`. */
+export type ArchFlowStepRow = {
+  n: number;
+  link: string;
+  from: ArchSemanticEnd | null;
+  to: ArchSemanticEnd | null;
+  inModule: boolean;
+  problem: 'not_current' | 'broken' | 'stale' | 'unchecked' | null;
+  word: string;
+  stepText: string;
+  mark: string;
+  item: ArchLinkRow | null;
+};
+
+export type ArchFlowRow = {
+  noteId: string;
+  version: number | null;
+  topic: string;
+  conclusion: string;
+  steps: ArchFlowStepRow[];
+  gapsAfter: number[];
+  gapTexts: string[];
+  statusText: string;
+  standing: 'eligible' | 'ineligible';
+  standingWord: string;
+  freshWord: string;
+  author: string;
+  checkItems: Array<{ noteId: string; version: number }>;
+  notCurrent: number[];
+  internal: number[];
+};
+
+export type ArchSemanticData = {
+  status: 'ready' | 'empty' | 'error' | 'cap';
+  links: ArchLinkRow[];
+  flows: ArchFlowRow[];
+  /** The whole layer's failure text (both routes failed); the block texts below are per route. */
+  errorText: string;
+  linkError: string;
+  flowError: string;
+  capText: string;
+  totalText: string;
+  counts: { broken: number; doubt: number; unchecked: number; headless: number; ineligible: number };
+  /** The `?sem=` deep link's link; null when the page was not opened on one. */
+  pick: string | null;
+  /** The `#flow=` deep link's flow; null when the page was not opened on one. */
+  flowPick: string | null;
+};
+
+/** What boot reads for the layer; `null` is "not read" (the switch is off). */
+export type ArchSemanticRead = {
+  links: SemanticLinkV1[] | null;
+  flows: SemanticFlowV1[] | null;
+  linkError: string;
+  flowError: string;
+  linkCap: boolean;
+  flowCap: boolean;
+};
+
+const symbolOfEnd = (end: SemanticLinkV1['from']): string =>
+  end.anchor.kind === 'file'
+    ? (end.request.kind === 'file' ? end.request.symbolRequest?.name ?? '' : '')
+      || end.anchor.symbol?.qualifiedName || ''
+    : end.anchor.kind === 'interface' ? end.anchor.interfaceId : '';
+
+const pathOfEnd = (end: SemanticLinkV1['from']): string =>
+  end.anchor.kind === 'file' ? end.anchor.path : '';
+
+function semanticEndOf(end: SemanticLinkV1['from'], moduleNames: Map<string, string>): ArchSemanticEnd {
+  const retired = end.anchorRetiredReasons.map((reason) => ANCHOR_RETIRED_WORD[reason]);
+  return {
+    moduleId: end.moduleId,
+    moduleName: end.moduleId === null ? '' : moduleNames.get(end.moduleId) ?? end.moduleId,
+    path: pathOfEnd(end),
+    symbol: symbolOfEnd(end),
+    retired,
+    missing: end.anchorStatus === 'retired' || (end.anchor.kind === 'file' && end.anchor.deleted === true),
+  };
+}
+
+function semanticResultOf(link: SemanticLinkV1): { result: keyof typeof LINK_RESULT_WORD; text: string } {
+  if (link.version === null) {
+    return { result: 'headless', text: '没登记：只在注记文件里，平台没有它的记录，核对不了' };
+  }
+  const verification = link.verification;
+  if (verification.status === 'verified') {
+    return { result: 'verified', text: `对得上：${link.evidence.length} 条证据都在代码里找到了` };
+  }
+  if (verification.status === 'broken') {
+    const index = verification.missing[0] ?? 0;
+    const role = EVIDENCE_ROLE_WORD[link.evidence[index]?.role ?? 'use'];
+    return { result: 'broken', text: `断了：第 ${index + 1} 条（${role}）证据在代码里找不到了` };
+  }
+  if (verification.status === 'unverifiable') {
+    const why = verification.reason === 'key_not_literal'
+      ? '两边共用的名字是运行时拼出来的，没法按名字去代码里核'
+      : verification.reason === 'language_unsupported'
+        ? '这种语言平台查不了引用（只查 TS、JS）'
+        : '引用分析判断不了（文件可能不在项目配置里）';
+    return { result: 'unverifiable', text: '查不了：' + why };
+  }
+  if (verification.reason === 'refs_pending') {
+    return { result: 'doubt', text: '存疑：跨文件引用待核' };
+  }
+  return {
+    result: 'unchecked',
+    text: verification.reason === 'budget'
+      ? '这次没核：这一次要核的太多，没轮到它'
+      : '这次没核：要读的文件这次读不了（可能正被改着）',
+  };
+}
+
+/** `currentEligible` alone decides standing; the other fields only explain it. */
+function standingWhyOf(link: SemanticLinkV1, from: ArchSemanticEnd, to: ArchSemanticEnd): string {
+  if (link.currentEligible) return '';
+  if (link.freshness === 'stale') return '写它依据的代码改过，需复查';
+  if (link.freshness === 'unchecked') return '依据的代码这次没核';
+  if (to.retired.length > 0) return '到那一端的' + to.retired[0];
+  if (from.retired.length > 0) return '从那一端的' + from.retired[0];
+  if (link.state === 'pending_review') return '待审';
+  return '';
+}
+
+function freshWordOf(freshness: 'fresh' | 'stale' | 'unchecked'): string {
+  /* 2.3 乙: the background check does not push a change, so the row says when a new
+     result becomes visible. */
+  const state = freshness === 'fresh' ? '代码里核过，依据没变'
+    : freshness === 'stale' ? '写它依据的代码改过，需复查' : '依据的代码这次没核';
+  return state + '；平台空闲时会核，核完不会自己刷新，重新打开联系层或手动核对以后才看得到新结果';
+}
+
+function authorOf(source: NoteSourceV1, lines: WorkLineListV1 | null): string {
+  if (source.kind === 'user') return '你写的';
+  if (source.kind === 'platform') return '平台';
+  const duty = dutyWordOf(source.duty);
+  const row = lines?.rows.find((line) => line.key.sessionId === source.sessionRef.sessionId);
+  const name = row === undefined ? '' : asText(asRecord(row.name).primary);
+  return name === '' ? duty : duty + ' · ' + name;
+}
+
+/** The one standing word; `currentEligible` alone decides it. */
+export function linkStandingOf(row: Pick<ArchLinkRow, 'currentEligible'>): '作数' | '暂不作数' {
+  return row.currentEligible ? LINK_STANDING_WORD.eligible : LINK_STANDING_WORD.ineligible;
+}
+
+function linkOf(link: SemanticLinkV1, moduleNames: Map<string, string>, lines: WorkLineListV1 | null,
+  flowTopics: string[]): ArchLinkRow {
+  const from = semanticEndOf(link.from, moduleNames);
+  const to = semanticEndOf(link.to, moduleNames);
+  const result = semanticResultOf(link);
+  const why = standingWhyOf(link, from, to);
+  const missing = link.verification.status === 'broken' ? link.verification.missing : [];
+  const row = link;
+  return {
+    noteId: link.noteId, version: link.version, relation: link.relation,
+    relationWord: RELATION_WORD[link.relation] ?? link.relation,
+    from, to, via: link.via === null ? null : semanticEndOf(link.via, moduleNames),
+    keyText: link.key === null ? '' : link.key.kind === 'literal' ? link.key.text
+      : link.key.path + '#' + link.key.symbolRequest.name,
+    evidence: link.evidence.map((entry, index) => ({
+      role: EVIDENCE_ROLE_WORD[entry.role],
+      path: entry.at.path,
+      line: entry.at.range?.startLine ?? entry.at.symbol?.range.startLine ?? null,
+      broken: missing.indexOf(index) >= 0,
+    })),
+    currentEligible: row.currentEligible, freshness: row.freshness, state: row.state, verification: row.verification,
+    fromStatus: row.from.anchorStatus, toStatus: row.to.anchorStatus,
+    fromRetired: row.from.anchorRetiredReasons.slice(), toRetired: row.to.anchorRetiredReasons.slice(),
+    result: result.result, resultWord: LINK_RESULT_WORD[result.result], resultText: result.text,
+    standing: row.currentEligible ? 'eligible' : 'ineligible',
+    standingWord: linkStandingOf(row),
+    standingWhy: why,
+    freshWord: freshWordOf(link.freshness),
+    topic: link.topic, conclusion: link.conclusion,
+    author: authorOf(link.source, lines), flowTopics,
+  };
+}
+
+
+function flowStepOf(step: SemanticFlowStepV1, n: number, moduleNames: Map<string, string>,
+  lines: WorkLineListV1 | null, topics: string[]): ArchFlowStepRow {
+  const item = step.item === null ? null : linkOf(step.item, moduleNames, lines, topics);
+  const inModule = item !== null && item.from.moduleId !== null && item.from.moduleId === item.to.moduleId;
+  const word = step.problem === 'not_current' ? '不在了'
+    : step.problem === 'broken' ? '断了'
+      : step.problem === 'stale' ? '需复查'
+        : step.problem === 'unchecked' ? (item?.result === 'doubt' ? '存疑' : '这次没核')
+          : item?.resultWord ?? '对得上';
+  return {
+    n, link: step.link,
+    from: item?.from ?? null, to: item?.to ?? null,
+    inModule, problem: step.problem, word,
+    stepText: n + (item === null ? '' : ' ' + item.relationWord),
+    mark: '第 ' + n + ' 步' + (inModule ? '（在模块内部）' : ''),
+    item,
+  };
+}
+
+function flowOf(flow: SemanticFlowV1, moduleNames: Map<string, string>, lines: WorkLineListV1 | null): ArchFlowRow {
+  const steps = flow.steps.map((step, index) => flowStepOf(step, index + 1, moduleNames, lines, [flow.topic]));
+  const gaps = flow.gapsAfter.map((after) => `第 ${after}、${after + 1} 步接不上`);
+  const bad = steps.filter((step) => step.problem !== null);
+  const statusText = flow.currentEligible ? '都对得上：每一步都作数'
+    : '暂不作数' + (bad.length === 0 ? '' : '：' + bad.map((step) => step.mark + step.word).join('，'));
+  return {
+    noteId: flow.noteId, version: flow.version, topic: flow.topic, conclusion: flow.conclusion,
+    steps, gapsAfter: flow.gapsAfter.slice(), gapTexts: gaps, statusText,
+    standing: flow.currentEligible ? 'eligible' : 'ineligible',
+    standingWord: flow.currentEligible ? LINK_STANDING_WORD.eligible : LINK_STANDING_WORD.ineligible,
+    freshWord: freshWordOf(flow.freshness), author: authorOf(flow.source, lines),
+    checkItems: steps.filter((step) => step.item !== null && step.item.version !== null)
+      .map((step) => ({ noteId: step.item!.noteId, version: step.item!.version! })),
+    notCurrent: steps.filter((step) => step.problem === 'not_current').map((step) => step.n),
+    internal: steps.filter((step) => step.inModule).map((step) => step.n),
+  };
+}
+
+/** The layer's projection; `read` is null when the switch is off. */
+export function adaptArchSemantics(read: ArchSemanticRead | null, ui: Pick<ArchOverviewUi, 'semPick' | 'flowPick'> = {},
+  moduleNames: Map<string, string> = new Map(), lines: WorkLineListV1 | null = null): ArchSemanticData | null {
+  if (read === null) return null;
+  const links: ArchLinkRow[] = [];
+  const flows: ArchFlowRow[] = [];
+  const flowTopics = new Map<string, string[]>();
+  for (const flow of read.flows ?? []) {
+    for (const step of flow.steps) {
+      if (step.item === null) continue;
+      flowTopics.set(step.item.noteId, [...(flowTopics.get(step.item.noteId) ?? []), flow.topic]);
+    }
+  }
+  /* A flow step carries its own link item; the same link is listed once more in `links`, so its flow topics join there. */
+  for (const link of read.links ?? []) links.push(linkOf(link, moduleNames, lines, flowTopics.get(link.noteId) ?? []));
+  for (const flow of read.flows ?? []) flows.push(flowOf(flow, moduleNames, lines));
+  const counts = {
+    broken: links.filter((row) => row.result === 'broken').length,
+    doubt: links.filter((row) => row.result === 'doubt').length,
+    unchecked: links.filter((row) => row.result === 'unchecked').length,
+    headless: links.filter((row) => row.result === 'headless').length,
+    ineligible: links.filter((row) => row.standing === 'ineligible').length,
+  };
+  const linkFailed = read.links === null;
+  const flowFailed = read.flows === null;
+  const status = linkFailed && flowFailed ? 'error'
+    : read.linkCap || read.flowCap ? 'cap'
+      : (read.links?.length ?? 0) === 0 && (read.flows?.length ?? 0) === 0 && !linkFailed && !flowFailed ? 'empty'
+        : 'ready';
+  return {
+    status, links, flows,
+    errorText: linkFailed && flowFailed ? (read.linkError || read.flowError) : '',
+    linkError: linkFailed ? read.linkError : '', flowError: flowFailed ? read.flowError : '',
+    capText: read.linkCap ? '联系太多，没读完：读了 100 页（1 万条）还没到头，这一块先不画'
+      : read.flowCap ? '流程太多，没读完：读了 100 页（5 千条）还没到头，这一块先不画' : '',
+    totalText: `写下的 ${links.length} 条联系、${flows.length} 条流程`,
+    counts, pick: ui.semPick ?? null, flowPick: ui.flowPick ?? null,
+  };
 }
 
 export function adaptArchOverview(source: ArchOverviewSource, ui: ArchOverviewUi): ArchOverviewData {
@@ -890,7 +1245,10 @@ export function adaptArchOverview(source: ArchOverviewSource, ui: ArchOverviewUi
   for (const task of tasks) byTask[task.id] = task;
 
   const search = searchOf(source.search);
+  const moduleNames = new Map(modules.map((module) => [asText(module.ref.moduleId), asText(module.name)]));
+  const semantic = adaptArchSemantics(source.semantic ?? null, ui, moduleNames, source.lines);
   return {
+    scope: { projectId: source.scope.projectId, workspaceId: source.scope.workspaceId },
     repo: {
       rootId: 'SYS', nodes, edges,
       workPaths: source.work?.files.map((file) => file.path) ?? [],
@@ -919,5 +1277,6 @@ export function adaptArchOverview(source: ArchOverviewSource, ui: ArchOverviewUi
     commitBars: commitBarsOf(source),
     deepen: deepenRowsOf(source),
     notConnected: NOT_CONNECTED_TEXT,
+    semantic,
   };
 }

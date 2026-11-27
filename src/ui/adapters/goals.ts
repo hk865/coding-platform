@@ -12,6 +12,7 @@
  */
 
 import { asRecord, asText } from '../values.js';
+import type { AuxPanelData } from './aux-panel.js';
 import { goalDisplayState, lineNameOf, stopWordOf, type GoalDisplayPhaseCode } from './task-map.js';
 import { completionRevisionOf } from './nav.js';
 import type { DecisionSelectionV1, GoalAutonomyV1 } from '../../contracts/goal-decisions.js';
@@ -152,6 +153,7 @@ export type GoalsData = {
   goals: GoalsGoal[];
   conflict: GoalsConflict | null;
   maps: GoalsMaps;
+  aux: AuxPanelData | null;
   /** `goals/list.sourceCursor`, exactly as read. */
   sourceCursor: unknown;
   selectedGoalId: string | null;
@@ -166,6 +168,7 @@ export type GoalsData = {
  * was not part of the card (its progress is then the empty 0/0 wording). */
 export type GoalsInput = {
   goals: unknown;
+  aux?: AuxPanelData | null;
   displays?: Record<string, unknown> | null;
   lines?: unknown;
   conflicts?: unknown;
@@ -685,6 +688,7 @@ export function adaptGoals(input: GoalsInput, selected: string | null): GoalsDat
     goals,
     conflict,
     maps,
+    aux: input.aux ?? null,
     sourceCursor: goalList.sourceCursor ?? null,
     selectedGoalId: selected,
     projectId,

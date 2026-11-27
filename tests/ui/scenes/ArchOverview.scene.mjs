@@ -17,6 +17,7 @@
  * so the reread after the click shows the stopped/continued/deepened/committed page.
  */
 import { readFileSync } from 'node:fs';
+import { semanticReply } from './semantic-scene.mjs';
 
 const HAVE = JSON.parse(readFileSync(new URL('./ArchOverview.scene.json', import.meta.url), 'utf8'));
 const P = 'coding-platform';
@@ -54,6 +55,8 @@ export const scene = {
   now: HAVE.now,
   routes: HAVE.routes,
   reply(route, input, body) {
+    const sem = semanticReply(route, input);
+    if (sem !== undefined) return sem;
     const winput = body && body.request ? body.request.input : null;
     if (route === 'goals/read') pageGoal = input?.goalId ?? null;
     if (route === 'role-lines/operations') return readyAnswer(pageGoal === null ? noGoal() : withGoal());

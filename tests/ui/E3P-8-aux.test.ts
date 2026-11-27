@@ -1,8 +1,8 @@
 import { afterAll, describe, expect, it } from 'vitest';
-import { findElement } from './helpers/boot-page.js';
+import { findClass, findElement } from './helpers/boot-page.js';
 import {
-  auxPanel, auxTab, callsOf, countRoute, hasClass, onBoard, quietPage, revealTreeNode, textOf, treeNames, treeNode, waitFor,
-  type PageLog,
+  auxFileRows, auxPanel, auxRowName, auxTab, callsOf, countRoute, descendants, hasClass, onBoard, quietPage, revealTreeNode,
+  textOf, treeNames, treeNode, waitFor, type PageLog,
 } from './helpers/E3N-page.js';
 import { click } from './helpers/E3N-interact.js';
 import { conflictCard, openPAW2 } from './helpers/E3P-world.js';
@@ -89,8 +89,12 @@ describe('E3P-8 Plan right panel', () => {
     });
   }, 180_000);
 
-  it('② Diff reads the one listed workspace and 文件 stays unconnected', async () => {
+  it('② Diff reads the one listed workspace and 文件 opens', async () => {
+    /* 今天红在 `tests/ui/E3P-8-aux.test.ts:113`（“文件”页签的 `is-off` 断言）：5b 的页签和
+       “新建页签”里的文件项仍是 `is-off`/`还没接通`；Astra 落地后两者都接通、各读一次 `files/list`，转绿。 */
     await onBoard('Plan', wgit.world, async (page, log) => {
+      const menuFile = (): FakeElement | undefined => descendants(page.root)
+        .find((element) => element.getAttribute('role') === 'menuitem' && textOf(element).startsWith('文件'));
       const from = log.calls.length;
       click(auxTab(page.root, 'Diff')!);
       await waitFor(() => diffRow(page.root, 'src/module.ts') !== undefined);
@@ -100,13 +104,46 @@ describe('E3P-8 Plan right panel', () => {
       expect(since(log, 'files/list', from)).toHaveLength(1);
       expect(countRoute(log, 'files/compare')).toBe(0);
 
+      /* B7b: the 文件 tab and the + menu's 文件 entry open the one real listing and
+         read README.md. `auxFileListOf` (`src/ui/adapters/aux-panel.ts:210`) sorts
+         folders before files, so the literal first row is `src/`; README.md is the
+         listing's first path and the closest reading is its first file row.
+         具名改坏: `auxRenderVals` 仍把 files 页签和“+ 文件”画成 `is-off`/`还没接通`；下面每句各自红。 */
       const files = auxTab(page.root, '文件')!;
-      expect(files.getAttribute('aria-disabled')).toBe('true');
-      expect(files.getAttribute('title')).toBe('还没接通');
+      expect(hasClass(files, 'is-off')).toBe(false);
+      expect(files.getAttribute('aria-disabled')).not.toBe('true');
+      expect(files.getAttribute('title')).not.toBe('还没接通');
       const before = log.calls.length;
       click(files);
+      await waitFor(() => since(log, 'files/list', before).some((call) => call.reply !== undefined));
+      await waitFor(() => auxFileRows(page.root).length > 0);
       await quietPage(log);
-      expect(log.calls.length).toBe(before);
+      expect(since(log, 'files/list', before)).toHaveLength(1);
+      const names = auxFileRows(page.root).map(auxRowName);
+      expect(names).toContain('README.md');
+      const firstFile = auxFileRows(page.root).filter((row) => findClass(row, 'fsp') !== undefined)
+        .map(auxRowName);
+      expect(firstFile[0]).toBe('README.md');
+      const readme = auxFileRows(page.root).find((row) => auxRowName(row) === 'README.md')!;
+      const beforeRead = log.calls.length;
+      click(readme);
+      await waitFor(() => since(log, 'files/read', beforeRead).some((call) => call.reply !== undefined));
+      await quietPage(log);
+      const reads = since(log, 'files/read', beforeRead);
+      expect(reads).toHaveLength(1);
+      expect((reads[0]!.input as { path?: unknown }).path).toBe('README.md');
+
+      const menu = log.calls.length;
+      click(findElement(page.root, (element) => element.getAttribute('aria-label') === '新建页签')!);
+      await waitFor(() => menuFile() !== undefined);
+      const item = menuFile()!;
+      expect(hasClass(item, 'is-off')).toBe(false);
+      expect(item.getAttribute('title')).not.toBe('还没接通');
+      expect(item.getAttribute('aria-disabled')).not.toBe('true');
+      click(item);
+      await waitFor(() => since(log, 'files/list', menu).some((call) => call.reply !== undefined));
+      await quietPage(log);
+      expect(since(log, 'files/list', menu)).toHaveLength(1);
     });
   }, 180_000);
 

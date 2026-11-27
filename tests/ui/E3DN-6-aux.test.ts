@@ -12,7 +12,7 @@ import {
 
 /**
  * E3DN-6 D15 after 5c: the delivery page's right panel reads the real task map
- * and the connected tool tabs; 文件 stays unconnected (Astra's B7c). A
+ * and the connected tool tabs; 文件页签和“新建页签”里的文件项已接通（B7c）. A
  * requirement's 在任务图里看 selects its task and reads that task's detail, and
  * the architecture map's 当前工作 is the page's own local switch (it never reads
  * architecture/work-scope).
@@ -30,6 +30,8 @@ const participantsSince = (log: PageLog, from: number): string[] => callsOf(log,
 
 describe('E3DN-6 the connected right panel', () => {
   it('D15③ the task map and the command, Diff and 文件 tabs', async () => {
+    /* 今天红在 `tests/ui/E3DN-6-aux.test.ts:54`（“文件”页签的 `is-off` 断言）：5c 的页签和
+       “新建页签”里的文件项仍是 `is-off`/`还没接通`；Astra 落地后两者都接通、共读两次 `files/list`，转绿。 */
     const done = await mainWorld();
     const { page, log } = await bootDone(done.world, done.goal.goalId);
     try {
@@ -44,21 +46,25 @@ describe('E3DN-6 the connected right panel', () => {
       for (const name of ['命令', 'Diff']) expect(auxTab(page.root, name)?.getAttribute('aria-disabled')).not.toBe('true');
       /* `views.ts` is the sample file page: it must not survive the real read. */
       expect(textOf(page.root)).not.toContain('views.ts');
-      /* B7c still owns 文件: drawn 还没接通 and its clicks send nothing. */
+      /* B7c: the 文件 tab and the + menu's 文件 entry are connected; each click
+         reads the one listing (the second adds the tab's own read).
+         具名改坏: `dataVals` 仍把 files 页签和“+ 文件”画成 `is-off`/`还没接通`、`pick` 为 `noop`；
+         下面每句各自红。 */
       const file = auxTab(page.root, '文件')!;
-      expect(hasClass(file, 'is-off')).toBe(true);
-      expect(file.getAttribute('title')).toBe('还没接通');
-      expect(file.getAttribute('aria-disabled')).toBe('true');
-      const before = log.calls.length;
+      expect(hasClass(file, 'is-off')).toBe(false);
+      expect(file.getAttribute('title')).not.toBe('还没接通');
+      expect(file.getAttribute('aria-disabled')).not.toBe('true');
       press(file, '文件');
+      await settle(() => countRoute(log, 'files/list') === 1);
       press(findElement(page.root, (element) => element.getAttribute('aria-label') === '新建页签'), '新建页签');
       const item = descendants(page.root).find((element) => element.getAttribute('role') === 'menuitem'
         && textOf(element).startsWith('文件'))!;
-      expect(hasClass(item, 'is-off')).toBe(true);
-      expect(item.getAttribute('title')).toBe('还没接通');
-      expect(item.getAttribute('aria-disabled')).toBe('true');
+      expect(hasClass(item, 'is-off')).toBe(false);
+      expect(item.getAttribute('title')).not.toBe('还没接通');
+      expect(item.getAttribute('aria-disabled')).not.toBe('true');
       press(item, '文件');
-      expect(log.calls.length).toBe(before);
+      await settle(() => countRoute(log, 'files/list') === 2);
+      expect(countRoute(log, 'files/list')).toBe(2);
     } finally {
       await page.restore();
     }

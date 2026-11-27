@@ -58,9 +58,10 @@ import {
   type CandidateDetail, type CandidateFactsRead, type DecideCard, type DecideCheckRow, type DecideData, type DecideRow, type DecideStepKey, type KnowledgeNoticeRead,
 } from './adapters/decide.js';
 import {
-  adaptArchOverview, type ArchCatalogRead, type ArchNoteRead, type ArchObservedRead, type ArchOperationRow,
-  type ArchOverviewData, type ArchOverviewSource,
+  adaptArchOverview, adaptArchSemantics, SEMANTIC_CHECK_FAIL_WORD, type ArchCatalogRead, type ArchNoteRead, type ArchObservedRead,
+  type ArchOperationRow, type ArchOverviewData, type ArchOverviewSource, type ArchSemanticRead,
 } from './adapters/arch-overview.js';
+import type { SemanticFlowV1, SemanticLinkV1, SemanticPageV1 } from '../contracts/semantic-layer.js';
 import type { ArchitectureObservationStateV1 } from '../contracts/architecture-observation.js';
 import type {
   KnowledgeCommitResult, KnowledgeCommitStatus, KnowledgeProblemV1, KnowledgeRecoveryItemV1, ProposalBatchFileV1,
@@ -92,10 +93,11 @@ import type { RequestReferenceInputV1 } from '../contracts/query-job.js';
 import type { QueryJobRef } from '../contracts/query-job.js';
 import {
   NO_PLAN_TEXT, adaptTaskMap, adaptTaskMapCalendar, adaptTaskMapDecisionCards, adaptTaskMapDetail, adaptTaskMapTime, anchorLinesOf, mergeUncountedWhy,
-  decisionCardCountPartial, runningCommandsByTask,
+  decisionCardCountPartial, overlapGatesOf, runningCommandsByTask,
   isFinishedGoalDisplayPhase, localShortAt, moduleNamesOf, type GoalDisplayPhaseCode, type TaskMapQueueRead,
   type TaskMapData, type TaskMapDetailTaskRead, type TaskMapDisplayRead, type TaskMapGoalRead,
   type TaskMapGraphRead, type TaskMapHoverRead, type TaskMapLineRead, type TaskMapNodeDetailData,
+  type TaskMapOverlapGate, type TaskMapOverlapGateRead,
   type TaskMapParticipantRead, type TaskMapRiskRead, type TaskMapSummaryRead, type TaskMapCalendarRead, type TaskMapTimeData, type TaskMapTimelineRead,
   type TaskMapTrackLineRead, type TaskMapTrackPageRead, type TaskMapUncommittedRead,
 } from './adapters/task-map.js';
@@ -233,6 +235,13 @@ export type BoardReadDemand = TaskMapReadDemand & {
   memberRunHosts?: RunRef | null;
   /** 只给 Main：本页自己的命令句柄，键是 `projectId/workspaceId|<行键>`。 */
   commandRuns?: Map<string, { scope: CoreScope; commandId: string } | 'gone'>;
+  /** The semantic layer's switch: `true` reads both routes once per refresh,
+   * `false` withdraws them. Absent is off (4-2 甲). */
+  semantic?: boolean;
+  /** The `?sem=<noteId>` deep link's selected link; `null` withdraws the selection. */
+  semPick?: string | null;
+  /** Main only: the `#flow=<id>` deep link's selected flow. */
+  flowPick?: string | null;
 };
 
 /** 本页命令表的键前缀，一个范围一个；`runCommand`、`stopCommand`、`readMain` 共用。 */
@@ -506,6 +515,9 @@ export type BoardActions = {
   /** A6: 再看 50 步 reads one page after the block's own `next` and appends it
    * by position, then the same refresh loop republishes the block. */
   readRunSteps?: (key: string) => Promise<void>;
+  /** The semantic layer's 重新核对: one check route call, then the same reread
+   * loop redraws from the new receipt; a failure throws the page's sentence. */
+  checkSemanticLinks?: (items: Array<{ noteId: string; version: number }>) => Promise<{ removed: boolean }>;
   /** A6: the board's own open/close state of one drawn Run block, by the
    * block's page key. Boot starts the 5 s chain only while an open block is
    * live; a block auto-opened by 详细/完全展开 reports itself open too. */
@@ -591,6 +603,7 @@ export type BoardActions = {
   /** §2.5/§2.8: one `tasks/hold/release` (the task card's 撤销暂缓), releasing
    * every hold reason of that Task in one commit. */
   releaseHolds: (taskRef: TaskTriple) => Promise<void>;
+  releaseOverlapGate: (gate: TaskMapOverlapGate, reason: string) => Promise<void>;
   /** A8: the TaskMap's 停止 — the line's own cancel control, from the running
    * command's `{ runRef, sessionRef, workspaceId }`. */
   stopTaskRun: (item: { runRef: RunRef; sessionRef: TaskMapSessionRef; workspaceId: string }) => Promise<void>;
@@ -700,6 +713,10 @@ export async function bootBoardPage(): Promise<void> {
   const search = new URLSearchParams(location.search);
   const goalParam = search.get('goal');
   let goalId = goalParam === null || goalParam === '' ? null : goalParam;
+  /* 4-2 甲: `?sem=` is the one explicit way in (the full page's link from Main);
+     nothing is written to the URL or either storage. `#flow=` selects a flow. */
+  const semParam = search.get('sem');
+  const flowParam = (location.hash ?? '').startsWith('#flow=') ? location.hash.slice('#flow='.length) : '';
   /* §2.2: Member's whole-line identity. Both values are needed together; one
      alone is ambiguous across projects. Other boards parse them but ignore. */
   const lineProject = search.get('lineProject');
@@ -772,6 +789,11 @@ export async function bootBoardPage(): Promise<void> {
   /* Main B §2.1: the panel opens on 任务图, so its first read is `auxTab:'task'`;
      Decide's, Plan's and Done's panels open on 任务图 too. */
   if (boardName === 'Main' || boardName === 'Decide' || boardName === 'Plan' || boardName === 'Done') demand.auxTab = 'task';
+  if (boardName === 'ArchOverview' && semParam !== null && semParam !== '') {
+    demand.semantic = true;
+    demand.semPick = semParam;
+  }
+  if (boardName === 'Main' && flowParam !== '') demand.flowPick = flowParam;
   if ((boardName === 'Member' || boardName === 'Chain')
     && lineProject !== null && lineProject !== '' && lineSession !== null && lineSession !== '') {
     demand.lineKey = { projectId: lineProject, sessionId: lineSession };
@@ -1032,6 +1054,28 @@ export async function bootBoardPage(): Promise<void> {
          shows no note or Run hosts, so the withdrawal reads nothing. */
       if (Object.keys(next).length === 1 && (next.noteAnchor === null || next.memberRunHosts === null)) return;
       void refresh.reread();
+    },
+    async checkSemanticLinks(items: Array<{ noteId: string; version: number }>): Promise<{ removed: boolean }> {
+      const data = latestArch;
+      if (data === null) return { removed: false };
+      let removed = false;
+      try {
+        const reply = readyRouteValue<{ items: Array<{ noteId: string; version: number; verification: unknown | null }> }>(
+          await client.post('architecture/semantic-links/check', data.scope, { items }),
+          'architecture/semantic-links/check');
+        removed = reply.items.some((item) => item.verification === null);
+      } catch (error) {
+        logReadError(error);
+        const code = error instanceof RouteReadError
+          ? (error.code === 'not_found' ? 'not_found' : 'other') : 'network';
+        const text = code === 'not_found' ? SEMANTIC_CHECK_FAIL_WORD.not_found
+          : code === 'other' ? SEMANTIC_CHECK_FAIL_WORD.other : SEMANTIC_CHECK_FAIL_WORD.network;
+        /* The page suppresses 重新核对 on a stale/not_found answer (item 3); the code is the
+           action's public contract, the words stay the page's. */
+        throw Object.assign(new Error(text), { code: code });
+      }
+      await refresh.reread();
+      return { removed };
     },
     async readRunSteps(key: string): Promise<void> {
       const cached = pageRunSteps.get(key);
@@ -1988,6 +2032,20 @@ export async function bootBoardPage(): Promise<void> {
       if (reply.status !== 'committed' && reply.status !== 'unchanged') {
         throw new Error(writeTextOf(new RouteReadError('tasks/hold/release',
           reply.code || reply.status || 'no status', reply.reason ?? '')));
+      }
+      await refresh.reread();
+    },
+    async releaseOverlapGate(gate, reason): Promise<void> {
+      const scope = { projectId: gate.ref.projectId, workspaceId: gate.workspaceId };
+      try {
+        const reply = await client.post('goals/overlap-release', scope, {
+          commandId: crypto.randomUUID(), gate: gate.ref, revision: gate.revision, reason,
+        });
+        if (reply.status !== 'released') {
+          throw new RouteReadError('goals/overlap-release', reply.code || reply.status, reply.reason ?? '');
+        }
+      } catch (error) {
+        throw new Error(gateWriteTextOf(error));
       }
       await refresh.reread();
     },
@@ -4143,9 +4201,9 @@ export async function readAuxPanel(
       return { ...empty, task: { tree, counts, detail, detailFor: demand.detailTaskId, moduleNames, taskModules, det } };
     }
     if (tab === 'arch') {
-      let architecture: unknown = null;
+      let architecture: ArchCatalogRead | null = null;
       try {
-        architecture = readyRouteValue<unknown>(await client.post('architecture/read', scope, {
+        architecture = readyRouteValue<ArchCatalogRead>(await client.post('architecture/read', scope, {
           selection: { kind: 'current' },
         }), 'architecture/read');
       } catch (error) {
@@ -4159,8 +4217,18 @@ export async function readAuxPanel(
         work = new Set(scopeRead.files.map((file) => file.path));
       }
       const tree = catalogArchTree(architecture, scope.projectId, nav.tasks, work);
+      /* The names come from the whole catalog, not the work-filtered tree: the other
+         end of a semantic link may be a module the filter dropped (item 11). */
+      const moduleNames = new Map<string, string>();
+      if (architecture !== null) {
+        for (const module of architecture.catalog.catalog.modules) moduleNames.set(module.ref.moduleId, module.name);
+      }
+      const semantic = demand.semantic === true
+        ? adaptArchSemantics(await readSemanticPages(client, scope), { flowPick: demand.flowPick ?? null },
+          moduleNames, null)
+        : null;
       return {
-        ...empty, arch: { tree, counts: tree === null ? {} : auxLeafCountsOf(tree, 'file'), work },
+        ...empty, arch: { tree, counts: tree === null ? {} : auxLeafCountsOf(tree, 'file'), work, semantic },
         task: { ...taskTreeOf(), detail: null, detailFor: null, moduleNames: {}, taskModules: {}, det: null },
       };
     }
@@ -4284,6 +4352,8 @@ async function readPageAux(
       auxPath: demand.auxPath ?? null,
       detailTaskId: demand.detailTaskId ?? null,
       workOnly: demand.workOnly === true,
+      semantic: demand.auxTab === 'arch' && demand.semantic === true,
+      flowPick: demand.flowPick ?? null,
     }, { allowed, runs });
 }
 
@@ -4776,6 +4846,48 @@ export async function readPlan(
 }
 
 /**
+ * The semantic layer's two reads (4-2 甲/4-3 甲): the project scope, links at 100
+ * a page and flows at 50, each at most 100 pages. Each route is caught on its
+ * own so one failure leaves the other block drawable; only a network failure is
+ * "连不上平台" and only the page limit is the cap sentence.
+ */
+async function readSemanticPages(
+  client: ReturnType<typeof createHostClient>, scope: CoreScope,
+): Promise<ArchSemanticRead> {
+  const out: ArchSemanticRead = {
+    links: null, flows: null, linkError: '', flowError: '', linkCap: false, flowCap: false,
+  };
+  const readEveryPage = async <T>(route: string, limit: number): Promise<T[]> => {
+    const items: T[] = [];
+    let cursor: string | null = null;
+    for (let guard = 0; guard < 100; guard += 1) {
+      const page: SemanticPageV1<T> = readyRouteValue<SemanticPageV1<T>>(
+        await client.post(route, scope, { scope: { kind: 'project' }, cursor, limit }), route,
+      );
+      items.push(...page.items);
+      cursor = page.next ?? null;
+      if (cursor === null) return items;
+    }
+    throw new RouteReadError(route, 'pagination_limit', 'over 100 pages');
+  };
+  const semanticErrorTextOf = (error: unknown): string => error instanceof RouteReadError
+    ? pageTextOf(error) : SEMANTIC_CHECK_FAIL_WORD.network;
+  try {
+    out.links = await readEveryPage<SemanticLinkV1>('architecture/semantic-links', 100);
+  } catch (error) {
+    if (error instanceof RouteReadError && error.code === 'pagination_limit') { logReadError(error); out.linkCap = true; }
+    else { logReadError(error); out.linkError = semanticErrorTextOf(error); }
+  }
+  try {
+    out.flows = await readEveryPage<SemanticFlowV1>('architecture/semantic-flows', 50);
+  } catch (error) {
+    if (error instanceof RouteReadError && error.code === 'pagination_limit') { logReadError(error); out.flowCap = true; }
+    else { logReadError(error); out.flowError = semanticErrorTextOf(error); }
+  }
+  return out;
+}
+
+/**
  * E3-ARCH: the ArchOverview read. Scope is `taskMapScope`'s; catalog
  * `not_found` is the ruled "not adopted" empty state, `tasks/query`
  * `not_found` is "no plan", and `architecture/query` reads every page of the
@@ -4904,6 +5016,7 @@ export async function readArchOverview(
     }
   }
 
+  const semantic = demand.semantic === true ? await readSemanticPages(client, scope) : null;
   const workspace = boot.workspaces.find((entry) => entry.scope.workspaceId === scope.workspaceId);
   const source: ArchOverviewSource = {
     scope, projectName: workspace?.name ?? '', workspaceNames,
@@ -4911,12 +5024,13 @@ export async function readArchOverview(
       id: found.goal.ref.goalId, ordinal: found.goal.read.ordinal ?? null,
       objective: asText(found.goal.read.goal.objective),
     },
-    catalog, observation, observed, changes, files, search, work, tasks, lines, notes, operations, knowledge,
+    catalog, observation, observed, changes, files, search, work, tasks, lines, notes, operations, knowledge, semantic,
   };
   const ui = {
     level: 'SYS', view: demand.dirView === true ? 'dir' as const : 'sem' as const,
     selected: anchor === null ? null : anchor.kind === 'file' ? anchor.path : null,
     hover: null, q: needle, workOnly: demand.workOnly === true, legend: false, theme: 'dark' as const,
+    semPick: demand.semPick ?? null,
   };
   return { data: adaptArchOverview(source, ui), cursor };
 }
@@ -4933,8 +5047,10 @@ export async function readArchOverview(
  */
 export async function readGoals(
   client: ReturnType<typeof createHostClient>, goalId: string | null,
-  _demand: BoardReadDemand = {},
+  demand: BoardReadDemand = {},
 ): Promise<RefreshRead<GoalsData>> {
+  // A tab change during the Goal reads schedules its own refresh.
+  const auxDemand = { ...demand };
   const boot = await client.bootstrap();
   const cursor = boot.changesHead ?? null;
   const found = await taskMapScope(client, boot.workspaces, goalId);
@@ -5042,9 +5158,27 @@ export async function readGoals(
       logReadError(error);
     }
   }
+  let aux: AuxPanelData | null = null;
+  const tab = auxDemand.auxTab;
+  if (tab === 'files' || tab === 'file' || tab === 'commands' || tab === 'diff') {
+    const nav = adaptNav({ goals, lines }, selected, scope);
+    const auxClient: typeof client = {
+      ...client,
+      async post(route, workspace, input) {
+        try {
+          return await client.post(route, workspace, input);
+        } catch (error) {
+          // Let the shared reader localize a lost connection to the same file, diff side or tab as a rejected read.
+          if (error instanceof RouteReadError) throw error;
+          throw new RouteReadError(route, 'unavailable', String(error));
+        }
+      },
+    };
+    aux = await readPageAux(auxClient, boot, scope, nav, auxDemand);
+  }
   return {
     data: adaptGoals({
-      goals, displays, lines, conflicts, tasks, drivers, architecture, projectId: scope.projectId, scope,
+      goals, displays, lines, conflicts, tasks, drivers, architecture, aux, projectId: scope.projectId, scope,
     }, selected),
     cursor,
   };
@@ -5195,7 +5329,17 @@ async function loadTaskMapForGoal(
     const mapRow = data.tasks.find((task) => task.id === node);
     data.detail = await readNodeDetail(client, scope, ref, graph, node,
       mapRow?.st ?? '', mapRow?.why ?? '');
-    if (data.detail !== null) await addTaskDetailFacts(client, scope, ref, graph, node, data.detail);
+    if (data.detail !== null) {
+      await addTaskDetailFacts(client, scope, ref, graph, node, data.detail);
+      try {
+        const gateScope = { projectId: ref.projectId, workspaceId: data.detail.workspaceId };
+        const page = readyRouteValue<{ gates: TaskMapOverlapGateRead[] }>(await client.post(
+          'goals/overlap-gates', gateScope, { goalRef: ref, page: { limit: 50 } }), 'goals/overlap-gates');
+        data.detail.overlapGates = overlapGatesOf(page.gates, data.detail, data);
+      } catch (error) {
+        logReadError(error);
+      }
+    }
   }
   return data;
 }
@@ -5423,6 +5567,16 @@ function writeTextOf(error: unknown): string {
   const code = error instanceof RouteReadError ? error.code : '';
   const reason = error instanceof RouteReadError ? error.reason : '';
   return WRITE_ERROR_TEXT[code + ':' + reason] ?? WRITE_ERROR_TEXT[code] ?? '写入失败。';
+}
+
+function gateWriteTextOf(error: unknown): string {
+  if (error instanceof RouteReadError) {
+    if (error.code === 'revision_conflict') return '这道门刚变过，等页面刷新后再点一次。';
+    if (error.code === 'invalid' && error.reason.includes('already satisfied')) {
+      return '参谋已经记了约定，这道门已经过了。';
+    }
+  }
+  return writeTextOf(error);
 }
 
 /** S2 (5.1-8): the control owner's English refusals in the person's words,

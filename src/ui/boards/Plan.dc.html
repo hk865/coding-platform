@@ -785,7 +785,7 @@ body { margin: 0; background: #1F1F1F; }
             <textarea id="plan-input" rows="2" placeholder="{{composerPh}}" value="{{draft}}" onChange="{{onDraft}}"></textarea>
             <div class="composer-foot">
               <sc-if value="{{hasNote}}" hint-placeholder-val="{{ false }}"><span class="to">{{composerNote}}</span></sc-if>
-              <button class="{{sendCls}}" type="button" onClick="{{send}}" aria-label="发送" title="发送">
+              <button class="{{sendCls}}" type="button" onClick="{{send}}" aria-disabled="{{sendOff}}" aria-label="发送" title="发送">
                 <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 12.75V3.5M4.25 7.25 8 3.5l3.75 3.75"></path></svg>
               </button>
             </div>
@@ -996,7 +996,7 @@ body { margin: 0; background: #1F1F1F; }
                         <sc-if value="{{p.isEdit}}" hint-placeholder-val="{{ false }}"><svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="M10.75 2.75 13.25 5.25 6 12.5H3.5V10Z"></path><path d="M9.25 4.25l2.5 2.5"></path></svg></sc-if>
                         <sc-if value="{{p.isCmd}}" hint-placeholder-val="{{ false }}"><svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 4.5 6.25 8 3 11.5"></path><path d="M8.25 11.75h4.75"></path></svg></sc-if>
                         <sc-if value="{{p.isInt}}" hint-placeholder-val="{{ false }}"><svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.75 3v4.5a2 2 0 0 0 2 2h8.5"></path><path d="m10.25 6.5 3 3-3 3"></path></svg></sc-if>
-                        <span class="step-verb">{{p.verb}}</span><span class="step-dot">·</span><span class="{{p.objCls}}">{{p.obj}}</span>
+                        <span class="step-verb">{{p.verb}}</span><span class="step-dot">·</span><sc-if value="{{p.isPath}}" hint-placeholder-val="{{ false }}"><button class="{{p.objCls}} is-link" type="button" onClick="{{p.objGo}}" title="在辅助区打开这个文件">{{p.obj}}</button></sc-if><sc-if value="{{p.isPlainObj}}" hint-placeholder-val="{{ true }}"><span class="{{p.objCls}}">{{p.obj}}</span></sc-if>
                         <sc-if value="{{p.hasMeta}}" hint-placeholder-val="{{ false }}"><span class="step-meta">{{p.meta}}</span></sc-if>
                         <sc-if value="{{p.isDiff}}" hint-placeholder-val="{{ false }}"><span class="step-meta"><span class="add">{{p.add}}</span> <span class="del">{{p.del}}</span></span></sc-if>
                         <sc-if value="{{p.hasStop}}" hint-placeholder-val="{{ false }}"><button class="{{p.stopCls}}" type="button" onClick="{{p.stopGo}}" title="取消这次运行">停止</button></sc-if><sc-if value="{{p.hasStopFail}}" hint-placeholder-val="{{ false }}"> <span class="tx-failed">{{p.stopFail}}</span></sc-if>
@@ -1147,7 +1147,7 @@ body { margin: 0; background: #1F1F1F; }
       <div class="pt-list" role="tablist" aria-label="辅助页">
         <sc-for list="{{ax.tabs}}" as="t" hint-placeholder-count="6">
           <span class="{{t.cls}}">
-            <button class="nm{{t.offCls}}" type="button" role="tab" aria-selected="{{t.on}}" aria-disabled="{{t.off}}" onClick="{{t.pick}}" title="{{t.tip}}">{{t.name}}</button>
+            <button class="nm" type="button" role="tab" aria-selected="{{t.on}}" onClick="{{t.pick}}" title="{{t.tip}}">{{t.name}}</button>
             <sc-if value="{{t.dirty}}" hint-placeholder-val="{{ false }}"><span class="dirty" title="有未保存的修改"><span class="sr-only">有未保存的修改</span></span></sc-if>
             <sc-if value="{{t.canClose}}" hint-placeholder-val="{{ false }}">
               <button class="x" type="button" onClick="{{t.close}}" aria-label="{{t.closeLabel}}" title="关闭">
@@ -1169,7 +1169,7 @@ body { margin: 0; background: #1F1F1F; }
           <sc-if value="{{ax.newOpen}}" hint-placeholder-val="{{ false }}">
             <div class="menu" role="menu" aria-label="新建页签">
               <sc-for list="{{ax.newItems}}" as="m" hint-placeholder-count="3">
-                <button class="{{m.cls}}" type="button" role="menuitem" onClick="{{m.go}}" title="{{m.tip}}" aria-disabled="{{m.off}}">{{m.label}}<sc-if value="{{m.open}}" hint-placeholder-val="{{ false }}"><span class="ck">已打开</span></sc-if></button>
+                <button class="{{m.cls}}" type="button" role="menuitem" onClick="{{m.go}}">{{m.label}}<sc-if value="{{m.open}}" hint-placeholder-val="{{ false }}"><span class="ck">已打开</span></sc-if></button>
               </sc-for>
             </div>
           </sc-if>
@@ -1406,6 +1406,7 @@ body { margin: 0; background: #1F1F1F; }
             <span class="fp-acts">
               <button class="btn btn-sm" type="button" onClick="{{ax.fp.toggleEdit}}">{{ax.fp.editLabel}}</button>
               <button class="{{ax.fp.saveCls}}" type="button" onClick="{{ax.fp.save}}" aria-disabled="{{ax.fp.cantSave}}">保存</button>
+              <sc-if value="{{ax.fp.saveError}}" hint-placeholder-val="{{ false }}"><span class="tx-failed" role="alert">{{ax.fp.saveError}}</span></sc-if>
             </span>
           </sc-if>
         </div>
@@ -1415,13 +1416,14 @@ body { margin: 0; background: #1F1F1F; }
             <div class="acts">
               <button class="btn btn-sm btn-line" type="button" onClick="{{ax.fp.reload}}">重新载入</button>
               <button class="btn btn-sm btn-line" type="button" onClick="{{ax.fp.compare}}">比较</button>
-              <button class="btn btn-sm btn-line" type="button" onClick="{{ax.fp.overwrite}}">仍然保存</button>
+              <button class="{{ax.fp.overwriteCls}}" type="button" aria-disabled="{{ax.fp.saving}}" onClick="{{ax.fp.overwrite}}">仍然保存</button>
               <button class="btn btn-sm" type="button" onClick="{{ax.fp.dismiss}}">先不保存</button>
             </div>
           </div>
         </sc-if>
         <sc-if value="{{ax.fp.viewing}}" hint-placeholder-val="{{ true }}">
           <div class="fcode" aria-label="文件内容">
+            <sc-if value="{{ax.fp.readNote}}" hint-placeholder-val="{{ false }}"><p class="pnote">{{ax.fp.readNote}}</p></sc-if>
             <sc-for list="{{ax.fp.rows}}" as="l" hint-placeholder-count="12">
               <sc-if value="{{l.fold}}" hint-placeholder-val="{{ false }}"><div class="{{l.cls}}"><span class="fl-t">{{l.text}}</span></div></sc-if>
               <sc-if value="{{l.line}}" hint-placeholder-val="{{ true }}"><div class="{{l.cls}}"><button class="fl-n" type="button" onClick="{{l.pick}}" aria-label="{{l.label}}">{{l.no}}</button><span class="fl-t">{{l.text}}</span></div></sc-if>
@@ -1437,7 +1439,7 @@ body { margin: 0; background: #1F1F1F; }
         <div class="fp-bar">
           <span class="t">{{ax.fp.barText}}</span>
           <sc-if value="{{ax.fp.hasSel}}" hint-placeholder-val="{{ false }}"><button class="btn btn-sm" type="button" onClick="{{ax.fp.clearSel}}">清除选择</button></sc-if>
-          <button class="btn btn-sm btn-line" type="button" onClick="{{ax.fp.quote}}">{{ax.fp.quoteLabel}}</button>
+          <button class="{{ax.fp.quoteCls}}" type="button" aria-disabled="{{ax.fp.quoteOff}}" title="{{ax.fp.quoteTip}}" onClick="{{ax.fp.quote}}">{{ax.fp.quoteLabel}}</button>
         </div>
       </div>
     </sc-if>
@@ -2938,9 +2940,7 @@ class Component extends DCLogic {
   /* §2.1: in data mode the right panel's workspace is the route's, never the
      sample `axRepo()`; `files` holds only the one file page the read returned.
      Ruling 2: the lines, the changed rows and the tree come from
-     `readAuxPanel` (aux-panel.ts); this only maps them onto the prototype's
-     shapes. The 文件 page, its save/compare and the references stay Astra's
-     B7b; the Diff, command and two map tabs are this batch's. */
+     `readAuxPanel` (aux-panel.ts); this only maps them onto the prototype's shapes. */
   auxRepo() {
     const aux = this.auxData();
     const version = this.props.dataVersion || 0;
@@ -3150,15 +3150,10 @@ class Component extends DCLogic {
   /* a path in a map's detail (文件, 路径) and on node pages (markup: .d-fline): a file opens its page in the auxiliary area,
      a folder opens 文件 at it, a changed file also offers 看 Diff; a path not in the repository (a planned file) stays text */
   axFileItem(path) {
-    /* B2/缺口包: with a Host the path stays text until Astra's B7b opens the 文件
-       page; a changed file still offers its Diff (this batch's tab). */
-    if (this.dataMode()) {
-      const changed = this.axRepo().changed.some((f) => f.path === path);
-      const a = String(path).split('/'); const noop = () => {};
-      return { full: path, parts: a.map((x, i) => (i < a.length - 1 ? x + '/' : x)), canOpen: false, cantOpen: true, open: noop,
-        tip: '还没接通', hasDiff: changed, diff: changed ? () => this.axOpenDiff(path) : noop };
-    }
-    const P = this.axPaths(); const isFile = P.files.has(path); const isDir = !isFile && P.dirs.has(path);
+    const paths = this.axPaths();
+    // Without a directory listing, opening the path lets the file read resolve it.
+    const isFile = paths.files.has(path) || (this.dataMode() && !paths.known);
+    const isDir = paths.dirs.has(path);
     const changed = isFile && this.axRepo().changed.some((f) => f.path === path);
     const a = String(path).split('/'); const noop = () => {};
     return { full: path, parts: a.map((x, i) => (i < a.length - 1 ? x + '/' : x)), canOpen: isFile || isDir, cantOpen: !isFile && !isDir,
@@ -3171,6 +3166,7 @@ class Component extends DCLogic {
     const st = this.state || {};
     const pages = (st.axPages || []).indexOf(path) >= 0 ? st.axPages : (st.axPages || []).concat([path]);
     this.setState({ axPages: pages, ptab: 'f:' + path, axSel: null, axNew: false, panel: true, hover: null });
+    if (this.dataMode()) this.axRead('f:' + path);
   }
   axOpenDiff(path) {
     const st = this.state || {};
@@ -3182,6 +3178,7 @@ class Component extends DCLogic {
     const d = Object.assign({}, st.axDirs || {}); const parts = String(path).split('/');
     parts.forEach((x, i) => { d[parts.slice(0, i + 1).join('/')] = true; });
     this.setState({ axTabs: (st.axTabs || []).indexOf('files') >= 0 ? st.axTabs : (st.axTabs || []).concat(['files']), ptab: 'files', axDirs: d, axNew: false, panel: true, hover: null });
+    if (this.dataMode()) this.axRead('files');
   }
 
   /* line-level diff of two short texts (longest common subsequence) → rows [sign, oldNo, newNo, text];
@@ -3199,8 +3196,31 @@ class Component extends DCLogic {
     return rows;
   }
 
-  /* ------------------------------------------------------------ everything the markup binds: ax.*
-     s = this.state; o = { at: '14:15' (the board's clock), extra: [{ key, name }] node pages (Main's s.extra) } */
+  async saveEditedFile(path, file, overwrite) {
+    const before = this.state;
+    const draft = before.axDraft[path];
+    const status = before.fileWrites?.[path] || {};
+    if (!file || draft === undefined || status.busy || (status.conflict && !overwrite)) return;
+    const mark = (result) => this.setState({ fileWrites: { ...this.state.fileWrites, [path]: result } });
+    mark({ busy: true, conflict: status.conflict });
+    const expected = overwrite ? file.digest : (before.draftVersions?.[path] ?? file.digest);
+    const content = file.eol && !draft.endsWith('\n') ? draft + '\n' : draft;
+    try {
+      await this.props.actions.saveFile(path, content, expected);
+      const current = this.state;
+      const drafts = { ...current.axDraft };
+      const versions = { ...current.draftVersions };
+      // A later edit survives the save. Its base is the newly saved file.
+      if (drafts[path] === draft) delete drafts[path];
+      delete versions[path];
+      this.setState({ axDraft: drafts, draftVersions: versions, axSaved: { ...current.axSaved, [path]: true } });
+      mark({});
+    } catch (error) {
+      if (error.code === 'source_stale') mark({ conflict: true });
+      else mark({ conflict: status.conflict, error: error.message });
+    }
+  }
+
   axView(s, o) {
     const set = (p) => this.setState(p);
     const cur = () => this.state || {};
@@ -3310,9 +3330,10 @@ class Component extends DCLogic {
           if (open) walk({ dirPath: n.path, items: n.kids }, depth + 1);
         } else {
           const ch = changedBy[n.path];
+          const counted = ch && ch.add !== null;
           rows.push({ key: n.path, isDir: false, isFile: true, name: n.name, cls: 'frow d' + Math.min(depth, 9) + (ptab === 'f:' + n.path ? ' is-on' : ''), ex: null,
-            meta: ch ? '+' + ch.add + ' −' + ch.del : '', hasMeta: !!ch, addTxt: ch ? '+' + ch.add : '', delTxt: ch ? '−' + ch.del : '',
-            go: () => { const c = cur(); const pages = (c.axPages || []).indexOf(n.path) >= 0 ? c.axPages : (c.axPages || []).concat([n.path]); set({ axPages: pages, ptab: 'f:' + n.path, axSel: null }); } });
+            meta: counted ? '+' + ch.add + ' −' + ch.del : '', hasMeta: !!counted, addTxt: counted ? '+' + ch.add : '', delTxt: counted ? '−' + ch.del : '',
+            go: () => this.axOpenFile(n.path) });
         }
       });
       if (list.items.length > shown) rows.push({ key: list.dirPath + ':more', isDir: false, isFile: false, isMore: true, name: '再显示 100 个（共 ' + list.items.length + ' 个）', cls: 'frow is-more d' + Math.min(depth, 9),
@@ -3329,7 +3350,12 @@ class Component extends DCLogic {
       const lines = draft !== undefined ? draft.split('\n') : baseLines;
       const from = F ? F.from : 1; const to = from + lines.length - 1;
       const sel = s.axSel && s.axSel.path === path ? s.axSel : null;
-      const editing = !!(s.axEdit || {})[path];
+      const host = this.dataMode();
+      const aux = host && this.auxData();
+      const readNote = aux && aux.tab === 'file' && !aux.file ? (aux.error?.text || '文件不在了') : '';
+      const write = s.fileWrites?.[path] || {};
+      const quoteOff = host && !F;
+      const editing = !!(s.axEdit || {})[path] && !quoteOff;
       const dirty = draft !== undefined;
       const pick = (no) => (e) => {
         const c = cur(); const prev = c.axSel && c.axSel.path === path ? c.axSel : null;
@@ -3339,12 +3365,14 @@ class Component extends DCLogic {
       };
       const codeRows = [];
       if (F && from > 1) codeRows.push({ fold: true, line: false, text: '第 1–' + (from - 1) + ' 行，原型没有收录', cls: 'fl is-fold' });
-      lines.forEach((t, k) => { const no = from + k; const on = !!sel && no >= sel.a && no <= sel.b;
+      if (!quoteOff) lines.forEach((t, k) => { const no = from + k; const on = !!sel && no >= sel.a && no <= sel.b;
         codeRows.push({ fold: false, line: true, no: no, text: t, cls: 'fl' + (on ? ' is-sel' : ''), pick: pick(no), label: '选中第 ' + no + ' 行；按住 Shift 再点一行，选中一段' }); });
       if (F && to < F.total) codeRows.push({ fold: true, line: false, text: '第 ' + (to + 1) + '–' + F.total + ' 行，原型没有收录', cls: 'fl is-fold' });
       const savedAt = (s.axSaved || {})[path];
-      const conflict = s.axConflict === path && F && F.disk;
-      const saveNow = () => {
+      const conflict = !!F && (host ? !!write.conflict : s.axConflict === path && F.disk);
+      const saveOff = !dirty || (host && (!F || !!write.busy || !!conflict));
+      const saveNow = (overwrite = false) => {
+        if (host) return this.saveEditedFile(path, F, overwrite);
         const c = cur(); const d = (c.axDraft || {})[path]; if (d === undefined) return;
         const t = Object.assign({}, c.axText || {}); t[path] = d.split('\n');
         const dr = Object.assign({}, c.axDraft || {}); delete dr[path];
@@ -3357,29 +3385,57 @@ class Component extends DCLogic {
       const snippet = (a, b) => { const k = Math.max(0, a - from); const t = (lines.slice(k, k + (b - a + 1)).filter((x) => x.trim())[0] || '').trim(); return t.length > 56 ? t.slice(0, 55) + '…' : t; };
       fp = {
         path: path, name: path.split('/').pop(), parts: path.split('/').map((x, k, a) => (k < a.length - 1 ? x + '/' : x)), known: !!F,
-        state: !F ? '原型没有收录这个文件的内容' : dirty ? '未保存的修改' : savedAt ? '已保存 ' + savedAt : reloaded ? '已重新载入 ' + at : '载入于 ' + F.loaded,
+        state: !F ? (host ? '' : '原型没有收录这个文件的内容') : dirty ? '未保存的修改'
+          : savedAt ? (host ? '已保存' : '已保存 ' + savedAt)
+          : reloaded ? (host ? '已重新载入' : '已重新载入 ' + at) : '载入于 ' + F.loaded,
+        readNote, saveError: write.error || '', saving: !!write.busy,
+        overwriteCls: 'btn btn-sm btn-line' + (write.busy ? ' is-off' : ''),
         stateCls: 'fp-state' + (dirty ? ' tx-waiting' : ''), rows: codeRows, editing: editing, viewing: !editing, draftText: lines.join('\n'),
         editLabel: editing ? '查看' : '编辑', toggleEdit: () => { const e = Object.assign({}, cur().axEdit || {}); if (e[path]) delete e[path]; else e[path] = true; set({ axEdit: e }); },
-        onEdit: (e) => { const d = Object.assign({}, cur().axDraft || {}); d[path] = e && e.target ? e.target.value : lines.join('\n'); set({ axDraft: d }); },
+        onEdit: (e) => {
+          const current = cur();
+          const patch = { axDraft: { ...current.axDraft, [path]: e.target.value } };
+          if (host && F && current.draftVersions?.[path] === undefined) {
+            patch.draftVersions = { ...current.draftVersions, [path]: F.digest };
+          }
+          set(patch);
+        },
         onSelect: (e) => { const t = e && e.target; if (!t || t.selectionStart === t.selectionEnd) return; const v = String(t.value);
           const a = from + v.slice(0, t.selectionStart).split('\n').length - 1; const b = from + v.slice(0, Math.max(t.selectionStart, t.selectionEnd - 1)).split('\n').length - 1;
           set({ axSel: { path: path, anchor: a, a: a, b: b } }); },
-        canSave: dirty, cantSave: !dirty, saveCls: 'btn btn-sm btn-line' + (dirty ? '' : ' is-off'),
-        save: () => { const c = cur(); if ((c.axDraft || {})[path] === undefined) return; if (F && F.disk && !(c.axReload || {})[path] && !(c.axSaved || {})[path]) set({ axConflict: path }); else saveNow(); },
+        canSave: !saveOff, cantSave: saveOff, saveCls: 'btn btn-sm btn-line' + (saveOff ? ' is-off' : ''),
+        save: () => { if (host) return saveNow();
+          const c = cur(); if ((c.axDraft || {})[path] === undefined) return; if (F && F.disk && !(c.axReload || {})[path] && !(c.axSaved || {})[path]) set({ axConflict: path }); else saveNow(); },
         hasSel: !!sel, selText: sel ? (sel.a === sel.b ? '已选第 ' + sel.a + ' 行' : '已选第 ' + sel.a + '–' + sel.b + ' 行') : '',
         barText: sel ? (sel.a === sel.b ? '已选第 ' + sel.a + ' 行' : '已选第 ' + sel.a + '–' + sel.b + ' 行') + (dirty ? '（未保存，引用的是草稿快照）' : '')
           : nQf ? '已引用到草稿（' + nQf + ' 条），还没有发送'
-          : F ? (editing ? '在编辑框里选中几行，再引用' : '点行号选中一行，按住 Shift 再点一行选中一段') : '可以把整个文件引用到草稿',
+          : F ? (editing ? '在编辑框里选中几行，再引用' : '点行号选中一行，按住 Shift 再点一行选中一段') : quoteOff ? '' : '可以把整个文件引用到草稿',
+        quoteOff, quoteCls: 'btn btn-sm btn-line' + (quoteOff ? ' is-off' : ''),
+        quoteTip: quoteOff ? '读到文件后可以引用' : '加入当前草稿',
         quoteLabel: sel ? '引用到草稿' : '把整个文件引用到草稿', clearSel: () => set({ axSel: null }),
         quote: () => {
+          if (quoteOff) return;
           const c = cur(); const n = (c.axQn || 0) + 1;
           const q = sel ? { id: 'q' + n, path: path, a: sel.a, b: sel.b, snip: snippet(sel.a, sel.b), snap: dirty } : { id: 'q' + n, path: path, a: null, b: null, snip: F ? snippet(from, to) : '', snap: dirty };
+          if (dirty) q.snapText = sel ? lines.slice(sel.a - from, sel.b - from + 1).join('\n') : draft;
           set({ quotes: (c.quotes || []).concat([q]), axQn: n, axSel: null });
         },
-        conflict: !!conflict, conflictText: conflict ? '磁盘上的 ' + path.split('/').pop() + ' 在 ' + F.disk.at + ' 被 ' + F.disk.by + ' 改过（+' + F.disk.add + ' −' + F.disk.del + '），晚于你载入的版本（' + F.loaded + '）。' : '',
-        reload: () => { const c = cur(); const r = Object.assign({}, c.axReload || {}); r[path] = true; const dr = Object.assign({}, c.axDraft || {}); delete dr[path]; set({ axReload: r, axDraft: dr, axConflict: null }); },
+        conflict: !!conflict, conflictText: !conflict ? '' : host ? '磁盘内容在你读取后有了更新。' : '磁盘上的 ' + path.split('/').pop() + ' 在 ' + F.disk.at + ' 被 ' + F.disk.by + ' 改过（+' + F.disk.add + ' −' + F.disk.del + '），晚于你载入的版本（' + F.loaded + '）。',
+        reload: () => {
+          const current = cur();
+          if (current.fileWrites?.[path]?.busy) return;
+          const drafts = { ...current.axDraft };
+          const versions = { ...current.draftVersions };
+          delete drafts[path];
+          delete versions[path];
+          set({ axReload: { ...current.axReload, [path]: true }, axDraft: drafts, draftVersions: versions,
+            axSel: null, axConflict: null, fileWrites: { ...current.fileWrites, [path]: {} } });
+          if (host) this.axRead('f:' + path);
+        },
         compare: () => set({ ptab: 'diff', axCmp: path, axTabs: (cur().axTabs || []).indexOf('diff') >= 0 ? cur().axTabs : (cur().axTabs || []).concat(['diff']) }),
-        overwrite: () => saveNow(), dismiss: () => set({ axConflict: null })
+        overwrite: () => saveNow(true), dismiss: () => {
+          if (!cur().fileWrites?.[path]?.busy) set({ axConflict: null, fileWrites: { ...cur().fileWrites, [path]: {} } });
+        }
       };
     }
     /* ---- commands */
@@ -3425,7 +3481,30 @@ class Component extends DCLogic {
       cls: 'frow d0' + (!cmpPath && s.axDiff === f.path ? ' is-on' : ''),
       go: () => { set({ axDiff: f.path, axCmp: null }); if (this.dataMode()) this.axRead('d:' + f.path); } }));
     let drows = []; let dnote = ''; let dhead = ''; let dPath = null;
-    if (cmpPath) {
+    const appendHunks = (hunks, compareDraft = false) => {
+      for (const hunk of hunks) {
+        const header = compareDraft ? '@@ 第 ' + hunk.oldAt + ' 行起 · 磁盘 ↔ 草稿' : hunk.head;
+        drows.push({ hunk: true, line: false, text: header, cls: 'dl-hunk' });
+        let oldLine = hunk.oldAt;
+        let newLine = hunk.newAt;
+        for (const [sign, text] of hunk.rows) {
+          const added = sign === '+';
+          const deleted = sign === '-';
+          drows.push({ hunk: false, line: true, text, cls: 'dl-row' + (added ? ' is-add' : deleted ? ' is-del' : ''),
+            sign: added ? '+' : deleted ? '−' : '', o: added ? '' : String(oldLine++), n: deleted ? '' : String(newLine++) });
+        }
+      }
+    };
+    if (cmpPath && this.dataMode()) {
+      const file = repo.files[cmpPath];
+      const draft = s.axDraft[cmpPath] ?? file.disk.text;
+      const content = file.eol && !draft.endsWith('\n') ? draft + '\n' : draft;
+      const hunks = actions.diffHunks(file.disk.text, content);
+      dhead = '磁盘上的版本 ↔ 你的草稿 · ' + cmpPath;
+      if (hunks === null) dnote = '这个文件没有逐行内容：二进制或不是 UTF-8 文本、超过 1 MiB，或改动超过 1000 行';
+      else if (!hunks.length) dnote = '逐行看没有差别（可能只差文件开头的 BOM，或文件刚又改回去了）';
+      else appendHunks(hunks, true);
+    } else if (cmpPath) {
       const F = repo.files[cmpPath]; const mine = ((s.axDraft || {})[cmpPath] !== undefined ? s.axDraft[cmpPath].split('\n') : F.lines);
       dhead = F.disk.by + ' ' + F.disk.at + ' 写到磁盘的版本 ↔ 你的草稿 · ' + cmpPath.split('/').pop() + ' 第 ' + F.from + ' 行起';
       drows = [{ hunk: true, line: false, text: '@@ 第 ' + F.from + ' 行起 · 磁盘 ↔ 草稿', cls: 'dl-hunk' }].concat(this.axLineDiff(F.disk.lines, mine, F.from).map((r) => ({ hunk: false, line: true, cls: 'dl-row' + (r[0] === '+' ? ' is-add' : r[0] === '-' ? ' is-del' : ''), sign: r[0] === ' ' ? '' : r[0] === '-' ? '−' : '+', o: r[1] === null ? '' : String(r[1]), n: r[2] === null ? '' : String(r[2]), text: r[3] })));
@@ -3434,12 +3513,7 @@ class Component extends DCLogic {
       if (f) { dPath = f.path;
         dhead = 'Git（HEAD）↔ 工作区 · ' + f.path.split('/').pop() + (f.add === null ? '' : ' · +' + f.add + ' −' + f.del) + (f.by ? ' · ' + f.by : '');
       }
-      if (f) f.hunks.forEach((h) => {
-        drows.push({ hunk: true, line: false, text: h.head, cls: 'dl-hunk' });
-        let o2 = h.oldAt; let n2 = h.newAt;
-        h.rows.forEach((r) => { const row = { hunk: false, line: true, cls: 'dl-row' + (r[0] === '+' ? ' is-add' : r[0] === '-' ? ' is-del' : ''), sign: r[0] === ' ' ? '' : r[0] === '-' ? '−' : '+', o: r[0] === '+' ? '' : String(o2), n: r[0] === '-' ? '' : String(n2), text: r[1] };
-          if (r[0] !== '+') o2 += 1; if (r[0] !== '-') n2 += 1; drows.push(row); });
-      });
+      if (f) appendHunks(f.hunks);
       if (f && !f.hunks.length) dnote = (f.note ? f.note + '；' : '') + '逐行内容在原型里没有收录。';
       if (this.dataMode() && ptab === 'diff') {
         const aux = this.auxData();
@@ -3466,6 +3540,8 @@ class Component extends DCLogic {
     /* ---- quotes in the composer */
     const quotes = (s.quotes || []).map((q) => ({ id: q.id, path: q.path, lines: q.a === null ? '整个文件' : q.a === q.b ? '第 ' + q.a + ' 行' : '第 ' + q.a + '–' + q.b + ' 行',
       snap: !!q.snap, snip: q.snip, hasSnip: !!q.snip, remove: () => set({ quotes: (cur().quotes || []).filter((x) => x.id !== q.id) }) }));
+    const keptQuote = quotes.some((quote) => s.heldQuoteIds?.includes(quote.id));
+    const quoteNote = keptQuote ? '引用没有随这次发出（这一种发送不带引用），还在草稿里。' : '已引用到草稿，还没有发送';
     const rail = handle('rail'); const panel = handle('panel');
     return {
       appCls: (s.axMax ? 'panel-max' : '') + (s.axDrag ? ' is-dragging' : ''), railW: s.railW || defW('rail', W0), panelW: s.panelW || defW('panel', W0),
@@ -3476,7 +3552,8 @@ class Component extends DCLogic {
       newOpen: !!s.axNew, toggleNew: () => set({ axNew: !cur().axNew }), newItems: newItems,
       maxLabel: s.axMax ? '还原右栏' : '放大右栏', isMax: !!s.axMax, notMax: !s.axMax, toggleMax: () => set({ axMax: !cur().axMax, panel: true }),
       hide: () => { set({ panel: false, axMax: false, axNew: false }); if (this.dataMode()) actions.readMore({ auxTab: null }); },
-      fileRows: rows, fileNote: 'coding-platform · 分支 feat/reliability-and-structure · 改动 ' + repo.changed.length + ' 个文件',
+      fileRows: rows, fileNote: this.dataMode() ? this.auxFileNote(repo)
+        : 'coding-platform · 分支 feat/reliability-and-structure · 改动 ' + repo.changed.length + ' 个文件',
       fp: fp || { rows: [], parts: [] },
       cmds: cmds, cmdNote: this.dataMode()
         ? (() => { const aux = this.auxData(); if (aux && aux.error) return aux.error.text;
@@ -3486,10 +3563,10 @@ class Component extends DCLogic {
           if (!cmd.allowed) return '这个工作区没有开“跑命令”的授权：命令能看，不能在这里运行。';
           return '命令在 Host 的工作区里运行；这里不是终端，没有输入。'; })()
         : '命令在 Host 的工作区里运行；这里不是终端，没有输入。',
-      dfiles: dfiles, drows: drows, dhead: dhead, dnote: dnote, hasDnote: !!dnote, isCmp: !!cmpPath, backToGit: () => set({ axCmp: null }),
+      dfiles: dfiles, drows: drows, dhead: dhead, dnote: dnote, hasDnote: !!dnote, isCmp: !!cmpPath, backToGit: () => { set({ axCmp: null }); if (this.dataMode()) this.axRead('diff'); },
       /* Diff's head: the file shown in Git ↔ 工作区 opens as its page (from Main's review) */
       dOpenShow: ptab === 'diff' && !!dPath, dOpen: () => { if (dPath) this.axOpenFile(dPath); }, dOpenTip: dPath ? '在文件页里打开 ' + dPath : '',
-      quotes: quotes, hasQuotes: quotes.length > 0, quoteNote: '已引用到草稿，还没有发送',
+      quotes: quotes, hasQuotes: quotes.length > 0, quoteNote,
       /* 放大 hides the composer: the quotes waiting there are counted beside the strip's buttons; a click restores the panel */
       qMax: { show: !!s.axMax && quotes.length > 0, n: quotes.length, go: () => set({ axMax: false }) }
     };
@@ -4393,8 +4470,7 @@ class Component extends DCLogic {
       const isPath = p.path === true;
       /* A1: only a read step's path is the auxiliary panel's link; an edit's
          path keeps `is-path` as a plain span (the prototype's edit markup). */
-      /* B2/缺口包: with a Host the read path stays text until Astra's B7b opens the 文件 page */
-      const isLink = isPath && p.ic === 'file' && p.verb === '读取' && !this.dataMode();
+      const isLink = isPath && p.ic === 'file' && p.verb === '读取';
       const hasStop = !!p.stop && typeof stopAt === 'function';
       const callId = callIds === undefined ? '' : (callIds[i] || '');
       const failKey = runKey !== undefined && callId !== '' ? runKey + '\u0000' + callId : '';
@@ -6175,8 +6251,51 @@ class Component extends DCLogic {
       }))
     });
   }
-  /* §2.5/§2.11/§2.12: the thread, the four cards, the composer and the one send
-     seam. The right panel and the line view stay on the sample mount. */
+  async sendPlanDraft(data) {
+    const sent = this.state;
+    const text = sent.draft.trim();
+    if (!text || sent.sending) return;
+    const actions = this.props.actions;
+    const quotes = sent.quotes || [];
+    const goalDraft = sent.iterating && sent.iterKey === 'G' ? data.goalCard?.draft : null;
+    const plan = data.plan;
+    const changePlan = sent.iterating && sent.iterKey !== 'G' && plan?.proposal;
+    const withFiles = !!goalDraft || (!changePlan && !sent.askCardKey);
+    this.setState({ sending: true, err: '', errKeep: '' });
+    try {
+      let reply;
+      if (withFiles) {
+        const refs = quotes.map((q) => ({ path: q.path, startLine: q.a, endLine: q.b, snapshot: q.snapText ?? null }));
+        reply = goalDraft ? await actions.askSecretary(text, refs, { continues: goalDraft.requestRoot })
+          : await actions.askSecretary(text, refs);
+      } else if (changePlan) {
+        reply = await actions.askPlanChange(text, {
+          round: plan.askRound, proposalRef: plan.proposal.ref, revision: plan.proposal.revision
+        });
+      } else {
+        reply = await actions.askCard(sent.askCardKey, text);
+      }
+      if (!reply) return;
+      const now = this.state;
+      const patch = { pending: (now.pending || []).concat([reply]), heldQuoteIds: withFiles ? [] : quotes.map((q) => q.id) };
+      if (withFiles && quotes.length) {
+        // An open line keeps the main composer's quotes in lvKeep.main.
+        const remaining = (items) => items.filter((q) => !quotes.includes(q));
+        if (now.line) patch.lvKeep = { ...now.lvKeep, main: remaining(now.lvKeep.main) };
+        else patch.quotes = remaining(now.quotes);
+      }
+      if (now.askCardKey === sent.askCardKey && now.iterKey === sent.iterKey && now.draft === sent.draft) {
+        Object.assign(patch, { draft: '', iterating: false, iterKey: null, askRef: '', askSq: '', askCardKey: '' });
+      }
+      this.setState(patch);
+      if (!changePlan) actions.readMore({});
+    } catch (error) {
+      this.setState({ err: this.planMsg(error) });
+    } finally {
+      this.setState({ sending: false });
+    }
+  }
+
   planBoardVals(base, data) {
     const s = this.state || {};
     const set = (p) => this.setState(p);
@@ -6288,45 +6407,14 @@ class Component extends DCLogic {
       text: armed ? (s.iterKey === 'G' ? '改目标卡：发出后交给秘书处理' : '改方案 ' + s.iterKey + '：发出后交给秘书处理') : '',
       clear: () => set({ iterating: false, iterKey: null })
     };
-    const sendPlan = () => {
-      const st = this.state || {};
-      const text = String(st.draft || '').trim();
-      if (!text || st.sending) return;
-      set({ sending: true, err: '', errKeep: '' });
-      const goalCard = data.goalCard || null;
-      const plan = data.plan || null;
-      const planChange = !!st.iterating && st.iterKey !== 'G' && plan !== null && plan.proposal !== null;
-      let call;
-      if (st.iterating && st.iterKey === 'G' && goalCard !== null && goalCard.draft !== null) {
-        call = actions.askSecretary(text, null, { continues: goalCard.draft.requestRoot });
-      } else if (planChange) {
-        call = actions.askPlanChange(text, {
-          round: plan.askRound, proposalRef: plan.proposal.ref, revision: plan.proposal.revision
-        });
-      } else if (st.askCardKey) {
-        call = actions.askCard(st.askCardKey, text);
-      } else {
-        call = actions.askSecretary(text, []);
-      }
-      Promise.resolve(call).then((reply) => {
-        if (!reply) { set({ sending: false }); return; }
-        set({
-          sending: false,
-          pending: (this.state.pending || []).concat([{ root: reply.root, input: reply.input, answer: reply.answer }]),
-          draft: '', iterating: false, iterKey: null, askRef: '', askSq: '', askCardKey: ''
-        });
-      }).catch((e) => set({ sending: false, err: this.planMsg(e) }));
-    };
     const ledger = (data.track || []).map((row) => ({
       time: row.at, type: row.type, id: row.id, sum: row.summary || '', sumCls: '', cls: ''
     }));
-    /* With a Host nothing of the sample shows: no sample autonomy, no hint of
-       the sample phase, and no reference or file quote the sample right panel
-       (Plan B) put in the draft. */
     const autoText = gc.draft !== null ? gc.draft.autonomyText : '';
     const phase = conflictRows.length > 0 ? 'conflict' : gc.draft !== null ? 'goal'
       : doc !== null && doc.ideas.length > 0 ? 'plan' : '';
-    const errText = s.err || '';
+    const composerNote = s.err || (base.ax.hasQuotes ? base.ax.quoteNote : '');
+    const sendOff = !!s.sending || !String(s.draft || '').trim();
     const read = this.props.readState || null;
     const readError = read && read.status === 'error'
       ? { show: true, text: read.message, retry: read.retry }
@@ -6337,16 +6425,14 @@ class Component extends DCLogic {
       hasAsk: !!s.askCardKey && !!s.askRef, askRef: s.askCardKey ? s.askRef || '' : '',
       askSq: s.askSq || 'sq z8 s-pending',
       clearAsk: () => set({ askRef: '', askSq: '', askCardKey: '' }),
-      ax: Object.assign({}, base.ax, { quotes: [] }),
       composerLabel: armed ? arm.text : '发给秘书', composerPh: this.planPh(armed, s.iterKey, phase),
       draft: s.draft || '',
       onDraft: (e) => {
         const value = e && e.target ? e.target.value : '';
         set(value ? { draft: value } : { draft: '', iterating: false, iterKey: null });
       },
-      sendCls: 'send' + (String(s.draft || '').trim() ? '' : ' is-off'),
-      send: sendPlan,
-      hasNote: !!errText, composerNote: errText,
+      sendCls: 'send' + (sendOff ? ' is-off' : ''), sendOff, send: () => this.sendPlanDraft(data),
+      hasNote: !!composerNote, composerNote,
       readError: readError,
       showTrace: () => { set({ pane: 'trace', densMenu: false }); if (typeof actions.readMore === 'function') actions.readMore({ mainTrack: true }); },
       showChat: () => { set({ pane: 'chat' }); if (typeof actions.readMore === 'function') actions.readMore({ mainTrack: false }); }
@@ -6365,12 +6451,6 @@ class Component extends DCLogic {
     const out = Object.assign({}, base);
     const set = (p) => this.setState(p);
     const openPanel = (this.state || {}).panel !== false;
-    const nc = actions.notConnected;
-    const ncGo = (e) => {
-      if (typeof nc === 'function') { nc(e); return; }
-      if (e && e.preventDefault) e.preventDefault();
-      if (e && e.stopPropagation) e.stopPropagation();
-    };
     out.togglePanel = () => {
       set(openPanel ? { panel: false, axMax: false, axNew: false } : { panel: true });
       if (typeof actions.readMore !== 'function') return;
@@ -6439,18 +6519,6 @@ class Component extends DCLogic {
     if (aux && aux.error && (aux.tab === 'task' || aux.tab === 'arch')) {
       out.pnote = aux.error.text; out.hasPnote = true;
     }
-    /* 缺口包 (B7b): the 文件 tab and "+ 文件" stay unconnected until Astra's B7b
-       maps them onto `axFileItem`/`axView`; every other tab is this batch's. The
-       two bindings stay after B7b (the Done copy has them too), with no item off. */
-    out.ax = Object.assign({}, out.ax, {
-      tabs: (out.ax.tabs || []).map((t) => (t.key === 'files'
-        ? Object.assign({}, t, { offCls: ' is-off', off: 'true', tip: '还没接通', pick: ncGo })
-        : Object.assign({}, t, { offCls: '', off: 'false' }))),
-      newItems: (out.ax.newItems || []).map((m) => (m.label === '文件'
-        ? Object.assign({}, m, { cls: m.cls + ' is-off', off: 'true', tip: '还没接通', go: ncGo })
-        : Object.assign({}, m, { tip: null, off: 'false' }))),
-      dOpenShow: false
-    });
     /* READS-5/SPEC-17: the line head's panel button is the panel's own, so it
        withdraws and restores the tab's read too */
     if (out.lv && out.lv.show) out.lv = Object.assign({}, out.lv, { togglePanel: out.togglePanel });

@@ -5,14 +5,38 @@
  * one long running command and a ready `queries/cancel`.
  *   --scene tests/ui/scenes/Plan.scene.mjs --query '?goal=scene-goal'
  */
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { sceneLine } from './scene-line.mjs';
 
 const HAVE = JSON.parse(readFileSync(new URL('./Plan.scene.json', import.meta.url), 'utf8'));
 /* 5b's right panel reads, answered as the Main scene answers them (the same e3w-scene workspace). */
 const MAIN = JSON.parse(readFileSync(new URL('./Main.scene.json', import.meta.url), 'utf8'));
-const AUX = ['graph/hover', 'architecture/read', 'architecture/work-scope', 'files/list', 'files/read',
+const AUX = ['graph/hover', 'architecture/read', 'architecture/work-scope', 'files/list',
   'files/uncommitted', 'verification/installed-checks'];
+const workingFiles = {
+  'README.md': '# 工作台\n\n运行项目前先确认工作区。\n',
+  'src/app/core-routes.ts': "export const coreRoutes = [\n  'files/read',\n  'files/uncommitted',\n];\n",
+  'src/ui/views.ts': MAIN.routes['files/read'].value.content,
+};
+const headFiles = { 'README.md': workingFiles['README.md'], 'src/ui/views.ts': 'export function views(list) {\n' };
+const digest = (text) => createHash('sha256').update(text).digest('hex');
+const requestRef = (queryJobId) => ({ aggregateType: 'QueryJob', projectId: 'e3w-scene', workspaceId: 'e3w-scene', queryJobId });
+const submitted = new Map();
+
+function fileReply(route, input) {
+  const { path, version } = input;
+  const content = (version?.kind === 'git' ? headFiles : workingFiles)[path];
+  if (content === undefined) return { status: 'rejected', code: 'not_found' };
+  const revision = digest(content);
+  if (route === 'files/save') {
+    if (input.expectedRevision !== revision) return { status: 'rejected', code: 'source_stale' };
+    workingFiles[path] = input.content;
+    return { status: 'ready', value: { path, oldRevision: revision, revision: digest(input.content), byteLength: Buffer.byteLength(input.content) } };
+  }
+  return { status: 'ready', value: { path, version, content, digest: revision, digestBasis: 'raw_bytes',
+    sizeBytes: Buffer.byteLength(content), readAt: MAIN.routes['files/read'].value.readAt } };
+}
 const LINE = sceneLine({ projectId: 'e3w-scene', workspaceId: 'e3w-scene', goalId: 'scene-goal',
   sessionId: 'scene-executor', name: '执行者 · 场景线' });
 HAVE.routes['lines/list'].value.rows[1] = LINE.lineRow;
@@ -132,6 +156,29 @@ export const scene = {
   reply(route, input) {
     const line = LINE.reply(route, input);
     if (line !== undefined) return line;
+    if (route === 'files/read' || route === 'files/save') return fileReply(route, input);
+    if (route === 'requests/ask') return { status: 'queued', followupRound: requestRef(input.commandId) };
+    if (route === 'requests/submit') {
+      const round = requestRef(input.commandId);
+      const root = input.continues ?? round;
+      const parent = submitted.get(root.queryJobId) ?? MR.value.requests.find((item) => item.requestRoot.queryJobId === root.queryJobId);
+      const secretary = HAVE.routes['requests/read'].value.owner;
+      const history = parent?.rounds ?? [];
+      const goalId = parent?.goalId ?? input.goalId;
+      const queued = {
+        ref: round, runRef: null, kind: input.continues ? 'followup' : 'request', status: 'queued', input: input.text, references: input.references,
+        answer: null, ideas: [], goalCardDrafts: [], selectedIdea: null, assignedSession: secretary, session: null,
+        absorbedInto: null, closeCode: null, closeDetail: null, closeMessage: null, since: HAVE.routes['goals/list'].value.sourceCursor,
+      };
+      submitted.set(root.queryJobId, {
+        requestRoot: root, goalId, effectiveGoalId: goalId, processing: true, assignment: 'assigned', owner: secretary,
+        ownerState: 'owned', waitReason: null, reasons: ['round'], rounds: [...history, queued], candidate: null, cards: [],
+      });
+      return { status: 'queued', requestRoot: root, round, assignment: 'assigned', secretary, created: false, waitReason: null };
+    }
+    if (route === 'requests/read' && submitted.has(input.requestRoot.queryJobId)) {
+      return { status: 'ready', value: submitted.get(input.requestRoot.queryJobId) };
+    }
     if (route === 'goals/list') return GOALS;
     if (route === 'main/read') return input?.goalId === 'scene-goal-2' ? MR2 : MR;
     if (route === 'plans/request-candidate') {

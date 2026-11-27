@@ -273,7 +273,8 @@ body { margin: 0; background: #1F1F1F; }
             <textarea id="goals-composer" rows="2" placeholder="{{composerPh}}" value="{{draft}}" onChange="{{onDraft}}"></textarea>
             <div class="composer-foot">
               <sc-if value="{{ax.hasQuotes}}" hint-placeholder-val="{{ false }}"><span class="to">{{ax.quoteNote}}</span></sc-if>
-              <button class="{{sendCls}}" type="button" onClick="{{send}}" aria-label="发送" title="发送">
+              <sc-if value="{{sendError}}" hint-placeholder-val="{{ false }}"><span class="tx-failed" role="alert">{{sendError}}</span></sc-if>
+              <button class="{{sendCls}}" type="button" onClick="{{send}}" aria-disabled="{{sendOff}}" disabled="{{sendOff}}" aria-label="发送" title="发送">
                 <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 12.75V3.5M4.25 7.25 8 3.5l3.75 3.75"></path></svg>
               </button>
             </div>
@@ -524,7 +525,7 @@ body { margin: 0; background: #1F1F1F; }
       <div class="pbody">
         <div class="ftree" aria-label="工作区文件">
           <sc-for list="{{ax.fileRows}}" as="f" hint-placeholder-count="12">
-            <button class="{{f.cls}}" type="button" onClick="{{f.go}}" aria-expanded="{{f.ex}}">
+            <button class="{{f.cls}}" type="button" onClick="{{f.go}}" aria-expanded="{{f.ex}}" title="{{f.path}}">
               <sc-if value="{{f.isDir}}" hint-placeholder-val="{{ true }}"><svg class="ico xs chev" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4"></path></svg></sc-if>
               <sc-if value="{{f.isFile}}" hint-placeholder-val="{{ false }}"><span class="fsp" aria-hidden="true"></span></sc-if>
               <span class="fname">{{f.name}}</span>
@@ -543,7 +544,8 @@ body { margin: 0; background: #1F1F1F; }
           <sc-if value="{{ax.fp.known}}" hint-placeholder-val="{{ true }}">
             <span class="fp-acts">
               <button class="btn btn-sm" type="button" onClick="{{ax.fp.toggleEdit}}">{{ax.fp.editLabel}}</button>
-              <button class="{{ax.fp.saveCls}}" type="button" onClick="{{ax.fp.save}}" aria-disabled="{{ax.fp.cantSave}}">保存</button>
+              <button class="{{ax.fp.saveCls}}" type="button" onClick="{{ax.fp.save}}" aria-disabled="{{ax.fp.cantSave}}" disabled="{{ax.fp.cantSave}}">保存</button>
+              <sc-if value="{{ax.fp.error}}" hint-placeholder-val="{{ false }}"><span class="tx-failed" role="alert">{{ax.fp.error}}</span></sc-if>
             </span>
           </sc-if>
         </div>
@@ -551,32 +553,34 @@ body { margin: 0; background: #1F1F1F; }
           <div class="fp-note" role="alert">
             <p><span class="tx-decide">文件在磁盘上改过了</span>：{{ax.fp.conflictText}}保存会覆盖它的改动。</p>
             <div class="acts">
-              <button class="btn btn-sm btn-line" type="button" onClick="{{ax.fp.reload}}">重新载入</button>
-              <button class="btn btn-sm btn-line" type="button" onClick="{{ax.fp.compare}}">比较</button>
-              <button class="btn btn-sm btn-line" type="button" onClick="{{ax.fp.overwrite}}">仍然保存</button>
-              <button class="btn btn-sm" type="button" onClick="{{ax.fp.dismiss}}">先不保存</button>
+              <button class="btn btn-sm btn-line" type="button" disabled="{{ax.fp.busy}}" onClick="{{ax.fp.reload}}">重新载入</button>
+              <button class="btn btn-sm btn-line" type="button" disabled="{{ax.fp.busy}}" onClick="{{ax.fp.compare}}">比较</button>
+              <button class="{{ax.fp.overwriteCls}}" type="button" aria-disabled="{{ax.fp.busy}}" disabled="{{ax.fp.busy}}" onClick="{{ax.fp.overwrite}}">仍然保存</button>
+              <button class="btn btn-sm" type="button" disabled="{{ax.fp.busy}}" onClick="{{ax.fp.dismiss}}">先不保存</button>
             </div>
           </div>
         </sc-if>
         <sc-if value="{{ax.fp.viewing}}" hint-placeholder-val="{{ true }}">
           <div class="fcode" aria-label="文件内容">
+            <sc-if value="{{ax.fp.readNote}}" hint-placeholder-val="{{ false }}"><p class="pnote">{{ax.fp.readNote}}</p></sc-if>
             <sc-for list="{{ax.fp.rows}}" as="l" hint-placeholder-count="12">
-              <sc-if value="{{l.fold}}" hint-placeholder-val="{{ false }}"><div class="{{l.cls}}"><span class="fl-t">{{l.text}}</span></div></sc-if>
-              <sc-if value="{{l.line}}" hint-placeholder-val="{{ true }}"><div class="{{l.cls}}"><button class="fl-n" type="button" onClick="{{l.pick}}" aria-label="{{l.label}}">{{l.no}}</button><span class="fl-t">{{l.text}}</span></div></sc-if>
+              <div class="{{l.cls}}"><button class="fl-n" type="button" onClick="{{l.pick}}" aria-label="{{l.label}}">{{l.no}}</button><span class="fl-t">{{l.text}}</span></div>
             </sc-for>
           </div>
         </sc-if>
         <sc-if value="{{ax.fp.editing}}" hint-placeholder-val="{{ false }}">
           <div class="fcode is-edit">
             <label class="sr-only" for="ax-fedit">编辑 {{ax.fp.name}}</label>
-            <textarea id="ax-fedit" class="fedit" spellcheck="false" value="{{ax.fp.draftText}}" onChange="{{ax.fp.onEdit}}" onSelect="{{ax.fp.onSelect}}"></textarea>
+            <textarea id="ax-fedit" class="fedit" disabled="{{ax.fp.busy}}" spellcheck="false" value="{{ax.fp.draftText}}" onChange="{{ax.fp.onEdit}}" onSelect="{{ax.fp.onSelect}}"></textarea>
           </div>
         </sc-if>
-        <div class="fp-bar">
-          <span class="t">{{ax.fp.barText}}</span>
-          <sc-if value="{{ax.fp.hasSel}}" hint-placeholder-val="{{ false }}"><button class="btn btn-sm" type="button" onClick="{{ax.fp.clearSel}}">清除选择</button></sc-if>
-          <button class="btn btn-sm btn-line" type="button" onClick="{{ax.fp.quote}}">{{ax.fp.quoteLabel}}</button>
-        </div>
+        <sc-if value="{{ax.fp.known}}" hint-placeholder-val="{{ true }}">
+          <div class="fp-bar">
+            <span class="t">{{ax.fp.barText}}</span>
+            <sc-if value="{{ax.fp.hasSel}}" hint-placeholder-val="{{ false }}"><button class="btn btn-sm" type="button" onClick="{{ax.fp.clearSel}}">清除选择</button></sc-if>
+            <button class="btn btn-sm btn-line" type="button" onClick="{{ax.fp.quote}}">{{ax.fp.quoteLabel}}</button>
+          </div>
+        </sc-if>
       </div>
     </sc-if>
 
@@ -588,8 +592,9 @@ body { margin: 0; background: #1F1F1F; }
             <div class="cmd">
               <span class="cmd-name">{{c.name}}</span>
               <span class="cmd-acts">
-                <sc-if value="{{c.canRun}}" hint-placeholder-val="{{ true }}"><button class="btn btn-sm btn-line" type="button" onClick="{{c.run}}">{{c.runLabel}}</button></sc-if>
-                <sc-if value="{{c.canCancel}}" hint-placeholder-val="{{ false }}"><button class="btn btn-sm btn-line" type="button" onClick="{{c.cancel}}">取消</button></sc-if>
+                <sc-if value="{{c.canRun}}" hint-placeholder-val="{{ true }}"><button class="{{c.runCls}}" type="button" aria-disabled="{{c.runOff}}" disabled="{{c.runOff}}" onClick="{{c.run}}">{{c.runLabel}}</button></sc-if>
+                <sc-if value="{{c.canCancel}}" hint-placeholder-val="{{ false }}"><button class="{{c.stopCls}}" type="button" aria-disabled="{{c.busy}}" disabled="{{c.busy}}" onClick="{{c.cancel}}">取消</button></sc-if>
+                <sc-if value="{{c.error}}" hint-placeholder-val="{{ false }}"><span class="tx-failed" role="alert">{{c.error}}</span></sc-if>
                 <sc-if value="{{c.hasOut}}" hint-placeholder-val="{{ false }}"><button class="btn btn-sm" type="button" onClick="{{c.toggle}}" aria-expanded="{{c.shown}}">{{c.toggleLabel}}</button></sc-if>
               </span>
               <span class="cmd-line">{{c.line}}</span>
@@ -633,19 +638,21 @@ body { margin: 0; background: #1F1F1F; }
 class Component extends DCLogic {
   constructor(...args) {
     super(...args);
-    /* G2: the auxiliary area's keys (auxtabs.snippet.js). The panel opens on 架构图 (the conflict, as approved); 任务图 is
-       the first tab, as on the other boards. No file page is open at first, so the 480px strip shows every tab (as on
-       Main): a file page opens from the 文件 tree or from a file's detail (打开文件). tsel = the 任务图 selection;
-       extra = node pages opened from either map (右键 or 新标签打开). Rework 2026-10-06: the 任务图 thumbnail's keys
-       (taskpanel.snippet.js tpState); the open goal row is rowOpen (the thumbnail's 回到起点 resets the maps' shared open) */
+    // Open on the conflict map. File pages are opened from the workspace tree or a map detail.
     this.state = Object.assign(this.axState(), this.tpState(), {
       theme: null, rowOpen: null, cfPick: null, facts: false, err: '',
       scope: 'overlap', view: 'tree', sel: null, tsel: null, hover: null, ofold: {}, legend: false, extra: [],
-      log: [], clock: 20, composer: false, askRef: '', askId: '', askSq: '', draft: ''
-    }, { ptab: 'arch', axPages: [], panel: true });
+      log: [], composer: false, askRef: '', askId: '', askSq: '', draft: ''
+    });
   }
 
   componentDidUpdate(prev) {
+    this.syncAuxRead();
+    const data = this.props.data;
+    if (prev?.data !== data && data?.aux?.files) {
+      // Map details can reuse the last directory listing without issuing a file read on either map.
+      this.listing = { scope: data.scope, files: data.aux.files, changed: data.aux.diff?.rows || [] };
+    }
     const s = this.state || {};
     if (prev && prev.theme !== this.props.theme && s.theme) this.setState({ theme: null });
     /* a successful reread is the new state: an action error from the old one no longer shows */
@@ -1096,227 +1103,270 @@ class Component extends DCLogic {
       crumbs: crumbs, agent: card.agent, sem: card.sem, rel: rel };
   }
 
-  /* =====================================================================
-     auxtabs.snippet.js — G2: the right auxiliary area kept from the 2026-09-28 acceptance
-     (任务图 / 架构图 / 文件 / 命令 / Diff + pages opened from nodes; hide, maximise, new tab, switch, close;
-     two draggable dividers; file tree and file pages apart; save with a conflict example; 引用到草稿 with
-     path, lines and a snippet, 草稿快照 for an unsaved selection; commands run / cancel with kept output;
-     Git ↔ working tree diff, line level).
-     Paste every method into the board's logic class, spread axState() into the constructor's this.state,
-     and bind the markup of auxtabs.snippet.html. The 文件 tree is this board's local sample state.
-     Content is the moment of 10-04 14:15 (Main, Decide); other boards pass their own clock to axView().
-     Every handler is state only: no timers, no DOM writes. Pointer drag uses setPointerCapture on the handle.
-     ===================================================================== */
-
-  /* ------------------------------------------------------------ state keys (spread into this.state) */
   axState() {
     return {
-      ptab: 'task',                                   /* 'task' | 'arch' | 'files' | 'cmd' | 'diff' | 'f:<path>' | a node page key */
-      axTabs: ['files', 'cmd', 'diff'],               /* tool tabs that are open (closable, reopened from +) */
-      axPages: ['src/core/work-graph/state/task-machine.ts', 'src/app/server.ts'],   /* open file pages */
-      axMax: false, axNew: false, railW: null, panelW: null, axBox: null, axDrag: null,   /* widths unset until a divider moves */
-      axDirs: { src: true, 'src/core': true, 'src/core/work-graph': true, 'src/core/work-graph/state': true, 'src/app': true },
-      axMore: {}, axSel: null, axEdit: {}, axDraft: {}, axText: {}, axSaved: {}, axReload: {}, axConflict: null, axCmp: null,
-      axCmd: { c2: { st: 'done', shown: false, n: 1 } }, axDiff: 'src/core/work-graph/state/task-machine.ts', quotes: [], axQn: 0
+      ptab: 'arch', panel: true, axTabs: ['files', 'cmd', 'diff'], axPages: [],
+      axMax: false, axNew: false, railW: null, panelW: null, axBox: null, axDrag: null,
+      axDirs: new Set(['src']), axMore: new Map(), axSel: null, axFiles: new Map(), axCmd: new Map(),
+      axDiff: null, axCmp: null, quotes: [], axQn: 0,
     };
   }
 
-  /* ------------------------------------------------------------ the shared fake workspace (real paths, short content) */
-  axRepo() {
-    if (this._axr) return this._axr;
-    const TM = 'src/core/work-graph/state/task-machine.ts'; const AM = 'src/core/work-graph/state/attempt-machine.ts';
-    const RC = 'src/core/work-graph/persistence/record-codecs.ts'; const SV = 'src/app/server.ts';
-    const VM = 'src/core/work-graph/state/verification-machine.ts';
-    const files = {};
-    /* a file page shows one window of the file (from, lines) inside its real length (total); the rest is a quiet fold */
-    files[TM] = { from: 80, total: 212, loaded: '14:12', lines: [
-      '  const facts = readAttemptFacts(record);', '  const failureClass = deriveReworkClass(facts);', "  let counted = failureClass !== 'interrupted';",
-      '  switch (failureClass) {', "    case 'check_failed':", "    case 'check_incomplete':", "      reason = 'auto-rework:' + failureClass;", '      break;',
-      "    case 'cancelled':", '      counted = false;', '      break;', "    case 'interrupted':", "      reason = 'platform-interrupted';", '      break;',
-      '    default:', "      reason = 'run-failed';", '  }', '  if (counted && input.autoReworks >= REWORK_LIMIT) {',
-      "    return refuse('needs_decision', 'auto_rework_limit_reached');", '  }', "  return accept({ kind: 'task_requeued', failureClass, counted, reason });"] };
-    files[SV] = { from: 118, total: 402, loaded: '14:09', lines: [
-      '  if (suffix === CHANGES_SUFFIX) {', '    const resume = parseChangeStreamResume(req.headers[LAST_EVENT_ID_HEADER]);',
-      "    res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store' });", '    const stop = feed.subscribe(resume, (notice) => {',
-      "      send('id: ' + notice.id + '\\n');", "      send('data: ' + JSON.stringify(notice) + '\\n\\n');", '    });',
-      "    req.on('close', stop);", '    streams.add(res);', '    return;', '  }'],
-      /* what is on disk now: 执行者 · SSE 推送 edited it at 14:11 (+38 −4, Member.dc.html call_7e2b); the window shows the heartbeat part */
-      disk: { at: '14:11', by: '执行者 · SSE 推送', add: 38, del: 4, lines: [
-        '  if (suffix === CHANGES_SUFFIX) {', '    const resume = parseChangeStreamResume(req.headers[LAST_EVENT_ID_HEADER]);',
-        "    res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store' });", '    const stop = feed.subscribe(resume, (notice) => {',
-        "      send('id: ' + notice.id + '\\n');", "      send('data: ' + JSON.stringify(notice) + '\\n\\n');", '    });',
-        '    const beat = setInterval(() => {', "      send(': heartbeat\\n\\n');", '    }, HEARTBEAT_MS);',
-        "    req.on('close', () => {", '      clearInterval(beat);', '      stop();', '    });', '    streams.add(res);', '    return;', '  }'] } };
-    files['src/app/core-routes.ts'] = { from: 1, total: 2134, loaded: '14:15', lines: [
-      '/**', ' * Core HTTP routes of the workbench: goals, tasks, members and files.', ' * Every route parses its payload, then calls one port; no route touches the', ' * RecordStore directly.', ' */',
-      "import type { CoreRouteSuffix, CoreScope } from './core-http-types.js';", "import { createHostCoreCallContext } from './core-call-context.js';", '',
-      'export const CORE_ROUTE_SPECS = [', "  { suffix: 'goals/list', method: 'POST', port: 'workflow' },", "  { suffix: 'goals/show', method: 'POST', port: 'workflow' },",
-      "  { suffix: 'tasks/graph', method: 'POST', port: 'workGraph' },", "  { suffix: 'members/list', method: 'POST', port: 'workGraph' },", "  { suffix: 'files/read', method: 'POST', port: 'workspace' },", '] as const;'] };
-    files['src/ui/views.ts'] = { from: 1, total: 88, loaded: '14:15', lines: [
-      "import { renderConversation } from './views/conversation/center.js';", "import { renderGraphs } from './views/graphs/interaction.js';",
-      "import { renderFiles } from './views/files/render.js';", "import { renderShell } from './views/shell/layout.js';", '',
-      '/** The workbench views: rail, conversation and the right-hand pages. */', 'export function renderViews(state: WorkbenchState): void {',
-      '  renderShell(state);', '  renderConversation(state);', '  renderGraphs(state);', '  renderFiles(state);', '}'] };
-    files['package.json'] = { from: 1, total: 22, loaded: '14:15', lines: [
-      '{', '  "name": "coding-platform-next",', '  "private": true,', '  "type": "module",', '  "engines": {', '    "node": ">=24.15.0 <25"', '  },', '  "scripts": {',
-      '    "check:architecture": "node scripts/check-boundaries.mjs",', '    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.ui.json",',
-      '    "build": "tsc -p tsconfig.build.json && node scripts/build-workbench.mjs",', '    "test": "vitest run --maxWorkers=1",', '    "verify:isolated": "node scripts/verify-isolated.mjs"',
-      '  },', '  "dependencies": {', '    "marked": "18.0.14",', '    "typescript": "6.0.3"', '  },', '  "devDependencies": {', '    "vitest": "4.1.10"', '  }', '}'] };
-    /* Git ↔ working tree at 14:15: the uncommitted changes of goal 1 (Chain.dc.html and Member.dc.html name the counts).
-       by = the task whose runs made the change, as the boards tell it: 重新入队与失败类别 (T13) task-machine.ts, attempt-machine.ts
-       and record-codecs.ts (Chain: "record-codecs.ts 读取旧记录时类别留空"); SSE 推送 (T28) server.ts, attention-observer.ts and
-       main.ts (Member: "已改 3 个文件"); 检查不完整判定 (T21) verification-machine.ts (Decide q1: lint 第 3 行、第 88 行) */
-    const H = (head, oldAt, newAt, rows) => ({ head: head, oldAt: oldAt, newAt: newAt, rows: rows });
-    const changed = [
-      { path: TM, add: 15, del: 6, by: '重新入队与失败类别', hunks: [
-        H('@@ -66,6 +66,15 @@ 重新入队 · task_requeued', 66, 66, [[' ', 'export function requeueTask(record: TaskRecord, input: RequeueInput) {'], [' ', "  let reason = '';"],
-          ['-', "  const failureClass = input.failureClass ?? 'run_failed';"], ['-', '  const counted = true;'], ['-', "  if (input.autoReworks >= 3) return refuse('needs_decision', 'limit');"],
-          ['+', '  if (input.failureClass !== undefined) {'], ['+', "    return refuse('invalid', 'failure_class_is_derived');"], ['+', '  }'], ['+', '  const lease = record.lease;'],
-          ['+', "  if (lease && lease.state === 'held') {"], ['+', "    return refuse('conflict', 'lease_still_held');"], ['+', '  }'], ['+', '  const attempt = record.attempt + 1;'],
-          ['+', '  const brief = input.continuationBriefRef ?? null;'], ['+', '  const actor = input.actorClass;'], ['+', "  if (!actor) return refuse('invalid', 'actor_required');"], ['+', ''],
-          [' ', '  const facts = readAttemptFacts(record);']]),
-        H('@@ -79,7 +88,8 @@', 79, 88, [[' ', "    case 'cancelled':"], [' ', '      counted = false;'], ['+', '      break;'], [' ', "    case 'interrupted':"]]),
-        H('@@ -121,7 +131,6 @@ 读取旧记录', 121, 131, [[' ', '  const record = readRecord(raw);'], ['-', '  const legacyClass = readLegacyClass(record);'], ['-', '  if (legacyClass) record.failureClass = legacyClass;'],
-          ['-', '  delete record.legacyClass;'], ['+', '  // 类别由事实推导，不再读旧字段'], ['+', '  const failureClass = deriveReworkClass(readAttemptFacts(record));'], [' ', '  return { record, failureClass };']])] },
-      { path: AM, add: 9, del: 2, by: '重新入队与失败类别', hunks: [
-        H('@@ -31,6 +31,13 @@ 结束一次尝试', 31, 31, [[' ', 'export function endAttempt(attempt: AttemptRecord, outcome: RunOutcome) {'],
-          ['-', "  const failureClass = outcome.failureClass ?? 'run_failed';"], ['-', '  return { ...attempt, phase: outcome.phase, failureClass };'],
-          ['+', '  const facts = readOutcomeFacts(outcome);'], ['+', '  const failureClass = deriveFailureClass(facts);'], ['+', "  if (failureClass === 'unknown') {"],
-          ['+', "    return refuse('needs_decision', 'result_unknown');"], ['+', '  }'], ['+', '  return {'], ['+', '    ...attempt, phase: outcome.phase, failureClass,'],
-          ['+', "    counted: failureClass !== 'interrupted',"], ['+', '  };'], [' ', '}']])] },
-      { path: RC, add: 14, del: 2, by: '重新入队与失败类别', hunks: [
-        H('@@ -168,7 +168,19 @@ 重新入队记录 · 解码', 168, 168, [[' ', 'export function decodeRequeue(raw: unknown): RequeueRecord {'], [' ', '  return {'],
-          ['-', '    failureClass: requiredEnum(raw.failureClass, REWORK_CLASSES),'], ['-', "    actorClass: requiredEnum(raw.actorClass, ACTOR_CLASSES),"],
-          ['+', '    // 类别只作审计副本；10-02 之前的记录没有这个字段'], ['+', '    failureClass: optionalEnum(raw.failureClass, REWORK_CLASSES),'],
-          ['+', "    actorClass: optionalEnum(raw.actorClass, ACTOR_CLASSES) ?? 'system',"], ['+', '    autoRework: decodeAutoRework(raw.autoRework),'], ['+', '  };'], ['+', '}'], ['+', ''],
-          ['+', 'function decodeAutoRework(raw: unknown): AutoRework {'], ['+', "  if (raw === undefined) return { used: 0, limit: 3 };"], ['+', '  return {'],
-          ['+', '    used: requiredInt(raw.used), limit: requiredInt(raw.limit),'], ['+', '  };'], ['+', '}'], [' ', '']])] },
-      { path: SV, add: 38, del: 4, by: 'SSE 推送', hunks: [], note: '执行者 · SSE 推送 14:11 的改动：SSE 推送的心跳与断开处理' },
-      { path: 'src/app/attention-observer.ts', add: 21, del: 6, by: 'SSE 推送', hunks: [], note: '执行者 · SSE 推送 13:58 的改动' },
-      { path: 'src/ui/main.ts', add: 17, del: 9, by: 'SSE 推送', hunks: [], note: '执行者 · SSE 推送 14:03 的改动：改成订阅推送，断线时退回轮询' },
-      { path: VM, add: 7, del: 1, by: '检查不完整判定', hunks: [
-        H('@@ -1,3 +1,4 @@ 导入', 1, 1, [[' ', "import type { CheckReport, VerificationRound } from '../model/contracts.js';"], [' ', "import { transition } from './transition.js';"],
-          ['+', "import { readCheckFacts } from '../evidence/evidence-service.js';"], [' ', "import { deriveReworkClass } from './task-failure.js';"]]),
-        H('@@ -82,4 +83,9 @@ 判定检查不完整', 82, 83, [[' ', 'export function judgeRound(round: VerificationRound, report: CheckReport | null) {'],
-          ['-', "  if (!report) return 'failed';"], ['+', '  const facts = readCheckFacts(round);'], ['+', '  if (!report || facts.interrupted) {'], ['+', "    return 'incomplete';"], ['+', '  }'],
-          ['+', '  const missing = facts.expected.filter((k) => !report.items[k]);'], ['+', "  if (report.items.length < facts.expected.length) return 'incomplete';"],
-          [' ', "  return report.failed.length ? 'failed' : 'passed';"], [' ', '}']])] }
-    ];
-    const cmds = [
-      { id: 'c1', name: '类型检查', line: 'npm run typecheck', out: ['> tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.ui.json', '0 个错误'], took: '41 秒', exit: 0 },
-      { id: 'c2', name: '状态机单元测试', line: 'npm test -- tests/state', out: ['> vitest run --maxWorkers=1 tests/state', ' 通过  tests/state/task-machine.test.ts（18）', ' 通过  tests/state/attempt-machine.test.ts（13）', '31 个通过'], took: '6 秒', exit: 0 },
-      { id: 'c3', name: '全部测试', line: 'npm test', long: true, out: ['> vitest run --maxWorkers=1', ' 通过  tests/state（31）', ' 通过  tests/work-graph（214）', ' … 已完成 245 / 612'], took: '' },
-      { id: 'c4', name: '边界检查', line: 'npm run check:architecture', out: ['> node scripts/check-boundaries.mjs', '0 处越界'], took: '3 秒', exit: 0 },
-      { id: 'c5', name: '构建', line: 'npm run build', out: ['> tsc -p tsconfig.build.json && node scripts/build-workbench.mjs', '工作台已构建'], took: '18 秒', exit: 0 }
-    ];
-    this._axr = { files: files, changed: changed, cmds: cmds };
-    return this._axr;
+  // Both maps and their node tabs use GoalsMaps. Only a visible workspace tool needs a read.
+  auxDemand(s) {
+    const key = s.panel ? s.ptab : '';
+    if (key.startsWith('f:')) return { auxTab: 'file', auxPath: key.slice(2) };
+    if (key === 'diff') return s.axCmp ? { auxTab: 'file', auxPath: s.axCmp } : { auxTab: 'diff', auxPath: s.axDiff };
+    if (key === 'files') return { auxTab: 'files', auxPath: null };
+    if (key === 'cmd' || key.startsWith('cmd:')) return { auxTab: 'commands', auxPath: null };
+    return { auxTab: null, auxPath: null };
   }
 
-  /* the local workspace tree of the file / command / Diff pages (their prototype sample state) */
-  axTree() {
-    if (this._axt) return this._axt;
-    const paths = [
-      'src/app/server.ts', 'src/app/core-routes.ts', 'src/app/attention-observer.ts', 'src/app/main.ts',
-      'src/core/work-graph/state/task-machine.ts', 'src/core/work-graph/state/attempt-machine.ts',
-      'src/core/work-graph/state/verification-machine.ts', 'src/core/work-graph/persistence/record-codecs.ts',
-      'src/ui/main.ts', 'src/ui/views.ts', 'package.json'
-    ];
-    const root = [];
-    const dirOf = (parts) => {
-      let list = root; let base = '';
-      parts.forEach((p) => {
-        base = base ? base + '/' + p : p;
-        let node = list.filter((n) => n.kids && n.name === p)[0];
-        if (!node) { node = { name: p, path: base, kids: [] }; list.push(node); }
-        list = node.kids;
-      });
-      return list;
-    };
-    paths.forEach((path) => {
-      const parts = path.split('/'); const name = parts.pop();
-      dirOf(parts).push({ name: name, path: path, kids: null });
-    });
-    const sortBoard = (list) => {
-      list.sort((a, b) => (!!b.kids - !!a.kids) || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
-      list.forEach((n) => { if (n.kids) sortBoard(n.kids); });
-    };
-    sortBoard(root);
-    this._axt = root;
-    return this._axt;
+  syncAuxRead() {
+    const demand = this.auxDemand(this.state);
+    const prev = this.lastAuxDemand;
+    if (demand.auxTab === (prev?.auxTab ?? null) && demand.auxPath === (prev?.auxPath ?? null)) return;
+    this.lastAuxDemand = demand;
+    this.props.actions?.readMore?.(demand);
   }
 
-  /* the repository's real files and folders (the 文件 tree's data), for "can this path be opened" (axRepo() first: a board
-     at another moment may add files to the tree there) */
-  axPaths() {
-    this.axRepo();
-    if (this._axp) return this._axp;
-    const files = new Set(); const dirs = new Set();
-    const w = (list) => list.forEach((n) => { if (n.kids) { dirs.add(n.path); w(n.kids); } else files.add(n.path); });
-    w(this.axTree());
-    this._axp = { files: files, dirs: dirs };
-    return this._axp;
-  }
-
-  /* a path in a map's detail (文件, 路径) and on node pages (markup: .d-fline): a file opens its page in the auxiliary area,
-     a folder opens 文件 at it, a changed file also offers 看 Diff; a path not in the repository (a planned file) stays text */
   axFileItem(path) {
-    const P = this.axPaths(); const isFile = P.files.has(path); const isDir = !isFile && P.dirs.has(path);
-    const changed = isFile && this.axRepo().changed.some((f) => f.path === path);
-    const a = String(path).split('/'); const noopBoard = () => {};
-    return { full: path, parts: a.map((x, i) => (i < a.length - 1 ? x + '/' : x)), canOpen: isFile || isDir, cantOpen: !isFile && !isDir,
-      open: isFile ? () => this.axOpenFile(path) : isDir ? () => this.axRevealDir(path) : noopBoard,
-      tip: isFile ? '打开文件：' + path : isDir ? '在“文件”里展开：' + path : path + '（仓库里还没有这个文件）',
-      hasDiff: changed, diff: changed ? () => this.axOpenDiff(path) : noopBoard };
+    const scope = this.props.data?.scope;
+    const known = this.listing?.scope?.projectId === scope?.projectId
+      && this.listing?.scope?.workspaceId === scope?.workspaceId ? this.listing : null;
+    const isDir = known?.files.dirs.includes(path);
+    const canOpen = !known || isDir || known.files.paths.includes(path);
+    return {
+      ...this.pathParts(path), canOpen, cantOpen: !canOpen,
+      tip: isDir ? '在文件树中展开：' + path : canOpen ? '打开文件：' + path : '目录中没有列出这个文件',
+      open: () => {
+        if (!isDir) return this.axOpenFile(path);
+        const dirs = new Set(this.state.axDirs);
+        const parts = path.split('/');
+        parts.forEach((_, i) => dirs.add(parts.slice(0, i + 1).join('/')));
+        this.setState({ axDirs: dirs, ptab: 'files', panel: true, axTabs: [...new Set([...this.state.axTabs, 'files'])] });
+      },
+      hasDiff: known?.changed.some((row) => row.path === path),
+      diff: () => this.setState({ axDiff: path, axCmp: null, ptab: 'diff', panel: true,
+        axTabs: [...new Set([...this.state.axTabs, 'diff'])] }),
+    };
   }
-  /* open a file as its own page tab; a changed file's Diff; 文件 opened at a folder (the panel shows if it was hidden) */
+
   axOpenFile(path) {
     const st = this.state || {};
     const pages = (st.axPages || []).indexOf(path) >= 0 ? st.axPages : (st.axPages || []).concat([path]);
     this.setState({ axPages: pages, ptab: 'f:' + path, axSel: null, axNew: false, panel: true, hover: null });
   }
-  axOpenDiff(path) {
-    const st = this.state || {};
-    this.setState({ axTabs: (st.axTabs || []).indexOf('diff') >= 0 ? st.axTabs : (st.axTabs || []).concat(['diff']), ptab: 'diff', axDiff: path, axCmp: null, axNew: false, panel: true, hover: null });
-  }
-  axRevealDir(path) {
-    const st = this.state || {};
-    const d = Object.assign({}, st.axDirs || {}); const parts = String(path).split('/');
-    parts.forEach((x, i) => { d[parts.slice(0, i + 1).join('/')] = true; });
-    this.setState({ axTabs: (st.axTabs || []).indexOf('files') >= 0 ? st.axTabs : (st.axTabs || []).concat(['files']), ptab: 'files', axDirs: d, axNew: false, panel: true, hover: null });
+  // Each file tab keeps its own draft and save result. Command rows likewise keep their own output toggle.
+  patchAuxRow(field, key, patch) {
+    const rows = new Map(this.state[field]);
+    rows.set(key, { ...rows.get(key), ...patch });
+    this.setState({ [field]: rows });
   }
 
-  /* line-level diff of two short texts (longest common subsequence) → rows [sign, oldNo, newNo, text];
-     in a changed block the removed lines come before the added ones, as in git diff */
-  axLineDiff(a, b, from) {
-    const n = a.length; const m = b.length; const L = [];
-    for (let x = 0; x <= n; x += 1) { L.push([]); for (let y = 0; y <= m; y += 1) L[x].push(0); }
-    for (let x = n - 1; x >= 0; x -= 1) for (let y = m - 1; y >= 0; y -= 1) L[x][y] = a[x] === b[y] ? L[x + 1][y + 1] + 1 : Math.max(L[x + 1][y], L[x][y + 1]);
-    const rows = []; let x = 0; let y = 0;
-    while (x < n || y < m) {
-      if (x < n && y < m && a[x] === b[y]) { rows.push([' ', from + x, from + y, a[x]]); x += 1; y += 1; }
-      else if (x < n && (y >= m || L[x + 1][y] >= L[x][y + 1])) { rows.push(['-', from + x, null, a[x]]); x += 1; }
-      else { rows.push(['+', null, from + y, b[y]]); y += 1; }
+  async saveAuxFile(file, overwrite) {
+    const path = file.path;
+    const edit = this.state.axFiles.get(path);
+    if (edit?.draft === undefined || edit.busy || (!!edit.conflict !== overwrite)) return;
+    const expected = overwrite ? file.digest : edit.revision;
+    const content = this.fileContent(edit);
+    const update = (patch) => this.patchAuxRow('axFiles', path, patch);
+    update({ busy: true, error: '' });
+    try {
+      await this.props.actions.saveFile(path, content, expected);
+      update({ draft: undefined, saved: true, conflict: false });
+    } catch (error) {
+      if (error.code === 'source_stale') update({ conflict: true });
+      else update({ error: error.message });
+    } finally {
+      update({ busy: false });
     }
-    return rows;
   }
 
-  /* ------------------------------------------------------------ everything the markup binds: ax.*
-     s = this.state; o = { at: '14:15' (the board's clock), extra: [{ key, name }] node pages (Main's s.extra) } */
+  fileContent(edit) {
+    return edit.eol && !edit.draft.endsWith('\n') ? edit.draft + '\n' : edit.draft;
+  }
+
+  quoteFile(file, lines, selected, dirty) {
+    const s = this.state;
+    const picked = selected ? lines.slice(selected.a - 1, selected.b) : lines;
+    const first = (picked.find((line) => line.trim()) || '').trim();
+    const snippet = selected ? (first.length > 56 ? first.slice(0, 55) + '…' : first) : '共 ' + lines.length + ' 行';
+    const id = s.axQn + 1;
+    const quote = { id, path: file.path, a: selected?.a ?? null, b: selected?.b ?? null,
+      snip: snippet, snap: dirty && !!selected, snapshot: dirty && selected ? picked.join('\n') : null };
+    this.setState({ quotes: [...s.quotes, quote], axQn: id, axSel: null, composer: true });
+  }
+
+  fileSelection(path, lines, selected) {
+    const select = (anchor, end) => this.setState({ axSel: { path, anchor, a: Math.min(anchor, end), b: Math.max(anchor, end) } });
+    const pick = (no, event) => {
+      if (event?.shiftKey && selected) select(selected.anchor, no);
+      else if (selected?.a === no && selected.b === no) this.setState({ axSel: null });
+      else select(no, no);
+    };
+    const onSelect = ({ target }) => {
+      if (target.selectionStart === target.selectionEnd) return;
+      const lineAt = (index) => target.value.slice(0, index).split('\n').length;
+      select(lineAt(target.selectionStart), lineAt(target.selectionEnd - 1));
+    };
+    const rows = lines.map((text, i) => {
+      const no = i + 1;
+      return { no, text, cls: 'fl' + (selected && selected.a <= no && no <= selected.b ? ' is-sel' : ''),
+        pick: (event) => pick(no, event), label: '选中第 ' + no + ' 行；按住 Shift 再点一行，选中一段' };
+    });
+    return { rows, onSelect };
+  }
+
+  filePage(path, aux) {
+    const file = aux?.file?.path === path ? aux.file : null;
+    const s = this.state;
+    const edit = s.axFiles.get(path) || {};
+    const update = (patch) => this.patchAuxRow('axFiles', path, patch);
+    const dirty = edit.draft !== undefined;
+    const lines = dirty ? edit.draft.split('\n') : file?.lines || [];
+    const selected = s.axSel?.path === path && s.axSel.b <= lines.length ? s.axSel : null;
+    const selection = this.fileSelection(path, file ? lines : [], selected);
+    const saveOff = !dirty || !!edit.busy || !!edit.conflict;
+    const editing = !!file && !!edit.editing;
+    const count = s.quotes.filter((quote) => quote.path === path).length;
+    const range = selected ? '第 ' + selected.a + (selected.a === selected.b ? '' : '–' + selected.b) + ' 行' : '';
+    return {
+      path, name: path.split('/').pop(), parts: this.pathParts(path).parts, known: !!file,
+      state: !file ? '' : dirty ? '未保存的修改' : edit.saved ? '已保存' : '载入于 ' + file.readAtText,
+      stateCls: 'fp-state' + (dirty ? ' tx-waiting' : ''), ...selection, editing, viewing: !editing,
+      readNote: !file && aux?.tab === 'file' ? (aux.error?.text || (!aux.file ? '文件不在了' : '')) : '',
+      overwriteCls: 'btn btn-sm btn-line' + (edit.busy ? ' is-off' : ''),
+      error: edit.error, busy: !!edit.busy, editLabel: editing ? '查看' : '编辑', draftText: lines.join('\n'),
+      toggleEdit: () => update({ editing: !editing }),
+      onEdit: ({ target }) => {
+        if (edit.busy) return;
+        update({ draft: target.value, revision: dirty ? edit.revision : file.digest,
+          eol: dirty ? edit.eol : file.eol, error: '', saved: false });
+        if (s.axSel) this.setState({ axSel: null });
+      },
+      cantSave: saveOff, saveCls: 'btn btn-sm btn-line' + (saveOff ? ' is-off' : ''),
+      save: () => this.saveAuxFile(file, false), hasSel: !!selected,
+      barText: selected ? '已选' + range + (dirty ? '（未保存，引用的是草稿快照）' : '')
+        : count ? '已引用到草稿（' + count + ' 条），还没有发送'
+        : editing ? '在编辑框里选中几行，再引用' : '点行号选中一行，按住 Shift 再点一行选中一段',
+      quoteLabel: selected ? '引用到草稿' : '把整个文件引用到草稿', clearSel: () => this.setState({ axSel: null }),
+      quote: () => this.quoteFile(file, lines, selected, dirty),
+      conflict: !!file && !!edit.conflict, conflictText: '磁盘上的版本晚于你开始修改时的版本。',
+      reload: () => {
+        update({ draft: undefined, conflict: false, saved: false, error: '' });
+        this.setState({ axSel: null });
+        this.props.actions.readMore({ auxTab: 'file', auxPath: path });
+      },
+      compare: () => this.setState({ ptab: 'diff', axCmp: path, axTabs: [...new Set([...s.axTabs, 'diff'])] }),
+      overwrite: () => this.saveAuxFile(file, true), dismiss: () => update({ conflict: false }),
+    };
+  }
+
+  async writeCommand(key, row, stop) {
+    const current = this.state.axCmd.get(key);
+    if (current?.busy) return;
+    const update = (patch) => this.patchAuxRow('axCmd', key, patch);
+    update({ busy: true, error: '' });
+    try {
+      const { command, cwd, timeoutMs } = row;
+      if (stop) await this.props.actions.stopCommand(key);
+      else await this.props.actions.runCommand(key, { command, cwd, timeoutMs });
+      update({ shown: true });
+    } catch (error) {
+      update({ error: error.message });
+    } finally {
+      update({ busy: false });
+    }
+  }
+
+  commandRows(commands, tab) {
+    if (!commands) return [];
+    return commands.rows.map((row) => {
+      const key = tab === 'cmd' ? row.checkId : tab + '/' + row.checkId;
+      const view = Object.hasOwn(commands.runs, key) ? commands.runs[key] : commands.idle;
+      const state = this.state.axCmd.get(key) || {};
+      const runOff = !commands.allowed || !!state.busy;
+      const shown = !!state.shown && !!view.out;
+      return {
+        name: row.checkId, line: row.line, word: view.word, dot: view.dot,
+        canRun: view.phase === 'idle' || view.phase === 'ended', canCancel: view.phase === 'running',
+        runLabel: view.phase === 'idle' ? '运行' : '再运行', runOff, busy: !!state.busy,
+        runCls: 'btn btn-sm btn-line' + (runOff ? ' is-off' : ''),
+        stopCls: 'btn btn-sm btn-line' + (state.busy ? ' is-off' : ''),
+        run: () => { if (!runOff) return this.writeCommand(key, row, false); },
+        cancel: () => this.writeCommand(key, row, true),
+        error: state.error, out: view.out, hasOut: !!view.out, shown, kept: !!view.out && !shown,
+        keptText: '输出已隐藏，仍然保留（' + view.outLines + ' 行）', toggleLabel: shown ? '隐藏输出' : '显示输出',
+        toggle: () => this.patchAuxRow('axCmd', key, { shown: !shown }),
+      };
+    });
+  }
+
+  commandNote(aux) {
+    if (aux?.error) return aux.error.text;
+    const cmd = aux?.commands;
+    if (!cmd) return '';
+    if (!cmd.rows.length) return '这个工作区还没有登记的检查命令。初始化或采用计划时批准的检查，会列在这里。';
+    if (!cmd.allowed) return '这个工作区没有开“跑命令”的授权：命令能看，不能在这里运行。';
+    return '命令在工作区里运行，输出显示在命令下方。';
+  }
+
+  diffLines(hunks) {
+    return (hunks || []).flatMap((hunk) => {
+      let oldLine = hunk.oldAt;
+      let newLine = hunk.newAt;
+      const rows = hunk.rows.map(([op, text]) => ({
+        line: true, text, cls: 'dl-row' + (op === '+' ? ' is-add' : op === '-' ? ' is-del' : ''),
+        sign: op === '-' ? '−' : op.trim(), o: op === '+' ? '' : oldLine++, n: op === '-' ? '' : newLine++,
+      }));
+      return [{ hunk: true, text: hunk.head }, ...rows];
+    });
+  }
+
+  diffPanel(aux, fileNote, checkedNote) {
+    const s = this.state;
+    if (s.axCmp) {
+      const file = aux?.file;
+      const edit = s.axFiles.get(s.axCmp);
+      const hunks = file?.path === s.axCmp && edit?.draft !== undefined
+        ? this.props.actions.diffHunks(file.content, this.fileContent(edit)) : undefined;
+      const note = aux?.error?.text || (hunks === null ? '改动太大，无法逐行比较。' : hunks?.length === 0 ? '逐行看没有差别。' : '');
+      return { isCmp: true, dhead: '磁盘 ↔ 你的草稿 · ' + s.axCmp, drows: this.diffLines(hunks),
+        dnote: note, hasDnote: !!note, dfiles: [], backToGit: () => this.setState({ axCmp: null }) };
+    }
+    const diff = aux?.diff;
+    const rows = diff?.rows || [];
+    const selected = rows.find((row) => row.path === s.axDiff) || rows[0];
+    const path = selected?.path;
+    const view = diff?.view?.path === path ? diff?.view : null;
+    const note = selected ? (view ? [view.note, checkedNote].filter(Boolean).join(' · ') : '') : fileNote;
+    const counts = (row) => row.added === null ? '' : '+' + row.added + ' −' + row.deleted;
+    return {
+      dfiles: rows.map((row) => ({
+        path: row.path, name: row.path.split('/').pop(), dir: row.path.split('/').slice(0, -1).join('/'),
+        add: row.added === null ? '' : '+' + row.added, del: row.deleted === null ? '' : '−' + row.deleted,
+        cls: 'frow d0' + (row === selected ? ' is-on' : ''), go: () => this.setState({ axDiff: row.path }),
+      })),
+      dhead: selected ? ['Git（HEAD）↔ 工作区', path, counts(selected)].filter(Boolean).join(' · ') : '',
+      drows: this.diffLines(view?.hunks), dnote: note, hasDnote: !!note,
+      dOpenShow: !!path, dOpenTip: '在文件页里打开 ' + path, dOpen: () => this.axOpenFile(path),
+    };
+  }
+
   axView(s, o) {
     const set = (p) => this.setState(p);
     const cur = () => this.state || {};
-    o = o || {}; const at = o.at || '14:15';
-    const repo = this.axRepo(); const ptab = s.ptab || 'task';
-    const noopBoard = () => {};
-    const go = (key) => set({ ptab: key, axNew: false, hover: null });
+    const ptab = s.ptab;
+    const aux = o.aux;
+    const go = (key) => set({ ptab: key, axCmp: null, axNew: false, hover: null });
     /* ---- tabs */
     const toolName = { files: '文件', cmd: '命令', diff: 'Diff' };
     /* a second (third …) 命令 page is 'cmd:2' (…): its own runs and output, named 命令 2, so several terminals tell apart */
     const cmdN = (k) => { const m = /^cmd:(\d+)$/.exec(String(k)); return m ? +m[1] : 0; };
     const toolOf = (k) => toolName[k] || (cmdN(k) ? '命令 ' + cmdN(k) : '');
     const isCmdTab = ptab === 'cmd' || cmdN(ptab) > 0;
-    const isDirty = (p) => cur().axDraft && cur().axDraft[p] !== undefined;
+    const isDirty = (path) => s.axFiles.get(path)?.draft !== undefined;
     const closeTab = (key) => {
       const c = cur(); const patch = {};
       if (toolOf(key)) patch.axTabs = (c.axTabs || []).filter((k) => k !== key);
@@ -1328,7 +1378,7 @@ class Component extends DCLogic {
     /* file pages with the same name (src/app/main.ts, src/ui/main.ts) get the shortest parent that tells them apart, in
        front ("app/main.ts" / "ui/main.ts": under the strip's name cap the part that differs is the part that stays);
        a file tab's title and close label carry its full path, a node page's its name */
-    const twins = {}; const tabName = {};
+    const twins = Object.create(null); const tabName = Object.create(null);
     (s.axPages || []).forEach((p) => { const b = p.split('/').pop(); (twins[b] = twins[b] || []).push(p); });
     Object.keys(twins).forEach((b) => {
       const ps = twins[b]; if (ps.length < 2) { tabName[ps[0]] = b; return; }
@@ -1398,125 +1448,37 @@ class Component extends DCLogic {
       };
     };
     /* ---- files: the directory tree (one row per open level; 100 per folder, then 再显示 100 个) */
-    const changedBy = {}; repo.changed.forEach((f) => { changedBy[f.path] = f; });
+    const changedBy = new Map((aux?.diff?.rows || []).map((row) => [row.path, row]));
     const rows = [];
     const walkBoardTree = (list, depth) => {
-      const shown = 100 + ((s.axMore || {})[list.dirPath] || 0);
+      const shown = 100 + (s.axMore.get(list.dirPath) || 0);
       list.items.slice(0, shown).forEach((n) => {
         if (n.kids) {
-          const open = !!(s.axDirs || {})[n.path];
-          rows.push({ key: n.path, isDir: true, isFile: false, name: n.name, cls: 'frow d' + Math.min(depth, 9) + (open ? ' is-open' : ''), meta: '', hasMeta: false, ex: open,
-            go: () => { const d = Object.assign({}, cur().axDirs || {}); if (d[n.path]) delete d[n.path]; else d[n.path] = true; set({ axDirs: d }); } });
+          const open = s.axDirs.has(n.path);
+          rows.push({ key: n.path, path: n.path, isDir: true, isFile: false, name: n.name, cls: 'frow d' + Math.min(depth, 9) + (open ? ' is-open' : ''), meta: '', hasMeta: false, ex: open,
+            go: () => {
+              const dirs = new Set(cur().axDirs);
+              if (open) dirs.delete(n.path); else dirs.add(n.path);
+              set({ axDirs: dirs });
+            } });
           if (open) walkBoardTree({ dirPath: n.path, items: n.kids }, depth + 1);
         } else {
-          const ch = changedBy[n.path];
-          rows.push({ key: n.path, isDir: false, isFile: true, name: n.name, cls: 'frow d' + Math.min(depth, 9) + (ptab === 'f:' + n.path ? ' is-on' : ''), ex: null,
-            meta: ch ? '+' + ch.add + ' −' + ch.del : '', hasMeta: !!ch, addTxt: ch ? '+' + ch.add : '', delTxt: ch ? '−' + ch.del : '',
-            go: () => { const c = cur(); const pages = (c.axPages || []).indexOf(n.path) >= 0 ? c.axPages : (c.axPages || []).concat([n.path]); set({ axPages: pages, ptab: 'f:' + n.path, axSel: null }); } });
+          const ch = changedBy.get(n.path);
+          const counted = ch && ch.added !== null;
+          rows.push({ key: n.path, path: n.path, isDir: false, isFile: true, name: n.name, cls: 'frow d' + Math.min(depth, 9) + (ptab === 'f:' + n.path ? ' is-on' : ''), ex: null,
+            hasMeta: !!counted, addTxt: counted ? '+' + ch.added : '', delTxt: counted ? '−' + ch.deleted : '',
+            go: () => this.axOpenFile(n.path) });
         }
       });
       if (list.items.length > shown) rows.push({ key: list.dirPath + ':more', isDir: false, isFile: false, isMore: true, name: '再显示 100 个（共 ' + list.items.length + ' 个）', cls: 'frow is-more d' + Math.min(depth, 9),
-        meta: '', hasMeta: false, ex: null, go: () => { const m = Object.assign({}, cur().axMore || {}); m[list.dirPath] = (m[list.dirPath] || 0) + 100; set({ axMore: m }); } });
+        meta: '', hasMeta: false, ex: null, go: () => set({ axMore: new Map(cur().axMore).set(list.dirPath, shown) }) });
     };
-    if (ptab === 'files') walkBoardTree({ dirPath: '', items: this.axTree() }, 0);
-    /* ---- a file page */
-    let fp = null;
-    if (ptab.indexOf('f:') === 0) {
-      const path = ptab.slice(2); const F = repo.files[path];
-      const reloaded = !!(s.axReload || {})[path];
-      const baseLines = F ? ((s.axText || {})[path] || (reloaded && F.disk ? F.disk.lines : F.lines)) : [];
-      const draft = (s.axDraft || {})[path];
-      const lines = draft !== undefined ? draft.split('\n') : baseLines;
-      const from = F ? F.from : 1; const to = from + lines.length - 1;
-      const sel = s.axSel && s.axSel.path === path ? s.axSel : null;
-      const editing = !!(s.axEdit || {})[path];
-      const dirty = draft !== undefined;
-      const pick = (no) => (e) => {
-        const c = cur(); const prev = c.axSel && c.axSel.path === path ? c.axSel : null;
-        if (e && e.shiftKey && prev) set({ axSel: { path: path, anchor: prev.anchor, a: Math.min(prev.anchor, no), b: Math.max(prev.anchor, no) } });
-        else if (prev && prev.a === no && prev.b === no) set({ axSel: null });
-        else set({ axSel: { path: path, anchor: no, a: no, b: no } });
-      };
-      const codeRows = [];
-      if (F && from > 1) codeRows.push({ fold: true, line: false, text: '第 1–' + (from - 1) + ' 行，原型没有收录', cls: 'fl is-fold' });
-      lines.forEach((t, k) => { const no = from + k; const on = !!sel && no >= sel.a && no <= sel.b;
-        codeRows.push({ fold: false, line: true, no: no, text: t, cls: 'fl' + (on ? ' is-sel' : ''), pick: pick(no), label: '选中第 ' + no + ' 行；按住 Shift 再点一行，选中一段' }); });
-      if (F && to < F.total) codeRows.push({ fold: true, line: false, text: '第 ' + (to + 1) + '–' + F.total + ' 行，原型没有收录', cls: 'fl is-fold' });
-      const savedAt = (s.axSaved || {})[path];
-      const conflict = s.axConflict === path && F && F.disk;
-      const saveNow = () => {
-        const c = cur(); const d = (c.axDraft || {})[path]; if (d === undefined) return;
-        const t = Object.assign({}, c.axText || {}); t[path] = d.split('\n');
-        const dr = Object.assign({}, c.axDraft || {}); delete dr[path];
-        const sv = Object.assign({}, c.axSaved || {}); sv[path] = at;
-        set({ axText: t, axDraft: dr, axSaved: sv, axConflict: null });
-      };
-      /* quotes of this file waiting in the draft: with nothing selected the bar says so (the composer may be hidden by 放大
-         or by a decision card) */
-      const nQf = (s.quotes || []).filter((q) => q.path === path).length;
-      const snippet = (a, b) => { const k = Math.max(0, a - from); const t = (lines.slice(k, k + (b - a + 1)).filter((x) => x.trim())[0] || '').trim(); return t.length > 56 ? t.slice(0, 55) + '…' : t; };
-      fp = {
-        path: path, name: path.split('/').pop(), parts: path.split('/').map((x, k, a) => (k < a.length - 1 ? x + '/' : x)), known: !!F,
-        state: !F ? '原型没有收录这个文件的内容' : dirty ? '未保存的修改' : savedAt ? '已保存 ' + savedAt : reloaded ? '已重新载入 ' + at : '载入于 ' + F.loaded,
-        stateCls: 'fp-state' + (dirty ? ' tx-waiting' : ''), rows: codeRows, editing: editing, viewing: !editing, draftText: lines.join('\n'),
-        editLabel: editing ? '查看' : '编辑', toggleEdit: () => { const e = Object.assign({}, cur().axEdit || {}); if (e[path]) delete e[path]; else e[path] = true; set({ axEdit: e }); },
-        onEdit: (e) => { const d = Object.assign({}, cur().axDraft || {}); d[path] = e && e.target ? e.target.value : lines.join('\n'); set({ axDraft: d }); },
-        onSelect: (e) => { const t = e && e.target; if (!t || t.selectionStart === t.selectionEnd) return; const v = String(t.value);
-          const a = from + v.slice(0, t.selectionStart).split('\n').length - 1; const b = from + v.slice(0, Math.max(t.selectionStart, t.selectionEnd - 1)).split('\n').length - 1;
-          set({ axSel: { path: path, anchor: a, a: a, b: b } }); },
-        canSave: dirty, cantSave: !dirty, saveCls: 'btn btn-sm btn-line' + (dirty ? '' : ' is-off'),
-        save: () => { const c = cur(); if ((c.axDraft || {})[path] === undefined) return; if (F && F.disk && !(c.axReload || {})[path] && !(c.axSaved || {})[path]) set({ axConflict: path }); else saveNow(); },
-        hasSel: !!sel, selText: sel ? (sel.a === sel.b ? '已选第 ' + sel.a + ' 行' : '已选第 ' + sel.a + '–' + sel.b + ' 行') : '',
-        barText: sel ? (sel.a === sel.b ? '已选第 ' + sel.a + ' 行' : '已选第 ' + sel.a + '–' + sel.b + ' 行') + (dirty ? '（未保存，引用的是草稿快照）' : '')
-          : nQf ? '已引用到草稿（' + nQf + ' 条），还没有发送'
-          : F ? (editing ? '在编辑框里选中几行，再引用' : '点行号选中一行，按住 Shift 再点一行选中一段') : '可以把整个文件引用到草稿',
-        quoteLabel: sel ? '引用到草稿' : '把整个文件引用到草稿', clearSel: () => set({ axSel: null }),
-        quote: () => {
-          const c = cur(); const n = (c.axQn || 0) + 1;
-          const q = sel ? { id: 'q' + n, path: path, a: sel.a, b: sel.b, snip: snippet(sel.a, sel.b), snap: dirty } : { id: 'q' + n, path: path, a: null, b: null, snip: F ? snippet(from, to) : '', snap: dirty };
-          set({ quotes: (c.quotes || []).concat([q]), axQn: n, axSel: null });
-        },
-        conflict: !!conflict, conflictText: conflict ? '磁盘上的 ' + path.split('/').pop() + ' 在 ' + F.disk.at + ' 被 ' + F.disk.by + ' 改过（+' + F.disk.add + ' −' + F.disk.del + '），晚于你载入的版本（' + F.loaded + '）。' : '',
-        reload: () => { const c = cur(); const r = Object.assign({}, c.axReload || {}); r[path] = true; const dr = Object.assign({}, c.axDraft || {}); delete dr[path]; set({ axReload: r, axDraft: dr, axConflict: null }); },
-        compare: () => set({ ptab: 'diff', axCmp: path, axTabs: (cur().axTabs || []).indexOf('diff') >= 0 ? cur().axTabs : (cur().axTabs || []).concat(['diff']) }),
-        overwrite: () => saveNow(), dismiss: () => set({ axConflict: null })
-      };
-    }
-    /* ---- commands */
-    const cmdKey = (id) => (cmdN(ptab) ? ptab + '/' + id : id);   /* 命令 keeps the old keys; 命令 2 … key by page */
-    const cmds = repo.cmds.map((c0) => {
-      const ck = cmdKey(c0.id);
-      const st = (s.axCmd || {})[ck] || { st: 'idle', shown: false, n: 0 };
-      const upd = (p) => { const all = Object.assign({}, cur().axCmd || {}); all[ck] = Object.assign({}, all[ck] || { st: 'idle', shown: false, n: 0 }, p); set({ axCmd: all }); };
-      const hasOut = st.st !== 'idle';
-      const word = { idle: '未运行', running: '运行中', done: '已结束 · 退出码 ' + c0.exit + ' · 用时 ' + c0.took, cancelled: '已取消，输出保留' }[st.st];
-      const out = st.st === 'cancelled' ? c0.out.concat(['已取消']) : c0.out;
-      return { id: c0.id, name: c0.name, line: c0.line, word: word, dot: 'dot ' + (st.st === 'running' ? 's-running' : st.st === 'cancelled' ? 's-cancelled' : st.st === 'done' ? 's-satisfied' : 's-idle'),
-        canRun: st.st !== 'running', canCancel: st.st === 'running', runLabel: st.st === 'idle' ? '运行' : '再运行',
-        run: () => upd({ st: c0.long ? 'running' : 'done', shown: true, n: (st.n || 0) + 1 }), cancel: () => upd({ st: 'cancelled', shown: true }),
-        hasOut: hasOut, shown: hasOut && !!st.shown, kept: hasOut && !st.shown, keptText: '输出已隐藏，仍然保留（' + out.length + ' 行）',
-        toggleLabel: st.shown ? '隐藏输出' : '显示输出', toggle: () => upd({ shown: !st.shown }), out: out.join('\n'), outLines: out.length };
-    });
-    /* ---- diff: Git ↔ working tree, or (from a conflict) the disk ↔ your draft */
-    const cmpPath = s.axCmp && repo.files[s.axCmp] && repo.files[s.axCmp].disk ? s.axCmp : null;
-    const dfiles = repo.changed.map((f) => ({ path: f.path, name: f.path.split('/').pop(), dir: f.path.split('/').slice(0, -1).join('/'), add: '+' + f.add, del: '−' + f.del,
-      cls: 'frow d0' + (!cmpPath && s.axDiff === f.path ? ' is-on' : ''), go: () => set({ axDiff: f.path, axCmp: null }) }));
-    let drows = []; let dnote = ''; let dhead = ''; let dPath = null;
-    if (cmpPath) {
-      const F = repo.files[cmpPath]; const mine = ((s.axDraft || {})[cmpPath] !== undefined ? s.axDraft[cmpPath].split('\n') : F.lines);
-      dhead = F.disk.by + ' ' + F.disk.at + ' 写到磁盘的版本 ↔ 你的草稿 · ' + cmpPath.split('/').pop() + ' 第 ' + F.from + ' 行起';
-      drows = [{ hunk: true, line: false, text: '@@ 第 ' + F.from + ' 行起 · 磁盘 ↔ 草稿', cls: 'dl-hunk' }].concat(this.axLineDiff(F.disk.lines, mine, F.from).map((r) => ({ hunk: false, line: true, cls: 'dl-row' + (r[0] === '+' ? ' is-add' : r[0] === '-' ? ' is-del' : ''), sign: r[0] === ' ' ? '' : r[0] === '-' ? '−' : '+', o: r[1] === null ? '' : String(r[1]), n: r[2] === null ? '' : String(r[2]), text: r[3] })));
-    } else {
-      const f = repo.changed.filter((x) => x.path === s.axDiff)[0] || repo.changed[0]; dPath = f.path;
-      dhead = 'Git（HEAD）↔ 工作区 · ' + f.path.split('/').pop() + ' · +' + f.add + ' −' + f.del + (f.by ? ' · ' + f.by : '');
-      f.hunks.forEach((h) => {
-        drows.push({ hunk: true, line: false, text: h.head, cls: 'dl-hunk' });
-        let o2 = h.oldAt; let n2 = h.newAt;
-        h.rows.forEach((r) => { const row = { hunk: false, line: true, cls: 'dl-row' + (r[0] === '+' ? ' is-add' : r[0] === '-' ? ' is-del' : ''), sign: r[0] === ' ' ? '' : r[0] === '-' ? '−' : '+', o: r[0] === '+' ? '' : String(o2), n: r[0] === '-' ? '' : String(n2), text: r[1] };
-          if (r[0] !== '+') o2 += 1; if (r[0] !== '-') n2 += 1; drows.push(row); });
-      });
-      if (!f.hunks.length) dnote = (f.note ? f.note + '；' : '') + '逐行内容在原型里没有收录。';
-    }
+    if (ptab === 'files') walkBoardTree({ dirPath: '', items: aux?.files?.tree || [] }, 0);
+    const fp = ptab.startsWith('f:') ? this.filePage(ptab.slice(2), aux) : null;
+    const diff = aux?.diff;
+    const checkedNote = diff?.checkedFirst != null ? '只核对了前 ' + diff.checkedFirst + ' 个文件' : '';
+    const fileNote = aux?.error?.text || (!diff ? '' : diff.files?.repository === 'not_git' ? '不是 git 工作区'
+      : ['工作区 · 改动 ' + diff.rows.length + ' 个文件', checkedNote].filter(Boolean).join(' · '));
     /* ---- quotes in the composer */
     const quotes = (s.quotes || []).map((q) => ({ id: q.id, path: q.path, lines: q.a === null ? '整个文件' : q.a === q.b ? '第 ' + q.a + ' 行' : '第 ' + q.a + '–' + q.b + ' 行',
       snap: !!q.snap, snip: q.snip, hasSnip: !!q.snip, remove: () => set({ quotes: (cur().quotes || []).filter((x) => x.id !== q.id) }) }));
@@ -1530,20 +1492,14 @@ class Component extends DCLogic {
       newOpen: !!s.axNew, toggleNew: () => set({ axNew: !cur().axNew }), newItems: newItems,
       maxLabel: s.axMax ? '还原右栏' : '放大右栏', isMax: !!s.axMax, notMax: !s.axMax, toggleMax: () => set({ axMax: !cur().axMax, panel: true }),
       hide: () => set({ panel: false, axMax: false, axNew: false }),
-      fileRows: rows, fileNote: 'coding-platform · 分支 feat/reliability-and-structure · 改动 ' + repo.changed.length + ' 个文件',
-      fp: fp || { rows: [], parts: [] },
-      cmds: cmds, cmdNote: '命令在 Host 的工作区里运行；这里不是终端，没有输入。',
-      dfiles: dfiles, drows: drows, dhead: dhead, dnote: dnote, hasDnote: !!dnote, isCmp: !!cmpPath, backToGit: () => set({ axCmp: null }),
-      /* Diff's head: the file shown in Git ↔ 工作区 opens as its page (from Main's review) */
-      dOpenShow: ptab === 'diff' && !!dPath, dOpen: () => { if (dPath) this.axOpenFile(dPath); }, dOpenTip: dPath ? '在文件页里打开 ' + dPath : '',
+      fileRows: rows, fileNote, fp: fp || { rows: [], parts: [] },
+      cmds: isCmdTab ? this.commandRows(aux?.commands, ptab) : [], cmdNote: this.commandNote(aux),
+      ...(ptab === 'diff' ? this.diffPanel(aux, fileNote, checkedNote) : {}),
       quotes: quotes, hasQuotes: quotes.length > 0, quoteNote: '已引用到草稿，还没有发送',
       /* 放大 hides the composer: the quotes waiting there are counted beside the strip's buttons; a click restores the panel */
       qMax: { show: !!s.axMax && quotes.length > 0, n: quotes.length, go: () => set({ axMax: false }) }
     };
   }
-  /* the quoted lines as plain text, for the message you send (the board's send() decides; quoting never sends) */
-  axQuoteText(q) { return '引用：' + q.path + '，' + (q.a === null ? '整个文件' : q.a === q.b ? '第 ' + q.a + ' 行' : '第 ' + q.a + '–' + q.b + ' 行') + (q.snap ? '（草稿快照）' : ''); }
-
   /* 待执行 is drawn hollow (s-notyet); every other state keeps its class */
   sqAt(st) { return 's-' + (st === 'pending' ? 'notyet' : st); }
   /* ------------------------------------------------------------ PART A · the 任务图 tab (all five boards) */
@@ -1772,7 +1728,6 @@ class Component extends DCLogic {
     const s = this.state || {};
     const set = (p) => this.setState(p);
     const noopBoard = () => {};
-    const padBoard = (n) => String(n).padStart(2, '0');
     const theme = s.theme || this.props.theme || 'dark';
     const readState = this.props.readState || null;
     const status = readState && readState.status ? readState.status : 'empty';
@@ -1883,21 +1838,28 @@ class Component extends DCLogic {
 
     /* ---- composer (问秘书, 在对话里问) ---- */
     const draft = s.draft || '';
-    const sendBoard = () => {
+    const sendBoard = async () => {
       const st = this.state || {};
       const text = String(st.draft || '').trim();
-      if (!text || typeof actions.askSecretary !== 'function') return;
-      const quotes = st.quotes || [];
-      const refsIn = quotes.length
-        ? quotes.map((q) => ({ path: q.path, startLine: q.a === null || q.a === undefined ? null : q.a,
-          endLine: q.b === null || q.b === undefined ? null : q.b, snapshot: q.snap ? (q.snip || null) : null }))
-        : null;
-      Promise.resolve().then(() => actions.askSecretary(text, refsIn)).then((round) => {
+      if (st.sending || !text || typeof actions.askSecretary !== 'function') return;
+      const quotes = st.quotes;
+      const refsIn = quotes.map((q) => ({ path: q.path, startLine: q.a, endLine: q.b, snapshot: q.snapshot ?? null }));
+      set({ sending: true, sendError: '' });
+      try {
+        const round = await actions.askSecretary(text, refsIn);
         if (!round) return;
         const add = [{ isUser: true, text: round.input }];
-        if (round.answer !== null && round.answer !== undefined) add.push({ isAgent: true, text: round.answer });
-        set({ log: ((this.state || {}).log || []).concat(add), draft: '', quotes: [], composer: false, askRef: '', askSq: '', askId: '', err: '' });
-      }).catch((e) => set({ err: msgOf(e) }));
+        if (round.answer != null) add.push({ isAgent: true, text: round.answer });
+        const now = this.state;
+        const remaining = now.quotes.filter((q) => !quotes.includes(q));
+        const nextDraft = now.draft === st.draft ? '' : now.draft;
+        set({ log: now.log.concat(add), draft: nextDraft, quotes: remaining, composer: !!nextDraft || !!remaining.length,
+          askRef: '', askSq: '', askId: '', err: '' });
+      } catch (error) {
+        set({ sendError: msgOf(error) });
+      } finally {
+        set({ sending: false });
+      }
     };
     const askNode = (!!s.askRef && !!s.askId && s.askId !== 'conflict') || (!s.askRef && (s.quotes || []).length > 0);
     const composerPh = askNode ? '问秘书，比如：它和这次冲突有关吗？' : '问秘书，比如：这个冲突会耽误什么？';
@@ -1909,12 +1871,13 @@ class Component extends DCLogic {
     if (ptab !== 'task' && ptab !== 'arch' && !isAux(ptab) && !extra.some((x) => x.key === ptab)) ptab = 'task';
     const isTaskTab = ptab === 'task'; const isArch = ptab === 'arch'; const isMap = isTaskTab || isArch;
     const page = extra.filter((x) => x.key === ptab)[0] || null;
-    const ax = this.axView(Object.assign({}, s, { ptab: ptab }), { at: '14:' + padBoard(s.clock || 20), extra: extra, rail: false });
+    const wanted = this.auxDemand(s).auxTab;
+    const aux = data.aux?.tab === wanted ? data.aux : null;
+    const ax = this.axView({ ...s, ptab }, { aux, extra, rail: false });
     ax.tabs = ax.tabs.map((t) => {
       const x = extra.filter((y) => y.key === t.key)[0];
       return x ? Object.assign({}, t, { close: () => set({ extra: ((this.state || {}).extra || []).filter((y) => y.key !== x.key), ptab: ptab === x.key ? x.kind : ptab }) }) : t;
     });
-    if (ax.fp && ax.fp.quote) { const quote0 = ax.fp.quote; ax.fp.quote = () => { quote0(); set({ composer: true }); }; }
 
     /* ---- the two maps ---- */
     const byId = tree.byId; const root = tree.root;
@@ -2044,8 +2007,9 @@ class Component extends DCLogic {
       composerOpen: !!s.composer, closeComposer: () => set({ composer: false, askRef: '', askSq: '', askId: '' }),
       hasAsk: !!s.askRef, askRef: s.askRef || '', askSq: s.askSq || 'sq z8 s-pending', clearAsk: () => set({ askRef: '', askSq: '', askId: '' }),
       composerPh: composerPh,
-      draft: draft, onDraft: (e) => set({ draft: e && e.target ? e.target.value : '', err: '' }),
-      sendCls: 'send' + (draft.trim() ? '' : ' is-off'), send: sendBoard,
+      draft: draft, onDraft: (e) => set({ draft: e.target.value, sendError: '', err: '' }),
+      sendOff: !draft.trim() || !!s.sending, sendError: s.sendError,
+      sendCls: 'send' + (!draft.trim() || s.sending ? ' is-off' : ''), send: sendBoard,
 
       isTree: !outline, isOutline: outline,
       viewTreeCls: 'seg-btn' + (outline ? '' : ' is-on'), viewOutlineCls: 'seg-btn' + (outline ? ' is-on' : ''),

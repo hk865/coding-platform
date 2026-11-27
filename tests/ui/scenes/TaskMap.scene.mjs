@@ -1,9 +1,9 @@
 /**
- * The TaskMap board-check scene for the stop success path (N10). `TaskMap.scene.json` is the
+ * The TaskMap board-check scene for stopping a run and releasing a module gate. `TaskMap.scene.json` is the
  * static scene: T13 is running `scene-run-1`, its line has an available cancel control, and
- * `graph/detail` answers so a selected Task keeps its detail. This wrapper adds only the two
- * live answers the success path needs: `controls/submit` commits once, and `executions/read`
- * then says `desiredState: cancelled` for that Run, so the page draws 停止请求中.
+ * `graph/detail` answers so a selected Task keeps its detail. Stopping the run draws 停止请求中.
+ * 取消传播 waits for 重新入队与失败类别 to finish with the same module. Two pages opened
+ * before release can show the stale revision refusal on the second page.
  * Open it with
  *   --scene tests/ui/scenes/TaskMap.scene.mjs --query '?goal=g1'
  * The JSON alone still opens the page and the confirm card; without this wrapper the answer
@@ -16,6 +16,15 @@ const HAVE = JSON.parse(readFileSync(new URL('./TaskMap.scene.json', import.meta
 const RUN = 'scene-run-1';
 const READ = HAVE.routes['executions/read'];
 let cancelled = false;
+const waiting = { projectId: 'ple34b', goalId: 'g1', taskId: 'T16' };
+const module = { ref: { projectId: waiting.projectId, moduleId: 'execution-lifecycle' }, name: '执行生命周期', paths: [] };
+let gate = {
+  ref: { aggregateType: 'ModuleOverlapGate', ...waiting, moduleId: module.ref.moduleId },
+  revision: 2, workspaceId: 'scene', waiting, moduleId: module.ref.moduleId,
+  running: [{ task: { ...waiting, taskId: 'T13' }, run: { aggregateType: 'Run', projectId: waiting.projectId,
+    goalId: waiting.goalId, runId: RUN }, startCursor: 'c0000000001' }],
+  noteRequest: null, release: null,
+};
 
 /* D42-2: one page of two anchors (one unclaimed, one picked up) for the
    selected Task's 关系; the Task itself is the first one a test selects. */
@@ -57,15 +66,31 @@ export const scene = {
   now: HAVE.now,
   routes: HAVE.routes,
   reply(route, input) {
+    if (route === 'goals/overlap-gates') return { status: 'ready', value: { gates: [gate], nextCursor: null } };
+    if (route === 'goals/overlap-release') {
+      if (input.revision !== gate.revision) return { status: 'rejected', code: 'revision_conflict', reason: 'gate changed' };
+      gate = { ...gate, revision: gate.revision + 1, release: { by: { kind: 'human', id: 'scene' },
+        at: HAVE.now, commandId: input.commandId, reason: input.reason, revision: input.revision } };
+      return { status: 'released', gate };
+    }
+    if (route === 'architecture/read') return { status: 'ready', value: { catalog: { catalog: { modules: [module] } } } };
     if (route === 'controls/submit') {
       cancelled = true;
       return HAVE.routes['controls/submit'];
     }
-    if (route === 'graph/detail' && input && input.section === 'anomalies') return ANOMALIES;
+    if (route === 'graph/detail' && input.section === 'anomalies') {
+      const items = ANOMALIES.value.items.filter(({ anchor }) => anchor.task.taskId === input.node.ref.taskId);
+      return { status: 'ready', value: { ...ANOMALIES.value, items } };
+    }
     if (route === 'verification/round') return ROUNDS;
     if (route === 'graph/detail') {
       const answer = HELPER.reply(route, input);
       if (input && input.section) answer.value.section = input.section;
+      const task = answer.value.task;
+      if (input.section === 'summary' && ['T13', 'T16'].includes(task?.task.taskId)) {
+        task.module = module.ref;
+        task.plannedModules = [module.ref];
+      }
       return answer;
     }
     if (route === 'executions/read') {

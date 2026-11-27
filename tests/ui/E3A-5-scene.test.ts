@@ -148,3 +148,12 @@ describe('ArchOverview fixed scene (prototype sample)', () => {
     for (const path of planned) expect(paths.has(path)).toBe(true);
   });
 });
+
+describe('the semantic scene modules', () => {
+  it('import without throwing', async () => {
+    /* 表一第 2 条: a null step used to throw at import; both boards import this file. */
+    await import(new URL('./scenes/semantic-scene.mjs', import.meta.url).href);
+    await import(new URL('./scenes/ArchOverview.scene.mjs', import.meta.url).href);
+    await import(new URL('./scenes/Main.scene.mjs', import.meta.url).href);
+  });
+});

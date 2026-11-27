@@ -3,6 +3,14 @@
   "routes": {
     "bootstrap":
       {"workspaces":[{"scope":{"projectId":"e3g-scene","workspaceId":"e3g-scene"},"name":"E3G scene","workspaceRevision":1,"writeAllowed":false,"commandsAllowed":false}],"review":null,"execution":{},"changesHead":"c0000000001"},
+    "files/list":
+      {"status":"ready","value":{"paths":["src/ui/views.ts"],"partial":false}},
+    "files/read":
+      {"status":"ready","value":{"path":"src/ui/views.ts","content":"export function goalTitle(name: string) {\n  return name.trim();\n}\n","digest":"0e38368c1847c4e00d9b800cc04ab51c6a2ac2be1cbb27b93e2a2aac3ae440d6","digestBasis":"raw_bytes","sizeBytes":66,"readAt":"2026-11-09T09:00:00+08:00","version":{"kind":"working_tree"}}},
+    "files/uncommitted":
+      {"status":"ready","value":{"repository":"not_git"}},
+    "verification/installed-checks":
+      {"status":"ready","value":{"checks":[{"checkId":"类型检查","command":"npm run typecheck","cwd":".","timeoutMs":120000}]}},
     "goals/list":
       {"status":"ready","value":{"goals":[{"ref":{"aggregateType":"Goal","projectId":"e3g-scene","goalId":"scene-goal"},"revision":2,"since":"c0000000001","ordinal":1,"objective":"场景目标一","desiredState":"active","desiredStateRevision":1,"order":1,"autonomy":"after_plan_confirmation","waitForGoalRef":null,"activePlanRevision":{"aggregateType":"PlanRevision","projectId":"e3g-scene","planId":"scene-plan-scene-goal"},"display":{"phase":null}},{"ref":{"aggregateType":"Goal","projectId":"e3g-scene","goalId":"scene-goal-2"},"revision":2,"since":"c0000000002","ordinal":2,"objective":"场景目标二","desiredState":"active","desiredStateRevision":1,"order":2,"autonomy":"after_plan_confirmation","waitForGoalRef":null,"activePlanRevision":{"aggregateType":"PlanRevision","projectId":"e3g-scene","planId":"scene-plan-scene-goal-2"},"display":{"phase":null}},{"ref":{"aggregateType":"Goal","projectId":"e3g-scene","goalId":"scene-goal-3"},"revision":2,"since":"c0000000003","ordinal":3,"objective":"场景目标三","desiredState":"active","desiredStateRevision":1,"order":3,"autonomy":"after_plan_confirmation","waitForGoalRef":null,"activePlanRevision":null,"display":{"phase":"PLANNING"}}],"sourceCursor":"c0000000003"}},
     "goals/display":

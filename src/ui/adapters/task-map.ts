@@ -17,6 +17,7 @@ import { catalogForWorkspace } from '../../contracts/workspace-catalog.js';
 import { displayProjectPath, qualifyProjectPath } from '../../contracts/workspace-path.js';
 import type { AdoptedArchitecture } from '../../contracts/architecture-catalog.js';
 import type { TaskRow } from '../../contracts/task-graph.js';
+import type { ModuleOverlapGateRef } from '../../contracts/module-overlap-gate.js';
 import type { RunRef, TaskTriple } from '../../contracts/dispatch.js';
 import type { SessionRef } from '../../contracts/core/identity.js';
 import { revisionAssignments } from '../../contracts/plan.js';
@@ -922,8 +923,17 @@ export type TaskMapUncommittedRead = {
   files?: Array<{ path?: unknown; state?: unknown; lines?: { added?: unknown; deleted?: unknown } | null }>;
 } | null;
 export type TaskMapDetailArchGroup = { crumb: string; files: TaskMapDetailFile[] };
+export type TaskMapOverlapGateRead = {
+  ref: ModuleOverlapGateRef; revision: number; waiting: TaskTriple; moduleId: string;
+  running: Array<{ task: TaskTriple }>; noteRequest: unknown; release: unknown;
+};
+export type TaskMapOverlapGate = {
+  ref: ModuleOverlapGateRef; revision: number; workspaceId: string; moduleName: string; text: string;
+};
 export type TaskMapNodeDetailData = {
   id: string; word: string; why: string;
+  workspaceId: string; awaitingStart: boolean;
+  moduleNames: Record<string, string>; overlapGates: TaskMapOverlapGate[];
   stageName: string;
   owner: string; hasOwner: boolean;
   /** Current owner is "现在"; a replay hides the historical relation (ruling 5). */
@@ -1603,6 +1613,11 @@ export function adaptTaskMapDetail(
   const cardStatus = cardParts.join(' · ');
   return {
     id, word, why: mapWhy !== '' ? mapWhy : detailWhy(task),
+    workspaceId: taskWorkspaceId,
+    awaitingStart: (task.phase === 'pending' || task.phase === 'ready')
+      && disposition !== 'cancelled' && disposition !== 'superseded',
+    moduleNames: Object.fromEntries(modules.map(({ value }) => [value.id, value.name])),
+    overlapGates: [],
     stageName: '',
     owner: who, hasOwner: who !== '', ownerNow: true,
     files: [...groups.entries()].map(([crumb, files]) => ({ crumb, files })),
@@ -1637,6 +1652,23 @@ export function adaptTaskMapDetail(
         + fromText + '改为 ' + (PHASE_WORD[asText(change.to)] ?? word) + (reason !== '' ? '：' + reason : '') };
     })() : null,
   };
+}
+
+/** Gate records outlive the wait. Name only peers still running in this task graph. */
+export function overlapGatesOf(
+  gates: readonly TaskMapOverlapGateRead[], detail: TaskMapNodeDetailData, map: TaskMapData,
+): TaskMapOverlapGate[] {
+  if (!detail.awaitingStart) return [];
+  const runningNames = new Map(map.tasks.filter((task) => task.st === 'running').map((task) => [task.id, task.name]));
+  return gates.flatMap((gate) => {
+    if (gate.waiting.taskId !== detail.id || gate.release !== null) return [];
+    const names = gate.running.map(({ task }) => runningNames.get(task.taskId)).filter((name) => name !== undefined);
+    if (!names.length) return [];
+    const moduleName = detail.moduleNames[gate.moduleId] || map.moduleNames?.[gate.moduleId] || '（名称暂不可用）';
+    const requested = gate.noteRequest === null ? '' : '（已经请参谋记了）';
+    return [{ ref: gate.ref, revision: gate.revision, workspaceId: detail.workspaceId, moduleName,
+      text: `在等 ${names.join('、')} 改完模块 ${moduleName}。参谋记一条约定或决定就会放开${requested}，你也可以带理由放开。` }];
+  });
 }
 
 /* ------------------------------------------------------------------ track */

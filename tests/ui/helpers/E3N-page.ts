@@ -179,6 +179,10 @@ export async function bootE3N(world: E3NTarget, name: 'Main' | 'TaskMap' | 'Goal
     if (options.unavailableOnce !== undefined && !unavailableOnce
       && (route === options.unavailableOnce || settingsRoute === options.unavailableOnce)) {
       unavailableOnce = true;
+      /* Recorded like `unavailable`'s answer, so a row can count the failed read. */
+      const body = bodyOf(init);
+      log.calls.push({ route: settingsRoute === '' ? route : settingsRoute, url,
+        input: settingsRoute === '' ? body['input'] ?? null : body, body, token: tokenOf(init), reply: UNAVAILABLE });
       return new Response(JSON.stringify(UNAVAILABLE), { status: 200, headers: { 'content-type': 'application/json' } });
     }
     if (options.before !== undefined && options.before[route] !== undefined) await options.before[route]!(log);
@@ -447,9 +451,14 @@ export function auxTab(root: FakeElement, name: string): FakeElement | undefined
 }
 
 /** The file rows of the right panel's 文件 tree (a folder row carries `aria-expanded`). */
-function auxFileRows(root: FakeElement): FakeElement[] {
+export function auxFileRows(root: FakeElement): FakeElement[] {
   const tree = findClass(root, 'ftree');
   return tree === undefined ? [] : descendants(tree).filter((element) => element.tagName.toLowerCase() === 'button');
+}
+
+/** The name a 文件 tree row carries (`.fname`); a row without the name reads as ''. */
+export function auxRowName(row: FakeElement | undefined): string {
+  return textOf(row === undefined ? undefined : findClass(row, 'fname'));
 }
 
 /**

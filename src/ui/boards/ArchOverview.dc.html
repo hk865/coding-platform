@@ -145,6 +145,7 @@ textarea.dc-input { min-height: 52px; }
       </button>
     </sc-if>
     <button class="{{workCls}}" type="button" aria-pressed="{{workOnly}}" onClick="{{toggleWork}}" title="只保留正在处理的文件所在的路径，其余变淡">只看当前工作</button>
+    <button class="{{semCls}}" type="button" aria-pressed="{{semOn}}" onClick="{{toggleSem}}" title="Agent 写下的联系和流程，不是代码依赖">语义联系</button>
     <button class="{{legendCls}}" type="button" aria-pressed="{{legend}}" onClick="{{toggleLegend}}">图例</button>
     <button class="btn btn-icon btn-sm" type="button" onClick="{{toggleTheme}}" aria-label="{{themeLabel}}" title="{{themeLabel}}">
       <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5.25"></circle><path class="fill" d="M8 2.75a5.25 5.25 0 0 1 0 10.5Z"></path></svg>
@@ -231,6 +232,12 @@ textarea.dc-input { min-height: 52px; }
 
           <sc-for list="{{counts}}" as="c" hint-placeholder-count="10">
             <button class="{{c.cls}}" type="button" style="left: {{c.x}}px; top: {{c.y}}px;" onClick="{{c.pick}}" onMouseEnter="{{c.hover}}" onMouseLeave="{{unhoverE}}" onFocus="{{c.hover}}" onBlur="{{unhoverE}}" aria-label="{{c.tip}}">{{c.text}}</button>
+          </sc-for>
+          <sc-for list="{{semLines}}" as="e" hint-placeholder-count="4">
+            <svg class="{{e.cls}}" style="left: {{e.x}}px; top: {{e.y}}px; width: {{e.w}}px; height: {{e.h}}px;" aria-hidden="true"><path class="ln" d="{{e.d}}"></path><path class="hd" d="{{e.head}}"></path></svg>
+          </sc-for>
+          <sc-for list="{{semLabels}}" as="c" hint-placeholder-count="4">
+            <button class="{{c.cls}}" type="button" style="left: {{c.x}}px; top: {{c.y}}px;" onClick="{{c.pick}}" onMouseEnter="{{c.hover}}" onMouseLeave="{{c.leave}}" onFocus="{{c.hover}}" onBlur="{{c.leave}}" aria-label="{{c.tip}}"><span class="{{c.dot}}" aria-hidden="true"></span>{{c.text}}</button>
           </sc-for>
         </sc-if>
 
@@ -342,7 +349,79 @@ textarea.dc-input { min-height: 52px; }
           <span class="wide"><svg class="ov-lg decl" viewBox="0 0 40 10" aria-hidden="true"><path class="ln" d="M2 5h34"></path><path d="m32 2 4 3-4 3"></path></svg>声明允许，当前代码没有引用</span>
           <span class="wide">共享层（Contracts、Kernel；WorkGraph 里是持久层 persistence 和共享层 model、state）几乎人人引用，Composition 装配所有模块：这些线不常驻，悬停或选中一个节点时画出</span>
           <span class="wide">引用超过 20 条的一层只画依赖主干：A 经 B 已能走到 C 时，A → C 不重复画；悬停节点时画出它的全部引用</span>
+          <sc-if value="{{semLegend}}" hint-placeholder-val="{{ false }}">
+            <span class="wide"><span class="sem-dot ok"></span><span class="sem-line ok"></span>联系：作数（点划线、亮）</span>
+            <span class="wide"><span class="sem-dot none"></span><span class="sem-line inelig"></span>联系：暂不作数（同一条点划线、暗一档；点时看核对结果）</span>
+            <span class="wide"><span class="sem-line gap"></span>缺口：流程里相邻两步接不上，或中间一步不在了（圆点线，没有箭头）</span>
+            <span class="wide"><span class="sem-dot ok"></span>对得上　<span class="sem-dot broken"></span>断了　<span class="sem-dot grey"></span>查不了　<span class="sem-dot none"></span>存疑 / 这次没核 / 没登记</span>
+            <span class="wide">点是核对结果，线是作不作数</span>
+            <span class="wide">开着联系层画线时，引用线变淡、引用数不显示</span>
+            <span class="wide">核对只说明写下的代码位置还在，不证明运行时真这样走</span>
+          </sc-if>
           <span class="wide">{{legendSrc}}</span>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{semDet.show}}" hint-placeholder-val="{{ false }}">
+        <section class="detail is-page" aria-label="联系详情">
+          <div class="d-head">
+            <span class="{{semDet.sq}}" aria-hidden="true"></span>
+            <span class="d-title ellipsis">{{semDet.name}}</span>
+            <button class="btn btn-icon btn-sm" type="button" onClick="{{semDet.close}}" aria-label="关闭详情" title="关闭详情">
+              <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="m4.5 4.5 7 7M11.5 4.5l-7 7"></path></svg>
+            </button>
+          </div>
+          <p class="d-state"><span class="{{semDet.tx}}">{{semDet.word}}</span>{{semDet.why}}</p>
+          <sc-if value="{{semDet.checking}}" hint-placeholder-val="{{ false }}"><p class="d-state">正在核对：要读代码、分析引用，第一次可能要几十秒；结果回来自动更新</p></sc-if>
+          <sc-if value="{{semDet.hasRemoved}}" hint-placeholder-val="{{ false }}"><p class="d-state">这一条在注记文件里已经不是联系了，重新读这一层。<button class="btn-text" type="button" onClick="{{semDet.reload}}">重新读这一层</button></p></sc-if>
+          <dl class="d-dl">
+            <dt>结论</dt><dd>{{semDet.sem}}</dd>
+            <sc-for list="{{semDet.rows}}" as="r" hint-placeholder-count="5"><dt>{{r.k}}</dt><dd>{{r.v}}</dd></sc-for>
+            <sc-if value="{{semDet.hasEv}}" hint-placeholder-val="{{ false }}">
+              <dt>证据</dt>
+              <dd><div class="d-rel"><span class="d-items"><sc-for list="{{semDet.ev}}" as="ev" hint-placeholder-count="2"><span class="d-file {{ev.cls}}" title="{{ev.title}}">{{ev.text}}</span></sc-for></span></div></dd>
+            </sc-if>
+            <sc-if value="{{semDet.hasItems}}" hint-placeholder-val="{{ false }}">
+              <dt>这一对的联系</dt>
+              <dd><span class="d-items"><sc-for list="{{semDet.items}}" as="it" hint-placeholder-count="2"><button class="d-item" type="button" onClick="{{it.go}}"><span class="{{it.sq}}"></span>{{it.name}}<span class="t3 num">{{it.note}}</span></button></sc-for></span></dd>
+            </sc-if>
+          </dl>
+          <sc-if value="{{semDet.hasError}}" hint-placeholder-val="{{ false }}">
+            <p class="d-state"><span class="tx-failed">没核成：{{semDet.error}}</span></p>
+            <p class="d-state"><button class="btn-text" type="button" onClick="{{semDet.reload}}">重新读这一层</button></p>
+          </sc-if>
+          <div class="d-acts">
+            <sc-for list="{{semDet.acts}}" as="a" hint-placeholder-count="1"><button class="btn-text{{a.offCls}}" type="button" aria-disabled="{{a.off}}" disabled="{{a.off}}" onClick="{{a.go}}">{{a.label}}</button></sc-for>
+            <sc-if value="{{semDet.hasMain}}" hint-placeholder-val="{{ false }}"><a class="btn-text" href="{{semDet.mainHref}}">在工作台右栏看这条流程</a></sc-if>
+          </div>
+          <p class="d-state">只读，不改任何东西；核对只说明写下的代码位置还在，不证明运行时真这样走。</p>
+        </section>
+      </sc-if>
+
+      <sc-if value="{{sem.show}}" hint-placeholder-val="{{ false }}">
+        <div class="qlist ov-sem-panel" aria-label="语义联系">
+          <p class="qname">语义联系 · {{sem.title}}</p>
+          <sc-if value="{{sem.loading}}" hint-placeholder-val="{{ false }}"><p class="d-line">正在读联系和流程…</p><p class="d-line">读完就画上；分组和引用照常。</p></sc-if>
+          <sc-if value="{{sem.empty}}" hint-placeholder-val="{{ false }}"><p class="ov-intro-t">这个项目还没有写下的联系和流程</p><p class="d-line">Agent 遇到代码里看不出来的联系（按名字调用、注入、回调、消息、共用的数据、起进程）会写下来，写了就出现在这里。新项目刚开始时这里是空的。</p></sc-if>
+          <sc-if value="{{sem.error}}" hint-placeholder-val="{{ false }}"><p><span class="tx-failed">没读出来：{{sem.errorText}}</span></p><p class="d-line">分组和引用照常。</p><button class="btn-text" type="button" onClick="{{sem.retry}}">再读一次</button></sc-if>
+          <sc-if value="{{sem.blockError}}" hint-placeholder-val="{{ false }}"><p><span class="tx-failed">没读出来：{{sem.blockError}}</span> <button class="btn-text" type="button" onClick="{{sem.retry}}">再读一次</button></p></sc-if>
+          <sc-if value="{{sem.cap}}" hint-placeholder-val="{{ false }}"><p>{{sem.capText}}</p><p class="d-line">这是页面防止一直读下去的上限，正常项目到不了；分组和引用照常。原始情况记在控制台。</p></sc-if>
+          <sc-if value="{{sem.hasFlows}}" hint-placeholder-val="{{ false }}">
+            <p class="qname">流程</p>
+            <sc-for list="{{sem.flows}}" as="f" hint-placeholder-count="2"><button class="qrow" type="button" onClick="{{f.go}}"><span class="qname">{{f.name}}</span><span class="qpath">{{f.note}}</span></button></sc-for>
+          </sc-if>
+          <sc-if value="{{sem.hasRows}}" hint-placeholder-val="{{ false }}">
+            <p class="qname">这一层的联系</p>
+            <sc-for list="{{sem.rows}}" as="r" hint-placeholder-count="4"><button class="qrow" type="button" onClick="{{r.go}}"><span class="{{r.sq}}"></span><span class="qname">{{r.name}}</span><span class="qpath">{{r.note}}</span></button></sc-for>
+          </sc-if>
+          <sc-if value="{{sem.hasCross}}" hint-placeholder-val="{{ false }}">
+            <p class="qname">{{sem.crossTitle}}</p>
+            <sc-for list="{{sem.cross}}" as="r" hint-placeholder-count="2"><button class="qrow" type="button" onClick="{{r.go}}"><span class="{{r.sq}}"></span><span class="qname">{{r.name}}</span><span class="qpath">{{r.note}}</span></button></sc-for>
+          </sc-if>
+          <sc-if value="{{sem.hasOrphans}}" hint-placeholder-val="{{ false }}">
+            <p class="qname">{{sem.orphanTitle}}</p>
+            <sc-for list="{{sem.orphans}}" as="r" hint-placeholder-count="2"><button class="qrow" type="button" onClick="{{r.go}}"><span class="{{r.sq}}"></span><span class="qname">{{r.name}}</span><span class="qpath">{{r.note}}</span></button></sc-for>
+          </sc-if>
         </div>
       </sc-if>
 
@@ -430,6 +509,8 @@ class Component extends DCLogic {
   componentDidUpdate(prev) {
     const s = this.state || {};
     if (prev && prev.theme !== this.props.theme && s.theme) this.setState({ theme: null });
+    /* The switch's first read landed: drop the loading line. */
+    if (s.semLoading && this.props.data && this.props.data.semantic) this.setState({ semLoading: false });
   }
   /* A new read invalidates every derived model, layout and cycle cache; this
      runs before render, because updateProps renders before componentDidUpdate. */
@@ -454,6 +535,8 @@ class Component extends DCLogic {
     }
     if (Object.prototype.hasOwnProperty.call(patch, 'q')) demand.search = String(patch.q || '');
     if (Object.prototype.hasOwnProperty.call(patch, 'workOnly')) demand.workOnly = !!patch.workOnly;
+    /* 4-2 甲: the switch alone reads or withdraws both routes. */
+    if (Object.prototype.hasOwnProperty.call(patch, 'semOn')) demand.semantic = !!patch.semOn;
     /* A crumb or view button also sets `view` while navigating; only a real
        semantic/folder switch joins the read demand. */
     if (Object.prototype.hasOwnProperty.call(patch, 'view') && patch.view !== before.view) {
@@ -1581,7 +1664,7 @@ class Component extends DCLogic {
     return plan.info.map((x) => {
       const a = geo.pos[x.e.from]; const b = geo.pos[x.e.to]; const y0 = a.y + a.h; const y1 = b.y - 1;
       let pts;
-      if (x.kind === 'side') { const yy = snap(Math.min(a.y, b.y) + 29); pts = a.x < b.x ? [[a.x + a.w + 1, yy], [b.x - 2, yy]] : [[a.x - 1, yy], [b.x + b.w + 2, yy]]; }
+      if (x.kind === 'side') { const yy = snap(Math.min(a.y, b.y) + 29 + 15 * (x.e.semLane || 0)); pts = a.x < b.x ? [[a.x + a.w + 1, yy], [b.x - 2, yy]] : [[a.x - 1, yy], [b.x + b.w + 2, yy]]; }
       else if (x.kind === 'adj') {
         if (x.sm) { const yy = ty(a.row, 'mid', x.sm.track); pts = [[x.sx, y0], [x.sx, yy], [x.tx, yy], [x.tx, y1]]; }
         else pts = [[x.sx, y0], [x.tx, y1]];
@@ -1589,7 +1672,7 @@ class Component extends DCLogic {
         const ye = ty(a.row, 'exit', x.se.track); const yn = ty(b.row - 1, 'entry', x.sn.track);
         pts = [[x.sx, y0], [x.sx, ye], [x.B.x, ye], [x.B.x, yn], [x.tx, yn], [x.tx, y1]];
       }
-      return { id: x.e.id, e: x.e, kind: x.kind, pts: pts, back: x.back, box: this.edgeBox(pts) };
+      return { id: x.e.id, e: x.e, kind: x.kind, pts: pts, back: x.back, box: this.edgeBox(pts, x.e.semGap !== true) };
     });
   }
 
@@ -1627,7 +1710,7 @@ class Component extends DCLogic {
   }
 
   /* one edge = one placed SVG sized to its own box; the path and arrow head are relative to that box */
-  edgeBox(pts) {
+  edgeBox(pts, arrow = true) {
     const xs = pts.map((q) => q[0]); const ys = pts.map((q) => q[1]);
     const x0 = Math.floor(Math.min.apply(null, xs) - 6); const y0 = Math.floor(Math.min.apply(null, ys) - 6);
     const x1 = Math.ceil(Math.max.apply(null, xs) + 6); const y1 = Math.ceil(Math.max.apply(null, ys) + 6);
@@ -1636,7 +1719,7 @@ class Component extends DCLogic {
     let head;
     if (Math.abs(end[0] - prev[0]) > Math.abs(end[1] - prev[1])) { const d = end[0] > prev[0] ? 1 : -1; head = 'M' + f(end[0] - 5 * d) + ' ' + f(end[1] - 3.5) + ' L' + f(end[0]) + ' ' + f(end[1]) + ' L' + f(end[0] - 5 * d) + ' ' + f(end[1] + 3.5); }
     else { const d = end[1] > prev[1] ? 1 : -1; head = 'M' + f(end[0] - 3.5) + ' ' + f(end[1] - 5 * d) + ' L' + f(end[0]) + ' ' + f(end[1]) + ' L' + f(end[0] + 3.5) + ' ' + f(end[1] - 5 * d); }
-    return { x: x0, y: y0, w: x1 - x0, h: y1 - y0, d: this.roundPath(rel, 5), head: head };
+    return { x: x0, y: y0, w: x1 - x0, h: y1 - y0, d: this.roundPath(rel, 5), head: arrow ? head : '' };
   }
   roundPath(pts, r) {
     const p = [];
@@ -1655,8 +1738,9 @@ class Component extends DCLogic {
     return d + ' L' + f(z[0]) + ' ' + f(z[1]);
   }
   /* the lines drawn on demand (dense levels, the shared layer, references against the layering) for a set of edges */
-  extraRoute(lay, edges) {
-    const key = lay.key + '|' + edges.map((e) => e.id).sort().join(',');
+  extraRoute(lay, edges, textOf) {
+    const key = lay.key + '|' + edges.map((e) => e.id).sort().join(',')
+      + '|' + (textOf ? edges.map((e) => textOf(e)).join('\u0001') : '');
     this._ex = this._ex || {};
     if (this._ex[key]) return this._ex[key];
     const occupied = {};
@@ -1664,7 +1748,7 @@ class Component extends DCLogic {
     lay.plan.info.forEach((x) => { if (x.kind === 'side') return; take(x.e.from + '>', x.sx); take(x.e.to + '<', x.tx); });
     const plan = this.planEdges(lay.spec, lay.pos, edges, { solo: true, avoid: lay.plan.bundles, occupied: occupied });
     const paths = this.routePaths(plan, lay.geo, lay.plan);
-    paths.forEach((p) => { p.text = p.e.decl ? '未用' : p.e.noCount ? this.nt() : this.fmt(p.e.n); });
+    paths.forEach((p) => { p.text = textOf ? String(textOf(p.e)) : p.e.decl ? '未用' : p.e.noCount ? this.nt() : this.fmt(p.e.n); });
     const taken = lay.rects.concat(Object.keys(lay.labels).map((k) => ({ x: lay.labels[k].x, y: lay.labels[k].y, w: lay.labels[k].w, h: 16 })));
     const labels = this.placeLabels(paths, taken, lay.paths);
     const res = { paths: paths, labels: labels };
@@ -2105,6 +2189,97 @@ class Component extends DCLogic {
     const dx = Math.min(84, 14 + Math.abs(ty - sy) * 0.18);
     return { d: 'M' + r(x) + ' ' + r(sy) + ' C' + r(x - dx) + ' ' + r(sy) + ' ' + r(x - dx) + ' ' + r(ty) + ' ' + r(x - 1) + ' ' + r(ty),
       head: 'M' + r(x - 6) + ' ' + r(ty - 3.5) + ' L' + r(x - 1) + ' ' + r(ty) + ' L' + r(x - 6) + ' ' + r(ty + 3.5) };
+  }
+
+  /* ------------------------------------------------------------ semantic layer (batch 9) */
+  /* The switch is page state only (4-2 甲): undefined means "as the read says", which is
+     how a `?sem=` deep link starts open. Nothing is written to the URL or either storage. */
+  semOnNow() {
+    const s = this.state || {};
+    if (s.semOn !== undefined) return s.semOn === true;
+    return !!(this.props.data && this.props.data.semantic);
+  }
+  toggleSem() {
+    const on = this.semOnNow();
+    this.setState({ semOn: !on, semPick: null, semPair: null, semFlow: null, semHover: null,
+      semLoading: !on, semError: '', semBusy: null });
+  }
+  /* The re-check: one action, one item list; the action rereads the layer on success. */
+  async semCheck(items, key) {
+    const act = this.props.actions && this.props.actions.checkSemanticLinks;
+    if (!act || !items || !items.length || (this.state || {}).semBusy) return;
+    this.setState({ semBusy: key, semError: '', semErrorFor: key, semRemoved: false, semStale: false });
+    try {
+      const result = await act(items);
+      this.setState({ semBusy: null, semRemoved: !!(result && result.removed) });
+    } catch (error) {
+      this.setState({ semBusy: null, semStale: !!(error && error.code === 'not_found'),
+        semError: String(error && error.message ? error.message : error) });
+    }
+  }
+  semReload() {
+    this.setState({ semPick: null, semPair: null, semFlow: null, semError: '', semLoading: true });
+    const actions = this.props.actions;
+    if (actions && typeof actions.readMore === 'function') actions.readMore({ semantic: true });
+  }
+  semDot(row) {
+    return 'sem-dot ' + (row.result === 'verified' ? 'ok' : row.result === 'broken' ? 'broken'
+      : row.result === 'unverifiable' ? 'grey' : 'none');
+  }
+  /* The dot of a merged line is its worst row: broken > hollow > grey > green. */
+  semWorstDot(rows) {
+    let best = ''; let rank = -1;
+    for (const row of rows) {
+      const cls = this.semDot(row);
+      const at = cls.indexOf('broken') >= 0 ? 3 : cls.indexOf('none') >= 0 ? 2 : cls.indexOf('grey') >= 0 ? 1 : 0;
+      if (at > rank) { rank = at; best = cls; }
+    }
+    return best;
+  }
+  semEndName(end) {
+    if (!end) return '';
+    const name = end.moduleName || end.moduleId || '';
+    const file = end.path ? end.path.split('/').pop() : '';
+    return name || file || '?';
+  }
+  semEndText(end) {
+    if (!end) return '';
+    const where = end.moduleName || end.moduleId || '';
+    const file = end.path || '';
+    const sym = end.symbol ? (end.path ? '#' + end.symbol : end.symbol) : '';
+    const path = file && file !== where ? file + sym : file ? sym : '';
+    return [where, path].filter(Boolean).join(' · ') + (end.retired.length ? '（' + end.retired.join('、') + '）' : '');
+  }
+  /* The hover card of one aggregated module pair: one row per link when there are
+     several, and the standing split in one sentence (D87-1). */
+  semCardOf(sd, pair) {
+    const rows = pair.noteIds.map((id) => sd.links.find((row) => row.noteId === id)).filter(Boolean);
+    const ok = rows.filter((row) => row.standing === 'eligible').length;
+    const no = rows.length - ok;
+    const name = this.nodeOf(pair.from) ? this.nodeOf(pair.from).name : pair.from;
+    const to = this.nodeOf(pair.to) ? this.nodeOf(pair.to).name : pair.to;
+    if (rows.length === 1) {
+      const row = rows[0];
+      return { show: true, hasSq: true, sq: 'sq z10 ' + (row.result === 'verified' ? 's-satisfied' : 's-notyet'), name: row.relationWord + ' · ' + name + ' → ' + to,
+        word: row.resultText, tx: 'tx-plain', why: row.standing === 'eligible' ? '' : ' · 暂不作数' + (row.standingWhy ? '：' + row.standingWhy : ''),
+        path: '', hasPath: false, agent: row.author,
+        sem: row.conclusion || '', hasSem: !!row.conclusion,
+        extra: [{ k: '种类', v: row.relationWord }].concat(row.via ? [{ k: '经过', v: this.semEndText(row.via) }] : [])
+          .concat([{ k: '复查', v: row.freshWord }]),
+        tasks: [], hasTasks: false, more: '', hasMore: false, hint: '点一下在右栏看详情' };
+    }
+    return { show: true, hasSq: false, sq: '', name: rows.length + ' 条联系 · ' + name + ' → ' + to,
+      word: ok + ' 条作数，' + no + ' 条暂不作数', tx: 'tx-plain', why: '', path: '', hasPath: false, agent: '',
+      sem: '', hasSem: false,
+      extra: rows.slice(0, 6).map((row) => ({ k: row.relationWord, v: (row.keyText || row.resultWord) + ' · ' + row.resultWord + ' · ' + row.standingWord })),
+      tasks: [], hasTasks: false, more: '', hasMore: false, hint: '点一下在右栏逐条列出' };
+  }
+  semFlowNote(flow) {
+    const parts = [flow.steps.length + ' 步'];
+    if (flow.gapTexts.length) parts.push(flow.gapTexts.length + ' 处接不上');
+    if (flow.notCurrent.length) parts.push(flow.notCurrent.length + ' 步不在了');
+    parts.push(flow.standing === 'eligible' ? '都对得上' : '暂不作数');
+    return parts.join(' · ');
   }
 
   /* ------------------------------------------------------------ renderVals */
@@ -2711,6 +2886,9 @@ class Component extends DCLogic {
       onQ: blankNoop, onQKey: blankNoop, clearQ: blankNoop,
       qlist: [], hasQList: false, hasQMore: false, qmore: '',
       workOnly: false, workCls: 'seg-btn', toggleWork: blankNoop, hasWorkNote: false, workNote: '',
+      semOn: false, semCls: 'seg-btn', toggleSem: blankNoop, semLegend: false, semLines: [], semLabels: [],
+      sem: { show: false, title: '', loading: false, empty: false, error: false, errorText: '', blockError: '', cap: false, capText: '', retry: blankNoop, hasFlows: false, flows: [], hasRows: false, rows: [], hasCross: false, crossTitle: '', cross: [], hasOrphans: false, orphans: [], orphanTitle: '' },
+      semDet: { show: false, sq: 'sem-dot none', name: '', tx: '', word: '', why: '', sem: '', rows: [], hasEv: false, ev: [], hasItems: false, items: [], hasError: false, error: '', checking: false, hasRemoved: false, reload: blankNoop, acts: [], hasMain: false, mainHref: '', close: blankNoop },
       legend: false, legendCls: 'seg-btn', toggleLegend: blankNoop, legendSrc: '',
       vsw: { show: false, isSem: true, isDir: false, semCls: 'seg-btn is-on', dirCls: 'seg-btn', toSem: blankNoop, toDir: blankNoop },
       cap: { main: '', src: '' },
@@ -2757,6 +2935,269 @@ class Component extends DCLogic {
     };
     const selRep = repAt(selNode);
     const selE = selEdge && E.byId[selEdge] ? E.byId[selEdge] : null;
+
+    /* ---------------------------------------------------------------- semantic layer */
+    const semOn = this.semOnNow();
+    const sd = this.props.data.semantic;
+    const semPick = s.semPick === undefined ? (sd ? sd.pick : null) : s.semPick;
+    const semFlowPick = s.semFlow || (sd && sd.flowPick) || null;
+    const semLoading = semOn && (sd === null || (s.semLoading === true && sd === null));
+    let semEdges = []; let semLines = []; let semLabels = []; let semContacts = {}; let semPairs = [];
+    const flowMark = {}; const flowMarkIn = {}; const flowNodes = {}; let semFlowRow = null;
+    let sem = { show: false, title: '', loading: false, empty: false, error: false, errorText: '', blockError: '',
+      cap: false, capText: '', retry: blankNoopSem(), hasFlows: false, flows: [], hasRows: false, rows: [], hasCross: false, crossTitle: '', cross: [], hasOrphans: false, orphans: [], orphanTitle: '' };
+    let semDet = { show: false, sq: 'sem-dot none', name: '', tx: '', word: '', why: '', sem: '',
+      rows: [], hasEv: false, ev: [], hasItems: false, items: [], hasError: false, error: '', checking: false, hasRemoved: false, reload: blankNoopSem(),
+      acts: [], hasMain: false, mainHref: '', close: blankNoopSem() };
+    function blankNoopSem() { return () => {}; }
+    const semNameOf = (id) => { const n = id ? nodeOf(id) : null; return n ? n.name : (id || '?'); };
+    if (semOn) {
+      const flows = sd ? sd.flows : [];
+      const links = sd ? sd.links : [];
+      /* A representative at this level: the receipt's moduleId first, then (for a module
+         that is this level itself) the path's child. An end outside this level is the
+         OUTSIDE sentinel, so it is listed in "另有 n 条连到这个模块外面" and never lost. */
+      const OUTSIDE = '!outside';
+      const inLevel = (id) => id === lid || (id ? R.anc(id).indexOf(lid) >= 0 : false);
+      const endRep = (end) => {
+        if (!end || end.moduleId === null) return null;
+        const r = repAt(end.moduleId); if (r) return r;
+        if (inLevel(end.moduleId) && end.path) return repAt(end.path);
+        return OUTSIDE;
+      };
+      const isRep = (id) => !!id && id !== OUTSIDE;
+      const repsOf = (row) => ({ from: endRep(row.from), to: endRep(row.to) });
+      /* One pair per current-level representative pair, in the receipt's direction; the
+         page (not the adapter) groups, because only it knows the level (4-1 甲). */
+      const groupSemanticPairs = (rows, repOf) => {
+        const pairs = new Map();
+        for (const row of rows) {
+          const { from, to } = repOf(row);
+          if (!isRep(from) || !isRep(to) || from === to) continue;
+          const key = from + '|' + to;
+          let pair = pairs.get(key);
+          if (pair === undefined) {
+            pair = { key: key, from: from, to: to, text: '', eligible: true, noteIds: [] };
+            pairs.set(key, pair);
+          }
+          pair.noteIds.push(row.noteId);
+          if (row.standing === 'ineligible') pair.eligible = false;
+        }
+        for (const pair of pairs.values()) {
+          const parts = [];
+          for (const row of rows) {
+            if (pair.noteIds.indexOf(row.noteId) < 0) continue;
+            const at = parts.findIndex((part) => part === row.relationWord || part.indexOf(row.relationWord + ' ') === 0);
+            if (at < 0) parts.push(row.relationWord);
+            else {
+              const part = parts[at] ?? row.relationWord;
+              parts[at] = part === row.relationWord ? row.relationWord + ' 2'
+                : row.relationWord + ' ' + (Number(part.slice(row.relationWord.length + 1)) + 1);
+            }
+          }
+          pair.text = parts.join('、');
+        }
+        return [...pairs.values()];
+      };
+      const levelPairs = [];
+      if (sd) for (const pair of groupSemanticPairs(links, repsOf)) levelPairs.push({ pair: pair, a: pair.from, b: pair.to });
+      /* The threshold and 联系 n count unordered pairs; the lines keep their directions. */
+      const unordered = new Map();
+      for (const p of levelPairs) {
+        const key = [p.a, p.b].sort().join('|');
+        if (!unordered.has(key)) unordered.set(key, p);
+      }
+      semPairs = levelPairs;
+      const rankOf = (row) => row.result === 'broken' ? 0 : row.standing === 'ineligible' ? 1 : 2;
+      const sorted = links.slice().sort((a, b) => (rankOf(a) - rankOf(b)) || (a.topic < b.topic ? -1 : 1));
+      const rowsHere = sorted.filter((row) => { const r = repsOf(row); return isRep(r.from) && isRep(r.to); });
+      const crossHere = sorted.filter((row) => { const r = repsOf(row);
+        return (isRep(r.from) && r.to === OUTSIDE) || (r.from === OUTSIDE && isRep(r.to)); });
+      const orphans = sorted.filter((row) => row.from.moduleId === null || row.to.moduleId === null);
+      const flowRow = semFlowPick ? flows.find((flow) => flow.noteId === semFlowPick) || null : null;
+      semFlowRow = flowRow;
+      const linkRow = semPick ? links.find((row) => row.noteId === semPick) || null : null;
+      const pairRow = s.semPair ? (levelPairs.find((p) => p.pair.key === s.semPair) || {}).pair || null : null;
+      /* the panel: one row per flow and link, ordered broken first; a cross row names the
+         end that left this level (模块外 / 归不到图上的模块) */
+      const panelRows = rowsHere.map((row) => ({
+        sq: this.semDot(row),
+        name: row.relationWord + ' · ' + this.semEndName(row.from) + ' → ' + this.semEndName(row.to) + (row.keyText ? ' · ' + row.keyText : ''),
+        note: row.resultWord + (row.standingWhy ? ' · ' + row.standingWhy : '') + ' · ' + row.standingWord,
+        go: () => set({ semPick: row.noteId, semPair: null, semFlow: null, semError: '' }),
+      }));
+      const panelCross = crossHere.map((row) => {
+        const r = repsOf(row);
+        const outside = isRep(r.from) ? row.to : row.from;
+        return { sq: this.semDot(row), name: this.semEndName(outside),
+          note: row.relationWord + ' · ' + row.resultWord + ' · ' + row.standingWord,
+          go: () => set({ semPick: row.noteId, semPair: null, semFlow: null, semError: '' }) };
+      });
+      const panelOrphans = orphans.map((row) => ({ sq: this.semDot(row),
+        name: this.semEndName(row.from) + ' → ' + this.semEndName(row.to),
+        note: '不属于任何模块 · ' + row.resultWord + ' · ' + row.standingWord,
+        go: () => set({ semPick: row.noteId, semPair: null, semFlow: null, semError: '' }) }));
+      const status = sd === null ? 'loading' : sd.status;
+      sem = {
+        show: false, title: sd ? (sd.totalText + (sd.counts.ineligible ? ' · 暂不作数共 ' + sd.counts.ineligible : '')) : '正在读',
+        loading: semLoading || status === 'loading',
+        empty: status === 'empty',
+        error: status === 'error',
+        errorText: sd ? sd.errorText : '连不上平台（网络断了，或平台没在运行）',
+        blockError: sd && sd.status !== 'error' ? (sd.linkError || sd.flowError) : '',
+        cap: status === 'cap', capText: sd ? sd.capText : '', retry: () => this.semReload(),
+        hasFlows: flows.length > 0,
+        flows: flows.map((flow) => ({ name: flow.topic, note: this.semFlowNote(flow),
+          go: () => set({ semFlow: flow.noteId, semPick: null, semPair: null, semError: '' }) })),
+        hasRows: panelRows.length > 0, rows: panelRows,
+        hasCross: panelCross.length > 0,
+        crossTitle: '另有 ' + panelCross.length + ' 条连到这个模块外面',
+        cross: panelCross,
+        hasOrphans: panelOrphans.length > 0, orphans: panelOrphans, orphanTitle: '归不到图上的模块',
+      };
+      /* the detail: one link, one module pair, or one flow */
+      if (linkRow) {
+        const key = linkRow.noteId;
+        const acts = [];
+        const stale = s.semErrorFor === key && (s.semStale === true || s.semRemoved === true);
+        if (linkRow.version !== null && !stale) acts.push({
+          label: s.semBusy === key ? '正在核对…' : '重新核对', offCls: s.semBusy ? ' is-off' : '', off: !!s.semBusy,
+          go: () => this.semCheck([{ noteId: linkRow.noteId, version: linkRow.version }], key),
+        });
+        semDet = {
+          show: true, sq: this.semDot(linkRow),
+          name: linkRow.relationWord + ' · ' + this.semEndName(linkRow.from) + ' → ' + this.semEndName(linkRow.to),
+          tx: '', word: linkRow.resultText + (linkRow.standing === 'ineligible'
+            ? '；暂不作数' + (linkRow.standingWhy ? '：' + linkRow.standingWhy : '') : ''), why: '',
+          sem: linkRow.conclusion || '（没有写下结论）',
+          rows: [
+            { k: '种类', v: linkRow.relationWord },
+            { k: '从', v: this.semEndText(linkRow.from) },
+            { k: '到', v: this.semEndText(linkRow.to) },
+          ].concat(linkRow.via ? [{ k: '经过', v: this.semEndText(linkRow.via) }] : [])
+            .concat(linkRow.keyText ? [{ k: '共用的名字', v: linkRow.keyText }] : [])
+            .concat([{ k: '作者', v: linkRow.author }, { k: '复查', v: linkRow.freshWord }])
+            .concat(linkRow.flowTopics.length ? [{ k: '所在流程', v: linkRow.flowTopics.join('、') }] : []),
+          hasEv: true, ev: linkRow.evidence.map((ev) => ({
+            cls: ev.broken ? 'is-broken' : '',
+            text: ev.role + ' · ' + ev.path + (ev.line ? ' · 第 ' + ev.line + ' 行' : '') + (ev.broken ? ' · 找不到了' : ''),
+            title: ev.path,
+          })),
+          hasItems: false, items: [], hasError: !!(s.semError && s.semErrorFor === key), error: s.semError || '',
+          checking: s.semBusy === key, hasRemoved: s.semRemoved === true && s.semErrorFor === key,
+          reload: () => this.semReload(), acts, hasMain: false, mainHref: '',
+          close: () => set({ semPick: null, semError: '' }),
+        };
+      } else if (pairRow) {
+        const pairLinks = pairRow.noteIds.map((id) => links.find((row) => row.noteId === id)).filter(Boolean);
+        const versions = pairLinks.filter((row) => row.version !== null)
+          .map((row) => ({ noteId: row.noteId, version: row.version }));
+        const acts = [];
+        const stale = s.semErrorFor === pairRow.key && (s.semStale === true || s.semRemoved === true);
+        if (versions.length >= 1 && versions.length <= 20 && !stale) acts.push({
+          label: s.semBusy === pairRow.key ? '正在核对…' : '重新核对这 ' + versions.length + ' 条',
+          offCls: s.semBusy ? ' is-off' : '', off: !!s.semBusy,
+          go: () => this.semCheck(versions, pairRow.key),
+        });
+        semDet = {
+          show: true, sq: 'sem-dot none', name: pairLinks.length + ' 条联系 · ' + semNameOf(pairRow.from) + ' → ' + semNameOf(pairRow.to),
+          tx: '', why: '', word: pairLinks.filter((row) => row.standing === 'eligible').length + ' 条作数，'
+            + pairLinks.filter((row) => row.standing === 'ineligible').length + ' 条暂不作数', sem: '',
+          rows: [], hasEv: false, ev: [], hasItems: true,
+          items: pairLinks.map((row) => ({ sq: this.semDot(row), name: row.relationWord + (row.keyText ? ' · ' + row.keyText : ''),
+            note: row.resultWord + ' · ' + row.standingWord,
+            go: () => set({ semPick: row.noteId, semPair: null }) })),
+          hasError: !!(s.semError && s.semErrorFor === pairRow.key), error: s.semError || '',
+          reload: () => this.semReload(), acts, hasMain: false, mainHref: '',
+          close: () => set({ semPair: null, semError: '' }),
+        };
+      } else if (flowRow) {
+        const acts = [];
+        const stale = s.semErrorFor === flowRow.noteId && (s.semStale === true || s.semRemoved === true);
+        if (flowRow.checkItems.length >= 1 && !stale) acts.push({
+          label: s.semBusy === flowRow.noteId ? '正在核对…' : '重新核对这 ' + flowRow.checkItems.length + ' 条联系',
+          offCls: s.semBusy ? ' is-off' : '', off: !!s.semBusy,
+          go: () => this.semCheck(flowRow.checkItems, flowRow.noteId),
+        });
+        const stepRows = flowRow.steps.map((step) => ({ k: step.mark, v: step.word
+          + (step.problem === 'not_current' ? '：这条联系现在不在（撤回、被取代，或在等审），图上没有两端可画' : '') }));
+        if (flowRow.gapTexts.length) stepRows.push({ k: '接不上', v: flowRow.gapTexts.join('；') });
+        semDet = {
+          show: true, sq: 'sem-dot none', name: '流程 · ' + flowRow.topic,
+          tx: '', word: flowRow.statusText, why: '', sem: flowRow.conclusion || '（没有写下结论）',
+          rows: [{ k: '作者', v: flowRow.author }, { k: '复查', v: flowRow.freshWord }].concat(stepRows),
+          hasEv: false, ev: [], hasItems: false, items: [], hasError: !!(s.semError && s.semErrorFor === flowRow.noteId),
+          checking: s.semBusy === flowRow.noteId, hasRemoved: false,
+          error: s.semError || '', reload: () => this.semReload(), acts, hasMain: true,
+          mainHref: (this.props.mainHref || 'Main.dc.html') + '#flow=' + String(flowRow.noteId).replace(/^f-/, ''),
+          close: () => set({ semFlow: null, semError: '' }),
+        };
+      }
+      sem.show = !semDet.show;
+      /* lines: the flow's steps when one is picked, otherwise one aggregated line per module
+         pair. Above 20 pairs the ordinary layer falls back to the hovered/selected pairs only
+         (4-1 甲); a flow is drawn step by step, never aggregated. */
+      const touched = {};
+      if (linkRow) { const r = repsOf(linkRow); if (isRep(r.from) && isRep(r.to)) touched[r.from + '|' + r.to] = true; }
+      if (pairRow) touched[pairRow.key] = true;
+      if (s.semHover) touched[s.semHover] = true;
+      if (s.hover) for (const p of levelPairs) if (p.a === s.hover || p.b === s.hover) touched[p.pair.key] = true;
+      const drawAll = unordered.size <= 20;
+      const semLanes = {};
+      const semAddEdge = (id, a, b, text, cls, extra) => {
+        if (!isRep(a) || !isRep(b) || a === b) return;
+        const lane = semLanes[a + '|' + b] = (semLanes[a + '|' + b] || 0);
+        semLanes[a + '|' + b] += 1;
+        semEdges.push(Object.assign({ id: id, from: a, to: b, n: 1, noCount: true, semText: text, semCls: cls, semLane: lane }, extra || {}));
+      };
+      if (flowRow) {
+        for (const step of flowRow.steps) {
+          if (step.item && !step.inModule) {
+            const a = endRep(step.from); const b = endRep(step.to);
+            const bad = step.problem === 'broken' || step.problem === 'stale' || step.problem === 'unchecked'
+              || step.item.standing === 'ineligible';
+            semAddEdge('SEM|flow|' + flowRow.noteId + '|' + step.n, a, b, step.stepText,
+              'ov-sem' + (bad ? ' is-inelig' : '') + ' lit', { semLinkId: step.item.noteId, semDot: this.semDot(step.item) });
+          }
+          if (step.item) {
+            const ends = [endRep(step.from), endRep(step.to)].filter(Boolean);
+            for (const id of ends) {
+              const bag = step.inModule ? flowMarkIn : flowMark;
+              if ((bag[id] || []).indexOf(step.n) < 0) bag[id] = (bag[id] || []).concat([step.n]);
+              flowNodes[id] = true;
+            }
+          }
+        }
+        const stepAt = (n) => flowRow.steps[n - 1] || null;
+        /* Every gap on the same pair of nodes is one line and one label (item 7). */
+        const gapGroups = new Map();
+        const gap = (aStep, bStep, text) => {
+          if (!aStep || !bStep) return;
+          const a = endRep(aStep.to); const b = endRep(bStep.from);
+          if (!isRep(a) || !isRep(b) || a === b) return;
+          const key = a + '|' + b;
+          const group = gapGroups.get(key);
+          if (group) group.texts.push(text);
+          else gapGroups.set(key, { a: a, b: b, texts: [text] });
+        };
+        for (const n of flowRow.gapsAfter) gap(stepAt(n), stepAt(n + 1),
+          '第 ' + n + '、' + (n + 1) + ' 步接不上');
+        for (const n of flowRow.notCurrent) gap(stepAt(n - 1), stepAt(n + 1), '第 ' + n + ' 步不在了');
+        for (const [key, group] of gapGroups) {
+          semAddEdge('SEM|gap|' + flowRow.noteId + '|' + key, group.a, group.b,
+            group.texts.join('；'), 'ov-sem is-gap', { semGap: true });
+        }
+      } else if (drawAll || Object.keys(touched).length > 0) {
+        for (const p of levelPairs) {
+          if (!drawAll && !touched[p.pair.key]) continue;
+          semAddEdge('SEM|pair|' + p.pair.key, p.a, p.b, p.pair.text,
+            'ov-sem' + (p.pair.eligible ? '' : ' is-inelig') + (touched[p.pair.key] ? ' lit' : ''), { semPairKey: p.pair.key });
+        }
+      }
+      if (!flowRow && !drawAll) {
+        for (const p of unordered.values()) { semContacts[p.a] = (semContacts[p.a] || 0) + 1; semContacts[p.b] = (semContacts[p.b] || 0) + 1; }
+      }
+    }
     /* search: the whole repository */
     const q = String(s.q || '').trim().toLowerCase();
     const KR = { module: 0, band: 0, group: 1, dir: 1, loose: 2, file: 3 };
@@ -2779,6 +3220,26 @@ class Component extends DCLogic {
       const drawnDefault = {}; lay.paths.forEach((p) => { drawnDefault[p.id] = true; });
       const extraEdges = E.list.filter((e) => !drawnDefault[e.id] && e.kind !== 'none' && (focusIds.indexOf(e.from) >= 0 || focusIds.indexOf(e.to) >= 0 || (selE && selE.id === e.id)));
       const ex = extraEdges.length ? this.extraRoute(lay, extraEdges) : { paths: [], labels: {} };
+      const exSem = semEdges.length ? this.extraRoute(lay, semEdges, (e) => e.semText) : { paths: [], labels: {} };
+      semLines = exSem.paths.map((p) => ({ cls: p.e.semCls
+        /* 2.2 甲: with 只看当前工作 on, only a line whose BOTH ends are off the work fades. */
+        + (s.workOnly === true && !R.onWork.has(p.e.from) && !R.onWork.has(p.e.to) ? ' is-dim' : ''),
+        x: p.box.x, y: p.box.y, w: p.box.w, h: p.box.h,
+        d: p.box.d, head: p.box.head }));
+      semLabels = exSem.paths.filter((p) => exSem.labels[p.id]).map((p) => {
+        const l = exSem.labels[p.id];
+        const pair = p.e.semPairKey ? (semPairs.find((row) => row.pair.key === p.e.semPairKey) || {}).pair : null;
+        const allLinks = sd ? sd.links : [];
+        const pairRows = pair ? pair.noteIds.map((id) => allLinks.find((row) => row.noteId === id)).filter(Boolean) : [];
+        const one = p.e.semLinkId ? allLinks.find((row) => row.noteId === p.e.semLinkId) : null;
+        return { pairKey: p.e.semPairKey || null, cls: 'ov-count ov-sem-label' + (p.e.semCls.indexOf('is-inelig') >= 0 ? ' is-inelig' : '')
+          + (p.e.semGap ? ' is-gap' : ''), x: l.x, y: l.y, w: l.w, text: p.text, tip: p.text,
+          dot: p.e.semGap ? '' : pair ? this.semWorstDot(pairRows) : p.e.semDot ? p.e.semDot : one ? this.semDot(one) : '',
+          pick: () => p.e.semPairKey ? set({ semPair: p.e.semPairKey, semPick: null, semFlow: null, semError: '' })
+            : p.e.semLinkId ? set({ semPick: p.e.semLinkId, semPair: null, semFlow: null, semError: '' }) : undefined,
+          hover: p.e.semPairKey ? () => set({ semHover: p.e.semPairKey }) : () => {},
+          leave: () => set({ semHover: null }) };
+      });
       const allPaths = lay.paths.concat(ex.paths); const allLabels = Object.assign({}, lay.labels, ex.labels);
       /* focus: the selection, its edges and neighbours stay; search hits keep their fill */
       const lit = {}; const litE = {};
@@ -2801,8 +3262,15 @@ class Component extends DCLogic {
         const ioLine = lay.dense && lay.band.indexOf(id) < 0;
         const refs = ioLine ? this.nodeRefs(id, lid, view) : null;
         const isBase = lay.base.indexOf(id) >= 0;
-        return { id: id, cls: 'ov-node' + (nodeDim(id) ? ' dim' : '') + (selRep === id ? ' is-sel' : lit[id] ? ' lit' : ''),
-          x: p.x, y: p.y, w: p.w, h: z.h, sq: 'sq z14 ' + this.archSq(n, 'collapsed'), name: n.name, cnt: this.nodeCount(n), on: selRep === id,
+        const flowCls = semFlowRow ? (flowNodes[id] ? ' lit' : ' dim') : '';
+        return { id: id, cls: 'ov-node' + (nodeDim(id) ? ' dim' : '') + (selRep === id ? ' is-sel' : lit[id] ? ' lit' : '') + flowCls,
+          x: p.x, y: p.y, w: p.w, h: z.h, sq: 'sq z14 ' + this.archSq(n, 'collapsed'), name: n.name,
+          cnt: semFlowRow && (flowMark[id] || flowMarkIn[id])
+            /* item 6: a picked flow replaces the count with only the short step sentence. */
+            ? [flowMark[id] ? '第 ' + flowMark[id].join('、') + ' 步' : '',
+              flowMarkIn[id] ? '第 ' + flowMarkIn[id].join('、') + ' 步在模块内部' : ''].filter(Boolean).join(' · ')
+            : this.nodeCount(n) + (semContacts[id] ? ' · 联系 ' + this.fmt(semContacts[id]) : ''),
+          on: selRep === id,
           hasIo: !!refs, io: refs ? (isBase ? '被依赖 ' + refs.ins.length : refs.io) : '',
           hasComb: rows.length > 0, rows: rows, stemTop: -(ioLine ? 45 : 27), stemH: (ioLine ? 50 : 32) + (Math.max(1, rows.length) - 1) * 20,
           hasMore: z.more, more: '另 ' + (n.kids.length - 36) + ' 个，进入这一层看全部',
@@ -2812,10 +3280,10 @@ class Component extends DCLogic {
       const shown = allPaths.filter((p) => p.e && p.e.kind !== 'none');
       edges = shown.map((p) => {
         const e = p.e; const lt = !!litE[p.id];
-        return { cls: 'ov-edge' + (e.kind === 'back' ? ' back' : '') + (e.decl ? ' decl' : '') + (lt ? ' lit' : hl[p.id] ? ' hl' : edgeDim(e) ? ' dim' : ''),
+        return { cls: 'ov-edge' + (e.kind === 'back' ? ' back' : '') + (e.decl ? ' decl' : '') + (lt ? ' lit' : hl[p.id] ? ' hl' : edgeDim(e) || (semLines.length > 0) ? ' dim' : ''),
           x: p.box.x, y: p.box.y, w: p.box.w, h: p.box.h, d: p.box.d, head: p.box.head, lit: lt || !!hl[p.id] };
       }).sort((a, b) => (a.lit ? 1 : 0) - (b.lit ? 1 : 0));
-      counts = shown.filter((p) => allLabels[p.id]).map((p) => {
+      counts = semLines.length > 0 ? [] : shown.filter((p) => allLabels[p.id]).map((p) => {
         const e = p.e; const l = allLabels[p.id];
         return { id: p.id, cls: 'ov-count' + (e.kind === 'back' ? ' back' : '') + (litE[p.id] ? ' lit' : hl[p.id] ? ' hl' : edgeDim(e) ? ' dim' : ''), x: l.x, y: l.y,
           text: p.text, tip: this.edgeName(e) + '，' + (e.decl ? '声明了但没有引用' : this.props.data ? (e.noCount ? this.nt() : this.fmt(e.n) + ' 处引用') : this.fmt(e.n) + ' 处引用'),
@@ -2842,7 +3310,14 @@ class Component extends DCLogic {
         if (lay.dense) out.push({ k: '引用', v: rf.io });
         return out;
       };
-      if (s.hoverE && allLabels[s.hoverE] && E.byId[s.hoverE]) {
+      if (s.semHover && sd) {
+        const pair = (semPairs.find((row) => row.pair.key === s.semHover) || {}).pair;
+        const label = semLabels.find((row) => row.pairKey === s.semHover);
+        if (pair && label) card = Object.assign(this.semCardOf(sd, pair), beside(label.x, label.y - 4, label.w, 20));
+      }
+      if (s.semHover && sd && card.show) {
+        /* already placed by the semantic hover */
+      } else if (s.hoverE && allLabels[s.hoverE] && E.byId[s.hoverE]) {
         const l = allLabels[s.hoverE];
         card = Object.assign(this.edgeCard(E.byId[s.hoverE]), beside(l.x, l.y - 4, l.w, 20));
       } else if (s.hover === lid) {
@@ -2918,7 +3393,7 @@ class Component extends DCLogic {
       src = join([from, lay.fwdCount || lay.backCount ? '连线：代码里的引用（观察）' : '', lay.dense ? '引用多：只画依赖主干，悬停节点时画全' : '',
         baseBoxes ? baseBoxes + '的线悬停时画出' : '', lay.backCount ? lay.backCount + ' 条引用逆着分层，选中节点时画出' : '']);
     }
-    const cap = { main: main, src: src };
+    const cap = { main: main, src: src + (semOn ? ' · 语义联系是 Agent 写下的理解，不当作代码依赖' : '') };
     /* references that leave this level */
     const EB = this.levelEdges(lid, 'sem');
     const bitem = (it, out) => ({ name: nodeOf(it.other).name, n: this.fmt(it.n), go: () => set({ aroot: it.other, view: 'sem', asel: 'E|' + it.lid + '|' + (out ? it.mine + '|' + it.other : it.other + '|' + it.mine), hover: null, hoverE: null }) });
@@ -3064,6 +3539,8 @@ class Component extends DCLogic {
       hasQMore: this.props.data ? this.props.data.hasQMore : hits.length > 6,
       qmore: this.props.data ? this.props.data.qMore : '另有 ' + this.fmt(hits.length - 6) + ' 个，图里保持高亮',
       workOnly: work, workCls: 'seg-btn' + (work ? ' is-on' : ''), toggleWork: () => set({ workOnly: !work, hover: null, hoverE: null }),
+      semOn: semOn, semCls: 'seg-btn' + (semOn ? ' is-on' : ''), toggleSem: () => this.toggleSem(),
+      semLegend: semOn && !!s.legend, semLines: semLines, semLabels: semLabels, sem: sem, semDet: semDet,
       hasWorkNote: work, workNote: '只看当前工作：正在处理 ' + workFiles + ' 个文件，在 ' + workModuleCount + ' 个模块，其余变淡',
       legend: !!s.legend, legendCls: 'seg-btn' + (s.legend ? ' is-on' : ''), toggleLegend: () => set({ legend: !s.legend }), legendSrc: legendSrc,
       vsw: { show: lid === WG, isSem: view === 'sem', isDir: view === 'dir', semCls: 'seg-btn' + (view === 'sem' ? ' is-on' : ''), dirCls: 'seg-btn' + (view === 'dir' ? ' is-on' : ''),
@@ -3076,7 +3553,7 @@ class Component extends DCLogic {
       stage: stage, boxes: boxes, lvl: topV, edges: edges, nodes: nodes, counts: counts,
       ft: ft, frows: frows, arcs: arcs,
       card: card, unhover: () => set({ hover: null }), unhoverE: () => set({ hoverE: null }),
-      hasDet: !!det, noDet: !det, det: det || { isEdge: false, hasSq: false, sq: '', name: '', tx: '', word: '', why: '', crumbs: [], agent: '', sem: '', rel: [], acts: [], deepenState: { show: false, text: '' }, deepenFailed: { show: false, text: '' }, close: () => {} },
+      hasDet: !!det, noDet: !det && !semDet.show, det: det || { isEdge: false, hasSq: false, sq: '', name: '', tx: '', word: '', why: '', crumbs: [], agent: '', sem: '', rel: [], acts: [], deepenState: { show: false, text: '' }, deepenFailed: { show: false, text: '' }, close: () => {} },
       intro: intro,
       blank: { show: false, text: '', canRetry: false, retry: () => {} }
     };

@@ -9,6 +9,7 @@
 import { gitLines, lineEditScript, LINE_DIFF_MAX_DISTANCE } from '../../contracts/line-delta.js';
 import type { UncommittedFileListV1, UncommittedFilesV1 } from '../../contracts/workspace-files.js';
 import { catalogArchTree, goalTaskTree, type GoalsArchNode, type GoalsTaskNode } from './goals.js';
+import type { ArchSemanticData } from './arch-overview.js';
 import { localShortAt, type TaskMapNodeDetailData } from './task-map.js';
 
 export { catalogArchTree, goalTaskTree };
@@ -23,6 +24,10 @@ export type AuxDemand = {
   auxPath: string | null;
   detailTaskId: string | null;
   workOnly: boolean;
+  /** The semantic switch, forwarded only for the architecture tab (4-2 甲). */
+  semantic?: boolean;
+  /** `#flow=<id>`: the flow the page opens on. */
+  flowPick?: string | null;
 };
 
 /** The route value the file page reads; only the fields this page uses are
@@ -54,6 +59,8 @@ export type AuxArchData = {
   /** `auxLeafCountsOf(tree, 'file')`: what each node of `tree` counts. */
   counts: Record<string, AuxLeafCount>;
   work: ReadonlySet<string> | null;
+  /** The semantic layer; null when the switch is off. */
+  semantic: ArchSemanticData | null;
 };
 
 /** One tree node's leaves and their states, as the right panel counts them. */

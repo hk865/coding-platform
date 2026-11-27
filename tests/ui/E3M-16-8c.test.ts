@@ -476,7 +476,8 @@ describe('E3M-16 8c the page', () => {
         box.dispatch('input', { target: box, currentTarget: box });
         expect(go!.getAttribute('aria-disabled')).toBe('false');
         press(go, '认定这一轮已中断');
-        await settle(() => callsOf(booted.log, 'queries/resolve-unknown').length > 0, 8_000);
+        /* The page log holds the call from the moment it is sent; wait for its answer, not only its start. */
+        await settle(() => callsOf(booted.log, 'queries/resolve-unknown').some((call) => call.reply !== undefined), 8_000);
         const calls = callsOf(booted.log, 'queries/resolve-unknown');
         expect(calls).toHaveLength(1);
         const call = calls[0]!;

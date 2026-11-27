@@ -42,6 +42,8 @@ const DONE_GOAL = { aggregateType: 'Goal', projectId: DONE_PROJECT, goalId: 'ag2
 const DONE_PLAN = { aggregateType: 'PlanRevision', projectId: DONE_PROJECT, planId: 'pl-plan-done' };
 const runRef = (runId) => ({ aggregateType: 'Run', projectId: DONE_PROJECT, goalId: 'ag2b-goal', runId });
 const DONE_FILE_SIDES = {
+  'docs/y.md': { head: '# 交付说明\n', working: '# 交付说明\n' },
+  'src/b.ts': { head: 'export const b = 2;\n', working: 'export const b = 2;\n' },
   'src/a.ts': { head: 'a1\na2\na3\n', working: 'a1\na2b\na3\na4\na5\n' },
   'src/ui/x.ts': { head: 'x1\n', working: 'x1\nx2\n' },
   'docs/x.md': { head: 'd1\n', working: 'd1\nd2\n' },
@@ -195,6 +197,8 @@ const named = (route, input) => {
 /* The three card writes answer as the Host does; an accepted delivery is seen by the next read. */
 const WRITE_ROOT = { aggregateType: 'QueryJob', projectId: 'ag2b-collab-project', jobId: 'review-job-1' };
 let accepted = null;
+const submitted = new Map();
+const digest = (text) => createHash('sha256').update(text).digest('hex');
 
 export const scene = {
   now: "2026-10-23T09:00:01.000Z",
@@ -207,12 +211,40 @@ export const scene = {
     }
     if (route === 'queries/ask') return { status: 'queued', jobRef: WRITE_ROOT };
     if (route === 'messages/send') return { status: 'committed', value: { messageId: 'm-1' }, sendStatus: 'sent' };
+    if (route === 'requests/submit') {
+      const delivery = KEYED['goals/delivery'][DONE_GOAL.goalId].value;
+      const scope = ROUTES.bootstrap.workspaces[0].scope;
+      const round = { aggregateType: 'QueryJob', ...scope, queryJobId: input.commandId };
+      const secretary = delivery.secretary;
+      const goalId = input.goalId;
+      const queued = {
+        ref: round, runRef: null, kind: 'request', status: 'queued', input: input.text, references: input.references,
+        answer: null, ideas: [], goalCardDrafts: [], selectedIdea: null, assignedSession: secretary, session: null,
+        absorbedInto: null, closeCode: null, closeDetail: null, closeMessage: null, since: ROUTES['goals/list'].value.sourceCursor,
+      };
+      submitted.set(round.queryJobId, {
+        requestRoot: round, goalId, effectiveGoalId: goalId, processing: true, assignment: 'assigned', owner: secretary,
+        ownerState: 'owned', waitReason: null, reasons: ['round'], rounds: [queued], candidate: null, cards: [],
+      });
+      return { status: 'queued', requestRoot: round, round, assignment: 'assigned', secretary, created: false, waitReason: null };
+    }
+    if (route === 'requests/read' && submitted.has(input.requestRoot.queryJobId)) {
+      return { status: 'ready', value: submitted.get(input.requestRoot.queryJobId) };
+    }
+    if (route === 'files/save') {
+      const file = DONE_FILE_SIDES[input.path];
+      if (!file) return MISSING;
+      const oldRevision = digest(file.working);
+      if (input.expectedRevision !== oldRevision) return { status: 'rejected', code: 'source_stale' };
+      file.working = input.content;
+      return { status: 'ready', value: { path: input.path, oldRevision, revision: digest(file.working), byteLength: Buffer.byteLength(file.working) } };
+    }
     if (route === 'files/read') {
       const sides = DONE_FILE_SIDES[input?.path];
       if (sides === undefined) return MISSING;
       const content = input?.version?.kind === 'git' ? sides.head : sides.working;
       return { status: 'ready', value: {
-        path: input.path, content, digest: createHash('sha256').update(content).digest('hex'),
+        path: input.path, content, digest: digest(content),
         sizeBytes: Buffer.byteLength(content), digestBasis: 'raw_bytes',
         version: input?.version?.kind === 'git'
           ? { kind: 'git', commit: input.version.commit } : { kind: 'working_tree' },

@@ -25,6 +25,7 @@
  * `workspaces/registration` stays Main's, and every other route is Member's.
  */
 import { createHash } from 'node:crypto';
+import { semanticReply } from './semantic-scene.mjs';
 import { readFileSync } from 'node:fs';
 import { sceneLine } from './scene-line.mjs';
 import { scene as MEMBER } from './Member.scene.mjs';
@@ -268,6 +269,8 @@ export const scene = {
   now: HAVE.now,
   routes: { ...HAVE.routes, 'main/read': MR },
   reply(route, input, body) {
+    const sem = semanticReply(route, input);
+    if (sem !== undefined) return sem;
     if (route === 'goals/read') pageGoal = input?.goalId ?? null;
     if (pageGoal === 'scene-goal') {
       const candidate = candidates.reply(route, body?.request?.input ?? input);
