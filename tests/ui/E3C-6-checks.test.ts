@@ -29,12 +29,18 @@ const roundGroup = (root: FakeElement, ordinal: number): FakeElement | undefined
   descendants(findClass(root, 'thread') ?? root).find((element) => hasClass(element, 'grp')
     && textOf(element).includes(`正式检查 · 第 ${ordinal} 轮`));
 
-/** Open a round's group and its folded passing rows (the prototype's 其余 n 项通过), the reading's preconditions. */
-async function openRound(root: FakeElement, ordinal: number): Promise<void> {
+/** Open a round's group (not its folded passing rows). */
+async function openRoundHead(root: FakeElement, ordinal: number): Promise<FakeElement> {
   const head = roundHead(root, ordinal);
   if (head !== undefined && head.getAttribute('aria-expanded') !== 'true') click(head);
   await sleep(100);
-  const rest = descendants(roundGroup(root, ordinal) ?? root).find((element) => element.tagName.toLowerCase() === 'button'
+  return roundGroup(root, ordinal) ?? root;
+}
+
+/** Open a round's group and its folded passing rows (the prototype's 其余 n 项通过), the reading's preconditions. */
+async function openRound(root: FakeElement, ordinal: number): Promise<void> {
+  const group = await openRoundHead(root, ordinal);
+  const rest = descendants(group).find((element) => element.tagName.toLowerCase() === 'button'
     && /^(其余 \d+ 项通过|\d+ 项全部通过)$/.test(textOf(findClass(element, 'step-verb'))));
   if (rest !== undefined) click(rest);
   await sleep(100);
@@ -96,4 +102,27 @@ describe('E3C-6 the formal check rounds', () => {
       await page.restore();
     }
   }, 180_000);
+
+  it('E3C-15b one pass and one incomplete list the incomplete row apart, with its cause (A10)', async () => {
+    const s7c = await slot.use('E3C-15b', () => openS7C1World({ backend: 'memory', firstRun: 'ended' }),
+      (world) => world.close());
+    await seedChainChecks(s7c, 1, 'timeout');
+    const { page } = await bootChain(s7c.world, memberSearch('s7c-goal', s7c.lines.module.ref));
+    try {
+      const group = await openRoundHead(page.root, 1);
+      const text = textOf(group);
+      /* Hand count: chain-lint PASS and chain-unit runs past its timeout (INCONCLUSIVE, process_timed_out);
+         the head's 1/2 and the fold's one pass agree.
+         具名改坏: check() 只单列 fail/review；本行的 `全部通过` 红。 */
+      expect(text).not.toContain('全部通过');
+      expect(text).toContain('其余 1 项通过');
+      expect(text).toContain('检查超时');
+      const row = stepRows(group).find((step) => textOf(step).includes('sleep 5'));
+      expect(row, 'the incomplete check row').toBeDefined();
+      expect(textOf(row!)).toContain('检查不完整');
+      expect(hasClass(row!, 'is-fail')).toBe(false);
+    } finally {
+      await page.restore();
+    }
+  });
 });

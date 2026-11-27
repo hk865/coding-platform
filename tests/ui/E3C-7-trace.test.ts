@@ -14,10 +14,11 @@ import type { FakeElement } from './helpers/dom.js';
 /**
  * E3C-7 (test sheet §2.3, E3C-16..18; wiring C1, C4–C6, E2, DC2): the 轨迹
  * view shows the Run's raw `executions/history` records as they are (time,
- * raw kind, record id; the summary and the four kind filters are not
- * connected), its right column opens one record whole; on the 对话 view the
- * process group head (C1) and a Run row's expansion (E2) are drawn
- * unconnected (`is-off`, `title="还没接通"`, `aria-disabled`) and do nothing.
+ * raw kind, record id); a record that starts a drawn step reads that step's
+ * verb · object, every other record reads its kind's word. 推理/工具调用/消息
+ * filter by the step each row starts; 检查 has no record kind and keeps the
+ * not-connected mark. The process group head (C1) and a Run row's expansion
+ * (E2) both open.
  */
 
 const slot = worldSlot();
@@ -37,7 +38,7 @@ const inspBlock = (root: FakeElement, label: string): string => {
 };
 
 describe('E3C-7 the trace and the unconnected process rows', () => {
-  it('E3C-16 the scripted answer’s agent_event row: raw time, kind and id, summary 还没接通, the whole record on the right (C5/C6)', async () => {
+  it('E3C-16 the scripted answer’s agent_event row: raw time, kind and id, summary 过程记录, the whole record on the right (C5/C6)', async () => {
     const s7c = await ended('E3C-16');
     const history = asRecord((await s7c.world.post('executions/history', plain(S6A_SCOPE, {
       runRef: s7c.run.runRef, afterCursor: null, limit: 100 }))).body);
@@ -56,8 +57,10 @@ describe('E3C-7 the trace and the unconnected process rows', () => {
          具名改坏: 时间用完整 recordedAt；本行的 `09:00:01` 红。 */
       expect(cells[0]).toBe('09:00:01');
       expect(cells[1]).toBe('agent_event');
-      /* 具名改坏: 把 body 的 JSON 解析成“思考”/“工具调用”摘要；本行的 `还没接通` 红。 */
-      expect(textOf(findClass(row!, 'lg-sum'))).toBe('还没接通');
+      /* This row starts no drawn step (the scripted answer makes no call), so
+         its summary is the record kind's word.
+         具名改坏: 把不是步骤的行写成“还没接通”；本行的 `过程记录` 红。 */
+      expect(textOf(findClass(row!, 'lg-sum'))).toBe('过程记录');
       click(row!);
       await settle(() => findClass(page.root, 'insp') !== undefined);
       const panel = findClass(page.root, 'insp');
@@ -70,7 +73,7 @@ describe('E3C-7 the trace and the unconnected process rows', () => {
     }
   }, 120_000);
 
-  it('E3C-17 the 推理 filter is unconnected: no request, the same rows, 全部 stays pressed (C4)', async () => {
+  it('E3C-17 the 检查 filter is unconnected: no request, the same rows, 全部 stays pressed (C4)', async () => {
     const s7c = await ended('E3C-17');
     const { page, log } = await bootModule(s7c);
     try {
@@ -78,15 +81,14 @@ describe('E3C-7 the trace and the unconnected process rows', () => {
       await settle(() => traceRows(page.root).length > 0);
       const before = log.calls.length;
       const rows = traceRows(page.root).length;
-      const filters = byLabel(page.root, '只看一类记录');
-      press(buttonText(filters, '推理'), '推理');
-      await sleep(200);
-      /* 具名改坏: 让 `推理` 改 tfilter 并发请求；本行的“不发请求/行数不变”红。 */
+      /* e3w-rulings B: `is-off`, `title="还没接通"`, `aria-disabled="true"` and a guarded click (the base's one check).
+         具名改坏: 让 `检查` 改 tfilter 并发请求；本行的“不发请求/行数不变”红。 */
+      notConnected(buttonText(byLabel(page.root, '只看一类记录'), '检查')!);
       expect(log.calls.length).toBe(before);
       expect(traceRows(page.root)).toHaveLength(rows);
       expect(buttonText(byLabel(page.root, '只看一类记录'), '全部')?.getAttribute('aria-pressed')).toBe('true');
-      /* e3w-rulings B: `is-off`, `title="还没接通"`, `aria-disabled="true"` and a guarded click (the base's one check). */
-      notConnected(buttonText(byLabel(page.root, '只看一类记录'), '推理')!);
+      /* 推理 is connected now: three filters stay, 检查 alone is off. */
+      expect(buttonText(byLabel(page.root, '只看一类记录'), '推理')?.getAttribute('aria-disabled')).toBe('false');
     } finally {
       await page.restore();
     }
@@ -95,7 +97,7 @@ describe('E3C-7 the trace and the unconnected process rows', () => {
   it.each([
     { entry: '① C1 组头' },
     { entry: '② E2 运行行的展开' },
-  ])('E3C-18 $entry is unconnected and does nothing on a click (C1/E2, DC2)', async ({ entry }) => {
+  ])('E3C-18 $entry opens on a click without a write (C1/E2)', async ({ entry }) => {
     const s7c = await ended(entry);
     const { page, log } = await bootModule(s7c);
     try {
@@ -106,13 +108,15 @@ describe('E3C-7 the trace and the unconnected process rows', () => {
           .find((button) => button !== undefined);
       const control = find();
       expect(control, entry).toBeDefined();
+      expect(control!.getAttribute('aria-disabled')).not.toBe('true');
+      expect(control!.getAttribute('title')).not.toBe('还没接通');
       const before = log.calls.length;
-      /* The three attributes and the guarded click (e3w-rulings B, the base's `notConnected`).
-         具名改坏: 去掉该项的守卫（让它展开）；对应条目红。 */
-      notConnected(control!);
+      /* 具名改坏: 把组头/运行行再写回 is-off 或守卫住点击；本条目红。 */
+      click(control!);
+      await settle(() => find()?.getAttribute('aria-expanded') === 'true');
+      expect(find()?.getAttribute('aria-expanded')).toBe('true');
       await sleep(200);
       expect(log.calls.length).toBe(before);
-      expect(find()?.getAttribute('aria-expanded')).not.toBe('true');
     } finally {
       await page.restore();
     }

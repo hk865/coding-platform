@@ -23,7 +23,7 @@ import type { UncommittedFilesV1 } from '../../contracts/workspace-files.js';
 import { asRecord, asText } from '../values.js';
 import { localShortAt, taskState, taskWhyOf, PHASE_WORD } from './task-map.js';
 import { lineStatusView, dutyWordOf, lineHref, type LineKey, type NavData, type NavGoal, type NavInbox, type NavLine } from './nav.js';
-import { requeueVisible } from './line-shared.js';
+import { requeueVisible, reviewOfTaskRow, type LineReview } from './line-shared.js';
 import type { MainRunStep, MainRunSteps } from './main.js';
 import { auxChangedRowsOf } from './aux-panel.js';
 
@@ -115,6 +115,8 @@ export type MemberLine = {
   canIntervene: boolean;
   interveneReason: string | null;
   readOnly: boolean;
+  /** K3 L7: the line Task's review and its two buttons, or `null` without a record. */
+  review: LineReview | null;
   /** The TaskTriple the line is responsible for; the one `writeBasisOf` reads. */
   taskRef: TaskTriple | null;
   /** The Goal the page's subtitle shows (the line's own Goal, else the selected one); the person's words on this
@@ -481,6 +483,7 @@ export function adaptMemberLine(source: MemberSource, detail: WorkLineDetailV1):
     canIntervene: row.status.readOnly !== true && intervene?.availability === 'available',
     interveneReason: intervene !== null && intervene.availability !== 'available' ? intervene.reason : null,
     readOnly: row.status.readOnly === true,
+    review: reviewOfTaskRow(taskRow),
     taskRef: taskOfLine(row),
     goalId: subGoalId,
     items,

@@ -3459,9 +3459,8 @@ class Component extends DCLogic {
         const lvGuarded = (go) => () => { set({ lvErr: null }); go().catch(lvFailed); };
         const err = s.lvErr && s.lvErr.line === openLine.id ? s.lvErr.text : '';
         const review = lineRead.review || null;
-        const handleStatuses = ['pending_review', 'awaiting_proposal', 'awaiting_advice', 'needs_decision', 'awaiting_approval'];
-        const canHandle = review !== null && !review.held && handleStatuses.indexOf(review.status) >= 0;
-        const canResumeReview = review !== null && review.held;
+        const canHandle = review !== null && review.canHandle;
+        const canResumeReview = review !== null && review.canResumeReview;
         const holding = s.lvHolding === openLine.id;
         /* One in-flight state for the line's writes: the four controls (pause,
            resume, cancel, requeue) and the hold and release share it, so the

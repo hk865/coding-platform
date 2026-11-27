@@ -9,8 +9,8 @@ import type { FakeElement } from './helpers/dom.js';
 /**
  * E3C-8 (test sheet §2.3, E3C-19..21; wiring H1–H4, R9, L3): the page's own
  * local controls — the 对话/轨迹 tabs, the density menu (完全展开 shows no
- * step rows: C2 has no step read, DC2), the theme and the right-column
- * switch. None of them reads the Host or writes browser storage.
+ * step rows because this world's Run has no step projection), the theme and
+ * the right-column switch. None of them reads the Host or writes browser storage.
  */
 
 const slot = worldSlot();
@@ -57,7 +57,7 @@ describe('E3C-8 the page’s local controls', () => {
       press(findElement(page.root, (element) => element.getAttribute('role') === 'menuitemradio' && textOf(element).includes('完全展开')), '完全展开');
       await sleep(200);
       expect(findElement(page.root, (element) => element.getAttribute('role') === 'menu')).toBeUndefined();
-      /* 具名改坏: 密度档把 C2 的步骤展开成一行一条；本行的“没有步骤行”红。 */
+      /* 具名改坏: 密度档凭空画一条步骤行；本行的“没有步骤行”红。 */
       expect(stepRows(findClass(page.root, 'thread'))).toHaveLength(0);
       expect(log.calls.length).toBe(before);
     } finally {

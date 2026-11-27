@@ -14,7 +14,6 @@ import type { QueryJobRef, QueryRunRef, RequestReferenceV1 } from '../../contrac
 import type { RunRef } from '../../contracts/dispatch.js';
 import type { TaskGraph } from '../../contracts/task-graph.js';
 import type { SessionMessageRef } from '../../contracts/core/session-message.js';
-import type { UnknownCallReviewRef } from '../../contracts/unknown-call-review.js';
 import type { RunStepsReadV1 } from '../../contracts/run-steps.js';
 import type { LineExecutionItemV1, LineMessageStateV1 } from '../../contracts/work-line.js';
 import type { SessionMessageReadV1, MessageBody } from '../../contracts/mailbox.js';
@@ -31,6 +30,7 @@ import { AUTONOMY_TEXT, goalCauseSentenceOf, taskProgressOf, taskRowIn, taskTitl
 import {
   messageBodyKey, messageFlagsOf, runWordOf, type MemberCopySource, type MemberLine, type MemberWriteBasis,
 } from './member.js';
+import type { LineReview } from './line-shared.js';
 import {
   dutyWordOf, lineNameOfSession, sessionRefAtEdge, type NavData, type NavGoal, type NavGoalFacts, type NavDisplay,
   type NavRunStopFact,
@@ -62,6 +62,9 @@ export type MainRunSteps = {
   /** A8: the callId of each drawn step, parallel to `steps` (think steps keep
    * ''); the running-commands match needs it, the page never draws it. */
   callIds: string[];
+  /** A2: each step's Kernel position, parallel to `steps`; the trace row with
+   * the same position is that step's raw record. */
+  positions: number[];
   head: string;
   time: string;
   live: boolean;
@@ -85,7 +88,7 @@ export type MainRunSteps = {
  * one failure sentence and no steps (so the block stays one sentence). */
 export function failedRunStepsOf(sentence: string): MainRunSteps {
   return {
-    ref: null, callIds: [], head: sentence, time: '', live: false, steps: [],
+    ref: null, callIds: [], positions: [], head: sentence, time: '', live: false, steps: [],
     next: null, runningFrom: null, sentence, thinkTruncated: false, key: '', rawHref: null,
   };
 }
@@ -97,6 +100,7 @@ export function mainRunStepsOf(read: RunStepsReadV1): MainRunSteps {
     ref: null,
     callIds: read.kind === 'steps'
       ? read.steps.map((step) => step.kind === 'think' ? '' : step.callId) : [],
+    positions: read.kind === 'steps' ? read.steps.map((step) => step.position) : [],
     head: summary === null ? runStepsSentenceOf(read) : runStepsHeadOf(summary),
     time: summary === null ? '' : runStepsTimeOf(summary),
     live: summary !== null && summary.live,
@@ -210,7 +214,7 @@ export type MainLineRecord = {
   rich: { reply: string; liveStep: null; page: 'chain' | 'member' | null };
   write: MemberWriteBasis | null;
   /** K3 L7: this line's Task row review, or null when the key is unreadable/absent. */
-  review: { ref: UnknownCallReviewRef; revision: number; status: string; held: boolean } | null;
+  review: LineReview | null;
 };
 
 export type MainGoal = NavGoal & {

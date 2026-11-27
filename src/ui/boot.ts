@@ -77,6 +77,7 @@ import {
 import type { GoalCopyConfirmResultV1, GoalCopyDraftResultV1 } from '../contracts/goal-card.js';
 import type { MessageBody, SessionMessageReadV1 } from '../contracts/mailbox.js';
 import type { TaskExecutionRecord } from '../contracts/execution-read.js';
+import type { RunNetworkSnapshotV1 } from '../contracts/run-network.js';
 import type { ArtifactRecord } from '../contracts/artifact.js';
 import type { RunRef, TaskTriple } from '../contracts/dispatch.js';
 import type { TaskGraph, TaskRow } from '../contracts/task-graph.js';
@@ -214,6 +215,9 @@ export type BoardReadDemand = TaskMapReadDemand & {
   mainCardAnswer?: string | null;
   /** Main M4: the expanded check notice whose `settings/snapshot` is read once. */
   mainNoticeOpen?: string | null;
+  /** Chain A5: the trace record whose `materials/open` body is read once;
+   * `null` withdraws it (closing the panel or picking another row). */
+  chainRecord?: string | null;
   /** 只给 Main：本页自己的命令句柄，键是 `projectId/workspaceId|<行键>`。 */
   commandRuns?: Map<string, { scope: CoreScope; commandId: string } | 'gone'>;
 };
@@ -242,6 +246,8 @@ let pageRunSteps = new Map<string, RunStepsCacheEntry>();
  * page. `null` is a Run whose snapshot could not be read; it stays without a
  * block and is never retried under a guessed scope. */
 let pageRunWorkspaces = new Map<string, string | null>();
+/** A7: each ended Run's network record, once per page; a live Run is read per refresh. */
+let pageRunHosts = new Map<string, RunNetworkSnapshotV1 | null>();
 /** 5 s is the one live-block timer (A6); `setTimeout` chains it, never a polling loop. */
 const LIVE_RUN_REREAD_MS = 5_000;
 
@@ -308,11 +314,12 @@ async function readRunStepsPage(
  */
 async function drawnRunWorkspace(
   client: ReturnType<typeof createHostClient>, scope: CoreScope, ref: RunRef,
-  current: TaskExecutionRecord | null,
+  known: readonly TaskExecutionRecord[],
 ): Promise<string | null> {
-  if (current !== null && current.run.ref.runId === ref.runId) {
-    return current.run.workspaceSnapshot.workspaceId;
-  }
+  /* A1: the caller already read some Runs' snapshots; reuse them instead of a
+     second `executions/read` for the same Run. */
+  const current = known.find((record) => record.run.ref.runId === ref.runId) ?? null;
+  if (current !== null) return current.run.workspaceSnapshot.workspaceId;
   const key = runWorkspaceKeyOf(ref);
   if (pageRunWorkspaces.has(key)) return pageRunWorkspaces.get(key) ?? null;
   let workspaceId: string | null = null;
@@ -336,11 +343,14 @@ async function drawnRunWorkspace(
 async function readDrawnRunSteps(
   client: ReturnType<typeof createHostClient>, scope: CoreScope, nav: NavData, key: LineKey,
   executions: readonly LineExecutionItemV1[], current: TaskExecutionRecord | null,
+  known: readonly TaskExecutionRecord[] = [],
 ): Promise<Map<string, MainRunSteps>> {
   const views = new Map<string, MainRunSteps>();
   for (const item of executions) {
     if (item.kind !== 'execution' || views.has(item.runRef.runId)) continue;
-    const workspaceId = await drawnRunWorkspace(client, scope, item.runRef, current);
+    const records = current === null || known.some((record) => record.run.ref.runId === current.run.ref.runId)
+      ? known : [current, ...known];
+    const workspaceId = await drawnRunWorkspace(client, scope, item.runRef, records);
     if (workspaceId === null) continue;
     const runScope: RunStepsScope = { projectId: item.runRef.projectId, workspaceId };
     let view: MainRunSteps;
@@ -444,6 +454,11 @@ function liveRunKeysOf(data: unknown): Set<string> {
     keys.add(row.key);
   };
   const d = asRecord(data);
+  /* A1: Chain's one process group per attempt; only an open group keeps its
+     live Run's 5 s chain, and `b.steps` is that group's projection. */
+  if (Array.isArray(d.attempts)) {
+    for (const row of d.attempts) addDrawnRunSteps(asRecord(row).steps);
+  }
   if (Array.isArray(d.conversation)) {
     for (const row of d.conversation) addDrawnRunSteps(asRecord(row).run);
   }
@@ -632,6 +647,19 @@ export type BoardActions = {
    the four buttons while the write is in flight; both read the same latch. */
 const lineWrites = new Map<string, Promise<void>>();
 
+/** One write per line at a time: a second click joins the first promise. */
+async function withLineWrite(key: string, write: () => Promise<void>): Promise<void> {
+  const inFlight = lineWrites.get(key);
+  if (inFlight !== undefined) return inFlight;
+  const pending = write();
+  lineWrites.set(key, pending);
+  try {
+    await pending;
+  } finally {
+    lineWrites.delete(key);
+  }
+}
+
 /**
  * Browser entry for one frozen board page. The Host serves the original
  * `.dc.html` at this URL; boot fetches that source through the host client and
@@ -651,6 +679,7 @@ export async function bootBoardPage(): Promise<void> {
   pageAdoptedPlans = { pending: new Map(), cards: new Map() };
   pageRunSteps = new Map();
   pageRunWorkspaces = new Map();
+  pageRunHosts = new Map();
   const pageDocument = document;
   const search = new URLSearchParams(location.search);
   const goalParam = search.get('goal');
@@ -955,14 +984,19 @@ export async function bootBoardPage(): Promise<void> {
     await refresh.reread();
   }
 
-  /** The one unknown-call-review write; `input` adds the route's own fields. */
+  /** The one unknown-call-review write; `input` adds the route's own fields.
+   *  Chain publishes its review on `latestChain`, every other board on `latestLine`. */
   async function writeReview(route: string, input: Record<string, unknown>): Promise<void> {
-    const line = latestLine;
-    if (line === null || line.review === null) throw new Error(reviewWriteTextOf(new Error('no review')));
+    const basis = boardName === 'Chain'
+      ? (latestChain !== null && latestChainScope !== null && latestChain.bar.review !== null
+        ? { scope: latestChainScope, review: latestChain.bar.review } : null)
+      : (latestLine !== null && latestLine.review !== null
+        ? { scope: latestLine.scope, review: latestLine.review } : null);
+    if (basis === null) throw new Error(reviewWriteTextOf(new Error('no review')));
     try {
-      committedRouteValue(await client.write(route, line.scope, {
-        input: { reviewRef: line.review.ref, ...input },
-        meta: { requestId: crypto.randomUUID(), expected: [{ ref: line.review.ref, revision: line.review.revision }] },
+      committedRouteValue(await client.write(route, basis.scope, {
+        input: { reviewRef: basis.review.ref, ...input },
+        meta: { requestId: crypto.randomUUID(), expected: [{ ref: basis.review.ref, revision: basis.review.revision }] },
       }), route);
     } catch (error) {
       logReadError(error);
@@ -1790,22 +1824,14 @@ export async function bootBoardPage(): Promise<void> {
       const control = line.controls.find((entry) => entry.kind === kind && entry.availability === 'available') ?? null;
       if (control === null) throw new Error(writeTextOf(new Error('this control is not available')));
       const key = line.key.projectId + '|' + line.key.sessionId;
-      const inFlight = lineWrites.get(key);
-      if (inFlight !== undefined) return inFlight;
-      const pendingWrite = (async (): Promise<void> => {
+      await withLineWrite(key, async (): Promise<void> => {
         try {
           await submitRunControl(client, data.scope, control, kind);
         } catch (error) {
           throw new Error(writeTextOf(error));
         }
         await refresh.reread();
-      })();
-      lineWrites.set(key, pendingWrite);
-      try {
-        await pendingWrite;
-      } finally {
-        lineWrites.delete(key);
-      }
+      });
     },
     async stopQueryRun(ref: QueryRunRef): Promise<void> {
       /* A8: the Query run's own scope, as its `executions/steps` read uses; the
@@ -1832,9 +1858,7 @@ export async function bootBoardPage(): Promise<void> {
       const write = data?.write ?? null;
       if (data === null || write === null) throw new Error(writeTextOf(new Error('no requeue facts')));
       const key = data.line.key.projectId + '|' + data.line.key.sessionId;
-      const inFlight = lineWrites.get(key);
-      if (inFlight !== undefined) return inFlight;
-      const pendingWrite = (async (): Promise<void> => {
+      await withLineWrite(key, async (): Promise<void> => {
         let value: unknown;
         try {
           const reply = await client.write('tasks/requeue', data.scope, {
@@ -1856,13 +1880,7 @@ export async function bootBoardPage(): Promise<void> {
         }
         requeuedOrThrow(value);
         await refresh.reread();
-      })();
-      lineWrites.set(key, pendingWrite);
-      try {
-        await pendingWrite;
-      } finally {
-        lineWrites.delete(key);
-      }
+      });
     },
     async controlChain(kind: 'pause' | 'resume' | 'cancel'): Promise<void> {
       const data = latestChain;
@@ -1872,36 +1890,43 @@ export async function bootBoardPage(): Promise<void> {
       }
       const control = line.controls.find((entry) => entry.kind === kind && entry.availability === 'available') ?? null;
       if (control === null) throw new Error(writeTextOf(new Error('this control is not available')));
-      try {
-        await submitRunControl(client, latestChainScope, control, kind);
-      } catch (error) {
-        throw new Error(writeTextOf(error));
-      }
-      await refresh.reread();
+      const scope = latestChainScope;
+      await withLineWrite(line.key.projectId + '|' + line.key.sessionId, async (): Promise<void> => {
+        try {
+          await submitRunControl(client, scope, control, kind);
+        } catch (error) {
+          throw new Error(writeTextOf(error));
+        }
+        await refresh.reread();
+      });
     },
     async requeueChain(): Promise<void> {
       const write = latestChainWrite;
-      if (write === null || latestChainScope === null) {
+      const line = latestChain?.line ?? null;
+      if (write === null || latestChainScope === null || line === null) {
         throw new Error(writeTextOf(new Error('no requeue facts')));
       }
-      let value: unknown;
-      try {
-        const reply = await client.write('tasks/requeue', latestChainScope, {
-          input: { taskRef: write.taskRef, afterRunRef: write.afterRunRef, reason: '人工重新入队' },
-          meta: {
-            requestId: crypto.randomUUID(),
-            expected: [
-              { ref: write.goalRef, revision: write.goalRevision },
-              { ref: write.afterRunRef, revision: write.runRevision },
-            ],
-          },
-        });
-        value = committedRouteValue(reply, 'tasks/requeue');
-      } catch (error) {
-        throw new Error(writeTextOf(error));
-      }
-      requeuedOrThrow(value);
-      await refresh.reread();
+      const scope = latestChainScope;
+      await withLineWrite(line.key.projectId + '|' + line.key.sessionId, async (): Promise<void> => {
+        let value: unknown;
+        try {
+          const reply = await client.write('tasks/requeue', scope, {
+            input: { taskRef: write.taskRef, afterRunRef: write.afterRunRef, reason: '人工重新入队' },
+            meta: {
+              requestId: crypto.randomUUID(),
+              expected: [
+                { ref: write.goalRef, revision: write.goalRevision },
+                { ref: write.afterRunRef, revision: write.runRevision },
+              ],
+            },
+          });
+          value = committedRouteValue(reply, 'tasks/requeue');
+        } catch (error) {
+          throw new Error(writeTextOf(error));
+        }
+        requeuedOrThrow(value);
+        await refresh.reread();
+      });
     },
     async releaseHolds(taskRef: TaskTriple): Promise<void> {
       const scope = latestNavScope;
@@ -3664,12 +3689,18 @@ export async function readChain(
   const ownKey = demand.ownKey ?? requested ?? key;
   if (ownKey !== null) demand.ownKey = ownKey;
   let line: ChainSource['line'] = null;
+  let detail: WorkLineDetailV1 | null = null;
   if (key !== null && !missing) {
-    if (requested !== null && nav.detail !== null && nav.detail.kind === 'line') line = nav.detail.row;
-    else {
+    if (requested !== null && nav.detail !== null && nav.detail.kind === 'line') {
+      detail = nav.detail;
+      line = nav.detail.row;
+    } else {
       try {
         const read = await readLine(client, scope, key);
-        line = read.kind === 'line' ? read.row : null;
+        if (read.kind === 'line') {
+          detail = read;
+          line = read.row;
+        }
       } catch (error) {
         if (!(error instanceof RouteReadError) || error.code !== 'not_found') throw error;
         line = null;
@@ -3755,12 +3786,45 @@ export async function readChain(
           if (!(error instanceof RouteReadError)) throw error;
           reads.push({
             ...entry, displayStatus: entry.status === 'open' ? 'incomplete' : 'completed',
-            checks: [], chain: main.chain, delivery: { requirements: [] },
+            checks: [], gaps: [],
+            /* A10: the head chain's reverify belongs to the head round, never to
+               this failed read; its `autoCount` is the chain's own count. */
+            chain: { ...main.chain, reverify: null }, delivery: { requirements: [] },
           } as unknown as ChainSource['rounds'][string][number]);
         }
       }
     }
     rounds[runId] = reads;
+  }
+
+  const lastRun = runs.at(-1) ?? null;
+  /* A1: every drawn Run's steps, from the page's own `executions/read`s (no
+     second read of the same Run) and one running-commands match. */
+  const runStepsByRun = key === null || line === null
+    ? new Map<string, MainRunSteps>()
+    : await readDrawnRunSteps(client, scope, nav, key, tail, lastRun, runs);
+  await readRunningCommandSteps(client, scope, [...runStepsByRun.values()]);
+
+  /* A7: each Run's hosts. An ended Run cannot reach another host (the proxy
+     records before it connects), so its answer is kept for this page; a live
+     Run is read again with every 5 s refresh. */
+  const hosts: ChainSource['hosts'] = {};
+  for (const run of runs) {
+    const ref = run.run.ref;
+    const hostKey = runWorkspaceKeyOf(ref);
+    if (run.run.status === 'ended' && pageRunHosts.has(hostKey)) {
+      hosts[ref.runId] = pageRunHosts.get(hostKey) ?? null;
+      continue;
+    }
+    try {
+      const snapshot = readyRouteValue<RunNetworkSnapshotV1 | null>(
+        await client.post('network/read', scope, { subject: ref }), 'network/read');
+      hosts[ref.runId] = snapshot;
+      if (run.run.status === 'ended') pageRunHosts.set(hostKey, snapshot);
+    } catch (error) {
+      logReadError(error);
+      hosts[ref.runId] = null;
+    }
   }
 
   /* §2.4: the shown stop marker's or Run's control state, each intent once. */
@@ -3779,6 +3843,25 @@ export async function readChain(
   }
   for (const run of runs) await readChainControl(run.run.controlState?.intentRef);
 
+  /* A5: one `materials/open` for the trace record the page selected; a failed
+     read is that block's one sentence, never the page's failure. */
+  let recordBody: ChainSource['recordBody'] = null;
+  if (demand.chainRecord !== null && demand.chainRecord !== undefined) {
+    const wanted = demand.chainRecord;
+    const found = Object.values(histories).flatMap((history) => history.items)
+      .find((entry) => entry.recordId === wanted) ?? null;
+    if (found !== null && !('encoding' in found.body)) {
+      try {
+        const material = readyRouteValue<{ body?: unknown }>(await client.post('materials/open', scope,
+          { ref: found.body, usage: 'historical_explanation' }), 'materials/open');
+        recordBody = { recordId: wanted, text: asText(material.body) };
+      } catch (error) {
+        logReadError(error);
+        recordBody = { recordId: wanted, error: true };
+      }
+    }
+  }
+
   let archive: ChainSource['archive'] = null;
   if (demand.archive === true) {
     /* R8: the first page only; a non-empty cursor is a reported truncation,
@@ -3790,7 +3873,6 @@ export async function readChain(
 
   /* §8.3 A: the selected Goal's graph is `readNav`'s; a selected line may
      serve another Goal, whose graph is read once here. */
-  const lastRun = runs.at(-1) ?? null;
   const lineTask = line === null ? null : taskOfLine(line);
   let tasks: unknown = nav.tasks;
   if (lineTask !== null && lineTask.goalId !== (nav.selectedGoalId ?? '')) {
@@ -3817,12 +3899,13 @@ export async function readChain(
     : null;
 
   const source: ChainSource = {
-    nav, line, archive,
+    nav, line, detail, archive,
     executions: key === null ? null : {
       section: 'executions', segments, scope: 'indexed', items: tail, nextCursor: null,
       sourceCursor: sourceCursor ?? ('' as never),
     },
     runs, histories, briefs, rounds, tasks, goalWaiting, goalWaitingPartial, controls,
+    runStepsByRun, hosts, recordBody,
   };
   return { data: adaptChain(source, { selected: key, ownKey, dens: '标准', theme: 'dark' }), cursor };
 }
@@ -4234,18 +4317,6 @@ export async function readMainThread(
   return { pages, decisions, older: cursor, track };
 }
 
-/** K3 L7: the line's own Task row review, from the graph this read already
- * carries. `unreadable` and an absent key are both "no button". */
-function reviewOfTaskGraph(taskGraph: TaskGraph | null, line: MemberLine): MainLineRecord['review'] {
-  const taskRef = line.taskRef;
-  if (taskGraph === null || taskRef === null) return null;
-  const row = taskGraph.tasks.find((task) => task.ref.projectId === taskRef.projectId
-    && task.ref.goalId === taskRef.goalId && task.ref.taskId === taskRef.taskId);
-  const review = row?.unknownCallReview;
-  if (review === undefined || review.status === 'unreadable') return null;
-  return { ref: review.ref, revision: review.revision, status: review.status, held: review.hold === 'held' };
-}
-
 /**
  * L2/D100-1/D107-2: each drawn message's closed fact. A transferred or copied
  * message names its other line through one `messages/view` read; a failed read
@@ -4324,7 +4395,7 @@ async function readOpenLine(
       rec,
       rich: { reply: '', liveStep: null, page: memberLine.task !== null ? 'chain' : 'member' },
       write,
-      review: reviewOfTaskGraph(source.taskGraph, memberLine),
+      review: memberLine.review,
     };
   }
   return { line, runSteps };

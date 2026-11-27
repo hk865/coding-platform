@@ -8,6 +8,7 @@ import type { SessionRef } from '../../contracts/core/identity.js';
 import type { SubmittedControl } from '../../contracts/control-intent.js';
 import type { SessionHistoryEntry } from '../../contracts/session-activity.js';
 import type { TaskRow } from '../../contracts/task-graph.js';
+import type { UnknownCallReviewRef } from '../../contracts/unknown-call-review.js';
 import type { LineControlV1, WorkLineDetailV1 } from '../../contracts/work-line.js';
 import {
   committedRouteValue, createHostClient, readyRouteValue,
@@ -55,9 +56,38 @@ export async function readSessionTrace(
   return page.items;
 }
 
+/** K3 L7 (4b): the line task's unknown-call review and the two buttons it allows.
+ *  我来处理 needs an unsettled record that is not held yet (unknown-call-review.ts:739-741);
+ *  继续 is release-hold, only on a held record. `null` without a readable record. */
+export type LineReview = {
+  ref: UnknownCallReviewRef; revision: number; status: string;
+  held: boolean; canHandle: boolean; canResumeReview: boolean;
+};
+
+/** The statuses 我来处理 may pause on (the same five the Main line view lists). */
+const HANDLE_STATUSES = new Set([
+  'pending_review', 'awaiting_proposal', 'awaiting_advice', 'needs_decision', 'awaiting_approval',
+]);
+
+/** The one copy of the review rule: Member, Main, Plan, Decide and Chain read
+ *  these two booleans instead of repeating the status table. */
+export function reviewOfTaskRow(row: TaskRow | null): LineReview | null {
+  const review = row?.unknownCallReview;
+  if (review === undefined || review.status === 'unreadable') return null;
+  const held = review.hold === 'held';
+  return {
+    ref: review.ref, revision: review.revision, status: review.status, held,
+    canHandle: !held && HANDLE_STATUSES.has(review.status),
+    canResumeReview: held,
+  };
+}
+
 /** X3: 重新入队 is shown only for a failed Task whose public requeue actors
- * include the person; the owner still decides. */
+ * include the person; the owner still decides. A held review has no requeue
+ * either: this page's requeue carries no `archiveOrigin`, so the owner only
+ * accepts release-hold (requeue-service.ts:1206-1207). */
 export function requeueVisible(task: TaskRow): boolean {
+  if (reviewOfTaskRow(task)?.held === true) return false;
   return task.effectivePhase === 'failed'
     && (task.failure?.requeueActors ?? []).includes('human');
 }

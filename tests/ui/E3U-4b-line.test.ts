@@ -95,6 +95,8 @@ describe('4b line view review and message facts', () => {
         && (element.getAttribute('title') ?? '').startsWith('放开这条核对记录'));
       await waitFor(() => reviewResume() !== undefined && reviewResume()!.getAttribute('aria-disabled') !== 'true');
       expect(findButton(page.root, '我来处理')).toBeUndefined();
+      /* A9: a held review's requeue is refused by the owner, so the button is gone too. */
+      expect(findButton(page.root, '重新入队')).toBeUndefined();
       click(reviewResume()!);
       await expect.poll(() => callsTo(log, 'unknown-call-reviews/release-hold').filter((call) => call.reply !== undefined).length,
         { timeout: 10_000, interval: 25 }).toBe(1);

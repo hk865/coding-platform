@@ -19,6 +19,7 @@ body { margin: 0; background: #1F1F1F; }
 .cx .menu-item .mi-hint + .ck { margin-left: 8px; }
 .cx .menu-item .ck.off { visibility: hidden; }
 .cx .run .w, .cx .run .tail { flex: none; white-space: nowrap; }
+.cx .gb-acts .tx-failed { flex: none; white-space: nowrap; align-self: center; margin-left: 6px; }
 .cx .run .live { display: inline-flex; align-items: center; flex: none; }
 .cx .steps.flat { margin: 0; padding-left: 0; }
 .cx .stp { display: flex; align-items: center; column-gap: 6px; flex: 1 1 100%; min-width: 0; min-height: 24px; text-align: left; }
@@ -351,28 +352,37 @@ body { margin: 0; background: #1F1F1F; }
               </a>
             </sc-if>
             <sc-if value="{{bar.canPause}}" hint-placeholder-val="{{ true }}">
-              <button class="btn btn-sm" type="button" onClick="{{bar.pause}}" title="{{bar.tip.pause}}" aria-disabled="{{bar.pauseOff}}">
+              <button class="{{bar.pauseCls}}" type="button" onClick="{{bar.pause}}" title="{{bar.tip.pause}}" aria-disabled="{{bar.pauseOff}}">
                 <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="M5.75 3.75v8.5M10.25 3.75v8.5"></path></svg>
                 暂停
               </button>
             </sc-if>
             <sc-if value="{{bar.canResume}}" hint-placeholder-val="{{ false }}">
-              <button class="btn btn-sm" type="button" onClick="{{bar.resume}}" title="{{bar.tip.resume}}" aria-disabled="{{bar.resumeOff}}">
+              <button class="{{bar.resumeCls}}" type="button" onClick="{{bar.resume}}" title="{{bar.tip.resume}}" aria-disabled="{{bar.resumeOff}}">
                 <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="M5.25 3.5v9l7-4.5Z"></path></svg>
                 继续
               </button>
             </sc-if>
             <sc-if value="{{bar.canCancel}}" hint-placeholder-val="{{ true }}">
-              <button class="btn btn-sm" type="button" onClick="{{bar.askCancel}}" title="{{bar.tip.cancel}}" aria-disabled="{{bar.cancelOff}}">
+              <button class="{{bar.cancelCls}}" type="button" onClick="{{bar.askCancel}}" title="{{bar.tip.cancel}}" aria-disabled="{{bar.cancelOff}}">
                 <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><rect x="4" y="4" width="8" height="8" rx="1.25"></rect></svg>
                 取消
               </button>
             </sc-if>
             <sc-if value="{{bar.canRequeue}}" hint-placeholder-val="{{ false }}">
-              <button class="btn btn-sm" type="button" onClick="{{bar.requeue}}" title="{{bar.requeueTip}}" aria-disabled="{{bar.requeueOff}}">
+              <button class="{{bar.requeueCls}}" type="button" onClick="{{bar.requeue}}" title="{{bar.requeueTip}}" aria-disabled="{{bar.requeueOff}}">
                 <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="M12.75 3.25v3h-3"></path><path d="M12.5 6.25A5 5 0 1 0 13 9.25"></path></svg>
                 重新入队
               </button>
+            </sc-if>
+            <sc-if value="{{bar.canHandle}}" hint-placeholder-val="{{ false }}">
+              <button class="{{bar.handleCls}}" type="button" onClick="{{bar.handle}}" title="{{bar.handleTip}}" aria-disabled="{{bar.handleOff}}">我来处理</button>
+            </sc-if>
+            <sc-if value="{{bar.canResumeReview}}" hint-placeholder-val="{{ false }}">
+              <button class="{{bar.resumeReviewCls}}" type="button" onClick="{{bar.resumeReview}}" title="{{bar.resumeReviewTip}}" aria-disabled="{{bar.resumeReviewOff}}">继续</button>
+            </sc-if>
+            <sc-if value="{{bar.hasFail}}" hint-placeholder-val="{{ false }}">
+              <span class="tx-failed">{{bar.fail}}</span>
             </sc-if>
           </span>
         </div>
@@ -789,6 +799,14 @@ class Component extends DCLogic {
     const s = this.state || {};
     if (prev && prev.theme !== this.props.theme && s.theme) this.setState({ theme: null });
     if (prev && prev.moment !== this.props.moment) this.setState(Object.assign(this.lvState(), { gopen: {}, sopen: {}, crest: {}, rsel: null, ctl: 'working', ev: [], clock: 15, confirm: false }));
+    /* A8: the failure belongs to the task bar it was written for; another task's
+       bar is a different bar, so the old sentence is not kept to show again. */
+    const barKeyOf = (data) => {
+      const row = data || {};
+      const last = Array.isArray(row.attempts) ? row.attempts[row.attempts.length - 1] : null;
+      return (row.task ? row.task.id : '') + '|' + (last ? last.runRef.goalId : '');
+    };
+    if (prev && (this.state || {}).barFail && barKeyOf(prev.data) !== barKeyOf(this.props.data)) this.setState({ barFail: '' });
   }
 
   /* the second tweak: the default matches Main (attempt 2 still running at 14:15); the other moment runs on to the round-2 pass */
@@ -2078,7 +2096,6 @@ class Component extends DCLogic {
      no-token mount's only content (§2.12). */
   chainDataVals(D, s, set, read) {
     const actions = this.props.actions || {};
-    const failReport = (error) => console.error(error);
     const theme = s.theme || this.props.theme || 'dark';
     const dens = s.dens || '标准';
     const lv = Math.max(0, ['简洁', '标准', '详细', '完全展开'].indexOf(dens));
@@ -2102,9 +2119,23 @@ class Component extends DCLogic {
     const untip = () => { if ((this.state || {}).tip) set({ tip: null }); };
     const liveAttempt = (a) => a.statusWord === '执行中' || a.statusWord === '启动中';
 
+    /* A5: asking for one artifact row's body is this page's only extra read;
+       every path that changes `rsel` or closes the trace asks or withdraws it. */
+    const withdrawBody = () => {
+      if ((s.chainRecord || null) !== null) { set({ chainRecord: null }); readMore({ chainRecord: null }); }
+    };
+    const chooseTrace = (recordId) => {
+      set({ rsel: recordId });
+      const record = recordId === null ? null : (D.trace || []).find((row) => row.recordId === recordId) || null;
+      const wanted = record !== null && record.bodyKind === 'artifact' ? recordId : null;
+      if ((s.chainRecord || null) !== wanted) { set({ chainRecord: wanted }); readMore({ chainRecord: wanted }); }
+    };
+
     const stepV = (st) => {
       const id = st.id;
-      const hasDetail = !!(st.detail || st.facts);
+      /* A2: a read/edit/tool step has no prose, but its raw record is the
+         reason to expand (the button is drawn only when open). */
+      const hasDetail = !!(st.detail || st.facts || st.rec);
       const open = st.onToggle ? !!st.expanded : hasDetail && !!sopen[id];
       const wrap = flat && !!st.full;
       return {
@@ -2119,7 +2150,7 @@ class Component extends DCLogic {
         hasText: open && !!st.detail && !st.onToggle, detail: st.detail || '', detailCls: 'step-detail' + (st.prose ? ' is-prose' : ''),
         hasFacts: open && !!st.facts, facts: (st.facts || []).map((f) => ({ k: f[0], v: f[1] })),
         hasRec: open && !!st.rec && !st.onToggle,
-        toTrace: () => set({ pane: 'trace', rsel: st.rec, tfilter: 'all', densMenu: false }),
+        toTrace: () => { set({ pane: 'trace', tfilter: 'all', densMenu: false }); chooseTrace(st.rec); },
         toggle: st.onToggle || (() => { if (hasDetail) set({ sopen: Object.assign({}, cur().sopen, { [id]: !open }) }); })
       };
     };
@@ -2150,7 +2181,7 @@ class Component extends DCLogic {
       let steps;
       if (flat) steps = rows;
       else {
-        const bad = rows.filter((x) => x.fail || x.review);
+        const bad = rows.filter((x) => x.fail || x.review || x.incomplete);
         const n = rows.length - bad.length;
         if (more) {
           steps = rows.concat([{ id: id + '-less', kind: 'less', verb: '收起通过的 ' + n + ' 项', rest: true, expanded: true,
@@ -2174,18 +2205,46 @@ class Component extends DCLogic {
       if (a.brief !== null) {
         items.push(Object.assign({}, blankItem, { id: 'cb-' + a.ordinal, isBrief: true, rows: a.brief.rows }));
       }
-      chainGroup({ id: 'att-' + a.ordinal, off: true, live: liveAttempt(a),
-        head: NOT_CONNECTED, t: NOT_CONNECTED, toggle: notConnected }, [], { defOpen: false });
+      /* A7/A10: what the attempt reached and which plan it was claimed under; both
+         are the attempt's own facts, drawn between the head row and the steps. */
+      if (a.plan !== '') sys('plan-' + a.ordinal, 'plan', a.plan, '');
+      if (a.hosts !== '') sys('hosts-' + a.ordinal, 'cmd', '连过的主机：' + a.hosts, '');
+      /* A1: the process group is the shared Run-step projection. A sentence
+         (not started/not entered/unreadable) is the whole block; a null
+         projection (workspace unreadable) draws no group at all. */
+      const proj = a.steps;
+      if (proj !== null) {
+        const sentenceOnly = proj.sentence !== '';
+        const gid = 'att-' + a.ordinal;
+        const groupOpen = flat ? true : !!gopen[gid];
+        if (!sentenceOnly && proj.key !== '' && typeof actions.runOpen === 'function') actions.runOpen(proj.key, groupOpen);
+        const rows = sentenceOnly ? [] : a.stepRows.slice();
+        if (!sentenceOnly && proj.next !== null) {
+          rows.push({ id: gid + '-more', kind: 'more', verb: '再看 50 步', expanded: false,
+            onToggle: () => { if (typeof actions.readRunSteps === 'function') actions.readRunSteps(proj.key); } });
+        }
+        if (!sentenceOnly && proj.thinkTruncated) {
+          rows.push({ id: gid + '-raw', kind: 'more', verb: '看原始记录', expanded: false,
+            onToggle: () => set({ pane: 'trace', densMenu: false }) });
+        }
+        chainGroup({ id: gid, live: proj.live,
+          head: sentenceOnly ? proj.sentence : proj.head,
+          t: proj.time, toggle: sentenceOnly ? () => {} : undefined }, rows, { defOpen: false });
+      }
       a.rounds.forEach((round) => {
         const wordCls = round.statusWord === '通过' ? 'tx-satisfied'
           : round.statusWord === '未通过' ? 'tx-failed' : 'tx-plain';
+        if (round.reverifyText !== '') sys('rv-' + a.ordinal + '-' + round.ordinal, 'plan', round.reverifyText, '');
+        const tail = '· ' + round.pass + '/' + round.total
+          + (round.supersededBy === null ? '' : ' · 已被第 ' + round.supersededBy + ' 轮取代')
+          + (round.gapText === '' ? '' : ' · 缺：' + round.gapText);
         const head = { id: 'r-' + a.ordinal + '-' + round.ordinal,
           head: '正式检查 · 第 ' + round.ordinal + ' 轮 ·', word: round.statusWord, wordCls: wordCls,
-          tail: '· ' + round.pass + '/' + round.total, t: '' };
+          tail: tail, t: '' };
         const rows = round.checks.length === 0
           ? [{ id: 'r-' + a.ordinal + '-' + round.ordinal + '-none', kind: 'cmd', verb: NOT_CONNECTED, meta: '' }]
           : round.checks.map((c, j) => ({ id: 'r-' + a.ordinal + '-' + round.ordinal + '-' + j, kind: 'cmd',
-            verb: c.command, obj: c.outcomeWord, meta: c.reason || '', fail: c.fail, review: c.review, rec: null }));
+            verb: c.command, obj: c.outcomeWord, meta: c.reason || '', fail: c.fail, incomplete: c.incomplete, review: c.review, rec: null }));
         check('r-' + a.ordinal + '-' + round.ordinal, round, rows, head);
       });
     });
@@ -2221,16 +2280,26 @@ class Component extends DCLogic {
       }]).concat(archOpen ? R.archived.map((m) => railRowV(m, true)) : [])
     };
 
-    /* 轨迹: the raw records; only 全部 filters, the other four have no class field (C4) */
+    /* 轨迹: 推理/工具调用/消息 filter by the step each row starts (A4); 检查 has
+       no record kind yet, so it keeps the not-connected mark. */
     const TF = [['all', '全部'], ['think', '推理'], ['tool', '工具调用'], ['msg', '消息'], ['check', '检查']];
+    const FILTER_KIND = { think: 'think', tool: 'tool', msg: 'message' };
+    const stepsIncompleteTip = D.stepsIncomplete ? '有的执行步骤还没读全，只含已读到的' : '';
     const tfilters = TF.map((x) => ({ label: x[1], on: x[0] === tfilter,
-      cls: 'seg-btn' + (x[0] === tfilter ? ' is-on' : '') + (x[0] === 'all' ? '' : ' is-off'),
-      off: x[0] === 'all' ? 'false' : 'true', title: x[0] === 'all' ? '' : NOT_CONNECTED,
-      pick: x[0] === 'all' ? () => set({ tfilter: 'all' }) : notConnected }));
+      cls: 'seg-btn' + (x[0] === tfilter ? ' is-on' : '') + (x[0] === 'check' ? ' is-off' : ''),
+      off: x[0] === 'check' ? 'true' : 'false',
+      title: x[0] === 'check' ? NOT_CONNECTED : stepsIncompleteTip,
+      pick: x[0] === 'check' ? notConnected : () => set({ tfilter: x[0] }) }));
     const SECN = {};
     D.attempts.forEach((a) => { SECN[a.ordinal] = '第 ' + a.ordinal + ' 次尝试'; });
+    const selectTrace = (record) => {
+      const next = record === null || s.rsel === record.recordId ? null : record.recordId;
+      chooseTrace(next);
+    };
     const sections = [];
     D.trace.forEach((r) => {
+      const filterKind = FILTER_KIND[tfilter] || null;
+      if (filterKind !== null && r.stepKind !== filterKind) return;
       const title = SECN[r.attemptOrdinal] || ('第 ' + r.attemptOrdinal + ' 次尝试');
       let section = sections.filter((x) => x.title === title)[0];
       if (section === undefined) { section = { title: title, rows: [] }; sections.push(section); }
@@ -2238,39 +2307,71 @@ class Component extends DCLogic {
       section.rows.push({
         t: r.recordedAt.slice(11, 19), ty: r.kind, id: r.recordId, on: on,
         cls: 'lg-row' + (on ? ' is-on' : ''), dom: 'r-' + r.recordId.replace('#', '-'),
-        label: r.recordedAt.slice(11, 19) + '，' + r.kind + '，' + NOT_CONNECTED,
-        sumCls: 'lg-sum', segs: [{ t: NOT_CONNECTED, cls: 'wr mr' }],
-        pick: () => set({ rsel: (this.state || {}).rsel === r.recordId ? null : r.recordId })
+        label: r.recordedAt.slice(11, 19) + '，' + r.kind + '，' + r.summary,
+        sumCls: 'lg-sum', segs: [{ t: r.summary, cls: 'wr mr' }],
+        pick: () => selectTrace(r)
       });
     });
     const tsecs = sections.filter((section) => section.rows.length > 0);
     const rec = rsel === null ? null : D.trace.filter((r) => r.recordId === rsel)[0] || null;
     const panelOpen = s.panel !== false;
+    const recordBody = rec !== null && D.recordBody !== null && D.recordBody.recordId === rec.recordId
+      ? D.recordBody : null;
     const insp = rec !== null && pane === 'trace' && panelOpen ? {
       show: true, title: rec.kind,
       sub: rec.recordedAt + ' · ' + (SECN[rec.attemptOrdinal] || ('第 ' + rec.attemptOrdinal + ' 次尝试')),
       kv: [{ k: '编号', v: rec.recordId, cls: 'mono' }, { k: '类型', v: rec.kind, cls: 'mono' },
         { k: '记录时间', v: rec.recordedAt, cls: 'mono' }, { k: '尝试', v: '第 ' + rec.attemptOrdinal + ' 次尝试', cls: '' }],
       blocks: rec.bodyKind === 'json' ? [{ label: '原文', text: rec.bodyText, cls: 'step-detail' }]
-        : rec.bodyKind === 'artifact' ? [{ label: '记录', text: 'ArtifactRef · ' + rec.bodyText + ' · 正文要 materials/open（本包不读）', cls: 'step-detail is-prose' }]
+        : rec.bodyKind === 'artifact' ? [{ label: '正文',
+          text: recordBody === null ? '正在读这条记录的正文…'
+            : 'error' in recordBody ? '暂时读不到这条记录的正文' : recordBody.text,
+          cls: 'step-detail is-prose' }]
           : [{ label: '', text: NOT_CONNECTED, cls: 'step-detail is-prose' }],
-      close: () => set({ rsel: null })
-    } : { show: false, title: '', sub: '', kv: [], blocks: [], close: () => set({ rsel: null }) };
+      close: () => selectTrace(null)
+    } : { show: false, title: '', sub: '', kv: [], blocks: [], close: () => selectTrace(null) };
 
-    /* the bar: the task's words from the map's tables, the line's controls only */
+    /* the bar: the task's words from the map's tables, the line's controls only.
+       A8: one write at a time greys all six buttons; a failure stays beside
+       them until the next click or another task's bar is read. */
     const b = D.bar;
+    const barLast = D.attempts[D.attempts.length - 1];
+    const barTaskKey = D.task === null ? '' : D.task.id + '|' + (barLast === null ? '' : barLast.runRef.goalId);
+    const barBusy = !!s.barBusy;
+    const barFail = s.barFail && s.barFailTask === barTaskKey ? s.barFail : '';
+    const barCls = (on) => 'btn btn-sm' + (on ? '' : ' is-off');
+    const barAct = (go) => () => {
+      if ((this.state || {}).barBusy) return;
+      set({ barBusy: true, barFail: '', barFailTask: barTaskKey });
+      Promise.resolve().then(go)
+        .catch((error) => set({ barFail: String(error.message), barFailTask: barTaskKey }))
+        .finally(() => set({ barBusy: false }));
+    };
+    const review = b.review || null;
+    const canHandle = review !== null && review.canHandle;
+    const canResumeReview = review !== null && review.canResumeReview;
     const bar = Object.assign({}, b, {
-      pauseOff: b.canPause ? 'false' : 'true', resumeOff: b.canResume ? 'false' : 'true',
-      cancelOff: b.canCancel ? 'false' : 'true', requeueOff: b.canRequeue ? 'false' : 'true',
+      pauseCls: barCls(!!b.canPause && !barBusy), resumeCls: barCls(!!b.canResume && !barBusy),
+      cancelCls: barCls(!!b.canCancel && !barBusy), requeueCls: barCls(!!b.canRequeue && !barBusy),
+      handleCls: barCls(canHandle && !barBusy), resumeReviewCls: barCls(canResumeReview && !barBusy),
+      pauseOff: barBusy || !b.canPause ? 'true' : 'false', resumeOff: barBusy || !b.canResume ? 'true' : 'false',
+      cancelOff: barBusy || !b.canCancel ? 'true' : 'false', requeueOff: barBusy || !b.canRequeue ? 'true' : 'false',
+      handleOff: barBusy || !canHandle ? 'true' : 'false', resumeReviewOff: barBusy || !canResumeReview ? 'true' : 'false',
+      canHandle: canHandle, canResumeReview: canResumeReview,
+      hasFail: barFail !== '', fail: barFail,
       requeueTip: b.canRequeue ? '重新入队，等执行者领取；下一次尝试带上接续说明' : (b.tip.cancel || '不能重新入队'),
-      pause: b.canPause ? () => { actions.controlChain('pause').catch(failReport); } : notConnected,
-      resume: b.canResume ? () => { actions.controlChain('resume').catch(failReport); } : notConnected,
-      askCancel: b.canCancel ? (e) => { this.cancelOpened('goal', e); set({ confirm: true, densMenu: false }); } : notConnected,
+      handleTip: '先暂停这项任务，你自己看过再点继续',
+      resumeReviewTip: '放开这条核对记录，按原来的任务和那次执行接着做',
+      pause: b.canPause ? barAct(() => actions.controlChain('pause')) : notConnected,
+      resume: b.canResume ? barAct(() => actions.controlChain('resume')) : notConnected,
+      askCancel: b.canCancel ? (e) => { set({ barFail: '' }); this.cancelOpened('goal', e); set({ confirm: true, densMenu: false }); } : notConnected,
       keep: () => { this.cancelClosed('goal'); set({ confirm: false }); },
       keepRef: (el) => this.cancelRef('goal', el),
       key: (e) => this.cancelKey('goal', e, () => { this.cancelClosed('goal'); set({ confirm: false }); }),
-      cancel: b.canCancel ? () => { set({ confirm: false }); actions.controlChain('cancel').catch(failReport); } : notConnected,
-      requeue: b.canRequeue ? () => { actions.requeueChain().catch(failReport); } : notConnected,
+      cancel: b.canCancel ? barAct(() => { set({ confirm: false }); return actions.controlChain('cancel'); }) : notConnected,
+      requeue: b.canRequeue ? barAct(() => actions.requeueChain()) : notConnected,
+      handle: canHandle ? barAct(() => actions.holdReview()) : notConnected,
+      resumeReview: canResumeReview ? barAct(() => actions.releaseReviewHold()) : notConnected,
       confirm: !!s.confirm && b.canCancel
     });
 
@@ -2312,17 +2413,37 @@ class Component extends DCLogic {
        render, the record carries only the guarded E2 run rows and the composer
        is off; the centre keeps the execution chain above. */
     const currentRow = D.rail.rows.filter((m) => m.current)[0] || null;
+    const lvOpen = s.lvOpen || {};
+    /* A3: this template's step fields differ from the process group's, so the
+       projection converts here; `isDiff` stays false because `meta` already
+       carries the edit's +a −d. */
+    const lvStepOf = (p) => ({
+      cls: 'step' + (p.fail ? ' is-fail' : '') + (p.live ? ' is-live' : ''),
+      isThink: p.ic === 'think', isFile: p.ic === 'file', isEdit: p.ic === 'edit',
+      isCmd: p.ic === 'cmd', isInt: p.ic === 'int',
+      verb: p.verb, obj: p.obj, objCls: 'step-obj' + (p.path ? ' is-path' : ''),
+      hasMeta: !!p.meta, meta: p.meta || '',
+      isDiff: false, add: '', del: '',
+      hasDetail: (flat || p.prose) && !!p.detail,
+      detCls: 'step-detail' + (p.prose ? ' is-prose' : ''), detail: p.detail || ''
+    });
     const lvItems = D.attempts.map((a) => {
       const at = a.startedAt === null ? '' : a.startedAt.slice(11, 19);
       const live = liveAttempt(a);
+      const proj = a.steps;
+      const sentenceOnly = proj !== null && proj.sentence !== '';
+      const id = 'att-' + a.ordinal;
+      const open = sentenceOnly ? false : lvOpen[id] === undefined ? live : !!lvOpen[id];
       return {
         isDay: false, isSep: false, isSys: false, isMark: false, isBrief: false, isRun: true, isRow: false,
         isAsk: false, isAct: false, quotes: [],
-        cls: 'run lv-run is-off' + (live ? ' is-live' : ''), open: false, toggle: notConnected,
-        head: '第 ' + a.ordinal + ' 次尝试 · ' + a.statusWord
+        cls: 'run lv-run' + (open ? ' is-open' : '') + (live ? ' is-live' : ''),
+        open: open,
+        toggle: sentenceOnly ? () => {} : () => set({ lvOpen: Object.assign({}, lvOpen, { [id]: !open }) }),
+        head: sentenceOnly ? proj.sentence : '第 ' + a.ordinal + ' 次尝试 · ' + a.statusWord
           + (a.outcomeWord === null || a.outcomeWord === a.statusWord ? '' : ' · ' + a.outcomeWord),
         headCls: 'lv-rt' + (live ? ' live-tx' : ''), hasWord: false, word: '', wordCls: 'lv-w tx-plain', time: at,
-        steps: [], hasNote: false, note: '', title: NOT_CONNECTED, off: 'true'
+        steps: open && proj !== null ? a.stepRows.map(lvStepOf) : [], hasNote: false, note: '', title: '', off: 'false'
       };
     });
     const lvHead = {
@@ -2336,7 +2457,7 @@ class Component extends DCLogic {
       pageMember: currentRow !== null && currentRow.duty === '执行者',
       pageMemberHref: D.line === null ? 'Member.dc.html' : D.line.pageMemberHref,
       pageChain: false, hasPanel: true,
-      togglePanel: () => set({ panel: !panelOpen }),
+      togglePanel: () => { if (panelOpen) withdrawBody(); set({ panel: !panelOpen }); if (!panelOpen && s.rsel !== null) chooseTrace(s.rsel); },
       st: { isLive: false, isAdv: false, isStill: true, word: currentRow === null ? '' : currentRow.word,
         advText: '', arrive: () => {}, tip: () => {} },
       tc: { name: '', tx: 'tx-plain', word: '', why: '', rows: [], hint: '' },
@@ -2349,7 +2470,7 @@ class Component extends DCLogic {
       acts: { canPause: false, canResume: false, canCancel: false, canRequeue: false,
         pause: notConnected, resume: notConnected, askCancel: notConnected, requeue: notConnected,
         tipPause: () => {}, tipResume: () => {}, tipCancel: () => {}, tipRequeue: () => {} },
-      banner: { has: false, text: '' }, items: lvItems,
+      banner: { has: D.line !== null && D.line.archived !== null, text: D.archivedText }, items: lvItems,
       confirm: { show: false, line: '', keep: () => {}, go: notConnected },
       cm: { show: false, isAsk: true, isAct: false, actOff: true, groupLabel: '',
         askCls: 'mode-btn lv-mb is-on', actCls: 'mode-btn lv-mb is-off',
@@ -2365,7 +2486,7 @@ class Component extends DCLogic {
       toggleTheme: () => set({ theme: theme === 'light' ? 'dark' : 'light' }),
       isChat: pane === 'chat', isTrace: pane === 'trace',
       paneChatCls: 'tab' + (pane === 'chat' ? ' is-on' : ''), paneTraceCls: 'tab' + (pane === 'trace' ? ' is-on' : ''),
-      showChat: () => set({ pane: 'chat' }), showTrace: () => set({ pane: 'trace', densMenu: false }),
+      showChat: () => { withdrawBody(); set({ pane: 'chat' }); }, showTrace: () => { set({ pane: 'trace', densMenu: false }); if (s.rsel !== null) chooseTrace(s.rsel); },
       dens: dens, densMenu: !!s.densMenu, densities: densities, toggleDens: () => set({ densMenu: !cur().densMenu }),
       mainHref: this.props.mainHref || 'Main.dc.html',
       items: items, tfilters: tfilters, tsecs: tsecs, insp: insp, wl: wl, bar: bar, hasLive: hasLive,
@@ -2409,6 +2530,8 @@ class Component extends DCLogic {
     /* ---------- one step row */
     const stepV = (st) => {
       const id = st.id;
+      /* A2: a read/edit/tool step has no prose, but its raw record is the
+         reason to expand (the button is drawn only when open). */
       const hasDetail = !!(st.detail || st.facts);
       const open = st.onToggle ? !!st.expanded : hasDetail && !!sopen[id];   /* details only on click, at every level */
       const wrap = flat && !!st.full;

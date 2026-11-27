@@ -39,14 +39,18 @@ export type ChainChecks = {
   passCheck: typeof CHAIN_PASS_CHECK; failCheck: typeof CHAIN_FAIL_CHECK;
 };
 
-/** The sheet's two checks (§1.2): `chain-lint` always passes, `chain-unit` passes only once its file exists. */
-function registerChainChecks(s7c: S7C1World): void {
+/**
+ * The sheet's two checks (§1.2): `chain-lint` always passes, `chain-unit` passes only once its file exists.
+ * The `timeout` unit runs past its timeout, so its round keeps one PASS and one INCONCLUSIVE check.
+ */
+function registerChainChecks(s7c: S7C1World, unit: 'fail' | 'timeout' = 'fail'): void {
   const host = s7c.world;
   const base = ag2bChecksConfiguration({ actor: host.ag2b.actor, revision: checkRevisionOf(2) });
   const one = base.checks[0]!;
   host.platform.registerCheckConfiguration({ configuration: { ...base, checks: [
     { ...one, checkId: CHAIN_PASS_CHECK, command: 'node -e "process.exit(0)"' },
-    { ...one, checkId: CHAIN_FAIL_CHECK, command: 'test -f chain-unit.pass' },
+    { ...one, checkId: CHAIN_FAIL_CHECK, command: unit === 'timeout' ? 'sleep 5' : 'test -f chain-unit.pass',
+      timeoutMs: unit === 'timeout' ? 100 : one.timeoutMs },
   ] } });
 }
 
@@ -68,12 +72,13 @@ async function headRound(s7c: S7C1World, run: RunRef): Promise<ChainRound> {
 }
 
 /**
- * Sheet §1.2: the first round on `s7c-m1`'s ended Run (lint PASS / unit FAIL);
+ * Sheet §1.2: the first round on `s7c-m1`'s ended Run (lint PASS / unit FAIL,
+ * or a unit that times out and leaves its round one PASS and one INCONCLUSIVE);
  * with `rounds: 2` the person's public `verification/reverify` opens the
  * successor round on the same Run after `chain-unit.pass` is written (2/2).
  */
-export async function seedChainChecks(s7c: S7C1World, rounds: 1 | 2): Promise<ChainChecks> {
-  registerChainChecks(s7c);
+export async function seedChainChecks(s7c: S7C1World, rounds: 1 | 2, unit: 'fail' | 'timeout' = 'fail'): Promise<ChainChecks> {
+  registerChainChecks(s7c, unit);
   const run = s7c.run.runRef;
   await runChecksRound(s7c, s7c.goal, s7c.lines.module.ref, 's7c-m1', 'e3c-round-1');
   const firstRound = await headRound(s7c, run);
