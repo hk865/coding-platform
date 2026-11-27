@@ -26,10 +26,14 @@ import type { VerificationRoundRef } from './verification.js';
 // ------------------------------------------------------------------------ //
 // Vocabulary                                                                //
 // ------------------------------------------------------------------------ //
-/** Platform-derived failure class of a requeue or reverify (C2); callers never set it. */
-export type ReworkFailureClass = 'interrupted' | 'cancelled' | 'check_failed' | 'run_failed' | 'check_incomplete';
+/**
+ * Platform-derived failure class of a requeue or reverify (C2); callers never set it. `review_rework` (121-173) is the
+ * operator's node-review rework of a completed node: nothing failed, the person sent the node back with a reason.
+ */
+export type ReworkFailureClass = 'interrupted' | 'cancelled' | 'check_failed' | 'run_failed' | 'check_incomplete'
+  | 'review_rework';
 export const REWORK_FAILURE_CLASSES: readonly ReworkFailureClass[] = Object.freeze([
-  'interrupted', 'cancelled', 'check_failed', 'run_failed', 'check_incomplete',
+  'interrupted', 'cancelled', 'check_failed', 'run_failed', 'check_incomplete', 'review_rework',
 ]);
 /** Who performs a rework operation (C1). Only `reworkActorClassOf` derives it. */
 export type ReworkActorClass = 'human' | 'system' | 'agent';
@@ -163,7 +167,16 @@ export type TaskRequeueTriggerV1 = {
   resumedEpoch: number;
   pausedEpoch: number;
 };
-export type TaskRequeueBasisComparison = 'compared' | 'skipped_interrupted' | 'skipped_human_cancel';
+/**
+ * 121-173: the operator sent the node back from node review. `reductionRevision` is the TaskReduction the person
+ * reviewed; this record makes exactly that reduction stop applying, so the Task is claimable again (P4).
+ */
+export type TaskRequeueNodeReviewTriggerV1 = {
+  kind: 'node_review_rework';
+  reductionRevision: number;
+};
+export type TaskRequeueBasisComparison = 'compared' | 'skipped_interrupted' | 'skipped_human_cancel'
+  | 'skipped_node_review';
 /** Model history the continuing Run is seeded from (LA-1); read from the afterRun claim Session. */
 export type TaskRequeueHistorySourceV1 = {
   sessionRef: SessionRef;
@@ -206,8 +219,8 @@ export type TaskRequeueSnapshotV1 = {
   interruption: 'executing' | 'paused' | null;
   stopIntentRef: ControlIntentRef | null;
   stopRequester: StopRequester;
-  /** Present only on the Goal-resume continuation. */
-  trigger?: TaskRequeueTriggerV1;
+  /** Present only on the Goal-resume continuation and on the node-review rework. */
+  trigger?: TaskRequeueTriggerV1 | TaskRequeueNodeReviewTriggerV1;
   /** Always computed and stored, compared or not. */
   basis: NoProgressKeyV1;
   basisComparison: TaskRequeueBasisComparison;

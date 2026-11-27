@@ -577,15 +577,17 @@ describe('reworkPermission: §4.3 "操作者与失败类别" matrix (C1, C2, C4;
 
   it('exhaustive sweep: every combination answers null or one of the §1.2 reason/code pairs', () => {
     const fences: ReworkFence[] = ['none', 'human_only', 'human_or_goal_resume'];
-    const classes: ReworkFailureClass[] = ['interrupted', 'cancelled', 'check_failed', 'run_failed', 'check_incomplete'];
+    const classes: ReworkFailureClass[] = ['interrupted', 'cancelled', 'check_failed', 'run_failed', 'check_incomplete',
+      'review_rework'];
     const bools = [false, true];
     let combinations = 0;
     for (const operation of ['requeue', 'reverify'] as const) for (const goalDesiredState of GOALS) for (const failureClass of classes)
       for (const interruption of ['executing', 'paused', null] as const) for (const fence of fences) for (const actorClass of REWORK_ACTOR_CLASSES)
-        for (const goalFanOut of bools) for (const trigger of bools) for (const budget of bools) for (const note of bools) {
+        for (const goalFanOut of bools) for (const trigger of bools) for (const budget of bools) for (const note of bools)
+          for (const nodeReview of bools) {
           combinations += 1;
           const result = reworkPermission({ operation, goalDesiredState, failureClass, interruption, fence, actorClass, goalFanOut,
-            trigger, budget, note });
+            trigger, budget, note, nodeReview });
           if (goalDesiredState !== 'active') {
             expect(result).toMatchObject({ ok: false, reason: 'guard_failed', code: 'busy' });
             continue;
@@ -593,16 +595,20 @@ describe('reworkPermission: §4.3 "操作者与失败类别" matrix (C1, C2, C4;
           if (result === null) {
             // Admitted ⇒ the fence, the fan-out rule and the request fields all hold.
             expect(fence !== 'human_only' || actorClass === 'human').toBe(true);
-            expect(fence !== 'human_or_goal_resume' || actorClass === 'human' || (goalFanOut && trigger)).toBe(true);
+            expect(fence !== 'human_or_goal_resume' || actorClass === 'human' || (goalFanOut && trigger && !nodeReview)).toBe(true);
             expect(!goalFanOut || (operation === 'requeue' && failureClass === 'interrupted' && interruption === 'paused' && trigger)).toBe(true);
-            expect(!(budget && actorClass === 'agent') && !(note && actorClass !== 'human') && !(trigger && !goalFanOut)).toBe(true);
+            expect(!(budget && actorClass === 'agent') && !(note && actorClass !== 'human') && !(trigger && !goalFanOut && !nodeReview)).toBe(true);
+            // 121-173: the node-review rework is only the person's requeue of `review_rework`, with its trigger.
+            expect(!nodeReview || (operation === 'requeue' && failureClass === 'review_rework' && actorClass === 'human'
+              && trigger && !goalFanOut)).toBe(true);
+            expect(failureClass !== 'review_rework' || nodeReview).toBe(true);
             continue;
           }
           expect(result.ok).toBe(false);
           if (result.ok) continue;
           expect([['guard_failed', 'forbidden'], ['illegal', 'invalid']]).toContainEqual([result.reason, result.code]);
         }
-    expect(combinations).toBe(2 * 3 * 5 * 3 * 3 * 3 * 2 * 2 * 2 * 2);
+    expect(combinations).toBe(2 * 3 * 6 * 3 * 3 * 3 * 2 * 2 * 2 * 2 * 2);
   });
 });
 

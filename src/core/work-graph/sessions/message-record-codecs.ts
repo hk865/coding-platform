@@ -31,6 +31,7 @@ import {
   VerificationRoundRefShape,
 } from '../../../contracts/data-format-refs.js';
 import { checkShape } from '../../../contracts/validation/data-format.js';
+import { isIsoZulu } from '../../../contracts/validation/time.js';
 import {
   hasOnlyKeys, invalid, isNonNeg, isPos, isRecord, nonEmpty, type UnknownRecord,
 } from '../../../contracts/validation/common.js';
@@ -669,8 +670,12 @@ function checkVersionPinList(value: unknown): Problem {
 
 function checkGoalSettingsShape(value: unknown): Problem {
   if (!isRecord(value)
-    || !hasOnlyKeys(value, ['schemaVersion', 'autonomy', 'order', 'waitForGoalRef', 'parallelRisks'])) {
+    || !hasOnlyKeys(value, ['schemaVersion', 'autonomy', 'order', 'waitForGoalRef', 'parallelRisks', 'nodeReviewSince'])) {
     return 'goal settings carries unknown fields';
+  }
+  // 121-173: the optional cut point of node review, present once the Goal switched to every_step.
+  if (value['nodeReviewSince'] !== undefined && !isIsoZulu(value['nodeReviewSince'])) {
+    return 'goal settings nodeReviewSince must be an ISO time';
   }
   if (value['schemaVersion'] !== 1) return 'goal settings schemaVersion must be 1';
   if (value['autonomy'] !== 'every_step' && value['autonomy'] !== 'after_plan_confirmation') {

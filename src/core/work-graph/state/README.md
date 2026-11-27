@@ -64,6 +64,7 @@
 
 做 Task/Goal/Plan、验证轮、决策策略与工作线派生的去这组。
 
+- `task-node-commit.ts`（121-173 补）：`nodeReviewProblem` 加改档切点（`reducedAt < nodeReviewSince` 的不审）；`newTaskNodeReviewDraft` 是 `TaskNodeReviewDraft@1` 的唯一构造；`nodeReviewDraftQuestion` 是问秘书的问题文本（只带标题、路径、检查是否通过，不带 diff）。NR-B 返工：`sendsBack` 判一条 TaskRequeue 是不是人对某个归约修订号的退回（读投影、退回去重、审核前的围栏共用）；`nodeReviewDraftCommandId` 是草稿发问和记账共用的命令身份（`node-review-draft:` 加 (goalId, taskId, 修订号) 的整体编码，复合 id 不会撞）。第 3 轮：`lineAskRequestId` 是 `queries/ask` 存问件用的请求号（`line-ask.ts` 和下面共用）；`nodeReviewDraftQuestionRef` 由草稿身份、Goal 的工作区和发问的 Host 身份推出草稿的问件 M（`hostMessageId`），交付页由它找 M 的确定 Query。`task-machine.ts`／`task-failure.ts`：TASK-16 从 `satisfied` 出发的例外只给节点审核退回（`TaskReworkFacts.nodeReviewRework`，P1→P4）；`requeueClassOf` 给 FC-18 `review_rework`、比较键记 `skipped_node_review`；矩阵的 `nodeReview` 只放行人、只配 `review_rework`。
 - `task-node-commit.ts` — 节点级审核（决定 121-45）的纯规则：`nodeReviewProblem`（哪个节点要人审：`every_step`、非 plan-only 的 work、适用的归约已 satisfied、有文件；不审时给原因）、`taskNodePending`（要审且该归约修订号还没有审核事实）、`taskNodeFilesOf`（节点自己 Run 的执行文件，去掉 `.workbench/`，definite 在前、按路径去重）、`taskAwaitsReview`（NR-24：S9 的 review-packet 开轮且检查都结了、K3 的 `awaiting_advice`/`awaiting_approval`/`needs_decision`，都算 live）、`nodeInFlight`（work 节点 Run 已结束、检查和完成还没落成归约，即 `verifying`：`every_step` 期间不领新 Task，它自己的轮次链照推）、`reviewedContentProblem`（人读到的路径集和 blob 与现在逐个比）和唯一构造 `taskNodeCommitOf`/`taskNodeCommitRefOf`。
 
 - `task-machine.ts` — Task 机器：相位投影（P1..P20）与写入合法性（TASK-01..30）、缩减/重排队记录。关口的处置照旧冻结，G8B B5 只放过人采用的计划按 R1 合规取代的关口（`TaskDispositionFacts.gateReplaced`，由计划校验的 `replacedGateIdsOf` 在采用时算好传进来，状态机不另判）。领取的 `TaskClaimFacts.claimHold`（暂缓里挡着的那一条）由 `taskClaimProblem` 在审查豁免之前判，审查领取也挡，拒绝原文在 `claimHoldProblem`（held：`claim hold` + 放的人和理由；叫停卡：`stop request`）。`TaskRequeue.agentProvenance` 恰在带 `runRef` 的 agent（做事轮）时有；参谋规划轮的请求者（`QueryRoundActorV1`）记 `null`（Q10a）。
@@ -119,8 +120,8 @@
 | `holdBlockerOf`、`nextTaskClaimHold`、`releaseAllHoldReasons`、`withReasons`、`yieldHoldPointer`、`rememberLastStop`、`holdAwaitsCursor` | `src/core/work-graph/state/task-claim-hold.ts:223`、`:105`、`:162`、`:147`、`:179`、`:193`、`:200` | 领取挡不挡的唯一判法、下一版暂缓、撤全部、重列原因（`null` 去掉这条，失效由领取侧的只读判断传入）、让卡位（清 `openDispatch` 同时留 `lastDispatch`，清 `pendingStop` 同时留 `lastStop`）、自动放行记 `lastStop`、新原因要不要带 `reasons[].since` 绑定 | 领取 owner（挡领取、干预领取撤全部、清 `openDispatch`）、两个动作 owner 和失效判断；不要另写 |
 | `scribeStopHeld` | `src/core/work-graph/state/task-claim-hold.ts:208` | 书记原因还 held（平台自动返工要等） | task-gate 的 `requeue_task` 等待、返工 owner 的 `system` 拒绝；不要另写 |
 | `AGENT_REQUESTER_FIELD`、`QUERY_ROUND_REQUESTER_ACTOR_FIELDS` | `src/core/work-graph/state/rework-request.ts:38`、`:29` | agent 请求者的唯一字段表（做事轮臂、问答轮臂） | 动作请求、返工请求的 `requester`；不要另写请求者形状 |
-| `nodeInFlight` | `src/core/work-graph/state/task-node-commit.ts:92` | `every_step` 下 work 节点还在检查/完成途中（`verifying`） | Workflow 的领取挡（`selectOrdinary` 的 `claimHold`）；不要另写这条判断 |
-| `nodeReviewProblem`、`taskNodePending`、`taskNodeFilesOf`、`taskAwaitsReview`、`reviewedContentProblem`、`taskNodeCommitOf`、`taskNodeCommitRefOf` | `src/core/work-graph/state/task-node-commit.ts:55`、`src/core/work-graph/state/task-node-commit.ts:64`、`src/core/work-graph/state/task-node-commit.ts:27`、`src/core/work-graph/state/task-node-commit.ts:76`、`src/core/work-graph/state/task-node-commit.ts:100`、`src/core/work-graph/state/task-node-commit.ts:129`、`src/core/work-graph/state/task-node-commit.ts:116` | 节点审核的判定、节点文件、等审阅算 live、blob 比对和审核事实的构造 | 节点审核 owner 的读和写；不要另写“哪些节点要审”或第二个构造 |
+| `nodeInFlight` | `src/core/work-graph/state/task-node-commit.ts:103` | `every_step` 下 work 节点还在检查/完成途中（`verifying`） | Workflow 的领取挡（`selectOrdinary` 的 `claimHold`）；不要另写这条判断 |
+| `nodeReviewProblem`、`taskNodePending`、`taskNodeFilesOf`、`taskAwaitsReview`、`reviewedContentProblem`、`taskNodeCommitOf`、`taskNodeCommitRefOf` | `src/core/work-graph/state/task-node-commit.ts:65`、`src/core/work-graph/state/task-node-commit.ts:77`、`src/core/work-graph/state/task-node-commit.ts:31`、`src/core/work-graph/state/task-node-commit.ts:89`、`src/core/work-graph/state/task-node-commit.ts:113`、`src/core/work-graph/state/task-node-commit.ts:214`、`src/core/work-graph/state/task-node-commit.ts:129` | 节点审核的判定、节点文件、等审阅算 live、blob 比对和审核事实的构造 | 节点审核 owner 的读和写；不要另写“哪些节点要审”或第二个构造 |
 | `interruptionRefOf`、`pendingGoalInterruption`、`resumedGoalInterruption`、`GoalInterruptionWriteV1` | `src/core/work-graph/state/goal-interruption.ts:9`、`src/core/work-graph/state/goal-interruption.ts:22`、`src/core/work-graph/state/goal-interruption.ts:38`、`src/core/work-graph/state/goal-interruption.ts:9` | 目标中断记录的地址，pending/resumed 迁移与版本期待（已 pending 保留、已 resumed 不再写） | 启动对账记录候选、驱动开始时结清、显示读记录时；不要另写记录地址，不要绕过状态层写记录 |
 | `goalDeliveryProblem`、`goalDeliveryAcceptanceOf` | `src/core/work-graph/state/goal-delivery.ts:19`、`src/core/work-graph/state/goal-delivery.ts:27` | 是否有可接受的交付（取消、无相位、未完成、Plan 已被活动 Plan 取代都拒绝）与确认记录的唯一构造 | 交付接受的写 owner 与页面读；不要另写可接受条件或第二个构造 |
 | `projectNoticeIdentity`、`projectNoticeNext`、`projectNoticePending`、`projectNoticeBound` | `src/core/work-graph/state/project-notice.ts:65`、`:37`、`:61`、`:65` | 项目通知的操作身份/记录 id、写入前的决定、待提交记录与回执游标绑定后的投影 | 项目通知写入与来源读取；不要另写身份、校验或字段 |
@@ -175,10 +176,10 @@
 | `transitionGoal` | `src/core/work-graph/state/goal-machine.ts:686` | Goal 主迁移：目标状态、计划指针、完成、部分接受；`goal_created` 的 `next` 是预绑定 Goal | Goal 写入 |
 | `goalFanOutRequestId` | `src/core/work-graph/state/goal-machine.ts:744` | 派生 fan-out 请求的稳定 id | pause/cancel/resume 的扇出 |
 | `findGoalResumeContinuations` | `src/core/work-graph/state/goal-machine.ts:797` | 从任务事实找 resume 的续作 | 恢复 Goal 后规划续作 |
-| `transitionGoalSettings` | `src/core/work-graph/state/goal-settings-machine.ts:189` | Goal 设置迁移（order_set 用已有顺序的下标） | 修改 Goal 设置 |
-| `goalStartPolicy` | `src/core/work-graph/state/goal-settings-machine.ts:237` | 启动准入策略 | 自动启动 Goal 前 |
-| `goalDecisionBasisMatches` | `src/core/work-graph/state/goal-settings-machine.ts:255` | 决策依据是否仍对应当前 Goal | 复用/重算决策时 |
-| `isLegalSettings` | `src/core/work-graph/state/goal-settings-machine.ts:141` | Goal 设置形状的唯一纯检查（schema 版本、autonomy、order、wait/risk 字段） | 构造或复制设置后写之前；`decideGoalCopy` 与设置迁移共用 |
+| `transitionGoalSettings` | `src/core/work-graph/state/goal-settings-machine.ts:192` | Goal 设置迁移（order_set 用已有顺序的下标） | 修改 Goal 设置 |
+| `goalStartPolicy` | `src/core/work-graph/state/goal-settings-machine.ts:240` | 启动准入策略 | 自动启动 Goal 前 |
+| `goalDecisionBasisMatches` | `src/core/work-graph/state/goal-settings-machine.ts:258` | 决策依据是否仍对应当前 Goal | 复用/重算决策时 |
+| `isLegalSettings` | `src/core/work-graph/state/goal-settings-machine.ts:143` | Goal 设置形状的唯一纯检查（schema 版本、autonomy、order、wait/risk 字段） | 构造或复制设置后写之前；`decideGoalCopy` 与设置迁移共用 |
 | `transitionLinePins` | `src/core/work-graph/state/line-pin-machine.ts:81` | 一次原子增删置顶项；无变化时 effects 为空 | 修改工作线置顶 |
 | `deriveLineStatus` | `src/core/work-graph/state/line-status.ts:261` | 唯一的工作线状态派生（词、注意、标记、桶） | 列表、悬停卡、详情 |
 | `lineRunningCapOf` | `src/core/work-graph/state/line-status.ts:413` | 由持有者的 Query 标记或 Run 的持久 `starting`+`authorized` 形状派生运行名额等待（`running_cap` 或 null） | 画线的名额等待；不要另写判定 |
@@ -286,20 +287,20 @@
 | `consumeHandoffBrief` | `src/core/work-graph/state/session-handoff.ts:248` | entered 确认的消费迁移：写 `brief.consumedBy`、revision 加 1，并给出 pin 住读到的 revision 的 guard；不写事件 | D 在 entered 提交里合并 record+guard；推进只设 `brief.ready`，从不消费 |
 | `withHandoffApproval`、`decidedHandoffApproval` | `src/core/work-graph/state/session-handoff.ts:296`、`:293` | 交接批准卡：接受时写入待批 `approval`（不动 revision）；`handoff.decide` 把人的裁决与回答写回，拒绝把操作置 `failed` | 交接接受与 `handoff.decide` |
 | `briefReady`、`BriefReadyFacts` | `src/core/work-graph/state/session-handoff.ts:349` | 简报就绪：受保护的最终归档提交成功且完整路由集已保存（`closed` 且每根有回执或被明确跳过）；`pending`/`partial` 不是成功 | 推进在归档 after 写里设 `brief.ready`；读取按同一规则判 `waiting` |
-| `deriveReworkClass` | `src/core/work-graph/state/task-failure.ts:200` | 失败分类（FC-1..FC-17） | 重排队前 |
+| `deriveReworkClass` | `src/core/work-graph/state/task-failure.ts:201` | 失败分类（FC-1..FC-17） | 重排队前 |
 | `reworkFenceOf` | `src/core/work-graph/state/task-failure.ts:147` | 人工停止围栏 | 判定谁能重做 |
-| `reworkPermission` | `src/core/work-graph/state/task-failure.ts:414` | Goal 活动 + 操作者/失败类别矩阵 | 允许重排队前 |
-| `automationVerdict` | `src/core/work-graph/state/task-failure.ts:807` | 按策略给自动化裁决 | 失败后自动处理 |
-| `buildTaskFailureFacts` | `src/core/work-graph/state/task-failure.ts:1049` | 组装失败事实读模型 | 展示失败与重做 |
-| `runErrorOf` | `src/core/work-graph/state/task-failure.ts:700` | 从终态负载与对账取错误与来源 | 统一错误展示 |
-| `attemptOrdinalOf` | `src/core/work-graph/state/task-failure.ts:1339` | Run 在它的链上是第几次尝试（从 1）：链上每个带 `requeueRef` 的 Run 开一次新尝试，接续（`previousRun`）留在同一次；复用 `chainRunIds` 防环 | 轨道横条 `attempt.ordinal` 与 `TaskRow.attemptOrdinal`；不要另写走链 |
-| `taskReworkRefusalEffects` | `src/core/work-graph/state/task-failure.ts:1500` | 拒绝重做的 effects | 拒绝记录同一提交 |
+| `reworkPermission` | `src/core/work-graph/state/task-failure.ts:432` | Goal 活动 + 操作者/失败类别矩阵 | 允许重排队前 |
+| `automationVerdict` | `src/core/work-graph/state/task-failure.ts:836` | 按策略给自动化裁决 | 失败后自动处理 |
+| `buildTaskFailureFacts` | `src/core/work-graph/state/task-failure.ts:1078` | 组装失败事实读模型 | 展示失败与重做 |
+| `runErrorOf` | `src/core/work-graph/state/task-failure.ts:729` | 从终态负载与对账取错误与来源 | 统一错误展示 |
+| `attemptOrdinalOf` | `src/core/work-graph/state/task-failure.ts:1368` | Run 在它的链上是第几次尝试（从 1）：链上每个带 `requeueRef` 的 Run 开一次新尝试，接续（`previousRun`）留在同一次；复用 `chainRunIds` 防环 | 轨道横条 `attempt.ordinal` 与 `TaskRow.attemptOrdinal`；不要另写走链 |
+| `taskReworkRefusalEffects` | `src/core/work-graph/state/task-failure.ts:1529` | 拒绝重做的 effects | 拒绝记录同一提交 |
 | `controlIntentRecordOf` | `src/core/work-graph/state/control-intent-machine.ts:388` | 由请求与 next 生成意图记录 | 控制提交 |
 | `projectTaskPhase` | `src/core/work-graph/state/task-machine.ts:241` | 相位 + 原因的精简投影 | 展示/守卫 |
 | `taskMachineStateOf` | `src/core/work-graph/state/task-machine.ts:255` | Task 定义的机器状态 | Task 迁移前 |
-| `transitionTask` | `src/core/work-graph/state/task-machine.ts:807` | Task 写入合法性（TASK-01..30） | claim、完成、处置、重排队 |
-| `taskRequeueStateProblem` | `src/core/work-graph/state/task-machine.ts:1195` | 当前状态能否重排队 | 重排队前 |
-| `newTaskRequeueRecord` | `src/core/work-graph/state/task-machine.ts:721` | 建 TaskRequeue 记录 | 重排队提交 |
+| `transitionTask` | `src/core/work-graph/state/task-machine.ts:826` | Task 写入合法性（TASK-01..30） | claim、完成、处置、重排队 |
+| `taskRequeueStateProblem` | `src/core/work-graph/state/task-machine.ts:1214` | 当前状态能否重排队 | 重排队前 |
+| `newTaskRequeueRecord` | `src/core/work-graph/state/task-machine.ts:740` | 建 TaskRequeue 记录 | 重排队提交 |
 | `effectivePlatformDuty` | `src/core/work-graph/state/context-input.ts:611` | 解析有效平台职责 | 判断平台/职责时 |
 | `normalizeCommandText` | `src/core/work-graph/state/command-normalization.ts:29` | 规范化命令文本 | 比较/算指纹前 |
 | `declaredInputProblem` | `src/core/work-graph/state/context-input.ts:480` | 检查声明输入 | 校验工具/上下文输入时 |

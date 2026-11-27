@@ -469,6 +469,7 @@ export const PLATFORM_PROMPT_PACK_V1 = {
     "brief.failureClass.check_failed": "检查未通过",
     "brief.failureClass.run_failed": "执行失败",
     "brief.failureClass.check_incomplete": "检查不完整",
+    "brief.failureClass.review_rework": "节点审核退回",
     "brief.actorClass.human": "人工",
     "brief.actorClass.system": "系统自动",
     "brief.actorClass.agent": "Agent",

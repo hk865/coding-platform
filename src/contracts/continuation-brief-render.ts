@@ -75,6 +75,8 @@ function briefTexts(texts: PromptTextsV1): BriefTexts {
       interrupted: S('brief.failureClass.interrupted') ?? '', cancelled: S('brief.failureClass.cancelled') ?? '',
       check_failed: S('brief.failureClass.check_failed') ?? '', run_failed: S('brief.failureClass.run_failed') ?? '',
       check_incomplete: S('brief.failureClass.check_incomplete') ?? '',
+      // 121-173: read on use, so a string table frozen before this class (an earlier Run's manifest) still renders.
+      get review_rework(): string { return S('brief.failureClass.review_rework'); },
     }),
     actorClass: Object.freeze({
       human: S('brief.actorClass.human') ?? '', system: S('brief.actorClass.system') ?? '',
@@ -296,6 +298,15 @@ export function renderContinuationBriefZh(
     }, toolNames);
     if (utf8Bytes(text) <= limit) return text;
   }
+  // 121-173: the person's node-review reason is the next round's brief. Its line is never clipped (briefBodyZh), and
+  // every candidate below keeps its section: the budget is spent on the other optional body lines first.
+  const reasonIndex = brief.failureClass === 'review_rework' ? body.indexOf(requeueReasonLineZh(B, brief, Infinity)) : -1;
+  const keptBody = (kept: number): { lines: string[]; omitted: number } => {
+    if (reasonIndex < kept) return { lines: body.slice(0, kept), omitted: body.length - kept };
+    const from = Math.max(kept, reasonIndex - 2);
+    return { lines: [...body.slice(0, kept), ...body.slice(from, reasonIndex + 1)],
+      omitted: body.length - kept - (reasonIndex + 1 - from) };
+  };
   if (anomalies === undefined && review === null && blockedAll.length === 0) {
     // A brief without either mandatory section: the longest prefix of ordinary
     // body lines whose FULL text fits, rendered through the frozen template and
@@ -303,8 +314,9 @@ export function renderContinuationBriefZh(
     // is the smallest one; when even that is over the limit the template's own
     // fixed text cannot fit, so refuse `capacity` instead of returning it.
     for (let kept = body.length; kept >= 0; kept -= 1) {
+      const shown = keptBody(kept);
       const text = renderBriefTemplateZh(B, marker, {
-        body: body.slice(0, kept), blockedOmission: [], bodyOmission: [omittedNoteZh(B, body.length - kept)],
+        body: shown.lines, blockedOmission: [], bodyOmission: [omittedNoteZh(B, shown.omitted)],
         anomalies: [], review: [], blocked: [],
       }, toolNames);
       if (utf8Bytes(text) <= limit) return text;
@@ -320,7 +332,8 @@ export function renderContinuationBriefZh(
   const cap = RENDER_TEXT_CAPS[RENDER_TEXT_CAPS.length - 1]!;
   const fixedCandidate = (anomalyLines: readonly string[], reviewLines: readonly string[]): string =>
     renderBriefTemplateZh(B, marker, {
-      body: [], blockedOmission: [], bodyOmission: [], anomalies: anomalyLines, review: reviewLines, blocked: [],
+      body: keptBody(0).lines, blockedOmission: [], bodyOmission: [], anomalies: anomalyLines, review: reviewLines,
+      blocked: [],
     }, toolNames);
   // The two mandatory sections are always kept as separate parts: a template may
   // place, format or condition them independently, so merging them into one
@@ -364,9 +377,10 @@ export function renderContinuationBriefZh(
   // mandatory-only minimum was measured above, so it is the final fallback, also
   // rendered through the same template.
   for (let kept = body.length; kept >= 0; kept -= 1) {
+    const shown = keptBody(kept);
     const text = renderBriefTemplateZh(B, marker, {
-      body: body.slice(0, kept), blockedOmission: [],
-      bodyOmission: [omittedNoteZh(B, body.length - kept + blockedOmitted)],
+      body: shown.lines, blockedOmission: [],
+      bodyOmission: [omittedNoteZh(B, shown.omitted + blockedOmitted)],
       anomalies: suffixMandatory.anomaly, review: suffixMandatory.review, blocked: [],
     }, toolNames);
     if (utf8Bytes(text) <= limit) return text;
@@ -519,6 +533,12 @@ function blockedCommandsLinesZh(
   }
   return lines;
 }
+/** The requeue section's reason line, its reason cut to `cap`. */
+function requeueReasonLineZh(B: BriefTexts, brief: ContinuationBriefV1, cap: number): string {
+  return `${B.S('brief.requeue.reasonLead')}${B.actorClass[brief.requeue.reasonAuthor]}`
+    + `${B.S('brief.requeue.reasonMiddle')}${boundedZh(B, brief.requeue.reason, cap)}`;
+}
+
 /** `text` cut to `cap` UTF-16 code units without splitting a surrogate pair; continuation lines are indented. */
 function clip(B: BriefTexts, text: string, cap: number): string {
   let cut = text;
@@ -702,8 +722,7 @@ function briefBodyZh(B: BriefTexts, brief: ContinuationBriefV1, cap: number): st
   }
 
   section(B.S('brief.section.requeue'));
-  lines.push(`${B.S('brief.requeue.reasonLead')}${B.actorClass[brief.requeue.reasonAuthor]}`
-    + `${B.S('brief.requeue.reasonMiddle')}${t(brief.requeue.reason)}`);
+  lines.push(requeueReasonLineZh(B, brief, brief.failureClass === 'review_rework' ? Infinity : cap));
   if (brief.requeue.newInputs.length === 0) lines.push(B.S('brief.requeue.none'));
   for (const input of brief.requeue.newInputs) {
     lines.push(input.kind === 'session_message'

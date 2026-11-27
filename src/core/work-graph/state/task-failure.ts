@@ -185,7 +185,8 @@ export type ReworkClassDerivationV1 =
     stop: ReworkStopV1;
   }
   | {
-    row: 'FC-3' | 'FC-6' | 'FC-7' | 'FC-7b' | 'FC-7m' | 'FC-8' | 'FC-9' | 'FC-10' | 'FC-13' | 'FC-15' | 'FC-16' | 'S1-FC-ARCHIVE';
+    row: 'FC-3' | 'FC-6' | 'FC-7' | 'FC-7b' | 'FC-7m' | 'FC-8' | 'FC-9' | 'FC-10' | 'FC-13' | 'FC-15' | 'FC-16' | 'FC-18'
+      | 'S1-FC-ARCHIVE';
     kind: 'class';
     failureClass: ReworkFailureClass;
     interruption: 'executing' | 'paused' | null;
@@ -290,6 +291,19 @@ export function deriveReworkClass(run: RunSnapshot, pointerIntent: StopIntentV1 
 }
 
 /**
+ * The class a requeue judges. FC-18 (121-173): the operator's node-review rework of a completed node is
+ * `review_rework`; its Run is a clean PASS (FC-17, nothing to rework on its own), so the class comes from the request's
+ * `node_review_rework` trigger, with the pointer fact of every row. Every other requeue: `deriveReworkClass`.
+ */
+export function requeueClassOf(trigger: { kind: string } | null, run: RunSnapshot, pointerIntent: StopIntentV1 | null,
+  chain: RoundChainHeadV1, archive?: VerifiedArchiveInterruptionV1 | null): ReworkClassDerivationV1 {
+  if (trigger?.kind === 'node_review_rework') {
+    return { row: 'FC-18', kind: 'class', failureClass: 'review_rework', interruption: null, stop: reworkStopOf(pointerIntent) };
+  }
+  return deriveReworkClass(run, pointerIntent, chain, archive);
+}
+
+/**
  * Slice 1 §3.5/rule 14: whether the owner-verified archive interruption
  * actually matches this Run's own stop fact. Only the archive's cancel, its
  * wait cancel or a real `interrupted_clean` fact of the same Run qualifies; a
@@ -386,6 +400,8 @@ export type ReworkPermissionInputV1 = {
   budget: boolean;
   /** The request carries a human `note`. */
   note: boolean;
+  /** 121-173: the request is the operator's node-review rework (its trigger is `node_review_rework`). */
+  nodeReview?: boolean;
 };
 
 /**
@@ -405,10 +421,12 @@ export type ReworkPermissionInputV1 = {
  *    continued only by a human (`forbidden`); `cancelled` is not for
  *    `agent` (`forbidden`, C2); a requeue of `check_incomplete` is only for
  *    `human` (`illegal`/`invalid`, it is reworked by a successor round);
- *    a reverify exists only for `check_failed` / `check_incomplete`
- *    (`illegal`/`invalid`);
+ *    `review_rework` only for `human` (`forbidden`, 121-173: the person sends a
+ *    node back); a reverify exists only for `check_failed` /
+ *    `check_incomplete` (`illegal`/`invalid`);
  * 5. request fields (`illegal`/`invalid`): an agent `budget`, a non-human
- *    `note`, a trigger from any actor but `GOAL_FAN_OUT_ACTOR`.
+ *    `note`, a trigger from any actor but `GOAL_FAN_OUT_ACTOR` or the node
+ *    review, and `review_rework` exactly with the node-review trigger.
  *
  * Null when admitted. Budget, cap and key checks are the committed policy
  * refusals of TASK-28 and are not here (§1.2).
@@ -443,7 +461,13 @@ export function reworkPermission(input: ReworkPermissionInputV1): ReworkPermissi
   if (classProblem !== null) return classProblem;
   if (input.budget && input.actorClass === 'agent') return reject('illegal', 'invalid', 'an agent may not set a requeue budget');
   if (input.note && !human) return reject('illegal', 'invalid', 'only an operator may attach a note');
-  if (input.trigger && !input.goalFanOut) return reject('illegal', 'invalid', 'only the Goal fan-out actor may carry a trigger');
+  const nodeReview = input.nodeReview === true;
+  if (input.trigger && !input.goalFanOut && !nodeReview) {
+    return reject('illegal', 'invalid', 'only the Goal fan-out actor may carry a trigger');
+  }
+  if ((input.failureClass === 'review_rework') !== nodeReview || (nodeReview && !input.trigger)) {
+    return reject('illegal', 'invalid', 'review_rework is exactly the node-review rework with its trigger');
+  }
   return null;
 }
 
@@ -468,6 +492,9 @@ function requeueClassProblem(input: ReworkPermissionInputV1, human: boolean, goa
     case 'check_failed':
     case 'run_failed':
       return null;
+    case 'review_rework':
+      return human ? null
+        : reject('guard_failed', 'forbidden', 'only an operator sends a node back from node review');
     default:
       return unreachable(input.failureClass, 'rework failure class');
   }
@@ -483,6 +510,8 @@ function reverifyClassProblem(input: ReworkPermissionInputV1): Rejected | null {
     case 'cancelled':
     case 'run_failed':
       return reject('illegal', 'invalid', `a ${input.failureClass} Run has no round to reverify`);
+    case 'review_rework':
+      return reject('illegal', 'invalid', 'a node sent back from node review has no failed round to reverify');
     default:
       return unreachable(input.failureClass, 'rework failure class');
   }

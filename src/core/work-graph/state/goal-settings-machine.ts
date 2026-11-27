@@ -23,6 +23,7 @@ import {
 import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js';
 import type { GoalDesiredState, GoalRef, GoalSnapshot } from '../../../contracts/ledger.js';
 import type { PlanRevisionRef } from '../../../contracts/plan.js';
+import { isIsoZulu } from '../../../contracts/validation/time.js';
 import { accept, reject, unreachable, type Rejected, type Transition } from './transition.js';
 
 // --------------------------------------------------------------------------
@@ -93,6 +94,7 @@ function settingsOf(state: GoalSnapshot): GoalSettingsV1 {
     order: base.order,
     waitForGoalRef: base.waitForGoalRef,
     parallelRisks: base.parallelRisks.map((risk) => ({ ...risk })),
+    ...(base.nodeReviewSince === undefined ? {} : { nodeReviewSince: base.nodeReviewSince }),
   };
 }
 
@@ -146,6 +148,7 @@ export function isLegalSettings(settings: unknown): boolean {
   if (!isLegalOrder(value.order)) return false;
   if (value.waitForGoalRef !== null && !isGoalRef(value.waitForGoalRef)) return false;
   if (!Array.isArray(value.parallelRisks)) return false;
+  if (value.nodeReviewSince !== undefined && !isIsoZulu(value.nodeReviewSince)) return false;
   return value.parallelRisks.every((risk) => isLegalParallelRisk(risk));
 }
 

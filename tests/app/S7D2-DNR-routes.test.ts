@@ -18,6 +18,12 @@ describe('nr route table', () => {
     expect(Object.entries(CORE_ROUTE_SPECS).find(([suffix]) => suffix === 'nodes/commit')?.[1])
       .toEqual({ kind: 'graph_write', binding: 'commitNode', owner: 'nodeCommits.commitNode' });
   });
+
+  // 121-173 (NR-B ruling §2.1): the person's send-back of a pending node.
+  it('nodes/rework is a graph_write bound to nodeCommits.reworkNode', () => {
+    expect(Object.entries(CORE_ROUTE_SPECS).find(([suffix]) => suffix === 'nodes/rework')?.[1])
+      .toEqual({ kind: 'graph_write', binding: 'reworkNode', owner: 'nodeCommits.reworkNode' });
+  });
 });
 
 const specOf = (suffix: string): unknown =>

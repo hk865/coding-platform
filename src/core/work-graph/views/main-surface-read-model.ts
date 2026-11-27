@@ -24,6 +24,9 @@
  * the project's lines plus the selected Goal's (the no-goal view: the project's
  * only), with each subject's automatic reworks folded, and the seen advance and
  * display token the page allows. Reading writes nothing.
+ *
+ * A Goal's view also carries that Goal's node review receipts (121-173): every `TaskNodeCommit` record, read again on
+ * each read, so a receipt stays after a refresh or a Host restart.
  */
 import type { CommitCursor } from '../../../contracts/command-event.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
@@ -46,6 +49,7 @@ import type {
 import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
 import type { DecisionCardV1, NoticeItemV1 } from '../model/decision-contracts.js';
 import type { PlanProposal } from '../model/plan-contracts.js';
+import type { NodeReviewReceiptV1, TaskNodeCommitPort } from '../model/task-node-commit-contracts.js';
 import { storedDispatchBasis } from '../model/action-request-contracts.js';
 import {
   REQUEST_ROOT_MARK, REQUEST_ROOTS_BY_GOAL_INDEX, requestGoalSlot, type RequestCoreViewV1,
@@ -78,7 +82,10 @@ export type MainPageV1 = { goalId: string | null;
   cards: DecisionCardV1[];
   notices: (NoticeItemV1 & { memberViews?: NoticeItemV1[] })[];
   seenThrough: Partial<Record<NoticeCategoryV1, NoticePositionV1>>; displayToken: string | null;
-  next: MainPageCursorV1 | null };
+  next: MainPageCursorV1 | null;
+  /** The Goal's node review receipts, oldest first; `[]` in the no-goal view; absent when the platform has no node
+   *  review owner (the page then says they cannot be read, not that there are none). */
+  nodeReceipts?: NodeReviewReceiptV1[] };
 
 /** One action the request's handling left behind: a claim hold, a dispatch request or a stop request. */
 export type RequestFeedbackActionV1 = {
@@ -137,6 +144,8 @@ export type MainSurfaceReadDependencies = {
   decisions: DecisionWholePageReader;
   /** The claim owner's source-chain root (design 3.3): a hand-off's `planfix`/`planresume` successor's request. */
   planSourceRoot: PlanSourceRootPort;
+  /** 121-173: the node review owner, for the Goal view's receipts. */
+  nodeCommits?: Pick<TaskNodeCommitPort, 'readNodeReceipts'>;
 };
 
 /** slice-6-SPEC L6: one page holds 20 requests. */
@@ -368,6 +377,13 @@ async function readMainPage(
   const whole = await deps.decisions.readWholePage(ctx, { workspace, notices: { goalRef } });
   if (whole.status !== 'ready') return whole;
   const listed = pageCards(whole.value.cards, views, goalRef, ctx.projectId);
+  // The no-goal view has no receipts; a Goal view reads them, and omits them only when no node review owner is wired.
+  let nodeReceipts: NodeReviewReceiptV1[] | undefined = goalRef === null ? [] : undefined;
+  if (goalRef !== null && deps.nodeCommits !== undefined) {
+    const read = await deps.nodeCommits.readNodeReceipts(ctx, { goalRef });
+    if (read.status !== 'ready') return read;
+    nodeReceipts = read.value.receipts;
+  }
   return { status: 'ready', value: {
     goalId: parsed.goalId,
     requests: views.map((view, index) => ({ ...view, cardKeys: listed.cardKeys[index]! })),
@@ -376,6 +392,7 @@ async function readMainPage(
     seenThrough: whole.value.seenThrough,
     displayToken: whole.value.displayToken,
     next: step.next,
+    ...(nodeReceipts === undefined ? {} : { nodeReceipts }),
   } };
 }
 

@@ -14,7 +14,9 @@
  * Named mutations are nr's new code: none can be shown on today's tree.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { graphWrite } from '../helpers/AG2b-collaboration-fixture.js';
+import { graphWrite, plain } from '../helpers/AG2b-collaboration-fixture.js';
+import { startGoalDriver } from '../helpers/DRV-fixture.js';
+import { waitFor } from '../scenarios/harness.js';
 import { byIdentityPrefix, commitBarrier } from '../helpers/S6A-commit-barrier.js';
 import { S6A_SCOPE } from '../helpers/S6A-request-fixture.js';
 import { committed } from '../helpers/S7A-fixture.js';
@@ -65,10 +67,11 @@ describe.each(BACKENDS)('nr storage (%s)', backend => {
     const taskId = `nrt04${backend[0]}-a`;
     const body = await dnrCommitBody(w, { taskId, requestId: 'nrt04-commit' });
     const pinned = await goalRevision(w.world, w.goal);
-    for (const autonomy of ['after_plan_confirmation', 'every_step'] as const) {
-      committed(await w.world.post('goals/settings/set', graphWrite(S6A_SCOPE, { goalRef: w.goal, autonomy,
-        waitForGoalRef: null }, `nrt04-${autonomy}`, [{ ref: w.goal, revision: await goalRevision(w.world, w.goal) }])),
-      `NR-T04 ${autonomy}`);
+    // The same every_step settings written twice move the Goal pin and keep the review cut point (lead ruling 11-27).
+    for (const write of ['first', 'second'] as const) {
+      committed(await w.world.post('goals/settings/set', graphWrite(S6A_SCOPE, { goalRef: w.goal, autonomy: 'every_step',
+        waitForGoalRef: null }, `nrt04-${write}`, [{ ref: w.goal, revision: await goalRevision(w.world, w.goal) }])),
+      `NR-T04 ${write}`);
     }
     const count = headCount(w);
     expect(await postNodeCommit(w, body)).toMatchObject({ status: 'rejected', code: 'revision_conflict',
@@ -125,6 +128,25 @@ describe.each(BACKENDS)('nr storage (%s)', backend => {
     expect(await postNodeCommit(w, body)).toMatchObject({ status: 'committed', value: { review: { sha: nodeSha } } });
     expect(gitOut(w, 'log', '--format=%H', '--grep=^Node-Commit: ').split('\n')).toEqual([nodeSha]);
     expect(await dnrRow(w, taskId)).toMatchObject({ pending: false, review: { review: { sha: nodeSha } } });
+  }, SLOW);
+
+  // 121-173 (NR-B ruling §11 group 1): the draft record of a pending node and the review receipt are read back from
+  // this backend's store. The world has no secretary, so the platform's one ask is recorded as failed (ruling §3.2).
+  it('NR-B the pending node draft record and the review receipt read back from the store', async () => {
+    const w = await pendingNode(`nrbs${backend[0]}`, backend);
+    const taskId = `nrbs${backend[0]}-a`;
+    await startGoalDriver(w.world, w.goal, `nrbs-${backend}-driver`);
+    type Delivery = { status: string; value: { nodes: Array<{ task: { taskId: string }; draft: unknown }> } };
+    const delivery = await waitFor(async () => (await w.world.post('goals/delivery', plain(S6A_SCOPE, { goalRef: w.goal })))
+      .body as Delivery, read => read.value.nodes.some(row => row.task.taskId === taskId && row.draft !== null),
+    'the pending node draft');
+    expect(delivery.value.nodes.find(row => row.task.taskId === taskId)?.draft).toEqual({ status: 'failed', text: null,
+      request: null, requestedAt: expect.any(String), failureReason: expect.stringMatching(/\S/) });
+    const committedReview = await postNodeCommit(w, await dnrCommitBody(w, { taskId, requestId: 'nrbs-commit' }));
+    const main = (await w.world.post('main/read', plain(S6A_SCOPE, { goalId: w.goal.goalId, cursor: null })))
+      .body as { status: string; value: { nodeReceipts?: unknown[] } };
+    expect(main).toMatchObject({ status: 'ready', value: { nodeReceipts: [{ taskRef: { taskId }, decision: 'committed',
+      sha: shaOf(committedReview), message: `DNR node ${taskId}`, files: 1 }] } });
   }, SLOW);
 
   it('NR-T16 B: the same identity with another fingerprint in history is a conflict; nothing is recorded', async () => {

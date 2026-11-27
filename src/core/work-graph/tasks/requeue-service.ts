@@ -60,9 +60,12 @@ import type { ArchiveRequeueOriginV1, SessionAnomalyAnchorV1 } from '../../../co
 import {
   DEFAULT_TASK_AUTOMATION_POLICY, GOAL_FAN_OUT_ACTOR, TASK_REWORK_REASON_MAX_CHARS, reworkActorClassOf,
   type QueryRoundActorV1, type ReworkActorClass, type ReworkActorV1, type TaskAutomationPolicyV1, type TaskRequeueOutcomeV1,
-  type TaskRequeueTriggerV1,
+  type TaskRequeueNodeReviewTriggerV1, type TaskRequeueTriggerV1,
   type TaskReworkRefusalCode, type TaskReworkRefusalRef, type TaskReworkRefusalSnapshotV1,
 } from '../../../contracts/task-requeue.js';
+import type { WriteResult } from '../../../contracts/core/results.js';
+import { taskNodeCommitCodec } from '../persistence/task-node-commit-codecs.js';
+import { taskNodeCommitRefOf } from '../state/task-node-commit.js';
 import type { RecordLookupPort, RecordOrderedLookupPort } from '../../record-store/lookup-ports.js';
 import type {
   GoalRecordTransactionPort, PreparedCommit, RecordGuard, StoreCommitReceipt, UniqueClaimChange,
@@ -80,7 +83,7 @@ import { sessionArchiveChangedEventFromEvent } from '../sessions/lifecycle-recor
 import { noProgressKey } from '../state/no-progress.js';
 import { decisionActionPolicy } from '../state/decision-policy.js';
 import {
-  countEndedGoalRuns, deriveReworkClass, nextRequeueAutoCount, permissionInterruptionOf, requeueConfirmedByReview,
+  countEndedGoalRuns, nextRequeueAutoCount, permissionInterruptionOf, requeueClassOf, requeueConfirmedByReview,
   reworkFenceOf, reworkPermission,
   taskReworkRefusalEffects, type StopIntentV1, type VerifiedArchiveInterruptionV1,
 } from '../state/task-failure.js';
@@ -702,10 +705,21 @@ function requeueConfirmedByCardOf(window: RequeueWindow, taskId: string, afterRu
 // The service
 // --------------------------------------------------------------------------
 
+/**
+ * 121-173 (`nodes/rework`): the node review owner checked the node, converted the person's pins to the Goal and the
+ * selected Run, and fixed the command keys from the person's own request (operation `node-rework`), so a replay is
+ * found before any state read. `reductionRevision` is the reduction the person reviewed.
+ */
+export type NodeReviewRequeueV1 = { reductionRevision: number; identityKey: string; fingerprint: string };
+export type NodeReviewRequeuePort = {
+  requeueForNodeReview(ctx: CoreCallContext, request: GraphWrite<RequeueTaskInput>, nodeReview: NodeReviewRequeueV1):
+    Promise<WriteResult<TaskRequeueOutcomeV1>>;
+};
+
 export function createTaskRequeueService(
   deps: TaskRequeueDependencies,
 ): Required<Pick<TaskClaimPort, 'requeueTask' | 'requeueApprovedByCard' | 'readTaskRequeue' | 'readTaskRequeueByIdentity'>>
-  & { lookupToolCommit: ToolCommitLookup } {
+  & { lookupToolCommit: ToolCommitLookup } & NodeReviewRequeuePort {
   const records = deps.records;
   const policyOf = (): TaskAutomationPolicyV1 => deps.automationPolicy?.() ?? DEFAULT_TASK_AUTOMATION_POLICY;
 
@@ -992,6 +1006,23 @@ export function createTaskRequeueService(
   }
 
   /**
+   * TASK-16 from `satisfied` (121-173): the operator sends a completed work node back from node review. The same
+   * requeue path runs with the `node_review_rework` trigger: the reviewed reduction stops applying and the Task is
+   * claimable again by `requeueRef`; the commit also holds that the node has no review fact.
+   */
+  async function requeueForNodeReview(ctx: CoreCallContext, request: GraphWrite<RequeueTaskInput>,
+    nodeReview: NodeReviewRequeueV1): Promise<WriteResult<TaskRequeueOutcomeV1>> {
+    const ownedCall = ownCall(ctx);
+    if (!ownedCall.ok) return ownedCall.rejection;
+    const ownedRequest = ownRequest(request);
+    if (!ownedRequest.ok) return ownedRequest.rejection;
+    const result = await runRequeue(ownedCall.value, ownedRequest.value, null, nodeReview);
+    // Only an Agent's or a planning round's requeue asks for a decision; the person's own never does.
+    if (result.status === 'needs_decision') throw new Error('a node-review rework never asks for a decision');
+    return result;
+  }
+
+  /**
    * LD-25 (`book-7c.md:716–:726`): the person approved a stored pending request. The same owner path runs with the
    * stored requester agent and the provenance rebuilt from its Run; there is no fresh admission (the requester Run may
    * have ended), and the autonomy fence is skipped because the card is the person's decision. The stored request is
@@ -1036,11 +1067,14 @@ export function createTaskRequeueService(
     return applied as EffectWriteResultV1<TaskRequeueOutcomeV1>;
   }
 
-  async function runRequeue(owned: OwnedCall, ownedRequest: OwnedRequest, authority: RequeueAuthority | null):
-  Promise<ReworkOwnerResultV1<TaskRequeueOutcomeV1>> {
+  async function runRequeue(owned: OwnedCall, ownedRequest: OwnedRequest, authority: RequeueAuthority | null,
+    nodeReview: NodeReviewRequeueV1 | null = null): Promise<ReworkOwnerResultV1<TaskRequeueOutcomeV1>> {
     const { input, requestId, expected } = ownedRequest;
     const shape = inputProblem(input, owned.scope);
     if (shape !== null) return shape;
+    // The plain route carries only a goal_resume trigger; the node-review trigger comes from the node review owner.
+    const requeueTrigger: TaskRequeueTriggerV1 | TaskRequeueNodeReviewTriggerV1 | null = nodeReview !== null
+      ? { kind: 'node_review_rework', reductionRevision: nodeReview.reductionRevision } : input.trigger ?? null;
     const task: TaskTriple = { projectId: input.taskRef.projectId, goalId: input.taskRef.goalId, taskId: input.taskRef.taskId };
     const goalRef: GoalRef = { aggregateType: 'Goal', projectId: task.projectId, goalId: task.goalId };
     const afterRunRef: RunRef = { aggregateType: 'Run', projectId: input.afterRunRef.projectId,
@@ -1094,8 +1128,8 @@ export function createTaskRequeueService(
     let identity: string;
     let fingerprint: string;
     try {
-      identity = identityOf(actor, owned.scope, requestId);
-      fingerprint = taskRequeueFingerprintOf(actor, owned.scope, input, expected);
+      identity = nodeReview?.identityKey ?? identityOf(actor, owned.scope, requestId);
+      fingerprint = nodeReview?.fingerprint ?? taskRequeueFingerprintOf(actor, owned.scope, input, expected);
     } catch { return reject('invalid', 'the requeue request is not canonicalizable JSON'); }
     const lookup = await records.lookupCommit({ identityKey: identity, fingerprint });
     if (lookup.status === 'ready') return replay(lookup.value, identity, fingerprint, actor, input.acknowledgement ?? null);
@@ -1153,6 +1187,18 @@ export function createTaskRequeueService(
     const goal = window.goal;
     if (goal.workspaceRef.workspaceId !== owned.scope.workspaceId) return reject('forbidden', 'the Goal belongs to another workspace');
     if (owned.signal.aborted) return reject('cancelled', 'the requeue was cancelled during the read');
+    if (nodeReview !== null) {
+      // 121-173: the revision the person saw, the trigger's and the one this commit guards (the window's TaskReduction
+      // guard) are one value; a reduction written since the person's read is a conflict, never a send-back of it.
+      const reductionRef = { aggregateType: 'TaskReduction', projectId: task.projectId, goalId: task.goalId,
+        taskId: task.taskId } as const;
+      const stored = window.facts.guards.find(guard => guard.refKey === refKeyOf(reductionRef))?.expectedRevision ?? null;
+      if (stored !== nodeReview.reductionRevision) {
+        return reject('revision_conflict', 'the TaskReduction changed since the person read it',
+          stored === null ? undefined : [{ ref: reductionRef, revision: stored }]);
+      }
+      window.rework.nodeReviewRework = { reductionRevision: nodeReview.reductionRevision };
+    }
     const afterRun = window.rework.selectedRun as RunSnapshot;
     const approvedClose = authority === null ? null : authority.approved;
     const cardCloseBase = (): CloseBase => ({ owned, identity, fingerprint, actor, goalRef, window, admissionGuards,
@@ -1180,6 +1226,20 @@ export function createTaskRequeueService(
     if (pins.value.refusal !== null && pins.value.refusal.revision !== (currentRefusal?.revision ?? 0)) {
       return reject('revision_conflict', 'the requeue refusal changed since the caller read it',
         currentRefusal === null ? undefined : [{ ref: refusalRef, revision: currentRefusal.revision }]);
+    }
+    if (nodeReview !== null) {
+      // 121-173: only a node without a review fact for the reduction the person reviewed goes back; a review that
+      // commits meanwhile meets this guard at the commit.
+      const reviewKey = refKeyOf(taskNodeCommitRefOf(goalRef, task.taskId, nodeReview.reductionRevision));
+      const review = await readOwnerRecord({ store: records, refKey: reviewKey, decode: taskNodeCommitCodec.decode,
+        readError: message => reject('unavailable', `the node review could not be read: ${message}`) });
+      // The node review owner read no review fact, so one committed since is a lost race, not a reviewed node.
+      if (review.ok) {
+        return reject('revision_conflict', 'the node was reviewed since the person read it',
+          [{ ref: review.value.ref, revision: review.value.revision }]);
+      }
+      if ('rejection' in review) return review.rejection;
+      admissionGuards = [...admissionGuards, { refKey: reviewKey, expectedRevision: null }];
     }
     // The Lease was released by the afterRun (or by one of the afterRun's
     // review rounds) and its claim Session is no longer held by it. The
@@ -1255,13 +1315,14 @@ export function createTaskRequeueService(
         return stateRefusal(stateProblem, window);
       }
     }
-    const derivation = deriveReworkClass(afterRun, pointerIntent, window.rework.chain, archive);
+    const derivation = requeueClassOf(requeueTrigger, afterRun, pointerIntent, window.rework.chain, archive);
     if (derivation.kind !== 'class') return reject('invalid', `the selected Run has nothing to rework (${derivation.row})`);
     const goalFanOut = actor.kind === GOAL_FAN_OUT_ACTOR.kind && actor.id === GOAL_FAN_OUT_ACTOR.id;
     const permission = refusalOf(reworkPermission({ operation: 'requeue', goalDesiredState: goal.desiredState,
       failureClass: derivation.failureClass, interruption: permissionInterruptionOf(derivation),
       fence: reworkFenceOf(afterRun, pointerIntent), actorClass, goalFanOut,
-      trigger: input.trigger !== undefined, budget: input.budget !== undefined, note: input.note !== undefined }));
+      trigger: requeueTrigger !== null, budget: input.budget !== undefined, note: input.note !== undefined,
+      nodeReview: nodeReview !== null }));
     if (permission !== null) return permission;
     // TASK-27 / GOAL-29 (A.2 step 5.6), after the actor × class matrix (which refuses a trigger from any actor but
     // the Goal fan-out, §4.4): a goal_resume trigger names this Goal's current resume epoch and the earlier
@@ -1366,7 +1427,9 @@ export function createTaskRequeueService(
     // successor round (§9 VR-14) never rewrites its predecessor.
     const roundGuards: RecordGuard[] = [];
     const roundClaims: UniqueClaimChange[] = [];
-    if (head !== null) {
+    // A node sent back from node review has a clean-PASS head: no successor round can open on it (a reverify needs a
+    // non-PASS head), so there is no slot to hold and VR-09 does not apply.
+    if (head !== null && nodeReview === null) {
       // The requeue is not the round's executor and pins no round revision.
       const covered = transitionRound(head, { kind: 'task_requeued', actorClass },
         { callerIsExecutor: false, expectedRevision: null, instanceLeaseHeld: false });
@@ -1437,10 +1500,9 @@ export function createTaskRequeueService(
 
     // 12. TaskRequeue@1 (TASK-16/17) and VR-09 on the chain head, in one commit. The record derives
     // its class, stop fact, count and history source itself (§14.1).
-    const trigger: TaskRequeueTriggerV1 | null = input.trigger ?? null;
     const requeued = transitionTask(window.state, { kind: 'task_requeued', requeue: {
       task, planRef: window.plan.ref, afterRun, pointerIntent, chain: window.rework.chain, requestedBy: actor,
-      requestedAt: deps.now(), reason: input.reason, basis, newInputRefs, budget, trigger, agentProvenance,
+      requestedAt: deps.now(), reason: input.reason, basis, newInputRefs, budget, trigger: requeueTrigger, agentProvenance,
       runs, requeues, policy, archiveOrigin: input.archiveOrigin ?? null, archive,
     } }, { taskId: task.taskId, claim: null, completion: null, disposition: null, rework: window.rework });
     if (!requeued.ok) return reject(requeued.code, requeued.detail);
@@ -1773,5 +1835,6 @@ export function createTaskRequeueService(
     return closed;
   }
 
-  return { requeueTask, requeueApprovedByCard, readTaskRequeue, readTaskRequeueByIdentity, lookupToolCommit };
+  return { requeueTask, requeueApprovedByCard, readTaskRequeue, readTaskRequeueByIdentity, lookupToolCommit,
+    requeueForNodeReview };
 }

@@ -461,6 +461,8 @@ export type CoreRouteBindings = {
   commitKnowledge: (ctx: CoreCallContext, input: unknown) => ReturnType<KnowledgeOpsPort['commit']>;
   /** Node-level review (121-45): the person's commit or acknowledgement of a node; the owner admits the operator only. */
   commitNode: TaskNodeCommitPort['commitNode'];
+  /** 121-173: the person sends the pending node back with a reason; the owner admits the operator only. */
+  reworkNode: TaskNodeCommitPort['reworkNode'];
   /** Delivery (121-45): the page read and the person's one acceptance write; each owner decides, so the route adds
    *  no person wrapper. */
   readGoalDelivery: GoalDeliveryReadPort['readGoalDelivery'];
@@ -627,7 +629,7 @@ export type CoreRoutePlatform = {
   /** KC-1 G2: the proposal owner's batch file list, internal like the plain proposal read. */
   readProposalBatchFiles?: ArchitectureProposalService['readProposalBatchFiles'];
   /** Node-level review (121-45): the node review owner; internal, so a narrow platform answers `unsupported`. */
-  nodeCommits?: Pick<TaskNodeCommitPort, 'commitNode'>;
+  nodeCommits?: Pick<TaskNodeCommitPort, 'commitNode' | 'reworkNode'>;
   /** Delivery (121-45): the page read and the acceptance write owners; internal like the other owner groups, so a
    *  narrow platform answers `unsupported`. */
   delivery?: GoalDeliveryReadPort;
@@ -848,6 +850,7 @@ export const CORE_ROUTE_SPECS: Record<
   'knowledge/status': { kind: 'plain', binding: 'readKnowledgeStatus', owner: 'knowledge.status' },
   'knowledge/commit': { kind: 'plain', binding: 'commitKnowledge', owner: 'knowledge.commit' },
   'nodes/commit': { kind: 'graph_write', binding: 'commitNode', owner: 'nodeCommits.commitNode' },
+  'nodes/rework': { kind: 'graph_write', binding: 'reworkNode', owner: 'nodeCommits.reworkNode' },
   'plans/request-candidate': { kind: 'plain', binding: 'readRequestCandidate', owner: 'requestCandidates.readRequestCandidate' },
   'plans/abandon': { kind: 'graph_write', binding: 'abandonPlanProposal', owner: 'requestCandidates.abandonPlanProposal' },
   'decisions/queue': { kind: 'plain', binding: 'queryDecisionQueue', owner: 'decisions.queryDecisionQueue' },
@@ -1708,6 +1711,8 @@ export function createPlatformCoreRouteBindings(
         (isPlainObject(input) ? { ...input, workspaceId: ctx.workspaceId ?? '' } : input) as never)),
     commitNode: platform.nodeCommits === undefined ? unsupported('the platform does not publish nodeCommits.commitNode')
       : platform.nodeCommits.commitNode.bind(platform.nodeCommits),
+    reworkNode: platform.nodeCommits === undefined ? unsupported('the platform does not publish nodeCommits.reworkNode')
+      : platform.nodeCommits.reworkNode.bind(platform.nodeCommits),
     readGoalDelivery: platform.delivery === undefined
       ? unsupported('the platform does not publish delivery.readGoalDelivery')
       : platform.delivery.readGoalDelivery.bind(platform.delivery),
@@ -2038,6 +2043,7 @@ export async function dispatchCoreRoute(
       case 'knowledge/status': return bindings.readKnowledgeStatus(ctx, plain.input);
       case 'knowledge/commit': return bindings.commitKnowledge(ctx, plain.input);
       case 'nodes/commit': return bindings.commitNode(ctx, graphWrite.request as never);
+      case 'nodes/rework': return bindings.reworkNode(ctx, graphWrite.request as never);
       case 'goals/delivery': return bindings.readGoalDelivery(ctx, plain.input as never);
       case 'goals/accept-delivery': return bindings.acceptGoalDelivery(ctx, graphWrite.request as never);
     }

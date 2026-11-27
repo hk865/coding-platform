@@ -75,7 +75,9 @@ import { consultationFacts, type HostOutboxItemV1, type HostOutboxKeysetV1,
 } from '../core/work-graph/model/communication-contracts.js';
 import type { PlanProposalRef } from '../core/work-graph/model/plan-contracts.js';
 import type { PlanRevisionDraft, PlanRevisionSnapshot } from '../contracts/plan.js';
-import { interventionPlanningQueryRefs, isRequestRound, queryJobRefFor, type QueryJobRef } from '../contracts/query-job.js';
+import {
+  consultationQueryRefs, interventionPlanningQueryRefs, isRequestRound, queryJobRefFor, type QueryJobRef,
+} from '../contracts/query-job.js';
 import type { RunSnapshot } from '../contracts/dispatch.js';
 import { hostContextIn, interventionQueryWorkspaceOf, planSourceLineageOf } from '../core/work-graph/tasks/plan-lineage.js';
 import { deliveryEligibility, isMessageAgentSender, isWaitMessage, waitFactsOfRecord, waitStateOf }
@@ -122,6 +124,7 @@ import {
 import { createQueryStageDriver, type QueryStageDriver } from '../business/workflow/query-stage-driver.js';
 import { servingBinding } from '../business/workflow/role-bindings.js';
 import { lineAskInputRejection } from '../business/workflow/line-ask.js';
+import { nodeReviewDraftCommandId, nodeReviewDraftQuestion } from '../core/work-graph/state/task-node-commit.js';
 import {
   attentionSignalToJson, createAttentionObserver, createAttentionScanner, type AttentionScopeV1, type AttentionSignal,
 } from './attention-observer.js';
@@ -193,7 +196,9 @@ import { systemRoundContext, systemRoundRequestId, type SystemRoundV1 } from '..
 import type { CommandReviewSubjectV1 } from '../contracts/scribe-review.js';
 import { exportBooks as readTaskbookExport, exportTaskbooksForPlan } from './taskbook-export.js';
 import { createSessionDutyResolver } from '../composition/session-duty.js';
-import type { SessionDutyResolver } from '../business/workflow/ports.js';
+import type {
+  LineAskAcceptedResultV1, LineAskCommandV1, LineAskInputV1, SessionDutyResolver,
+} from '../business/workflow/ports.js';
 
 /** One explicitly readable workspace. `root`, `workspaceRevision` and
  * `readPrefixes` are trusted startup facts, never request input. */
@@ -692,6 +697,79 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       : null;
     if (sameRole === undefined && workBinding === null) return { ok: false, missing: 'binding' };
     return { ok: true, limits, roleBinding: sameRole?.roleBinding ?? workBinding!.roleBinding };
+  };
+  /**
+   * One line ask with the line's own read-only Query profile (`copyQueryTargetOf`): the person's `queries/ask` and the
+   * platform's node review draft (121-173) both read the line once here. The command keeps every field the caller
+   * sent (the route accepts extra ones), so the outcome is told apart by `ok`, never by a field of the command.
+   */
+  const lineAskCommandOf = async (target: ProjectPlatform, ctx: CoreCallContext, input: LineAskInputV1):
+    Promise<{ ok: true; command: LineAskCommandV1 } | { ok: false; rejection: CoreRejection }> => {
+    const card = await target.sessions.readSession(ctx, input.sessionRef);
+    if (card.status === 'not_found') {
+      return { ok: false, rejection: { status: 'rejected', code: 'not_found', reason: 'the requested record does not exist' } };
+    }
+    if (card.status !== 'ready') {
+      return { ok: false, rejection: card.status === 'rejected' ? card
+        : { status: 'rejected', code: 'incomplete', reason: `the requested record is not ready (${card.status})` } };
+    }
+    const scope = { projectId: ctx.projectId, workspaceId: ctx.workspaceId ?? '' };
+    const queryTarget = copyQueryTargetOf(scope, card.value.record.role);
+    if (!queryTarget.ok) {
+      return { ok: false, rejection: { status: 'rejected', code: 'unavailable', reason: queryTarget.missing === 'profile'
+        ? 'the Session role has no query profile' : 'the Session role has no trusted work binding' } };
+    }
+    return { ok: true, command: { ...input, roleBinding: queryTarget.roleBinding,
+      runtimeBudget: queryTarget.limits.runtimeBudget, budget: queryTarget.limits.budget,
+      consumerId: queryTarget.limits.consumerId } };
+  };
+  /** The person's ask through the Workflow's one ask entry. */
+  const askWithLineProfile = async (target: ProjectPlatform, ctx: CoreCallContext,
+    input: Parameters<CoreRouteBindings['askLine']>[1]): ReturnType<CoreRouteBindings['askLine']> => {
+    const command = await lineAskCommandOf(target, ctx, input);
+    if (!command.ok) return command.rejection;
+    const ask = target.workflow.askLine;
+    if (ask === undefined) {
+      return { status: 'rejected', code: 'unsupported', reason: 'the Workflow does not publish the ask entry' };
+    }
+    return ask(ctx, command.command);
+  };
+  /** 121-173 (NR-B 6): the node draft's ask, stopped once the Workflow has accepted its Query. */
+  const askAcceptedWithLineProfile = async (target: ProjectPlatform, ctx: CoreCallContext,
+    input: LineAskInputV1): Promise<LineAskAcceptedResultV1> => {
+    const command = await lineAskCommandOf(target, ctx, input);
+    if (!command.ok) return command.rejection;
+    const ask = target.workflow.askLineAccepted;
+    if (ask === undefined) {
+      return { status: 'rejected', code: 'unsupported', reason: 'the Workflow does not publish the draft ask entry' };
+    }
+    return ask(ctx, command.command);
+  };
+  /**
+   * NR-B r2-4, round 3: a draft ask that saved its question M but opened no Query. M stays open, so the copy page may
+   * have opened M's Query meanwhile; that Query is then the draft's. Only with none is the failure, with this first
+   * attempt's own reason, the record.
+   */
+  const settleFailedAsk = async (target: ProjectPlatform, ctx: CoreCallContext,
+    failed: Extract<LineAskAcceptedResultV1, { status: 'failed' }>): Promise<LineAskAcceptedResultV1> => {
+    const round = consultationQueryRefs(failed.message).queryJobRef;
+    const job = await target.queries.readQueryJob(ctx, round);
+    if (job.status === 'ready') return { status: 'accepted', round, message: failed.message, drive: null };
+    if (job.status !== 'not_found') throw notReady("the draft question's Query", job);
+    return failed;
+  };
+  /**
+   * 121-173 (NR-B 6): an accepted draft Query keeps running detached as its copy question's one job (`copyJobs`, keyed
+   * like the copy page): the page never drives it twice at once. `close` aborts the context's signal first, so no
+   * drive starts after it (NR-B r2-3), and awaits the job after every producer stopped, before the stores close. A
+   * failed drive leaves the question unanswered for the copy page.
+   */
+  const driveDraftDetached = (message: SessionMessageRef, drive: () => Promise<void>): void => {
+    const key = canonicalKey(message);
+    if (copyJobs.has(key)) return;
+    copyJobs.set(key, drive()
+      .catch(() => { /* the question stays unanswered; a later copy page finds it again */ })
+      .finally(() => { copyJobs.delete(key); }));
   };
   const attentionScopes: AttentionScopeV1[] = options.attention === undefined ? [] : structuredClone(options.attention);
   const inputConsumers = structuredClone(options.inputConsumers ?? []);
@@ -1214,11 +1292,16 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
    * A): the project-scope Goal read locates it, and its display is read in its own workspace (cp2fq). A read that is
    * not ready throws; it is never "not held".
    */
-  const goalHeldByRestart = async (project: HostProject, ctx: CoreCallContext, goalRef: GoalRef): Promise<boolean> => {
+  /** A Goal's own workspace context: a wait of one workspace may hold a Goal of another workspace of the project. */
+  const goalOwnContext = async (project: HostProject, ctx: CoreCallContext, goalRef: GoalRef):
+    Promise<CoreCallContext> => {
     const located = await project.runtime.platform.plans.queryGoal(ctx, goalRef, { scope: 'project' });
     if (located.status !== 'ready') throw notReady('the Goal workspace read', located);
-    const own: CoreCallContext = { ...hostScopeContext({ projectId: goalRef.projectId,
+    return { ...hostScopeContext({ projectId: goalRef.projectId,
       workspaceId: located.value.goal.workspaceRef.workspaceId }, actor), signal: ctx.signal };
+  };
+  const goalHeldByRestart = async (project: HostProject, ctx: CoreCallContext, goalRef: GoalRef): Promise<boolean> => {
+    const own = await goalOwnContext(project, ctx, goalRef);
     const read = await project.goalFanOut.readGoalDisplay(own, { goalRef });
     if (read.status !== 'ready') throw notReady('the Goal interruption read', read);
     return read.value.display.causes.some(cause => 'interruption' in cause);
@@ -1329,7 +1412,8 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     if (page === undefined) return;
     if (page.continuation === null) admissionCursors.delete(key);
     else admissionCursors.set(key, page.continuation);
-    if (page.more) wakeLoop.wake(scope, GOAL_WAITS_QUEUE, 'commit'); // the next page, same queue
+    // The next page, same queue; a Goal this drain woke has its node drafts asked by that loop pass (below).
+    if (page.more || page.progressed > 0) wakeLoop.wake(scope, GOAL_WAITS_QUEUE, 'commit');
   };
   // The marker page behind the drain: one Session page's Query marks kept at `prepared` + `running_cap`.
   async function readMarkerQueries(ctx: CoreCallContext, scope: WorkspaceScope, cursor: string | null) {
@@ -1501,6 +1585,72 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     readMarkerQueries,
     startMarkerQuery,
     l5PriorityOf,
+    // 121-173: each node waiting for the person gets the secretary's draft of its note: asked once per (node,
+    // reduction) with the secretary line's own Query profile, recorded with its Query or with why the platform could
+    // not ask. Never retried, and a draft never holds back the review; a failed read throws to the drain. NR-B 6: the
+    // record names the Query as soon as the Workflow accepts it; the model runs after, detached, under the Host's
+    // closing signal, so the drain never waits for it.
+    ensureNodeReviewDrafts: async (scope, goalRef) => {
+      const project = projects.get(scope.projectId);
+      if (project === undefined) return;
+      const target = project.runtime.platform;
+      const nodes = target.nodeCommits;
+      // The Goal's own workspace: a ws1 wait may wake a Goal of ws2, whose rows, secretary and question live in ws2.
+      const ctx = await goalOwnContext(project, { ...hostScopeContext(scope, actor), signal: hostClosing.signal },
+        goalRef);
+      const waiting = await nodes.readPendingNodeReview(ctx, { goalRef });
+      if (waiting.status !== 'ready') throw notReady('the pending node review', waiting);
+      if (!waiting.value) return;
+      // NR-B 7: the Goal's rows and draft records; either read failing hands the whole Goal back to the drain.
+      const rows = await nodes.readNodeRows(ctx, { goalRef });
+      if (rows.status !== 'ready') throw notReady('the node review rows', rows);
+      const drafts = await nodes.readNodeReviewDrafts(ctx, { goalRef });
+      if (drafts.status !== 'ready') throw notReady('the node review drafts', drafts);
+      const asked = new Set(drafts.value.map(draft => `${draft.ref.taskId}:${draft.ref.reductionRevision}`));
+      const missing = rows.value.pending.flatMap(row => row.reduction === null
+        || asked.has(`${row.task.taskId}:${row.reduction.revision}`) ? [] : [{ row, reduction: row.reduction }]);
+      if (missing.length === 0) return;
+      // The secretary is read once, only for rows still without a record. No secretary, or a read that did not
+      // answer, is each such row's recorded `failed` with the reason; it is never asked again.
+      const secretary = await nodes.readNodeReviewDraftRecipient(ctx, { goalRef });
+      // NR-B round 3: a secretary read the Host's close cancelled records nothing; the Goal stays owed.
+      if (secretary.status === 'rejected' && secretary.code === 'cancelled') {
+        throw notReady('the draft secretary', secretary);
+      }
+      const secretaryRef = secretary.status === 'ready' ? secretary.value : null;
+      const unasked = secretary.status !== 'ready' ? `the secretary is not readable: ${secretary.status === 'rejected'
+        ? `${secretary.code}: ${secretary.reason}` : secretary.status}` : 'the workspace has no secretary';
+      // One row's error never holds back the Goal's other rows; the first one goes to the drain afterwards.
+      let failure: unknown = null;
+      for (const { row, reduction } of missing) {
+        try {
+          const question = nodeReviewDraftQuestion({ title: row.task.title, paths: row.files.map(file => file.path),
+            checksPassed: reduction.phase === 'satisfied' });
+          const commandId = nodeReviewDraftCommandId(goalRef.goalId, row.task.taskId, reduction.revision);
+          const ask = secretaryRef === null ? null
+            : await askAcceptedWithLineProfile(target, ctx, { sessionRef: secretaryRef, question, commandId });
+          // NR-B r2-2: an ask that holds its real Query is recorded even while the Host closes (the close waits for
+          // this drain). Only an ask the close cut short before any Query records nothing: the abort is not why the
+          // platform could not ask, and the next ask under the same identity finds the same question.
+          if (ask !== null && ask.status !== 'accepted' && ctx.signal.aborted) {
+            throw new Error('the Host is closing; the node draft is asked again later');
+          }
+          const settled = ask?.status === 'failed' ? await settleFailedAsk(target, ctx, ask) : ask;
+          const recorded = await nodes.recordNodeReviewDraft(ctx, { goalRef, taskId: row.task.taskId,
+            reductionRevision: reduction.revision, asked: settled?.status === 'accepted'
+              ? { request: settled.round, failureReason: null }
+              : { request: null, failureReason: settled === null ? unasked : settled.reason } });
+          if (recorded.status !== 'committed') throw notReady('the node review draft record', recorded);
+          // NR-B r2-3: a closing Host starts no drive; the claimed Query is the start-up reconcile's.
+          if (settled?.status === 'accepted' && settled.drive !== null && !ctx.signal.aborted) {
+            driveDraftDetached(settled.message, settled.drive);
+          }
+        } catch (thrown) {
+          failure ??= thrown;
+        }
+      }
+      if (failure !== null) throw failure;
+    },
     // The restart composition over the scope's own project.
     rebuild: async (scope, registry) => {
       const project = projects.get(scope.projectId);
@@ -1522,9 +1672,13 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
   goalWaitQueueOwner = goalWaitQueue;
   // The loop's pass reviews the resume marks before its drain: a failed review read throws out of the pass, so the
   // marks stay and the loop backs off and retries. The driver's own drains (`drainGoalWaits`) do not review them.
+  // NR-B: the node drafts every drain leaves owed are asked here only. A draft is a side job: a Goal whose draft read
+  // fails backs this loop off and is retried by it, and never fails an unrelated driver's own drain (`drainGoalWaits`).
   wakeLoop.register(GOAL_WAITS_QUEUE, { ...goalWaitQueue, drain: async (scope, input) => {
     await reviewResumes(scope, input.signal);
-    return await goalWaitQueue.drain(scope, input);
+    const page = await goalWaitQueue.drain(scope, input);
+    await goalWaitQueue.ensureDrafts(scope);
+    return page;
   } }, {
     aggregateTypes: GOAL_WAIT_WAKE_AGGREGATE_TYPES, maxItems: WAKE_LIMIT,
   });
@@ -4481,24 +4635,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     }
     const inputRejection = lineAskInputRejection(ctx.projectId, input);
     if (inputRejection !== null) return inputRejection;
-    const card = await platform.sessions.readSession(ctx, input.sessionRef);
-    if (card.status === 'not_found') return { status: 'rejected', code: 'not_found', reason: 'the requested record does not exist' };
-    if (card.status !== 'ready') {
-      return card.status === 'rejected' ? card
-        : { status: 'rejected', code: 'incomplete', reason: `the requested record is not ready (${card.status})` };
-    }
-    const scope = { projectId: ctx.projectId, workspaceId: ctx.workspaceId ?? '' };
-    const target = copyQueryTargetOf(scope, card.value.record.role);
-    if (!target.ok) {
-      return { status: 'rejected', code: 'unavailable', reason: target.missing === 'profile'
-        ? 'the Session role has no query profile' : 'the Session role has no trusted work binding' };
-    }
-    const ask = platform.workflow.askLine;
-    if (ask === undefined) {
-      return { status: 'rejected', code: 'unsupported', reason: 'the Workflow does not publish the ask entry' };
-    }
-    return ask(ctx, { ...input, roleBinding: target.roleBinding, runtimeBudget: target.limits.runtimeBudget,
-      budget: target.limits.budget, consumerId: target.limits.consumerId });
+    return askWithLineProfile(platform, ctx, input);
   };
   // PL §6.4.3 adoption point 1: the committed first plan exports before the driver starts;
   // the result is unchanged and the export is detached.
@@ -4632,9 +4769,10 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
         await attentionDone.catch(() => { /* the loop records its own state */ });
         await Promise.all([...inputJobs.values()]);
         // A copy page starts its question jobs before it settles, so the pages drain first and then the questions;
-        // both swallow failures like `inputJobs`, so this drain cannot reject past the store closes below.
+        // both swallow failures like `inputJobs`, so this drain cannot reject past the store closes below. The
+        // question jobs are awaited later, once every producer (the copy pages, the wake drain, the collaboration
+        // drivers) has stopped, so none can add a job past the wait (NR-B r2-3).
         await Promise.all([...copyPageJobs.values()]);
-        await Promise.all([...copyJobs.values()]);
         // The request driver goes before the other drivers and the platform: a
         // pass would otherwise start a round on a platform that is draining.
         // The loop stops scheduling, aborts the signal every drain and every
@@ -4645,6 +4783,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
         for (const project of open) await project.requestQueues?.settle();
         await goalWaitQueue.settle();
         await collaborationClosed;
+        await Promise.all([...copyJobs.values()]);
         for (const project of open) await project.goalFanOut.close();
         await workbenchToolsClosed;
         await autoCaptureClosed;

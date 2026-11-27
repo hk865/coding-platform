@@ -389,10 +389,11 @@ it('VD-7: future adoptions before the open and before the completion never stran
   const round2 = openedRound(beforeComplete.receipts.filter(receipt => receipt.kind === 'open_checks'));
   expect(round2.adoptedPlanRef).toEqual(p2.ref);
   const p3 = await adoptUnrelatedFuture(platform, 'p3');
-  // The stale completion pins the old Goal revision and Plan; the chain head completes under P3.
-  expect((await drive(platform, staleComplete)).receipts[0]).toMatchObject({ kind: 'complete_task',
+  // The stale completion pins the old Goal revision and Plan: it meets `revision_conflict` and goes back to the
+  // selection (ruling 11-27 round 1, item 1), which completes the chain head under P3.
+  const again = await drive(platform, staleComplete, input => input !== staleComplete && performs('complete_task')(input));
+  expect(again.receipts[0]).toMatchObject({ kind: 'complete_task',
     result: { status: 'rejected', code: 'revision_conflict' } });
-  const again = await drive(platform, select('a2-vd7-flow-4', 'work-2'), performs('complete_task'));
   const complete2 = again.stopped;
   if (complete2 === null || complete2.operation.kind !== 'complete_task') throw new Error('work-2 must reach its completion again');
   expect(complete2.operation.request.input).toMatchObject({ planRef: p3.ref, roundRef: round2.ref });

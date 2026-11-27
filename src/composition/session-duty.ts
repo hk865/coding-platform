@@ -60,6 +60,8 @@ export function createSessionDutyResolver(deps: SessionDutyResolverDependencies)
         } catch (error) {
           return rejected('unavailable', `the pinned RoleSpec read failed: ${messageOf(error)}`);
         }
+        // NR-B round 3: a read the caller's signal cancelled stays `cancelled`; every other failure is `unavailable`.
+        if (read.status === 'rejected' && read.code === 'cancelled') return read;
         if (read.status !== 'ready') {
           return rejected('unavailable', read.status === 'rejected'
             ? read.reason : `the pinned RoleSpec read is ${read.status}`);

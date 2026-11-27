@@ -46,7 +46,8 @@ import type {
 } from '../../src/contracts/verification.js';
 import {
   classifyTaskPhase, newTaskReductionRecord, newTaskRequeueRecord, projectTaskPhase, taskClaimProblem,
-  taskCompletionFoldProblem, taskCompletionProjectionProblem, taskCompletionRoundProblem, taskMachineStateOf, transitionTask,
+  taskCompletionFoldProblem, taskCompletionProjectionProblem, taskCompletionRoundProblem, taskMachineStateOf,
+  taskRequeueStateProblem, transitionTask,
   type NewTaskRequeueInput, type TaskClaimFacts as BaseTaskClaimFacts, type TaskCompletionFacts, type TaskEffect, type TaskEvent,
   type TaskGuardContext, type TaskMachineState, type TaskPhaseFacts, type TaskPhaseProjection, type TaskReductionBuildV1,
   type TaskDispositionFacts, type TaskReworkFacts, type TaskRoundEventKind, type TaskState,
@@ -1469,6 +1470,28 @@ describe('task_requeued and task_rework_refused in the unified order (§4.3, §4
       .toMatchObject({ ok: false, reason: 'illegal', code: 'invalid', detail: 'task_requeued requires the rework guard facts' });
     expect(transitionTask(null, { kind: 'task_requeued', requeue: requeueInput() }, ctxFor('absent')))
       .toMatchObject({ ok: false, reason: 'illegal', code: 'not_found' });
+  });
+
+  // N-1g (121-173, ruling §2.3): only the operator's node-review rework sends a satisfied node back; every other
+  // requeue of P1 keeps "nothing to requeue". Hand-computed: P1 + PASS head + FC-18 → P4, review_rework, not compared.
+  it('N-1g: only the node-review rework requeues a satisfied node (P1 → P4) as review_rework, not automatic', () => {
+    const passChain = roundChainHead([FINAL_PASS]);
+    const satisfied = { selectedRun: COMPLETED, chain: passChain };
+    const sentBack = { ...satisfied, nodeReviewRework: { reductionRevision: 1 } };
+    const nodeReview = { afterRun: COMPLETED, chain: passChain, basis: keyOf('completed'),
+      trigger: { kind: 'node_review_rework' as const, reductionRevision: 1 } };
+    expect(taskRequeueStateProblem(STATES.P1 as TaskState, reworkFacts(satisfied)))
+      .toMatchObject({ ok: false, reason: 'illegal', code: 'invalid' });
+    expect(taskRequeueStateProblem(STATES.P1 as TaskState, reworkFacts(sentBack))).toBeNull();
+    const result = requeueAt(STATES.P1, sentBack, nodeReview);
+    expect(result).toMatchObject({ ok: true, next: STATES.P4 });
+    expect(result.ok ? result.effects : []).toMatchObject([{ kind: 'write_task_requeue', requeue: {
+      failureClass: 'review_rework', interruption: null, basisComparison: 'skipped_node_review',
+      trigger: { kind: 'node_review_rework', reductionRevision: 1 }, afterRoundRef: FINAL_PASS.ref,
+      automation: { automatic: false, counted: false, autoCount: 0, cap: null } } }]);
+    // The same send-back from the platform automation is refused by the matrix (only the person reviews a node).
+    expect(answerOf(requeueAt(STATES.P1, sentBack, { ...nodeReview, requestedBy: WORKFLOW_AUTOMATION_ACTOR })))
+      .toEqual({ reason: 'guard_failed', code: 'forbidden' });
   });
 
   it('the input must carry the selected Run; the matrix with the fence and TASK-27 follow', () => {

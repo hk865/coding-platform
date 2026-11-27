@@ -11,7 +11,7 @@ import type { SessionMessageRef } from '../../contracts/core/session-message.js'
 import type {
   QueryJobAnswerRef, QueryJobAnswerSnapshot, QueryJobIntentV1, QueryRunRef,
 } from '../../contracts/query-job.js';
-import { consultationQueryRefs } from '../../contracts/query-job.js';
+import { consultationBindingProblem, consultationQueryRefs } from '../../contracts/query-job.js';
 import { canonicalJson, sameJson as sameCanonical, sha256Hex, type JsonValue } from '../../contracts/fingerprint.js';
 import type { GoalRef } from '../../contracts/ledger.js';
 import { isRecord, nonEmpty } from '../../contracts/validation/common.js';
@@ -121,8 +121,23 @@ export type ConsultationConsumerDeps = {
   deliveryFacts?: (owned: Owned, message: SessionMessage, part: 'message',
     goalRef: GoalRef | null, target: SessionRef | null) => Promise<DeliveryFactsV1 | CoreRejection>;
 };
-export function createConsultationConsumer(deps: ConsultationConsumerDeps):
-  (ctx: CoreCallContext, input: ConsultationInput) => Promise<ConsultationResult> {
+/** A consultation accepted up to its claimed, unanswered Query; `drive` continues it. */
+export type ConsultationAccepted = {
+  status: 'accepted'; message: SessionMessage; query: QueryJobRecord; consumerId: string; owned: Owned;
+};
+
+/**
+ * One call consumes one copy question: `accept`, then `drive`. 121-173 (NR-B 6): the two halves are also exported on
+ * the consumer, so the platform's node draft can record its real Query before the model runs. `accept` does everything
+ * up to a claimed Query and returns it (`accepted`), or the call's own result when nothing is left to drive; `drive` is
+ * `driveAccepted` plus the answered copy's archive. The call itself is unchanged for every caller.
+ */
+export type ConsultationConsumer = ((ctx: CoreCallContext, input: ConsultationInput) => Promise<ConsultationResult>) & {
+  accept(ctx: CoreCallContext, input: ConsultationInput): Promise<ConsultationResult | ConsultationAccepted>;
+  drive(ctx: CoreCallContext, step: ConsultationAccepted): Promise<ConsultationResult>;
+};
+
+export function createConsultationConsumer(deps: ConsultationConsumerDeps): ConsultationConsumer {
   const sessionArchive = deps.sessionArchive;
   const waiting = (message: SessionMessage, query: QueryJobRecord | null,
     answer: QueryJobAnswerSnapshot | null, reason: string): ConsultationResult =>
@@ -138,6 +153,8 @@ export function createConsultationConsumer(deps: ConsultationConsumerDeps):
   const ended = (message: SessionMessage, query: QueryJobRecord | null,
     answer: QueryJobAnswerSnapshot | null, reason: string): ConsultationResult =>
     ({ status: 'ready', value: { state: 'ended', message, query, answer, reason } });
+  const accepted = (owned: Owned, message: SessionMessage, consumerId: string, query: QueryJobRecord):
+    ConsultationAccepted => ({ status: 'accepted', message, query, consumerId, owned });
 
   async function deliveryProblem(owned: Owned, message: SessionMessage,
     goalRef: GoalRef | null, target: SessionRef | null): Promise<CoreRejection | null> {
@@ -252,7 +269,7 @@ export function createConsultationConsumer(deps: ConsultationConsumerDeps):
   }
 
   async function continueExisting(owned: Owned, input: ConsultationInput, message: SessionMessage,
-    record: QueryJobRecord): Promise<ConsultationResult> {
+    record: QueryJobRecord): Promise<ConsultationResult | ConsultationAccepted> {
     // §4.6 last paragraph: a message addressed to the user is never turned into
     // a Query or readSession; it is explicitly unsupported here. The inline
     // discriminant narrows MessageRecipient -> SessionRef for the ordinary
@@ -260,25 +277,12 @@ export function createConsultationConsumer(deps: ConsultationConsumerDeps):
     if ('kind' in message.recipient) {
       return reject('unsupported', 'a user-recipient message is not a Session consultation');
     }
-    const sessionRecipient = message.recipient;
+    const target = message.recipient;
+    const unbound = consultationBindingProblem(record, { ref: message.ref, recipient: target });
+    if (unbound !== null) return reject('forbidden', unbound);
     const job = record.job;
     const run = record.run;
     const execution = job.job.intent.execution;
-    const consultation = execution.consultation;
-    if (execution.kind !== 'semantic_query' || consultation === undefined) {
-      return reject('forbidden', 'the existing deterministic Query is not an explicit consultation');
-    }
-    if (!sameCanonical(consultation.messageRef, message.ref)) {
-      return reject('forbidden', 'the existing consultation Query belongs to another message');
-    }
-    const target = sessionRecipient;
-    if (!sameCanonical(consultation.recipient, { projectId: target.projectId, sessionId: target.sessionId })) {
-      return reject('forbidden', 'the existing consultation Query recipient is not the original message recipient');
-    }
-    const refs = consultationQueryRefs(message.ref);
-    if (refs.queryJobRef.queryJobId !== job.job.queryJobId || refs.queryRunRef.runId !== run.run.runId) {
-      return reject('forbidden', 'the existing Query is not the deterministic identity of its message');
-    }
     // A saved formal answer is attached first and is NEVER re-run, even when the
     // later Session occupancy or the current input configuration changed.
     if (job.job.answerRefs.length > 0) {
@@ -313,12 +317,12 @@ export function createConsultationConsumer(deps: ConsultationConsumerDeps):
     if (phase !== undefined) {
       // claimed / prepared / entering / entered / unknown: continue the SAME
       // execution, never a new Query.
-      return driveAccepted(owned, message, input.consumerId, record);
+      return accepted(owned, message, input.consumerId, record);
     }
     // Pending and never claimed: claim the FORMAL derived target (the child A′)
     // when the Query carries a derivation; only a legacy Query without one claims
     // the original recipient. The source Session occupancy is never consulted.
-    const derived = consultation.derivation;
+    const derived = execution.consultation?.derivation;
     const targetRef: SessionRef = derived === undefined
       ? { projectId: target.projectId, sessionId: target.sessionId }
       : { projectId: derived.childSessionRef.projectId, sessionId: derived.childSessionRef.sessionId };
@@ -331,10 +335,11 @@ export function createConsultationConsumer(deps: ConsultationConsumerDeps):
     }
     const claimed = await claim(owned, message.ref, run.ref, card.record.ref, card.record.revision);
     if (claimed.kind === 'fail') return waiting(message, record, null, claimed.reason);
-    return driveAccepted(owned, message, input.consumerId, claimed.record);
+    return accepted(owned, message, input.consumerId, claimed.record);
   }
 
-  const consume = async (ctx: CoreCallContext, input: ConsultationInput): Promise<ConsultationResult> => {
+  const accept = async (ctx: CoreCallContext, input: ConsultationInput):
+    Promise<ConsultationResult | ConsultationAccepted> => {
     const owned = ownContext(ctx);
     if ('rejection' in owned) return owned.rejection;
     const isolated = isolateInput(input);
@@ -537,7 +542,7 @@ export function createConsultationConsumer(deps: ConsultationConsumerDeps):
     const record: QueryJobRecord = { job: submitted.value.job, run: submitted.value.run };
     const claimed = await claim(owned, messageRef, refs.queryRunRef, childCard.record.ref, childCard.record.revision);
     if (claimed.kind === 'fail') return waiting(message, record, null, claimed.reason);
-    return driveAccepted(owned, message, value.consumerId, claimed.record);
+    return accepted(owned, message, value.consumerId, claimed.record);
   };
 
   /**
@@ -596,8 +601,8 @@ export function createConsultationConsumer(deps: ConsultationConsumerDeps):
       ? null : 'the formal answer is saved but the copy archive is still pending';
   }
 
-  return async (ctx: CoreCallContext, input: ConsultationInput): Promise<ConsultationResult> => {
-    const result = await consume(ctx, input);
+  /** An answered copy runs its final archive after either half (§4.2 above). */
+  const archived = async (ctx: CoreCallContext, result: ConsultationResult): Promise<ConsultationResult> => {
     if (result.status !== 'ready') return result;
     const state = result.value.state;
     if (state !== 'responded' && state !== 'processed') return result;
@@ -605,4 +610,11 @@ export function createConsultationConsumer(deps: ConsultationConsumerDeps):
     if (note === null) return result;
     return { status: 'ready', value: { ...result.value, reason: note } };
   };
+  const drive = async (ctx: CoreCallContext, step: ConsultationAccepted): Promise<ConsultationResult> =>
+    archived(ctx, await driveAccepted(step.owned, step.message, step.consumerId, step.query));
+  const consume = async (ctx: CoreCallContext, input: ConsultationInput): Promise<ConsultationResult> => {
+    const step = await accept(ctx, input);
+    return step.status === 'accepted' ? drive(ctx, step) : archived(ctx, step);
+  };
+  return Object.assign(consume, { accept, drive });
 }

@@ -9,6 +9,10 @@
  * node's own paths with the person's message, `acknowledge` records that the files no longer differ from HEAD and
  * makes none. Either way the person must have read exactly the content that is there now (N1). A git commit that
  * landed when its store commit did not is found again by its trailers and only recorded (N3, NR-14).
+ *
+ * `reworkNode` (121-173) is the person's other action: send the pending node back with a reason. It checks the node
+ * and the person's two pins here, then the requeue owner writes the TaskRequeue that makes the reviewed reduction stop
+ * applying. `readNodeReceipts` gives the review facts the main conversation keeps.
  */
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { VersionPin } from '../../../contracts/core/identity.js';
@@ -20,6 +24,7 @@ import { canonicalJson, type JsonValue } from '../../../contracts/fingerprint.js
 import type { GoalSnapshot, GoalRef, WorkspaceRef } from '../../../contracts/ledger.js';
 import type { PlanRevisionSnapshot } from '../../../contracts/plan.js';
 import type { TaskReductionRef } from '../../../contracts/reduction.js';
+import type { TaskRequeueSnapshotV1 } from '../../../contracts/task-requeue.js';
 import {
   TASK_NODE_COMMIT_BY_GOAL_LOOKUP, type TaskNodeCommittedEventV1, type TaskNodeCommitV1,
 } from '../../../contracts/task-node-commit.js';
@@ -27,24 +32,42 @@ import { checkShape } from '../../../contracts/validation/data-format.js';
 import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
 import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
 import type { DecisionReadPort, GoalExecutedFilesPort } from '../model/decision-contracts.js';
+import type { DutyRecipientPort } from '../sessions/duty-recipient.js';
 import type {
-  TaskNodeCommitPort, TaskNodeCommitWorkspacePort, TaskNodeReviewRowV1,
+  NodeReviewReceiptV1, TaskNodeCommitPort, TaskNodeCommitWorkspacePort, TaskNodeReviewRowV1,
 } from '../model/task-node-commit-contracts.js';
-import { commandKeys, executeWriteCommand } from '../persistence/command-executor.js';
+import { commandKeys, executeWriteCommand, readCommittedEvent } from '../persistence/command-executor.js';
+import { lookupCommittedReceipt } from '../persistence/receipt-lookup.js';
 import { lookupAll } from '../persistence/lookup-all.js';
 import { readOwnerRecord } from '../persistence/owner-record-read.js';
 import { storeFailureToRejection } from '../persistence/read-result-failures.js';
 import { taskNodeCommitCodec, taskNodeCommittedCodec } from '../persistence/task-node-commit-codecs.js';
 import {
-  nodeReviewProblem, reviewedContentProblem, taskAwaitsReview, taskNodeCommitOf, taskNodeCommitRefOf,
-  taskNodeFilesOf, taskNodePending, type ExecutedFileV1, type TaskNodeCommitDraftV1,
+  taskNodeReviewDraftCodec, taskNodeReviewDraftRecordedCodec,
+} from '../persistence/task-node-review-draft-codecs.js';
+import {
+  TASK_NODE_REVIEW_DRAFT_BY_GOAL_LOOKUP, type TaskNodeReviewDraftRecordedEventV1, type TaskNodeReviewDraftV1,
+} from '../../../contracts/task-node-review-draft.js';
+import {
+  newTaskNodeReviewDraft, nodeReviewDraftCommandId, nodeReviewProblem, sendsBack, reviewedContentProblem, taskAwaitsReview, taskNodeCommitOf, taskNodeCommitRefOf,
+  taskNodeFilesOf, taskNodePending, type ExecutedFileV1, type NodeReviewFactsV1, type TaskNodeCommitDraftV1,
 } from '../state/task-node-commit.js';
+import {
+  TASK_REQUEUED_EVENT_TYPE, TASK_REWORK_EVENT_SCHEMA_VERSION, taskRequeuedEventFromEvent, taskRequeueRefKey,
+} from './claim-record-codecs.js';
 import { bindTrustedContext, isolateWrite, operatorProblem } from './execution-entry-service.js';
-import { readCanonicalTaskFacts, readGoalPlanWindow, type CanonicalTaskFacts } from './plan-readers.js';
+import {
+  readCanonicalTaskFacts, readGoalPlanWindow, type CanonicalTaskFacts, type CanonicalTaskState,
+} from './plan-readers.js';
 import { liveRunsOf } from './plan-service.js';
+import type { NodeReviewRequeuePort } from './requeue-service.js';
 import { pinRevision } from './revision-guard.js';
 
 const OPERATION = 'node-commit';
+/** The send-back's own command identity: its replay is found from the person's request before any read. */
+const REWORK_OPERATION = 'node-rework';
+/** The draft ask's record: one command per (Goal, Task, reduction revision). */
+const DRAFT_OPERATION = 'node-review-draft';
 
 export type TaskNodeCommitServiceDependencies = {
   records: GoalRecordTransactionPort & RecordLookupPort;
@@ -52,6 +75,10 @@ export type TaskNodeCommitServiceDependencies = {
   /** E3-8's per-file conflict read (NR-21): only its cards' file objects mark a shared path. */
   conflicts: Pick<DecisionReadPort, 'queryGoalConflicts'>;
   workspace: TaskNodeCommitWorkspacePort;
+  /** 121-173: the requeue owner's node-review entry; a send-back is that owner's TaskRequeue. */
+  requeue: NodeReviewRequeuePort;
+  /** 121-173: the one duty read (`resolveDutyRecipient`); the draft is asked of the workspace's secretary. */
+  duties: Pick<DutyRecipientPort, 'resolveDutyRecipient'>;
   operatorActor?: { kind: 'human' | 'system'; id: string };
   now(): string;
 };
@@ -64,10 +91,19 @@ const CommitNodeInputShape = defineShape({ name: 'nodes/commit input', fields: {
   message: f.nullable(f.string()), reviewed: f.array(f.object({ path: id, blob: f.nullable(id) })),
 } });
 
+/** The send-back as it arrives; the reason's bounds are the requeue's own (`TASK_REWORK_REASON_MAX_CHARS`). */
+const ReworkNodeInputShape = defineShape({ name: 'nodes/rework input', fields: {
+  goalRef: f.ref(GoalRefShape), taskRef: f.ref(TaskTripleShape), reason: f.string(),
+} });
+
+/** 121-173: the selected Run's TaskRequeue as read; the review commit guards it, so a send-back of the same version
+ *  committed meanwhile fails the review. Null without a selected Run (no send-back can cover the version then). */
+type SendBackGuard = { refKey: string; expectedRevision: number | null } | null;
+
 type CommitFacts =
   /** NR-14: the git commit of this identity and fingerprint already landed; only the record is missing. */
-  | { kind: 'recovered'; draft: TaskNodeCommitDraftV1; sha: string }
-  | { kind: 'fresh'; draft: TaskNodeCommitDraftV1; workspace: WorkspaceRef; paths: string[] };
+  | { kind: 'recovered'; draft: TaskNodeCommitDraftV1; sha: string; sendBackGuard: SendBackGuard }
+  | { kind: 'fresh'; draft: TaskNodeCommitDraftV1; workspace: WorkspaceRef; paths: string[]; sendBackGuard: SendBackGuard };
 
 /** The stable ledger half of a Goal's node review: records only (no work-tree blob, no conflict graph, 121-93). */
 type NodeReviewLedgerV1 =
@@ -129,9 +165,8 @@ export function createTaskNodeCommitService(deps: TaskNodeCommitServiceDependenc
       const node = nodeFiles.get(task.taskId)!;
       const review = state.reductionRevision === null ? null
         : reviews.get(`${task.taskId}:${state.reductionRevision}`) ?? null;
-      pendingByTaskId.set(task.taskId, taskNodePending({ autonomy: goal.settings.autonomy, taskKind: task.taskKind,
-        executionIntent: task.executionIntent, effectivePhase: state.effectivePhase,
-        reductionRevision: state.reductionRevision, hasFiles: node.files.length > 0, reviewed: review !== null }));
+      pendingByTaskId.set(task.taskId, taskNodePending({ ...nodeReviewFactsOf(goal, task, state, facts.value),
+        hasFiles: node.files.length > 0, reviewed: review !== null }));
     }
     return { status: 'ready', value: { plan, goal, facts: facts.value, nodeFiles, reviews, pendingByTaskId } };
   }
@@ -187,7 +222,7 @@ export function createTaskNodeCommitService(deps: TaskNodeCommitServiceDependenc
         runs: runs.map(run => ({ ...run.ref })),
         files: node.files.map(file => ({ ...file, blob: blobs.get(file.path) ?? null,
           sharedWithGoalRefs: shared.get(file.path) ?? [] })),
-        review, pending,
+        review, pending, draft: null,
       });
     }
     return { status: 'ready', value: { rows, pending: rows.filter(row => row.pending), liveWork } };
@@ -215,10 +250,8 @@ export function createTaskNodeCommitService(deps: TaskNodeCommitServiceDependenc
     if (shapeProblem !== null) return rejected('invalid', shapeProblem);
     const input = write.input;
     const { goalRef, taskRef, decision, message, reviewed } = input;
-    if (goalRef.projectId !== scope.projectId) return rejected('forbidden', 'the Goal belongs to another project');
-    if (taskRef.projectId !== goalRef.projectId || taskRef.goalId !== goalRef.goalId) {
-      return rejected('invalid', 'the Task belongs to another Goal');
-    }
+    const targetProblem = nodeTargetProblem(scope, goalRef, taskRef);
+    if (targetProblem !== null) return targetProblem;
     // NR-12: a commit records the person's own message; an acknowledgement makes no commit and carries none.
     if (decision === 'commit' && (message === null || message.trim() === '')) {
       return rejected('invalid', 'a node commit needs the commit message');
@@ -226,8 +259,7 @@ export function createTaskNodeCommitService(deps: TaskNodeCommitServiceDependenc
     if (decision === 'acknowledge' && message !== null) {
       return rejected('invalid', 'an acknowledgement makes no commit and carries no message');
     }
-    const pins = nodeCommitPins(write.expected, goalRef, { aggregateType: 'TaskReduction', projectId: goalRef.projectId,
-      goalId: goalRef.goalId, taskId: taskRef.taskId });
+    const pins = nodeCommitPins(write.expected, goalRef, reductionRefOf(goalRef, taskRef.taskId));
     if ('status' in pins) return pins;
     const workspace: WorkspaceRef = { aggregateType: 'Workspace', projectId: scope.projectId, workspaceId: scope.workspaceId };
     const command = {
@@ -253,8 +285,12 @@ export function createTaskNodeCommitService(deps: TaskNodeCommitServiceDependenc
             return rejected('invalid', 'this request id already committed a different review; use a new request id');
           }
           if (found.value !== null) {
-            return { status: 'ready', facts: { kind: 'recovered', sha: found.value.sha,
-              draft: JSON.parse(found.value.record) as TaskNodeCommitDraftV1 } };
+            const draft = JSON.parse(found.value.record) as TaskNodeCommitDraftV1;
+            // 121-173: a version the person sent back is not recorded as reviewed, not even from its landed commit.
+            const fence = await recoveredSendBackFence(goalRef, draft);
+            if ('status' in fence) return fence;
+            return { status: 'ready', facts: { kind: 'recovered', sha: found.value.sha, draft,
+              sendBackGuard: fence.guard } };
           }
           const fresh = await readFresh(ctx, write.requestId, actor, workspace, input, pins);
           return 'status' in fresh ? fresh : { status: 'ready', facts: fresh };
@@ -277,8 +313,10 @@ export function createTaskNodeCommitService(deps: TaskNodeCommitServiceDependenc
             eventType: 'TaskNodeCommitted', schemaVersion: 1, occurredAt: deps.now(), result: record };
           return {
             records: [taskNodeCommitCodec.encode(record)],
-            // The node's one review fact: a second write of the same (Task, reduction revision) conflicts.
-            guards: [{ refKey: canonicalJson(record.ref as unknown as JsonValue), expectedRevision: null }],
+            // The node's one review fact: a second write of the same (Task, reduction revision) conflicts, and so
+            // does a send-back of that version committed since the read (121-173).
+            guards: [{ refKey: canonicalJson(record.ref as unknown as JsonValue), expectedRevision: null },
+              ...(facts.sendBackGuard === null ? [] : [facts.sendBackGuard])],
             claims: [],
             events: [taskNodeCommittedCodec.encode(event)],
           };
@@ -314,13 +352,15 @@ export function createTaskNodeCommitService(deps: TaskNodeCommitServiceDependenc
     const facts = await readCanonicalTaskFacts(records, goalRef, plan, task.taskId);
     if (facts.status !== 'ready') return facts;
     const state = facts.value.byTaskId.get(task.taskId)!;
+    // 121-173: checked before any git: the version the person read was sent back meanwhile.
+    const fence = sendBackFenceOf(facts.value, task.taskId, pins.reduction);
+    if ('status' in fence) return fence;
     const executed = await readExecuted(ctx, goalRef);
     if (!Array.isArray(executed)) return executed;
     const node = taskNodeFilesOf(new Set((facts.value.runsByTaskId.get(task.taskId) ?? []).map(run => run.ref.runId)),
       executed);
-    const notReviewed = nodeReviewProblem({ autonomy: goal.settings.autonomy, taskKind: task.taskKind,
-      executionIntent: task.executionIntent, effectivePhase: state.effectivePhase,
-      reductionRevision: state.reductionRevision, hasFiles: node.files.length > 0 });
+    const notReviewed = nodeReviewProblem({ ...nodeReviewFactsOf(goal, task, state, facts.value),
+      hasFiles: node.files.length > 0 });
     if (notReviewed !== null) return rejected('invalid', notReviewed);
     const reductionRevision = state.reductionRevision!;
     const existing = await readOwnerRecord({ store: records,
@@ -330,15 +370,8 @@ export function createTaskNodeCommitService(deps: TaskNodeCommitServiceDependenc
     // Mirrors the one-time delivery acceptance: a node's review fact is written once.
     if (existing.ok) return rejected('invalid', 'the node was already reviewed');
     if ('rejection' in existing) return existing.rejection;
-    if (goal.revision !== pins.goal) {
-      return rejectedWithNonEmptyCurrent('revision_conflict', 'the Goal revision changed since it was read',
-        [{ ref: goalRef, revision: goal.revision }]);
-    }
-    if (reductionRevision !== pins.reduction) {
-      return rejectedWithNonEmptyCurrent('revision_conflict', 'the TaskReduction changed since the caller read it',
-        [{ ref: { aggregateType: 'TaskReduction', projectId: goalRef.projectId, goalId: goalRef.goalId,
-          taskId: task.taskId }, revision: reductionRevision }]);
-    }
+    const moved = nodePinConflict(goalRef, goal.revision, reductionRefOf(goalRef, task.taskId), reductionRevision, pins);
+    if (moved !== null) return moved;
     const paths = node.files.map(file => file.path);
     const current = await deps.workspace.readTaskNodeBlobs({ workspace: goal.workspaceRef, paths });
     if (current.status !== 'ready') return current;
@@ -354,13 +387,265 @@ export function createTaskNodeCommitService(deps: TaskNodeCommitServiceDependenc
       return rejected('source_stale', "the node's files still differ from HEAD; re-read the node and commit it");
     }
     const blobs = new Map(current.value.map(entry => [entry.path, entry.blob]));
-    return { kind: 'fresh', workspace: goal.workspaceRef, paths, draft: { goalRef, taskId: task.taskId,
+    return { kind: 'fresh', workspace: goal.workspaceRef, paths, sendBackGuard: fence.guard, draft: { goalRef, taskId: task.taskId,
       reductionRevision, planRef: plan.ref, planRevision: plan.planRevision, runRefs: node.runRefs,
       files: node.files.map(file => ({ ...file, blob: blobs.get(file.path) ?? null })),
       reviewedBy: actor, reviewedAt: deps.now(), requestId } };
   }
 
-  return { readNodeRows, readPendingNodeReview, commitNode };
+  /**
+   * 121-173: the person sends the pending node back. The node must be the one waiting for the person (NR-01/02, the
+   * cut point, no review fact) under the person's two pins; the requeue owner then writes the TaskRequeue covering the
+   * selected Run with the person's reason, pinned to the Goal and that Run, and guards the absent review fact in the
+   * same commit. Nothing touches the work tree.
+   */
+  async function reworkNode(ctx: CoreCallContext, request: Parameters<TaskNodeCommitPort['reworkNode']>[1]):
+    ReturnType<TaskNodeCommitPort['reworkNode']> {
+    const owned = bindTrustedContext(ctx);
+    if (!owned.ok) return owned.rejection;
+    const write = isolateWrite(request);
+    if (!write.ok) return write.rejection;
+    const { scope, actor } = owned;
+    // Product rule (121-45, 121-173): only the person reviews a node; an automation never sends one back.
+    const notOperator = operatorProblem(actor, deps.operatorActor, 'send a node back');
+    if (notOperator !== null) return notOperator;
+    const shapeProblem = checkShape(ReworkNodeInputShape, write.input, 'stored');
+    if (shapeProblem !== null) return rejected('invalid', shapeProblem);
+    const { goalRef, taskRef, reason } = write.input;
+    const targetProblem = nodeTargetProblem(scope, goalRef, taskRef);
+    if (targetProblem !== null) return targetProblem;
+    const reductionRef = reductionRefOf(goalRef, taskRef.taskId);
+    const pins = nodeCommitPins(write.expected, goalRef, reductionRef);
+    if ('status' in pins) return pins;
+    const keys = commandKeys({ operation: REWORK_OPERATION,
+      scope: { projectId: scope.projectId, workspaceId: scope.workspaceId },
+      principal: { kind: actor.kind, id: actor.id }, commandId: write.requestId,
+      fingerprintInput: { goalRef, taskRef, reductionRevision: pins.reduction, reason,
+        expected: write.expected } as unknown as JsonValue });
+    // A send-back this request already committed replays its TaskRequeue; the node is no longer pending by then, so
+    // the replay comes before any state read.
+    const replay = async (): Promise<Awaited<ReturnType<TaskNodeCommitPort['reworkNode']>> | null> => {
+      const lookup = await lookupCommittedReceipt(records, keys.identityKey, keys.fingerprint);
+      if (lookup.status === 'missing') return null;
+      if (lookup.status === 'conflict') return rejected('idempotency_conflict', lookup.reason);
+      if (lookup.status !== 'found') return rejected('unavailable', lookup.reason);
+      const replayed = await readCommittedEvent(records, lookup.receipt, { eventType: TASK_REQUEUED_EVENT_TYPE,
+        schemaVersion: TASK_REWORK_EVENT_SCHEMA_VERSION, decode: taskRequeuedEventFromEvent });
+      return replayed.status === 'ready'
+        ? { status: 'committed', value: { kind: 'requeued', requeue: replayed.value.requeue }, replayed: true,
+          cursor: lookup.receipt.cursor }
+        : rejected('unavailable', `the node send-back cannot be replayed: ${replayed.reason}`);
+    };
+    const replayed = await replay();
+    if (replayed !== null) return replayed;
+    const ledger = await readNodeReviewLedger(ctx, goalRef);
+    if (ledger.status === 'rejected') return ledger;
+    if (ledger.status !== 'ready') {
+      return rejected(ledger.status === 'not_found' ? 'not_found' : 'unavailable', 'the node review is not readable');
+    }
+    const plan = ledger.value.plan;
+    const task = plan?.tasks.find(candidate => candidate.taskId === taskRef.taskId);
+    if (ledger.value.plan === null || task === undefined) return rejected('invalid', "the Task is not in the Goal's active Plan");
+    const { goal, facts, nodeFiles, reviews } = ledger.value;
+    // This version was already sent back: the same request that committed meanwhile replays; any other request is a
+    // second send-back of it (coordination: one send-back per version).
+    const sentBack = sentBackOf(facts, task.taskId, pins.reduction);
+    if (sentBack !== undefined) {
+      return await replay() ?? rejectedWithNonEmptyCurrent('revision_conflict', 'the node was already sent back',
+        [{ ref: sentBack.ref, revision: sentBack.revision }]);
+    }
+    const state = facts.byTaskId.get(task.taskId)!;
+    const notReviewed = nodeReviewProblem({ ...nodeReviewFactsOf(goal, task, state, facts),
+      hasFiles: nodeFiles.get(task.taskId)!.files.length > 0 });
+    if (notReviewed !== null) return rejected('invalid', notReviewed);
+    const reductionRevision = state.reductionRevision!;
+    if (reviews.has(`${task.taskId}:${reductionRevision}`)) return rejected('invalid', 'the node was already reviewed');
+    const moved = nodePinConflict(goalRef, goal.revision, reductionRef, reductionRevision, pins);
+    if (moved !== null) return moved;
+    const run = (facts.runsByTaskId.get(task.taskId) ?? []).find(candidate => candidate.ref.runId === state.execution?.runId);
+    if (run === undefined) return rejected('unavailable', "the node's selected Run is not readable");
+    // The requeue owner pins the Goal and the selected Run; the reduction is held by its own window's guard.
+    const requeued = await deps.requeue.requeueForNodeReview(ctx, {
+      input: { taskRef, afterRunRef: run.ref, reason },
+      meta: { requestId: write.requestId,
+        expected: [{ ref: goalRef, revision: pins.goal }, { ref: run.ref, revision: run.revision }] },
+    }, { reductionRevision: pins.reduction, identityKey: keys.identityKey, fingerprint: keys.fingerprint });
+    // NR-B r2-6: a refusal may be a race lost to this same request (two copies that both missed the receipt above):
+    // the receipt read again decides it, so the same body replays and another is `idempotency_conflict`; only an
+    // identity that never committed keeps the refusal.
+    if (requeued.status !== 'rejected') return requeued;
+    return await replay() ?? requeued;
+  }
+
+  async function recordNodeReviewDraft(ctx: CoreCallContext,
+    input: Parameters<TaskNodeCommitPort['recordNodeReviewDraft']>[1]):
+    ReturnType<TaskNodeCommitPort['recordNodeReviewDraft']> {
+    const owned = bindTrustedContext(ctx);
+    if (!owned.ok) return owned.rejection;
+    const { scope, actor } = owned;
+    const { goalRef, taskId, reductionRevision, asked } = input;
+    if (goalRef.projectId !== scope.projectId) return rejected('forbidden', 'the Goal belongs to another project');
+    const result = await executeWriteCommand<TaskNodeReviewDraftV1, TaskNodeReviewDraftV1, never,
+      TaskNodeReviewDraftRecordedEventV1, TaskNodeReviewDraftV1>(records, {
+      operation: DRAFT_OPERATION,
+      scope: { projectId: scope.projectId, workspaceId: scope.workspaceId },
+      principal: { kind: actor.kind, id: actor.id },
+      commandId: nodeReviewDraftCommandId(goalRef.goalId, taskId, reductionRevision),
+      fingerprintInput: { goalRef, taskId, reductionRevision, asked } as unknown as JsonValue,
+      read: async () => ({ status: 'ready', facts: newTaskNodeReviewDraft({ goalRef, taskId, reductionRevision, asked,
+        requestedBy: actor, requestedAt: deps.now() }) }),
+      decide: draft => ({ decision: draft }),
+      build: (draft, built) => ({
+        records: [taskNodeReviewDraftCodec.encode(draft)],
+        // The node's one ask: a second record of the same (Task, reduction revision) conflicts.
+        guards: [{ refKey: canonicalJson(draft.ref as unknown as JsonValue), expectedRevision: null }],
+        claims: [],
+        events: [taskNodeReviewDraftRecordedCodec.encode({ eventId: `${built.identityKey}:recorded`,
+          eventType: 'TaskNodeReviewDraftRecorded', schemaVersion: 1, occurredAt: draft.requestedAt, result: draft })],
+      }),
+      result: {
+        eventType: 'TaskNodeReviewDraftRecorded',
+        schemaVersion: 1,
+        decode: taskNodeReviewDraftRecordedCodec.decode,
+        validate: decoded => decoded.result.ref.goalId === goalRef.goalId && decoded.result.ref.taskId === taskId
+          && decoded.result.ref.reductionRevision === reductionRevision ? null : 'the event records another node draft',
+        project: decoded => decoded.result,
+      },
+    });
+    if (result.status === 'committed') return result;
+    if (result.status === 'refused') return result.refusal;
+    return rejectedWithNonEmptyCurrent(result.code, result.reason, result.current);
+  }
+
+  async function readNodeReviewDrafts(ctx: CoreCallContext, input: { goalRef: GoalRef }):
+    ReturnType<TaskNodeCommitPort['readNodeReviewDrafts']> {
+    const goalRef = input.goalRef;
+    if (ctx.projectId !== goalRef.projectId) return rejected('forbidden', 'the Goal belongs to another project');
+    let batch;
+    try {
+      batch = await lookupAll(records, TASK_NODE_REVIEW_DRAFT_BY_GOAL_LOOKUP, [goalRef.projectId, goalRef.goalId]);
+    } catch (failure) {
+      return storeFailureToRejection(failure);
+    }
+    const drafts: TaskNodeReviewDraftV1[] = [];
+    for (const encoded of batch.items) {
+      const decoded = taskNodeReviewDraftCodec.decode(encoded);
+      if (decoded.status !== 'decoded') return rejected('unavailable', `a node draft is not decodable: ${decoded.reason}`);
+      drafts.push(decoded.value);
+    }
+    return { status: 'ready', value: drafts };
+  }
+
+  async function readNodeReviewDraftRecipient(ctx: CoreCallContext, input: { goalRef: GoalRef }):
+    ReturnType<TaskNodeCommitPort['readNodeReviewDraftRecipient']> {
+    const owned = bindTrustedContext(ctx);
+    if (!owned.ok) return owned.rejection;
+    if (input.goalRef.projectId !== owned.scope.projectId) return rejected('forbidden', 'the Goal belongs to another project');
+    return deps.duties.resolveDutyRecipient(ctx, { workspace: owned.scope, duty: 'secretary' });
+  }
+
+  async function readNodeReceipts(ctx: CoreCallContext, input: { goalRef: GoalRef }):
+    ReturnType<TaskNodeCommitPort['readNodeReceipts']> {
+    const goalRef = input.goalRef;
+    if (ctx.projectId !== goalRef.projectId) return rejected('forbidden', 'the Goal belongs to another project');
+    const window = await readGoalPlanWindow(records, goalRef);
+    if (window.status !== 'ready') return window;
+    if (window.goal.workspaceRef.workspaceId !== ctx.workspaceId) {
+      return rejected('forbidden', 'the Goal belongs to another workspace');
+    }
+    const reviews = await readReviews(goalRef);
+    if (!(reviews instanceof Map)) return reviews;
+    const titles = new Map((window.plan?.tasks ?? []).map(task => [task.taskId, task.title]));
+    const receipts: NodeReviewReceiptV1[] = [...reviews.values()].map(review => ({
+      taskRef: { taskId: review.ref.taskId, title: titles.get(review.ref.taskId) ?? null },
+      decision: review.review.kind,
+      sha: review.review.kind === 'committed' ? review.review.sha : null,
+      message: review.review.kind === 'committed' ? review.review.message : null,
+      reviewedAt: review.reviewedAt, reviewedBy: { ...review.reviewedBy }, files: review.files.length,
+    }));
+    const order = (left: string, right: string): number => left < right ? -1 : left > right ? 1 : 0;
+    receipts.sort((left, right) => order(left.reviewedAt, right.reviewedAt)
+      || order(left.taskRef.taskId, right.taskRef.taskId));
+    return { status: 'ready', value: { receipts } };
+  }
+
+  /** The send-back fence of a commit that landed when its record did not: the Task read again in its active Plan. */
+  async function recoveredSendBackFence(goalRef: GoalRef, draft: TaskNodeCommitDraftV1):
+    Promise<{ guard: SendBackGuard } | CoreRejection> {
+    const window = await readGoalPlanWindow(records, goalRef);
+    if (window.status !== 'ready') return window;
+    const plan = window.plan;
+    if (plan === null || !plan.tasks.some(task => task.taskId === draft.taskId)) return { guard: null };
+    const facts = await readCanonicalTaskFacts(records, goalRef, plan, draft.taskId);
+    if (facts.status !== 'ready') return facts;
+    return sendBackFenceOf(facts.value, draft.taskId, draft.reductionRevision);
+  }
+
+  return { readNodeRows, readPendingNodeReview, commitNode, reworkNode, recordNodeReviewDraft, readNodeReviewDrafts,
+    readNodeReviewDraftRecipient, readNodeReceipts };
+}
+
+/**
+ * 121-173: one version is either reviewed or sent back. A version already sent back refuses the review
+ * (`revision_conflict` with that TaskRequeue); otherwise the review commit guards the selected Run's TaskRequeue as
+ * read, which a later send-back of the version would write.
+ */
+function sendBackFenceOf(facts: CanonicalTaskFacts, taskId: string, reductionRevision: number):
+  { guard: SendBackGuard } | CoreRejection {
+  const sentBack = sentBackOf(facts, taskId, reductionRevision);
+  if (sentBack !== undefined) {
+    return rejectedWithNonEmptyCurrent('revision_conflict', 'the node was sent back from review',
+      [{ ref: sentBack.ref, revision: sentBack.revision }]);
+  }
+  const execution = facts.byTaskId.get(taskId)?.execution ?? null;
+  if (execution === null) return { guard: null };
+  const refKey = taskRequeueRefKey({ aggregateType: 'TaskRequeue', projectId: execution.projectId,
+    goalId: execution.goalId, taskId, afterRunId: execution.runId });
+  return { guard: facts.reworkGuards.find(guard => guard.refKey === refKey) ?? null };
+}
+
+/** 121-173: the person's send-back of this reduction revision of the Task, read in the same canonical window. */
+function sentBackOf(facts: Pick<CanonicalTaskFacts, 'requeuesByTaskId'>, taskId: string, reductionRevision: number):
+  TaskRequeueSnapshotV1 | undefined {
+  return (facts.requeuesByTaskId.get(taskId) ?? []).find(requeue => sendsBack(requeue, reductionRevision));
+}
+
+function reductionRefOf(goalRef: GoalRef, taskId: string): TaskReductionRef {
+  return { aggregateType: 'TaskReduction', projectId: goalRef.projectId, goalId: goalRef.goalId, taskId };
+}
+
+/** The node the person names belongs to this project and its Task to that Goal. */
+function nodeTargetProblem(scope: { projectId: string }, goalRef: GoalRef, taskRef: { projectId: string; goalId: string }):
+  CoreRejection | null {
+  if (goalRef.projectId !== scope.projectId) return rejected('forbidden', 'the Goal belongs to another project');
+  if (taskRef.projectId !== goalRef.projectId || taskRef.goalId !== goalRef.goalId) {
+    return rejected('invalid', 'the Task belongs to another Goal');
+  }
+  return null;
+}
+
+/** NR-07: the person's Goal and TaskReduction pins against the revisions read now. */
+function nodePinConflict(goalRef: GoalRef, goalRevision: number, reductionRef: TaskReductionRef,
+  reductionRevision: number, pins: { goal: number; reduction: number }): CoreRejection | null {
+  if (goalRevision !== pins.goal) {
+    return rejectedWithNonEmptyCurrent('revision_conflict', 'the Goal revision changed since it was read',
+      [{ ref: goalRef, revision: goalRevision }]);
+  }
+  if (reductionRevision !== pins.reduction) {
+    return rejectedWithNonEmptyCurrent('revision_conflict', 'the TaskReduction changed since the caller read it',
+      [{ ref: reductionRef, revision: reductionRevision }]);
+  }
+  return null;
+}
+
+/** The review rules' facts of one Task, except its files: the Goal's level and cut point and the applicable reduction. */
+function nodeReviewFactsOf(goal: GoalSnapshot, task: PlanRevisionSnapshot['tasks'][number],
+  state: CanonicalTaskState, facts: Pick<CanonicalTaskFacts, 'reductionsByTaskId'>):
+  Omit<NodeReviewFactsV1, 'hasFiles'> {
+  const reduction = state.reductionRevision === null ? undefined : facts.reductionsByTaskId.get(task.taskId);
+  return { autonomy: goal.settings.autonomy, taskKind: task.taskKind, executionIntent: task.executionIntent,
+    effectivePhase: state.effectivePhase, reductionRevision: state.reductionRevision,
+    reducedAt: reduction?.reducedAt ?? null, nodeReviewSince: goal.settings.nodeReviewSince ?? null };
 }
 
 /** NR-06: `meta.expected` is exactly the Goal pin and the TaskReduction pin (revision 0 before any reduction). */

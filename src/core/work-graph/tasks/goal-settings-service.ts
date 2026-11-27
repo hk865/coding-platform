@@ -417,7 +417,14 @@ export function createGoalSettingsService(deps: GoalSettingsServiceDependencies)
       waitingCycle = walk.waitingCycle;
     }
 
-    const settings: GoalSettingsV1 = { ...settingsOf(goal), autonomy: input.autonomy, waitForGoalRef: wait };
+    // 121-173: switching to `every_step` starts node review now; a node completed before stays out of the card. An
+    // `every_step` Goal keeps its cut point when wait/order change; switching away drops it (it only applies under
+    // `every_step`), so settings changed back are the same content again, and switching back writes a new one.
+    const nodeReviewSince = input.autonomy !== 'every_step' ? undefined
+      : goal.settings.autonomy !== 'every_step' ? deps.now() : goal.settings.nodeReviewSince;
+    const { nodeReviewSince: _dropped, ...kept } = settingsOf(goal);
+    const settings: GoalSettingsV1 = { ...kept, autonomy: input.autonomy, waitForGoalRef: wait,
+      ...(nodeReviewSince === undefined ? {} : { nodeReviewSince }) };
     const facts = guardFacts({ operator: true, goal, pinMatches: true, sameWorkspace: true,
       predecessorExists: predecessor !== null || wait === null, waitingCycle, pairPlanPointersMatch: true });
     const decided = transitionGoalSettings(goal, { type: 'settings_set', settings }, facts);

@@ -639,12 +639,14 @@ const cases: [string, (x: Ctx) => Promise<void>][] = [
     const first = await x.service.setGoalSettings(x.f.ctx, firstRequest);
     expect(first).toMatchObject({ status: 'committed', value: { revision: 9, desiredStateRevision: 1 } });
     if (first.status !== 'committed') throw new Error('SS14 first did not commit');
-    expect(first.value.settings).toEqual({ schemaVersion: 1, autonomy: 'every_step', order: 1, waitForGoalRef: GOAL_A, parallelRisks: [RISK] });
+    expect(first.value.settings).toEqual({ schemaVersion: 1, autonomy: 'every_step', order: 1, waitForGoalRef: GOAL_A, parallelRisks: [RISK],
+      nodeReviewSince: T });
     const secondRequest = reorderReq('ss14-order', [GOAL_A, GOAL_C, GOAL_B], [GA(), GB(9), GC()]);
     const second = await x.service.reorderGoals(x.f.ctx, secondRequest);
     expect(second).toMatchObject({ status: 'committed' });
     if (second.status !== 'committed') throw new Error('SS14 second did not commit');
-    const finalSettings = { schemaVersion: 1, autonomy: 'every_step', order: 2, waitForGoalRef: GOAL_A, parallelRisks: [RISK] };
+    const finalSettings = { schemaVersion: 1, autonomy: 'every_step', order: 2, waitForGoalRef: GOAL_A, parallelRisks: [RISK],
+      nodeReviewSince: T };
     expect(second.value.goals.find(g => g.ref.goalId === 'B')).toMatchObject({ revision: 10, desiredStateRevision: 1, settings: finalSettings });
     expect(await goal(x, GOAL_B)).toMatchObject({ revision: 10, desiredStateRevision: 1, settings: finalSettings });
     const paused = await control(x, GOAL_B, 10, 'pause', 'ss14-pause');

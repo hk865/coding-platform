@@ -48,8 +48,8 @@ import type { TaskPhaseCauseCode, TaskPhaseCauseDetailV1, TaskPhaseCauseV1 } fro
 import {
   MAX_AUTO_REWORK_LIMIT, TASK_REWORK_REASON_MAX_CHARS, isQueryRoundActor, reworkActorClassOf,
   type ReworkActorClass, type ReworkActorV1, type ReworkFailureClass, type TaskAutomationPolicyV1, type TaskRequeueAutomationV1,
-  type TaskRequeueBasisComparison, type TaskRequeueRef, type TaskRequeueSnapshotV1, type TaskRequeueTriggerV1,
-  type TaskReworkRefusalSnapshotV1,
+  type TaskRequeueBasisComparison, type TaskRequeueNodeReviewTriggerV1, type TaskRequeueRef, type TaskRequeueSnapshotV1,
+  type TaskRequeueTriggerV1, type TaskReworkRefusalSnapshotV1,
 } from '../../../contracts/task-requeue.js';
 import type { RoundSnapshot, VerificationRoundRef } from '../../../contracts/verification.js';
 import type { AttemptClaimBasis } from './attempt-machine.js';
@@ -61,8 +61,8 @@ import {
   type ClaimRequeueFacts, type ReviewClaimFacts, type RunClaimContext,
 } from './run-machine.js';
 import {
-  deriveReworkClass, isGoalFanOutActor, nextRequeueAutoCount, permissionInterruptionOf, requeueHistorySourceOf,
-  reworkFenceOf, reworkPermission,
+  deriveReworkClass, isGoalFanOutActor, nextRequeueAutoCount, permissionInterruptionOf, requeueClassOf,
+  requeueHistorySourceOf, reworkFenceOf, reworkPermission,
   type ReworkClassDerivationV1, type StopIntentV1, type VerifiedArchiveInterruptionV1,
 } from './task-failure.js';
 import { accept, reject, rejected, unreachable, type Rejected, type Transition } from './transition.js';
@@ -386,6 +386,11 @@ export type TaskReworkFacts = {
    * classification.
    */
   archive?: VerifiedArchiveInterruptionV1 | null;
+  /**
+   * 121-173: the operator sends this `satisfied` node back from node review (its applicable reduction). Only that
+   * owner path sets it; the requeue's `node_review_rework` trigger carries the same revision.
+   */
+  nodeReviewRework?: { reductionRevision: number };
 };
 
 /** §9 events that reach a Task only through its round-chain head. */
@@ -553,8 +558,11 @@ export type NewTaskRequeueInput = {
   /** Verified by `newBasisInputProblem`; a stored human note is already one of them (§13.1). */
   newInputRefs: readonly NewBasisInputRefV1[];
   budget: TaskBudgetV1 | null;
-  /** The owner has checked the epochs and the pointer intent against the Goal (TASK-27, GOAL-29). */
-  trigger: TaskRequeueTriggerV1 | null;
+  /**
+   * `goal_resume`: the owner has checked the epochs and the pointer intent against the Goal (TASK-27, GOAL-29).
+   * `node_review_rework`: the operator's node-review rework of the reduction the person reviewed (121-173).
+   */
+  trigger: TaskRequeueTriggerV1 | TaskRequeueNodeReviewTriggerV1 | null;
   agentProvenance: DelegatedWriteProvenanceV1 | null;
   runs: readonly RequeueChainRun[];
   /** The Task's TaskRequeues of the same window (the C8 count and the one-hop history source). */
@@ -566,8 +574,12 @@ export type NewTaskRequeueInput = {
   archive?: VerifiedArchiveInterruptionV1 | null;
 };
 
-/** ND-5 / ND-6: `interrupted` and a human requeue of a cancel skip the key comparison. */
+/**
+ * ND-5 / ND-6: `interrupted` and a human requeue of a cancel skip the key comparison; so does the person's node-review
+ * rework (121-173: nothing failed, the person's reason is the new basis).
+ */
 function basisComparisonOf(failureClass: ReworkFailureClass, actorClass: ReworkActorClass): TaskRequeueBasisComparison {
+  if (failureClass === 'review_rework') return 'skipped_node_review';
   if (failureClass === 'interrupted') return 'skipped_interrupted';
   if (failureClass === 'cancelled' && actorClass === 'human') return 'skipped_human_cancel';
   return 'compared';
@@ -616,7 +628,8 @@ function taskRequeueSubjectProblem(input: NewTaskRequeueInput): string | null {
  * a `completed` Run (FC-11..17), and today a round opens on any ended Run
  * (`evidence-service.ts:440`), so a crashed, cancelled, failed or
  * budget_exhausted afterRun is checked here too (§4.3 step 3: an invalid
- * chain is `incomplete`, an open head `finalize_first:`).
+ * chain is `incomplete`, an open head `finalize_first:`). FC-18, the node-review rework (121-173), reworks a node
+ * whose head is a finalized clean PASS.
  */
 function taskRequeueChainProblem(chain: RoundChainHeadV1, row: string): string | null {
   switch (chain.kind) {
@@ -627,7 +640,7 @@ function taskRequeueChainProblem(chain: RoundChainHeadV1, row: string): string |
       if (head.status !== 'finalized') {
         return `the round chain head ${head.ref.roundId} is open; it is finalized before a requeue (${row})`;
       }
-      if (!isFinalizedNonPass(head)) {
+      if (!isFinalizedNonPass(head) && row !== 'FC-18') {
         return `the round chain head ${head.ref.roundId} is a clean PASS; there is no round to rework`;
       }
       return null;
@@ -651,7 +664,8 @@ function taskRequeueChainProblem(chain: RoundChainHeadV1, row: string): string |
  *   for a human or the Goal-resume continuation, `GOAL_FAN_OUT_ACTOR` only with
  *   a trigger on a paused interruption, no agent budget, no trigger from
  *   anyone else;
- * - the trigger names this Goal and a pause before the resume;
+ * - a `goal_resume` trigger names this Goal and a pause before the resume; a `node_review_rework` trigger names a
+ *   reduction revision (121-173);
  * - `budget_exhausted` needs a larger budget or a new input (G-BUDGET).
  */
 function taskRequeueCombinationProblem(
@@ -667,14 +681,18 @@ function taskRequeueCombinationProblem(
     return 'agent provenance is recorded exactly for a work-run agent requeue';
   }
   const refusal = requeuePermission(afterRun, input.pointerIntent, derivation, input.requestedBy, actorClass, 'active',
-    { trigger: input.trigger !== null, budget: input.budget !== null });
+    { trigger: input.trigger !== null, budget: input.budget !== null, nodeReview: input.trigger?.kind === 'node_review_rework' });
   if (refusal !== null && !refusal.ok) return refusal.detail;
   const trigger = input.trigger;
-  if (trigger !== null) {
+  if (trigger?.kind === 'goal_resume') {
     if (trigger.goalRef.projectId !== input.task.projectId || trigger.goalRef.goalId !== input.task.goalId) {
       return 'the goal_resume trigger names another Goal';
     }
     if (!(trigger.pausedEpoch < trigger.resumedEpoch)) return 'the goal_resume trigger pause is not before its resume';
+  }
+  if (trigger?.kind === 'node_review_rework'
+    && !(Number.isSafeInteger(trigger.reductionRevision) && trigger.reductionRevision >= 0)) {
+    return 'the node_review_rework trigger names no reduction revision';
   }
   if (!requeueBudgetIncreased(afterRun, input.budget, input.newInputRefs.length)) {
     return 'a budget_exhausted requeue needs a larger token budget or a new input (budget_not_increased)';
@@ -689,11 +707,12 @@ function taskRequeueCombinationProblem(
 function requeuePermission(
   afterRun: RunSnapshot, pointerIntent: StopIntentV1 | null, derivation: Extract<ReworkClassDerivationV1, { kind: 'class' }>,
   requestedBy: ReworkActorV1, actorClass: ReworkActorClass, goalDesiredState: GoalDesiredState,
-  request: { trigger: boolean; budget: boolean },
+  request: { trigger: boolean; budget: boolean; nodeReview: boolean },
 ): Rejected | null {
   return reworkPermission({ operation: 'requeue', goalDesiredState, failureClass: derivation.failureClass,
     interruption: permissionInterruptionOf(derivation), fence: reworkFenceOf(afterRun, pointerIntent), actorClass,
-    goalFanOut: isGoalFanOutActor(requestedBy), trigger: request.trigger, budget: request.budget, note: false });
+    goalFanOut: isGoalFanOutActor(requestedBy), trigger: request.trigger, budget: request.budget, note: false,
+    nodeReview: request.nodeReview });
 }
 
 /** G-CAP (C8): a counted automatic requeue past the cap (`nextRequeueAutoCount`). */
@@ -725,7 +744,7 @@ export function newTaskRequeueRecord(input: NewTaskRequeueInput): TaskRequeueSna
   const actorClass = reworkActorClassOf(null, input.requestedBy);
   if (actorClass === null) return requeueCannotBeBuilt('the requester has no rework actor class');
   const { afterRun, chain } = input;
-  const derivation = deriveReworkClass(afterRun, input.pointerIntent, chain, input.archive ?? null);
+  const derivation = requeueClassOf(input.trigger, afterRun, input.pointerIntent, chain, input.archive ?? null);
   const afterOutcome = afterRun.outcome;
   if (derivation.kind !== 'class' || afterOutcome === null || afterOutcome === 'outcome_unknown') {
     return requeueCannotBeBuilt(`run ${afterRun.ref.runId} has no rework class (${derivation.row})`);
@@ -1228,6 +1247,8 @@ export function taskRequeueStateProblem(state: TaskState, facts: TaskReworkFacts
     case 'P1':
     case 'P5':
     case 'P14': {
+      // TASK-16 from `satisfied` (121-173): only the operator's node-review rework sends a completed node back.
+      if (state.row === 'P1' && state.phase === 'satisfied' && facts.nodeReviewRework !== undefined) break;
       // S1-TASK-01 / §4.1 step 7: a verified wait-cancel archive of this exact
       // yielded Run is the durable authority to requeue; the ordinary
       // "nothing to requeue" refusal is for requeues without that authority.
@@ -1301,10 +1322,11 @@ function onTaskRequeued(
   }
   const actorClass = reworkActorClassOf(null, input.requestedBy);
   if (actorClass === null) return reject('guard_failed', 'forbidden', 'the requester has no rework actor class');
-  const derivation = deriveReworkClass(input.afterRun, input.pointerIntent, input.chain, input.archive ?? null);
+  const derivation = requeueClassOf(input.trigger, input.afterRun, input.pointerIntent, input.chain, input.archive ?? null);
   if (derivation.kind !== 'class') return reject('illegal', 'invalid', `the selected Run has nothing to rework (${derivation.row})`);
   const permission = requeuePermission(input.afterRun, input.pointerIntent, derivation, input.requestedBy, actorClass,
-    facts.goalDesiredState, { trigger: input.trigger !== null, budget: input.budget !== null });
+    facts.goalDesiredState, { trigger: input.trigger !== null, budget: input.budget !== null,
+      nodeReview: input.trigger?.kind === 'node_review_rework' });
   if (permission !== null) return permission;
   if (!requeueBudgetIncreased(input.afterRun, input.budget, input.newInputRefs.length)) {
     return reject('illegal', 'invalid', 'budget_not_increased is a TASK-28 policy refusal, not a requeue');
@@ -1370,7 +1392,7 @@ function onTaskReworkRefused(
   const actorClass = reworkActorClassOf(null, refusal.requestedBy);
   if (actorClass === null) return reject('guard_failed', 'forbidden', 'the requester has no rework actor class');
   const permission = requeuePermission(run, event.pointerIntent, derivation, refusal.requestedBy, actorClass,
-    facts.goalDesiredState, { trigger: false, budget: false });
+    facts.goalDesiredState, { trigger: false, budget: false, nodeReview: false });
   if (permission !== null) return permission;
   switch (refusal.code) {
     case 'budget_not_increased':

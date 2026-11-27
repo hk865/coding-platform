@@ -12,6 +12,7 @@
 - `commit-compiler.ts` — Goal 创建的纯编译：identity/fingerprint、`GoalCreated` 事件、revision-1 快照与 guard 的 `PreparedCommit`，以及 caller version pins。
 - `control-record-codecs.ts` — `ControlIntentSnapshot@1`、提交/观察事件、控制状态形状检查与注册。
 - `decision-record-codecs.ts` — 决定写事件（`GoalSettingsChanged`、`WorkspaceNoticeSeenChanged`）、notice origin 解码与决定证明校验。
+- `task-node-review-draft-codecs.ts` — `TaskNodeReviewDraft@1`（121-173）的字段表 codec 与注册：`taskNodeReviewDraftCodec`、`TaskNodeReviewDraftRecorded@1` 事件 codec `taskNodeReviewDraftRecordedCodec` 和 `TASK_NODE_REVIEW_DRAFT_SCHEMAS`；一条记录（`task-node-review-draft-by-goal` lookup）、一条事件。`record-codecs.ts`（121-173 补）：Goal 的 settings 是五项必需加可选 `nodeReviewSince`，`goalSettingsProblem` 和写出的 Goal 形状共用 `hasGoalSettingsKeys`。
 - `task-node-commit-codecs.ts` — `TaskNodeCommit@1` 的字段表 codec 与注册：`taskNodeCommitCodec`、`TaskNodeCommitted@1` 事件 codec `taskNodeCommittedCodec` 和 `TASK_NODE_COMMIT_SCHEMAS`；一条记录（`task-node-commit-by-goal` lookup）、一条事件。
 - `goal-interruption-codecs.ts` — `GoalInterruption@1` 的字段表 codec 与注册：`goalInterruptionCodec`、`GoalInterruptionChanged@1` 事件 codec 和 `GOAL_INTERRUPTION_SCHEMAS`；一条记录、一条事件。
 - `goal-delivery-codecs.ts` — `GoalDeliveryAcceptance@1` 的字段表 codec 与注册：`GOAL_DELIVERY_ACCEPTANCE_SCHEMA_ID`、`GOAL_DELIVERY_ACCEPTED_EVENT_TYPE`、`GOAL_DELIVERY_SCHEMAS`（一条记录、一条 `GoalDeliveryAccepted` 事件）、编解码 `encodeGoalDeliveryAcceptance`/`decodeGoalDeliveryAcceptance` 与 `encodeGoalDeliveryAcceptedEvent`/`decodeGoalDeliveryAcceptedEvent`（事件带整条记录，重放只读事件），以及 ref 键 `goalDeliveryAcceptanceRefKey`；没有 lookup，按完整 ref 的 canonical key 读。
@@ -65,12 +66,12 @@
 | `atLeastCursorResult` | `src/core/work-graph/persistence/read-result-failures.ts:26` | 比较观察到的 watermark 与要求的 `atLeastCursor`，不足则给真实 `not_ready` | 索引读承诺新鲜度时 |
 | `lookupAll` | `src/core/work-graph/persistence/lookup-all.ts:32` | 把一个等值索引读到结尾，窗口变化最多重试 4 次，返回 watermark 且 `truncated` 恒为 false | 契约要求完整等值事实集时 |
 | `readAllOrdered` | `src/core/work-graph/persistence/lookup-ordered-all.ts:17` | 按共享页大小把有序索引读到结尾，返回记录与最后 watermark；store 失败原样抛出 | 契约要求完整有序事实集时 |
-| `canonicalRefKey` | `src/core/work-graph/persistence/record-codecs.ts:82` | Project/Workspace/Goal ref 的规范 key；委托 `src/contracts/fingerprint.ts:16` 的 `canonicalKey` | 读、guard、claim、比较需要完整 key 时；不要另写编码 |
-| `cloneActorRef` | `src/core/work-graph/persistence/record-codecs.ts:93` | 深拷贝 `ActorRef` | 编码前隔离调用方对象时 |
-| `goalSnapshotValueProblem` | `src/core/work-graph/persistence/record-codecs.ts:577` | Goal 快照值形状/范围校验（含出生字段：缺 `settings` 即拒绝，`continuedFrom`/`copiedInterventions` 按字段表片段检查） | 解码或提交 Goal 快照时 |
-| `workspaceSnapshotValueProblem` | `src/core/work-graph/persistence/record-codecs.ts:590` | Workspace 快照值形状校验 | 解码或提交 Workspace 时 |
-| `readGoalSettings` | `src/core/work-graph/persistence/record-codecs.ts:836` | 返回 Goal 快照自带的 `settings`（每个 Goal 出生即有，不再补默认值） | 需要 Goal 设置时 |
-| `effectiveWorkspaceDecisionSettings` | `src/core/work-graph/persistence/record-codecs.ts:852` | 读取 Workspace 生效的决定设置 | 需要决定设置时 |
+| `canonicalRefKey` | `src/core/work-graph/persistence/record-codecs.ts:83` | Project/Workspace/Goal ref 的规范 key；委托 `src/contracts/fingerprint.ts:16` 的 `canonicalKey` | 读、guard、claim、比较需要完整 key 时；不要另写编码 |
+| `cloneActorRef` | `src/core/work-graph/persistence/record-codecs.ts:94` | 深拷贝 `ActorRef` | 编码前隔离调用方对象时 |
+| `goalSnapshotValueProblem` | `src/core/work-graph/persistence/record-codecs.ts:585` | Goal 快照值形状/范围校验（含出生字段：缺 `settings` 即拒绝，`continuedFrom`/`copiedInterventions` 按字段表片段检查） | 解码或提交 Goal 快照时 |
+| `workspaceSnapshotValueProblem` | `src/core/work-graph/persistence/record-codecs.ts:598` | Workspace 快照值形状校验 | 解码或提交 Workspace 时 |
+| `readGoalSettings` | `src/core/work-graph/persistence/record-codecs.ts:844` | 返回 Goal 快照自带的 `settings`（每个 Goal 出生即有，不再补默认值） | 需要 Goal 设置时 |
+| `effectiveWorkspaceDecisionSettings` | `src/core/work-graph/persistence/record-codecs.ts:860` | 读取 Workspace 生效的决定设置 | 需要决定设置时 |
 | `goalRefFor` | `src/core/work-graph/persistence/commit-compiler.ts:56` | 生成 `{aggregateType:'Goal', projectId, goalId}` 的规范 GoalRef | 需要 GoalRef 时；不要另写构造器 |
 | `compileGoalCreate` | `src/core/work-graph/persistence/commit-compiler.ts:90` | 把已由 `state/` 构造的 Goal 快照/guard 编译成一次 `PreparedCommit`；`birthEvent: "none"` 不建、不编码 `GoalCreated`（自己的结果事件记出生的 owner：确认草稿、复制） | Goal 创建的写入 owner |
 | `normalizeCallerGoalPins` | `src/core/work-graph/persistence/commit-compiler.ts:195` | 校验并归一化调用方 Goal pins | 组装 Goal 创建提交前 |

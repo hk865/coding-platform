@@ -8,6 +8,12 @@
  * Red on the base tree (7dbkat-base), green when BK-A lands: the queue has no `node_review` source kind yet, so
  * NRQ-1..NRQ-3 fail on the missing card/count. NRQ-4 asserts absence, so it is green on the base tree and red only
  * under its named mutation (`derive-from-rows`), which is the behaviour it guards.
+ *
+ * NR-B (ruling `nrb-rulings.md` §11, 2-5): a switch into every_step now reviews only the nodes finished after it, so
+ * NRQ-1..NRQ-3 start both nodes before the switch and finish them after it (`acrossTheSwitch` in the world); the
+ * two pending nodes and every expected value stay. The new setup is green on the base tree too (no cut-off there).
+ * Round-1 ruling 13: the starts @t0, the switch @t1, the finishes @t2, so NRQ-1 also guards 2-5's "compare the
+ * reduction time": a cut-off compared with the Runs' start (t0 < t1) leaves both nodes out and NRQ-1 is red.
  */
 import { describe, expect, it, onTestFinished } from 'vitest';
 import type { ReadResult } from '../../src/contracts/core/results.js';
@@ -16,9 +22,8 @@ import type { DecisionCardV1, DecisionQueueReadV1 } from '../../src/core/work-gr
 import { plain } from '../helpers/AG2b-collaboration-fixture.js';
 import { adoptPLMixedPlan } from '../helpers/PL-consumption-fixture.js';
 import { S6A_SCOPE, S6A_WORK_ROLE } from '../helpers/S6A-request-fixture.js';
-import { setS7AAutonomy } from '../helpers/S7A-fixture.js';
 import {
-  createFile, dnrCommit, dnrLine, dnrRow, dnrRows, openDNRWorld, runDNRNode, type DNRWorld,
+  acrossTheSwitch, createFile, dnrCommit, dnrLine, dnrRow, dnrRows, openDNRWorld, runDNRNode, type DNRWorld,
 } from '../helpers/S7D2-DNR-node-world.js';
 
 /** One line and one `satisfied` work node that created `path` through the Kernel's real `edit`. */
@@ -46,9 +51,7 @@ describe('BK-A: node_review cards in the decision queue', () => {
   it('NRQ-1 decisions/queue derives one node_review card from two pending nodes', async () => {
     const w = await openDNRWorld({ label: 'nrq1', autonomy: 'after_plan_confirmation', taskIds: ['nrq1-a', 'nrq1-b'] });
     onTestFinished(() => w.close());
-    await runNodeWithFile(w, 'nrq1-a', 'src/nrq1-a.ts');
-    await runNodeWithFile(w, 'nrq1-b', 'src/nrq1-b.ts');
-    await setS7AAutonomy(w.world, w.goal, 'every_step');
+    await acrossTheSwitch(w, [{ taskId: 'nrq1-a', path: 'src/nrq1-a.ts' }, { taskId: 'nrq1-b', path: 'src/nrq1-b.ts' }]);
     expect((await dnrRows(w)).pending).toHaveLength(2);
 
     const queue = await queueOfGoal(w, w.goal);
@@ -77,9 +80,7 @@ describe('BK-A: node_review cards in the decision queue', () => {
     // The NRQ-1 world: the same two pending nodes on one Goal.
     const w = await openDNRWorld({ label: 'nrq2', autonomy: 'after_plan_confirmation', taskIds: ['nrq1-a', 'nrq1-b'] });
     onTestFinished(() => w.close());
-    await runNodeWithFile(w, 'nrq1-a', 'src/nrq1-a.ts');
-    await runNodeWithFile(w, 'nrq1-b', 'src/nrq1-b.ts');
-    await setS7AAutonomy(w.world, w.goal, 'every_step');
+    await acrossTheSwitch(w, [{ taskId: 'nrq1-a', path: 'src/nrq1-a.ts' }, { taskId: 'nrq1-b', path: 'src/nrq1-b.ts' }]);
     expect((await dnrRows(w)).pending).toHaveLength(2);
 
     const before = nodeReviewCardsOf(await queueOfGoal(w, w.goal));
@@ -101,9 +102,7 @@ describe('BK-A: node_review cards in the decision queue', () => {
   it('NRQ-3 decisions/queue counts the node_review card only under its own Goal', async () => {
     const w = await openDNRWorld({ label: 'nrq3', autonomy: 'after_plan_confirmation', taskIds: ['nrq3-a', 'nrq3-b'] });
     onTestFinished(() => w.close());
-    await runNodeWithFile(w, 'nrq3-a', 'src/nrq3-a.ts');
-    await runNodeWithFile(w, 'nrq3-b', 'src/nrq3-b.ts');
-    await setS7AAutonomy(w.world, w.goal, 'every_step');
+    await acrossTheSwitch(w, [{ taskId: 'nrq3-a', path: 'src/nrq3-a.ts' }, { taskId: 'nrq3-b', path: 'src/nrq3-b.ts' }]);
     expect((await dnrRows(w)).pending).toHaveLength(2);
     // The second Goal's Plan is adopted but has no Run and no reduction: its only work Task is not pending.
     await adoptPLMixedPlan(w.world, { goal: w.world.goals.second, label: 'nrq3-b',

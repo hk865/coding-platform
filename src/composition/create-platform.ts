@@ -365,6 +365,7 @@ import {
   type WorkspaceChangeCaptureResult,
 } from '../core/workspace/workspace-change-capture.js';
 import { TASK_NODE_COMMIT_SCHEMAS } from '../core/work-graph/persistence/task-node-commit-codecs.js';
+import { TASK_NODE_REVIEW_DRAFT_SCHEMAS } from '../core/work-graph/persistence/task-node-review-draft-codecs.js';
 import { createTaskNodeCommitService } from '../core/work-graph/tasks/task-node-commit-service.js';
 import type { TaskNodeCommitPort, TaskNodeCommitWorkspacePort } from '../core/work-graph/model/task-node-commit-contracts.js';
 // Delivery (121-45): the acceptance record/event codecs, the write owner and the page read.
@@ -1196,7 +1197,8 @@ export function platformRecordSchemas() {
       ...REWORK_REQUEST_RECORD_SCHEMAS.records, ...ACTION_REQUEST_RECORD_SCHEMAS.records,
       ...INITIALIZATION_ADOPTION_SCHEMAS.records, ...HANDOFF_BRIEF_RECORD_SCHEMAS.records,
       ...ROLE_LINE_RECORD_SCHEMAS.records, ...ROLE_LINE_ORCHESTRATION_SCHEMAS.records, ...KNOWLEDGE_RECORD_SCHEMAS.records,
-      ...TASK_NODE_COMMIT_SCHEMAS.records, ...LINE_RECORD_SCHEMAS.records, ...GOAL_DELIVERY_SCHEMAS.records],
+      ...TASK_NODE_COMMIT_SCHEMAS.records, ...TASK_NODE_REVIEW_DRAFT_SCHEMAS.records, ...LINE_RECORD_SCHEMAS.records,
+      ...GOAL_DELIVERY_SCHEMAS.records],
     events: [...materialsSchema.events, ...PLAN_RECORD_SCHEMAS.events, ...PLAN_STATE_RECORD_SCHEMAS.events,
       ...PLAN_GOVERNANCE_RECORD_SCHEMAS.events, ...SESSION_RECORD_SCHEMAS.events, ...SESSION_LIFECYCLE_RECORD_SCHEMAS.events,
       ...ROLE_RECORD_SCHEMAS.events, ...OBSERVED_ARCHITECTURE_RECORD_SCHEMAS.events, ...ARCHITECTURE_CATALOG_SCHEMAS.events,
@@ -1217,7 +1219,8 @@ export function platformRecordSchemas() {
       ...REWORK_REQUEST_RECORD_SCHEMAS.events, ...ACTION_REQUEST_RECORD_SCHEMAS.events,
       ...INITIALIZATION_ADOPTION_SCHEMAS.events, ...HANDOFF_BRIEF_RECORD_SCHEMAS.events,
       ...ROLE_LINE_RECORD_SCHEMAS.events, ...ROLE_LINE_ORCHESTRATION_SCHEMAS.events, ...KNOWLEDGE_RECORD_SCHEMAS.events,
-      ...TASK_NODE_COMMIT_SCHEMAS.events, ...LINE_RECORD_SCHEMAS.events, ...GOAL_DELIVERY_SCHEMAS.events],
+      ...TASK_NODE_COMMIT_SCHEMAS.events, ...TASK_NODE_REVIEW_DRAFT_SCHEMAS.events, ...LINE_RECORD_SCHEMAS.events,
+      ...GOAL_DELIVERY_SCHEMAS.events],
     lookups: [...materialsSchema.lookups ?? [], ...PLAN_RECORD_SCHEMAS.lookups ?? [], ...PLAN_STATE_RECORD_SCHEMAS.lookups ?? [],
       ...PLAN_GOVERNANCE_RECORD_SCHEMAS.lookups ?? [], ...SESSION_RECORD_SCHEMAS.lookups ?? [],
       ...SESSION_LIFECYCLE_RECORD_SCHEMAS.lookups ?? [], ...ROLE_RECORD_SCHEMAS.lookups ?? [],
@@ -1238,7 +1241,8 @@ export function platformRecordSchemas() {
       ...REWORK_REQUEST_RECORD_SCHEMAS.lookups ?? [], ...ACTION_REQUEST_RECORD_SCHEMAS.lookups ?? [],
       ...GOAL_COPY_RECORD_SCHEMAS.lookups ?? [], ...INITIALIZATION_ADOPTION_SCHEMAS.lookups ?? [],
       ...HANDOFF_BRIEF_RECORD_SCHEMAS.lookups ?? [], ...ROLE_LINE_RECORD_SCHEMAS.lookups ?? [], ...ROLE_LINE_ORCHESTRATION_SCHEMAS.lookups ?? [],
-      ...KNOWLEDGE_RECORD_SCHEMAS.lookups ?? [], ...TASK_NODE_COMMIT_SCHEMAS.lookups ?? [], ...LINE_RECORD_SCHEMAS.lookups ?? []],
+      ...KNOWLEDGE_RECORD_SCHEMAS.lookups ?? [], ...TASK_NODE_COMMIT_SCHEMAS.lookups ?? [],
+      ...TASK_NODE_REVIEW_DRAFT_SCHEMAS.lookups ?? [], ...LINE_RECORD_SCHEMAS.lookups ?? []],
   };
 }
 
@@ -2268,10 +2272,6 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       lineage: { messages: mailbox, queries: queryJobs, plans: planService,
         readReview: (callCtx, input) => unknownCallReviews.readReview(callCtx, input) },
     });
-    // The main read and `requests/read`'s ONE whole-page run of the decision read model's assembly. It is built
-    // before the Runtime dependencies because Q's `read_requests` tool receives this owner.
-    const rawMainSurface = createMainSurfaceReadModel({ records: backend.records, requests: rawRequestFacts,
-      decisions: rawDecisionReads, planSourceRoot });
     // 按请求领取读派工三值用同一个 `dispatchBasis`（邮箱、图读者、动作 owner 共用的那一个）。
     const claimService = createTaskClaimService({ records: backend.records, roles: roleService,
       bodies, dispatchBasis, now, newId: randomUUID, planSourceRoot });
@@ -2302,6 +2302,42 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       planningRounds: { queryRounds, duty: sessionDutyResolver },
       automationPolicy: currentAutomationPolicy,
       now, eventId: randomUUID });
+    // Node-level review (121-45): the node commit's git on the Goal workspace's Host root, the same `resolveRoot` the
+    // change capture uses. A root that cannot be resolved, or a git failure, is `unavailable` in its own words.
+    const nodeGitOn = async <T>(workspaceRef: WorkspaceRef, work: (root: string) => Promise<T>):
+      Promise<{ status: 'ready'; value: T } | CoreRejection> => {
+      try {
+        const resolved = await options.workspace.resolveRoot(workspaceRef);
+        if (resolved.status !== 'ready') {
+          return { status: 'rejected', code: 'unavailable', reason: `the workspace root could not be resolved: ${resolved.reason}` };
+        }
+        return { status: 'ready', value: await work(resolved.value.root) };
+      } catch (error) {
+        return { status: 'rejected', code: 'unavailable', reason: messageOf(error) };
+      }
+    };
+    const nodeCommitGit: TaskNodeCommitWorkspacePort = {
+      readTaskNodeBlobs: input => nodeGitOn(input.workspace, root => readPathBlobs(root, input.paths)),
+      hasTaskNodeChanges: input => nodeGitOn(input.workspace, root => hasNodePathChanges(root, input.paths)),
+      commitTaskNodeChanges: async input => {
+        const done = await nodeGitOn(input.workspace, root => commitNodePaths(root, input.paths, input.message, input.trailer));
+        if (done.status !== 'ready') return done;
+        return done.value.status === 'committed' ? { status: 'ready', value: { sha: done.value.commit } }
+          : { status: 'rejected', code: 'unavailable', reason: done.value.reason };
+      },
+      findTaskNodeCommit: input => nodeGitOn(input.workspace,
+        root => findNodeCommit(root, input.identity, input.fingerprint)),
+    };
+    // 121-173: a send-back is the requeue owner's TaskRequeue, so the node review owner is built after it.
+    const rawNodeCommits = createTaskNodeCommitService({ records: backend.records, executedFiles: goalExecutedFiles,
+      conflicts: rawDecisionReads, workspace: nodeCommitGit, requeue: requeueService,
+      duties: { resolveDutyRecipient }, now,
+      ...(operatorActor === undefined ? {} : { operatorActor }) });
+    // The main read and `requests/read`'s ONE whole-page run of the decision read model's assembly. It is built
+    // before the Runtime dependencies because Q's `read_requests` tool receives this owner; it reads the node review
+    // receipts (121-173) from the node review owner above.
+    const rawMainSurface = createMainSurfaceReadModel({ records: backend.records, requests: rawRequestFacts,
+      decisions: rawDecisionReads, planSourceRoot, nodeCommits: rawNodeCommits });
     // The handoff facts' condition check enters through this holder because the facts are built after the owners
     // they share; a conditioned archive that runs before the wiring is complete is an explicit `unavailable`, never
     // a commit without its condition.
@@ -3242,40 +3278,17 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       readDecisionCard: (...args) => trackedCall(() => rawDecisionReads.readDecisionCard(...args), unavailable),
       queryGoalConflicts: (...args) => trackedCall(() => rawDecisionReads.queryGoalConflicts(...args), unavailable),
     };
-    // Node-level review (121-45): the node commit's git on the Goal workspace's Host root, the same `resolveRoot` the
-    // change capture uses. A root that cannot be resolved, or a git failure, is `unavailable` in its own words.
-    const nodeGitOn = async <T>(workspaceRef: WorkspaceRef, work: (root: string) => Promise<T>):
-      Promise<{ status: 'ready'; value: T } | CoreRejection> => {
-      try {
-        const resolved = await options.workspace.resolveRoot(workspaceRef);
-        if (resolved.status !== 'ready') {
-          return { status: 'rejected', code: 'unavailable', reason: `the workspace root could not be resolved: ${resolved.reason}` };
-        }
-        return { status: 'ready', value: await work(resolved.value.root) };
-      } catch (error) {
-        return { status: 'rejected', code: 'unavailable', reason: messageOf(error) };
-      }
-    };
-    const nodeCommitGit: TaskNodeCommitWorkspacePort = {
-      readTaskNodeBlobs: input => nodeGitOn(input.workspace, root => readPathBlobs(root, input.paths)),
-      hasTaskNodeChanges: input => nodeGitOn(input.workspace, root => hasNodePathChanges(root, input.paths)),
-      commitTaskNodeChanges: async input => {
-        const done = await nodeGitOn(input.workspace, root => commitNodePaths(root, input.paths, input.message, input.trailer));
-        if (done.status !== 'ready') return done;
-        return done.value.status === 'committed' ? { status: 'ready', value: { sha: done.value.commit } }
-          : { status: 'rejected', code: 'unavailable', reason: done.value.reason };
-      },
-      findTaskNodeCommit: input => nodeGitOn(input.workspace,
-        root => findNodeCommit(root, input.identity, input.fingerprint)),
-    };
-    const rawNodeCommits = createTaskNodeCommitService({ records: backend.records, executedFiles: goalExecutedFiles,
-      conflicts: rawDecisionReads, workspace: nodeCommitGit, now,
-      ...(operatorActor === undefined ? {} : { operatorActor }) });
     decisionCardSources.push(createTaskNodeReviewCardSource({ nodeCommits: rawNodeCommits }));
     const nodeCommits: TaskNodeCommitPort = {
       readNodeRows: (...args) => trackedCall(() => rawNodeCommits.readNodeRows(...args), unavailable),
       readPendingNodeReview: (...args) => trackedCall(() => rawNodeCommits.readPendingNodeReview(...args), unavailable),
       commitNode: (...args) => trackedCall(() => rawNodeCommits.commitNode(...args), unavailable),
+      reworkNode: (...args) => trackedCall(() => rawNodeCommits.reworkNode(...args), unavailable),
+      recordNodeReviewDraft: (...args) => trackedCall(() => rawNodeCommits.recordNodeReviewDraft(...args), unavailable),
+      readNodeReviewDrafts: (...args) => trackedCall(() => rawNodeCommits.readNodeReviewDrafts(...args), unavailable),
+      readNodeReviewDraftRecipient: (...args) => trackedCall(() => rawNodeCommits.readNodeReviewDraftRecipient(...args),
+        unavailable),
+      readNodeReceipts: (...args) => trackedCall(() => rawNodeCommits.readNodeReceipts(...args), unavailable),
     };
     // Delivery (121-45): the acceptance write owner and the delivery page read. The write owner admits the configured
     // operator only; the read joins the Goal display, the acceptance, the node rows and the secretary, reusing
@@ -3292,6 +3305,10 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       nodeCommits: rawNodeCommits,
       duties: { resolveDutyRecipient },
       records: backend.records,
+      queryAnswers: { readQueryJob: (c, r) => queryJobs.readQueryJob(c, r), readQueryAnswer: (c, r) => queryJobs.readQueryAnswer(c, r) },
+      // 121-173 (round 3): the draft question M for the binding check, and the Host actor that sends it.
+      messages: { readMessage: (c, r) => mailbox.readMessage(c, r) },
+      asker: operatorActor ?? null,
     });
     const delivery: GoalDeliveryReadPort = {
       readGoalDelivery: (...args) => trackedCall(() => rawGoalDeliveryRead.readGoalDelivery(...args), unavailable),
@@ -4433,6 +4450,7 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       readGoalWaits: (...args) => trackedCall(() => rawWorkflow.readGoalWaits!(...args), unavailable),
       consumeConsultation: (...args) => trackedCall(() => rawWorkflow.consumeConsultation(...args), unavailable),
       askLine: (...args) => trackedCall(() => rawWorkflow.askLine!(...args), unavailable),
+      askLineAccepted: (...args) => trackedCall(() => rawWorkflow.askLineAccepted!(...args), unavailable),
       handleIntervention: (...args) => trackedCall(() => rawWorkflow.handleIntervention!(...args), unavailable),
       readDeliveryEligibilityFacts: (...args) => trackedCall(() => rawWorkflow.readDeliveryEligibilityFacts!(...args), unavailable),
       // S1: the Host's plan-turn lifecycle entry, drained like every other Workflow call.

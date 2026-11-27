@@ -253,6 +253,7 @@ export type CoreRouteSuffix =
   | 'queries/cancel'
   // Node-level review (121-45): the person's commit or acknowledgement of one reviewed node.
   | 'nodes/commit'
+  | 'nodes/rework'
   // Delivery (121-45): the delivery page's read and the person's one acceptance write.
   | 'goals/delivery'
   | 'goals/accept-delivery'
@@ -935,9 +936,12 @@ export type QueriesCancelCoreRouteDto = {
 };
 export type NodesCommitBody = GraphWriteBody<TaskNodeCommitPort['commitNode']>;
 export type NodesCommitResponse = RouteResponse<TaskNodeCommitPort['commitNode']>;
-/** The `nodes/commit` body/response pair; `CORE_ROUTE_SPECS`'s annotation names it, so both aliases are reached. */
+export type NodesReworkBody = GraphWriteBody<TaskNodeCommitPort['reworkNode']>;
+export type NodesReworkResponse = RouteResponse<TaskNodeCommitPort['reworkNode']>;
+/** The `nodes/*` body/response pairs; `CORE_ROUTE_SPECS`'s annotation names them, so every alias is reached. */
 export type NodesCoreRouteDto = {
   'nodes/commit': { body: NodesCommitBody; response: NodesCommitResponse };
+  'nodes/rework': { body: NodesReworkBody; response: NodesReworkResponse };
 };
 export type GoalsDeliveryBody = PlainBody<GoalDeliveryReadPort['readGoalDelivery']>;
 export type GoalsDeliveryResponse = RouteResponse<GoalDeliveryReadPort['readGoalDelivery']>;

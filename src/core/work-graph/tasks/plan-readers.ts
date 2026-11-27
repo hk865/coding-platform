@@ -71,6 +71,7 @@ import {
 import { effectiveRegions, type RegionClaimV1 } from '../state/role-scope.js';
 import { projectTaskPhase, type TaskPhaseFacts } from '../state/task-machine.js';
 import { countEndedGoalRuns } from '../state/task-failure.js';
+import { sendsBack } from '../state/task-node-commit.js';
 import { UNKNOWN_CALL_REVIEW_MAX_ROUNDS } from '../state/unknown-call-review.js';
 import {
   isFinalizedNonPass, roundChainHead, roundTaskSignal, type RoundChainHeadV1, type RoundTaskSignalV1,
@@ -1983,8 +1984,11 @@ export async function readCanonicalTaskFacts(
           const verdict = taskOriginVerdict({ origin: entry, selected: selectedFacts, selectedBasis,
             selectedDefinition, taskId: task.taskId, index, goalRef });
           if (verdict.status === 'unavailable') return unavailable(verdict.reason);
+          // 121-173: a reduction the person sent back from node review no longer applies (the record stays as
+          // history); its TaskRequeue covers the Run that reduced it, and the next claimed Run may already be selected.
+          const sentBack = (requeuesByTaskId.get(task.taskId) ?? []).some(requeue => sendsBack(requeue, reduction.revision));
           if (verdict.status === 'accepted' && reduction.taskKind === task.taskKind
-            && reduction.planRevision === entry.plan.planRevision) {
+            && reduction.planRevision === entry.plan.planRevision && !sentBack) {
             reductionApplicable = true;
           }
         }

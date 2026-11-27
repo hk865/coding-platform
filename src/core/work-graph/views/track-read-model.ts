@@ -418,7 +418,7 @@ async function requeueInfoOf(
     automaticCount: value.automation.automatic ? value.automation.autoCount : null,
     reason: value.reason,
     failureClass: value.failureClass,
-    goalResume: value.trigger !== undefined,
+    goalResume: value.trigger?.kind === 'goal_resume',
     requestedAt: value.requestedAt,
     interruption: value.interruption,
   };

@@ -886,7 +886,7 @@ export function assembleContinuationBrief(input: AssembleBriefInput): Continuati
     failureClass,
     trigger: {
       actorClass,
-      goalResume: requeue.trigger !== undefined,
+      goalResume: requeue.trigger?.kind === 'goal_resume',
       requeueNumber: position < 0 ? ordered.length + 1 : position + 1,
       autoRework: requeue.automation.automatic && requeue.automation.cap !== null
         ? { count: requeue.automation.autoCount, cap: requeue.automation.cap } : null,

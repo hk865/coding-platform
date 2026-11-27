@@ -43,6 +43,11 @@ export type GoalSettingsV1 = {
   order: number;
   waitForGoalRef: GoalRef | null;
   parallelRisks: GoalParallelRiskV1[];
+  /**
+   * When the Goal last switched to `every_step` (121-173): only a node whose TaskReduction was written after it goes
+   * before the person. Absent on a Goal born `every_step` or never switched: every completed node is reviewed.
+   */
+  nodeReviewSince?: string;
 };
 
 /**

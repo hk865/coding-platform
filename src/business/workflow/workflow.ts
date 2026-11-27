@@ -66,11 +66,13 @@ import type {
   CommandRerunRequestPort, CommandRerunRequestReadPort,
 } from '../../core/work-graph/model/command-rerun-request-contracts.js';
 import type { ConsultationInput, ConsultationResult, FailedCardRefV1, GoalWaitBasisV1, InitialPlanningGoalInput, InitialPlanningGoalInputResult, ResolveDecisionInputV1, ResolveDecisionReadV1, WorkflowAdvanceInput, WorkflowAdvanceInternal, WorkflowAdvanceResult, WorkflowCalls, WorkflowOperation, WorkflowSessionRequeue, WorkflowSessionReview, WorkflowStepReceipt, WorkflowWaitsReadV1 } from './contracts.js';
-import type { LineAskCommandV1, LineAskResultV1, WorkflowDependencies, WorkflowHostConfiguration, WorkflowPort } from './ports.js';
+import type {
+  LineAskAcceptedResultV1, LineAskCommandV1, LineAskResultV1, WorkflowDependencies, WorkflowHostConfiguration, WorkflowPort,
+} from './ports.js';
 import type { HandoffWorkflowDependencies } from './contracts.js';
 import { createSecretaryHandoffWorkflow } from './session-handoff.js';
 import { createConsultationConsumer, asRejection } from './consultation.js';
-import { createLineAsk } from './line-ask.js';
+import { createLineAsk, createLineAskAccepted } from './line-ask.js';
 import { createTaskGate, goalWaitBasisOf, goalL46Blocked, gapWaitBasisOf, mergedWaitBasisOf, taskUnsatisfied, carriesWork, type L46WaitV1, type ReviewGate } from './task-gate.js';
 import { planOnlyTargetOf, refinementRoundOf, systemRoundSendInput } from './plan-round.js';
 import { orderTasksByDependency } from './task-order.js';
@@ -478,15 +480,20 @@ type ReviewStateV1 =
 const REVIEW_BOOKING_REFUSALS: ReadonlySet<CoreRejection['code']> = new Set([
   'forbidden', 'invalid', 'unsupported', 'source_stale',
 ]);
-/** VD-7: the completion names the Goal's CURRENT adopted Plan, never the round's frozen `adoptedPlanRef`. */
-function completeTaskStep(base: Base, goal: GoalSnapshot, planRef: PlanRevisionRef, round: RoundSnapshot): WorkflowOperation {
+/**
+ * VD-7: the completion names the Goal's CURRENT adopted Plan, never the round's frozen `adoptedPlanRef`. It pins the
+ * Task's stored TaskReduction revision as read (0 before any): a node sent back from node review keeps its earlier
+ * reduction as history, so its next completion follows that revision (121-173).
+ */
+function completeTaskStep(base: Base, goal: GoalSnapshot, planRef: PlanRevisionRef, round: RoundSnapshot,
+  reductionRevision: number): WorkflowOperation {
   const reductionRef: TaskReductionRef = {
     aggregateType: 'TaskReduction', projectId: round.subject.projectId,
     goalId: round.subject.goalId, taskId: round.subject.taskId,
   };
   const expected: VersionPin[] = [
     { ref: base.goalRef, revision: goal.revision },
-    { ref: reductionRef, revision: 0 },
+    { ref: reductionRef, revision: reductionRevision },
   ];
   const input = { taskRef: round.subject, planRef, roundRef: round.ref };
   return { kind: 'complete_task', request: graphWrite(base, 'complete_task', input, expected) };
@@ -1658,6 +1665,24 @@ export function createWorkflow(deps: WorkflowDependencies & {
    * read and the facts disagree (the head moved between the two reads). `null`
    * means the subject has no chain yet.
    */
+  /**
+   * The completion of a clean-PASS round, on the Task row's stored TaskReduction read now. A round that reduction
+   * already completed goes back to the selection: it is never completed a second time.
+   */
+  async function completionOf(owned: Owned, base: Base, goal: GoalSnapshot, planRef: PlanRevisionRef,
+    round: RoundSnapshot, receipt: WorkflowStepReceipt | null, waitBasis?: GoalWaitBasisV1):
+    Promise<WorkflowAdvanceResult> {
+    const graph = await deps.plans.queryTaskGraph(owned.ctx, { goalRef: base.goalRef, planRef });
+    if (graph.status !== 'ready') {
+      return waiting(receipt, receiptReason(graph, 'the Task could not be read for its completion'), undefined, waitBasis);
+    }
+    const reduction = graph.value.tasks.find(task => task.ref.taskId === round.subject.taskId)?.reduction;
+    if (reduction !== undefined && sameCanonical(reduction.completion.roundRef, round.ref)) {
+      return advancing(receipt, selectWorkStep(base));
+    }
+    return advancing(receipt, makePerform(base, completeTaskStep(base, goal, planRef, round, reduction?.revision ?? 0)));
+  }
+
   async function continueRoundChain(
     owned: Owned, base: Base, waitBasis: GoalWaitBasisV1, read: ReadResult<RoundSnapshot>,
   ): Promise<WorkflowAdvanceResult | null> {
@@ -1681,7 +1706,7 @@ export function createWorkflow(deps: WorkflowDependencies & {
       if (goal.activePlanRevision === null) {
         return waiting(null, 'the Goal has no adopted Plan; the Task is not completed', undefined, waitBasis);
       }
-      return advancing(null, makePerform(base, completeTaskStep(base, goal, goal.activePlanRevision, round)));
+      return completionOf(owned, base, goal, goal.activePlanRevision, round, null, waitBasis);
     }
     const next = nextAfterRound(base, round);
     if (next === null) {
@@ -2535,8 +2560,9 @@ export function createWorkflow(deps: WorkflowDependencies & {
     if (first !== undefined) {
       return { status: 'ready', value: {
         reason: `node_review_pending: the Task ${first.task.taskId} awaits the person's review and commit`,
+        // 121-173: the person's send-back is a TaskRequeue; it ends this wait as a review fact does.
         basis: goalWaitBasisOf(goal, [`node_review_pending:${first.task.taskId}`],
-          ['TaskNodeCommit', 'TaskReduction', 'Run']),
+          ['TaskNodeCommit', 'TaskReduction', 'Run', 'TaskRequeue']),
       } };
     }
     const inFlight = rows.value.rows.find(row =>
@@ -4597,11 +4623,14 @@ export function createWorkflow(deps: WorkflowDependencies & {
         }
         const goal = goalRead.value.goal;
         if (goal.activePlanRevision === null) return waiting(receipt, 'the Goal has no adopted Plan; the Task is not completed');
-        return advancing(receipt, makePerform(base, completeTaskStep(base, goal, goal.activePlanRevision, finalized.snapshot)));
+        return completionOf(owned, base, goal, goal.activePlanRevision, finalized.snapshot, receipt);
       }
       case 'complete_task': {
         const result = await deps.tasks.completeTask(owned.ctx, operation.request);
         const receipt: WorkflowStepReceipt = { kind: 'complete_task', result };
+        // The Goal or the stored reduction moved since the step read them (another flow completed this round):
+        // back to the selection, which reads them again; the same request is never re-sent with other pins.
+        if (result.status === 'rejected' && result.code === 'revision_conflict') return advancing(receipt, selectWorkStep(base));
         if (result.status !== 'committed') return waiting(receipt, result.reason);
         await deps.repairs?.attemptRepairsForGoal(owned.ctx, { goalRef: base.goalRef });
         await handOverRepairAnswers(owned, base);
@@ -5262,6 +5291,17 @@ export function createWorkflow(deps: WorkflowDependencies & {
     }
     return askLine(ctx, input);
   };
+  // 121-173 (NR-B 6): the platform's node-review draft: the same front and consumer, stopped once the Query is accepted.
+  const askLineAccepted = deps.messages === undefined || consultation === null ? null
+    : createLineAskAccepted({ sessions: deps.sessions, messages: deps.messages,
+      accept: consultation.accept, drive: consultation.drive });
+  const askLineAcceptedEntry = async (ctx: CoreCallContext, input: LineAskCommandV1):
+    Promise<LineAskAcceptedResultV1> => {
+    if (askLineAccepted === null) {
+      return rejection('unsupported', 'the Workflow has no consultation mailbox/Query/Project dependency');
+    }
+    return askLineAccepted(ctx, input);
+  };
 
   // Slice 5 §4.5 finite decision coordination and the read-only ordering safe
   // point. The finite coordinator is built from the SAME optional owner seams;
@@ -5473,7 +5513,8 @@ export function createWorkflow(deps: WorkflowDependencies & {
     : readClosingNoticeWithHostSendRef;
 
   return {
-    handleGoalInput, advanceWork, consumeConsultation, askLine: askLineEntry, resolveDecision, orderGoalAdvances,
+    handleGoalInput, advanceWork, consumeConsultation, askLine: askLineEntry, askLineAccepted: askLineAcceptedEntry,
+    resolveDecision, orderGoalAdvances,
     backfillRecentActivity, backfillActivityRange,
     handleIntervention: intervention.handleIntervention,
     readDeliveryEligibilityFacts,

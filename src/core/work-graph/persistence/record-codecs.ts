@@ -32,6 +32,7 @@ import { defineShape, f, type InferShape } from "../../../contracts/data-format.
 import { GoalRefShape, SessionMessageRefShape } from "../../../contracts/data-format-refs.js";
 import { LineRefShape } from "../../../contracts/line.js";
 import { checkShape } from "../../../contracts/validation/data-format.js";
+import { isIsoZulu } from "../../../contracts/validation/time.js";
 import {
   invalid, isNonNeg, isRecord, nonEmpty, parseTaggedObject,
 } from "../../../contracts/validation/common.js";
@@ -415,6 +416,10 @@ export function goalSnapshotProblem(parsed: UnknownRecord): string | null {
 const GOAL_SETTINGS_KEYS: readonly string[] = [
   "schemaVersion", "autonomy", "order", "waitForGoalRef", "parallelRisks",
 ];
+/** The five settings fields, plus `nodeReviewSince` once the Goal switched to `every_step` (an old record has none). */
+function hasGoalSettingsKeys(value: unknown): boolean {
+  return hasExactKeys(value, GOAL_SETTINGS_KEYS) || hasExactKeys(value, [...GOAL_SETTINGS_KEYS, "nodeReviewSince"]);
+}
 const GOAL_AUTONOMIES: readonly string[] = ["every_step", "after_plan_confirmation"];
 
 /** Pure `GoalParallelRiskV1` shape check; both plan refs may be an explicit null. */
@@ -438,7 +443,7 @@ function goalParallelRiskProblem(value: unknown, projectId: string): string | nu
 
 /** Pure `GoalSettingsV1` shape check; the caller only invokes it for a present field. */
 export function goalSettingsProblem(value: unknown, projectId: string): string | null {
-  if (!hasExactKeys(value, GOAL_SETTINGS_KEYS)) {
+  if (!hasGoalSettingsKeys(value)) {
     return "Goal snapshot settings must carry exactly the GoalSettingsV1 fields";
   }
   const settings = value as UnknownRecord;
@@ -462,6 +467,9 @@ export function goalSettingsProblem(value: unknown, projectId: string): string |
   for (const risk of risks) {
     const riskProblem = goalParallelRiskProblem(risk, projectId);
     if (riskProblem !== null) return riskProblem;
+  }
+  if (settings["nodeReviewSince"] !== undefined && !isIsoZulu(settings["nodeReviewSince"])) {
+    return "Goal settings nodeReviewSince must be an ISO time";
   }
   return null;
 }
@@ -568,7 +576,7 @@ function writtenGoalHasExactShape(goal: UnknownRecord): boolean {
     && hasExactKeys(goal["workspaceRef"], ["aggregateType", "projectId", "workspaceId"])
     && (goal["activePlanRevision"] === null || hasExactKeys(goal["activePlanRevision"], ["aggregateType", "projectId", "planId"]))
     && (goal["desiredStateRequestedBy"] === null || hasExactKeys(goal["desiredStateRequestedBy"], ["kind", "id"]))
-    && hasExactKeys(goal["settings"], GOAL_SETTINGS_KEYS);
+    && hasGoalSettingsKeys(goal["settings"]);
 }
 
 /**

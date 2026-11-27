@@ -10,9 +10,15 @@ import type { GoalRef } from '../../../contracts/ledger.js';
 import { withinKnowledgeDirectory } from '../../../contracts/knowledge.js';
 import type { Phase, PlanRevisionRef, TaskKind } from '../../../contracts/plan.js';
 import type { TaskUnknownCallReview } from '../../../contracts/task-graph.js';
+import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
+import { canonicalKey } from '../../../contracts/fingerprint.js';
+import { hostMessageId } from '../../../contracts/plan-round.js';
+import type { QueryJobRef } from '../../../contracts/query-job.js';
 import type {
   TaskNodeCommitRef, TaskNodeCommitV1, TaskNodeReviewFileV1,
 } from '../../../contracts/task-node-commit.js';
+import type { TaskNodeReviewDraftV1 } from '../../../contracts/task-node-review-draft.js';
+import type { TaskRequeueSnapshotV1 } from '../../../contracts/task-requeue.js';
 import { reviewPacketItemOf } from '../../../contracts/verification.js';
 import type { RoundTaskSignalV1 } from './verification-machine.js';
 
@@ -43,6 +49,10 @@ export type NodeReviewFactsV1 = {
   effectivePhase: Phase;
   /** The canonical projection's applicable TaskReduction revision; null when none applies. */
   reductionRevision: number | null;
+  /** That reduction's `reducedAt`; null when none applies. */
+  reducedAt: string | null;
+  /** `GoalSettingsV1.nodeReviewSince`; null when the Goal has none (every completed node is reviewed). */
+  nodeReviewSince: string | null;
   hasFiles: boolean;
 };
 
@@ -50,13 +60,18 @@ export type NodeReviewFactsV1 = {
  * NR-01/NR-02: why a Task is not a node the person reviews, or null when it is. Only under `every_step` (121-45: the
  * autonomy level decides which nodes), only a work Task that is not plan-only, only once its applicable reduction made
  * it satisfied (that reduction may come from an older Plan, NR-22), and only when it changed files: a gate, a read-only
- * node and an `after_plan_confirmation` Goal have nothing to commit.
+ * node and an `after_plan_confirmation` Goal have nothing to commit. A node completed before the Goal switched to
+ * `every_step` is not reviewed either (121-173): its changes stay in the work tree, uncommitted; a node completed at the
+ * same instant counts as after the switch. ISO times of one clock compare as strings.
  */
 export function nodeReviewProblem(facts: NodeReviewFactsV1): string | null {
   if (facts.autonomy !== 'every_step') return 'this Goal does not review each node';
   if (facts.taskKind !== 'work' || facts.executionIntent === 'plan_only') return 'only an executed work node is reviewed';
   if (facts.effectivePhase !== 'satisfied' || facts.reductionRevision === null) return 'the Task is not a completed node';
   if (!facts.hasFiles) return 'the Task has no changes to commit';
+  if (facts.reducedAt !== null && facts.nodeReviewSince !== null && facts.reducedAt < facts.nodeReviewSince) {
+    return 'the node was completed before this Goal started reviewing each node';
+  }
   return null;
 }
 
@@ -124,6 +139,76 @@ export type TaskNodeCommitDraftV1 = {
   runRefs: RunRef[]; files: TaskNodeReviewFileV1[];
   reviewedBy: TaskNodeCommitV1['reviewedBy']; reviewedAt: string; requestId: string;
 };
+
+/**
+ * 121-173: the one constructor of the secretary draft record of a pending node: written once per (node, reduction),
+ * with the Query it opened or why the platform could not ask (never both). The answer text is not copied.
+ */
+export function newTaskNodeReviewDraft(input: {
+  goalRef: GoalRef; taskId: string; reductionRevision: number;
+  asked: { request: QueryJobRef; failureReason: null } | { request: null; failureReason: string };
+  requestedBy: TaskNodeReviewDraftV1['requestedBy']; requestedAt: string;
+}): TaskNodeReviewDraftV1 {
+  const goalRef = input.goalRef;
+  return {
+    ref: { aggregateType: 'TaskNodeReviewDraft', projectId: goalRef.projectId, goalId: goalRef.goalId,
+      taskId: input.taskId, reductionRevision: input.reductionRevision },
+    schemaVersion: 1, revision: 1,
+    request: input.asked.request === null ? null : { ...input.asked.request },
+    requestedAt: input.requestedAt, failureReason: input.asked.failureReason,
+    requestedBy: { ...input.requestedBy },
+  };
+}
+
+/**
+ * 121-173: whether a TaskRequeue is the person's send-back of this reduction revision. That reduction then stops
+ * applying (the record stays as history), and it can be neither sent back again nor reviewed.
+ */
+export function sendsBack(requeue: Pick<TaskRequeueSnapshotV1, 'trigger'>, reductionRevision: number): boolean {
+  return requeue.trigger?.kind === 'node_review_rework' && requeue.trigger.reductionRevision === reductionRevision;
+}
+
+/**
+ * 121-173: the one command id of a node's draft ask, shared by the ask and its record. The tuple is encoded whole, so
+ * `('g:a','b',1)` and `('g','a:b',1)` stay two nodes.
+ */
+export function nodeReviewDraftCommandId(goalId: string, taskId: string, reductionRevision: number): string {
+  return `node-review-draft:${canonicalKey([goalId, taskId, reductionRevision])}`;
+}
+
+/** The request id `queries/ask` saves its question under (`line-ask.ts`), the person's and the node draft's alike. */
+export function lineAskRequestId(commandId: string): string {
+  return `queries-ask:${commandId}`;
+}
+
+/**
+ * 121-173 (round 3): the node draft's question M is the asking Host actor's `queries/ask` message under the draft
+ * command id (`hostMessageId`, sent and received in the Goal's workspace), so M, and with it M's deterministic Query
+ * (`consultationQueryRefs`), follow from the draft identity alone.
+ */
+export function nodeReviewDraftQuestionRef(workspace: { projectId: string; workspaceId: string },
+  asker: { kind: 'human' | 'system'; id: string }, goalId: string, taskId: string, reductionRevision: number):
+  SessionMessageRef {
+  const requestId = lineAskRequestId(nodeReviewDraftCommandId(goalId, taskId, reductionRevision));
+  const id = hostMessageId(workspace, asker, requestId);
+  if (id.status !== 'ready') throw new Error(id.reason);
+  return { aggregateType: 'SessionMessage', projectId: workspace.projectId, workspaceId: workspace.workspaceId,
+    messageId: id.value };
+}
+
+/**
+ * 121-173: the question the secretary gets for one pending node: only literals the review read already has (the
+ * Task's title, the node's paths, whether its checks passed), never a diff body; the secretary reads the files itself.
+ */
+export function nodeReviewDraftQuestion(node: { title: string; paths: readonly string[]; checksPassed: boolean }):
+  string {
+  return [
+    `节点「${node.title}」做完了，正等人审核。请写这一步的说明草稿：做了什么、为什么，两三句话；人会据此写提交说明。`,
+    `改动的文件：${node.paths.join('、')}`,
+    `检查：${node.checksPassed ? '已通过' : '未通过'}`,
+    '只回说明正文，不要改文件。',
+  ].join('\n');
+}
 
 /** NR-13: the one constructor of the immutable review fact (`committed` with its commit, or `acknowledged`). */
 export function taskNodeCommitOf(draft: TaskNodeCommitDraftV1, review: TaskNodeCommitV1['review']): TaskNodeCommitV1 {

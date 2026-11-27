@@ -22,6 +22,7 @@
 - `platform-check-context.ts` — 平台替 Agent 做只读核对时的调用上下文（`platformCheckContext`）；平台以自己固定的 Host 系统身份行事的上下文（`hostSystemContext`：成员创建、知识冲突给参谋的请求）。
 - `query-activity-plan.ts` — Query 活动写入的纯计划：`queryActivityRefOf`、`QueryActivityRecordContent`、`planQueryActivityWrite`（替换规则调用 `state/activity-replacement.ts`）与 `queryActivitySourceOf`（记录里的目标和两个 Session）；另有 WorkGraph 共用的 Kernel 进入判据 `queryEnteredKernel`（有执行状态、看到 Kernel `history`、不是平台的 `not_entered`；平台先写的 `entering` 和它的 `startedAt` 不算），活动读的缺记录规则、线时钟的副本开始和线的“被谁叫醒”都只认它。
 - `task-contracts.ts` — `GoalTaskPort`（创建/完成/控制 Goal，人的部分接受 `acceptPartialResult`；`CreateGoalInput.lineFolder` 可选，KLS-3a）与 `GraphWrite` 正本；`GoalServiceDependencies.operatorActor` 是部分接受唯一放行的操作者。
+- `task-node-commit-contracts.ts`（121-173 补）：`TaskNodeCommitPort` 加 `reworkNode`（`nodes/rework`）、`recordNodeReviewDraft`（只有 Host 唤醒调，不是路由）、`readNodeReviewDrafts`（这个 Goal 的草稿记录，交付页和 Host 共用）、`readNodeReviewDraftRecipient`（问谁：调用方工作区的秘书职责，没有是 `null`）、`readNodeReceipts`；`NodeReviewReceiptV1`、`NodeReviewDraftV1`；行加 `draft`（只有交付页挂，节点审核读出的行是 `null`）。
 - `task-node-commit-contracts.ts` — 节点级审核（决定 121-45）：`TaskNodeCommitPort`（`readNodeRows` 读活动 Plan 每个 Task 的行、待审节点和 live work；`readPendingNodeReview` 是队列 `node_review` 卡来源用的同一待审布尔，只读账本、不读 blob/冲突；`commitNode` 是人的提交/认可）、行 `TaskNodeReviewRowV1`，以及节点提交用的窄 git 端口 `TaskNodeCommitWorkspacePort`（逐路径 blob、和 HEAD 比有无差异、只提交给定路径、按 trailer 找回已落地的提交）与它的结果 `NodeGitResult`；组合根在 Goal 工作区的 Host 根上实现它。
 - `task-index.ts` — plan-local 的正反邻接构造和两种环检测，纯算法、无 Store 语义。
 

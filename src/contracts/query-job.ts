@@ -181,6 +181,31 @@ export function consultationQueryRefs(messageRef: SessionMessageRef): { queryJob
     };
 }
 /**
+ * The consultation entry's binding of an existing Query to its message M (`consultation.ts`), also read by the node
+ * draft (121-173): an explicit consultation of M, to M's recipient, under M's deterministic Job and Run. Null when
+ * the Query is bound to M; otherwise why not.
+ */
+export function consultationBindingProblem(
+    record: { job: { job: { queryJobId: string; intent: QueryJobIntentV1 } }; run: { run: { runId: string } } },
+    message: { ref: SessionMessageRef; recipient: SessionRef },
+): string | null {
+    const execution = record.job.job.intent.execution;
+    const consultation = execution.consultation;
+    if (execution.kind !== 'semantic_query' || consultation === undefined) {
+        return 'the existing deterministic Query is not an explicit consultation';
+    }
+    if (!sameJson(consultation.messageRef, message.ref)) return 'the existing consultation Query belongs to another message';
+    const recipient = { projectId: message.recipient.projectId, sessionId: message.recipient.sessionId };
+    if (!sameJson(consultation.recipient, recipient)) {
+        return 'the existing consultation Query recipient is not the original message recipient';
+    }
+    const refs = consultationQueryRefs(message.ref);
+    if (refs.queryJobRef.queryJobId !== record.job.job.queryJobId || refs.queryRunRef.runId !== record.run.run.runId) {
+        return 'the existing Query is not the deterministic identity of its message';
+    }
+    return null;
+}
+/**
  * The frozen deterministic identity of the ONE intervention-planning Query bound
  * to a real source message: the canonical SHA-256 of the message ref decides the
  * QueryJob and QueryRun ids, so a retry addresses the same persisted pair.
@@ -275,7 +300,7 @@ export type QueryRunSnapshot = {
 import type { ActorRef } from "./command-event.js";
 import { defineShape, f, type InferShape } from './data-format.js';
 import { GoalRefShape, ModuleRefShape } from './data-format-refs.js';
-import { canonicalJson, sha256Hex, type JsonValue } from "./fingerprint.js";
+import { canonicalJson, sameJson, sha256Hex, type JsonValue } from "./fingerprint.js";
 import type { RoleBindingRefV1 } from "./dispatch.js";
 import { validateRuntimeBudget, type RuntimeBudget } from './runtime-budget.js';
 import type { RoleConfigurationRef, SessionRef } from './core/identity.js';

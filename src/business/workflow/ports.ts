@@ -446,6 +446,17 @@ export type LineAskResultV1 =
   | { status: 'queued'; round: QueryJobRef }
   | CoreRejection;
 
+/**
+ * 121-173 (NR-B 6): the platform draft's ask stops once the consultation is accepted. `accepted` names the real Query
+ * (`round`) and its saved question (`message`); `drive`, when set, continues that Query to its answer and the caller
+ * runs it detached. `failed` is a saved question whose consultation opened no Query (refused or waiting), with the
+ * consumer's reason and the question, which the caller settles (NR-B r2-4). A rejection sent no question.
+ */
+export type LineAskAcceptedResultV1 =
+  | { status: 'accepted'; round: QueryJobRef; message: SessionMessageRef; drive: (() => Promise<void>) | null }
+  | { status: 'failed'; reason: string; message: SessionMessageRef }
+  | CoreRejection;
+
 /** The facts of one ended request round that may write this request's plan candidate. */
 export type PlanTurnFactsV1 = {
   /** The ended round. */
@@ -487,6 +498,8 @@ export interface WorkflowPort {
   consumeConsultation?(ctx: CoreCallContext, input: ConsultationInput): Promise<ConsultationResult>;
   /** The person's `queries/ask`: save one inquiry, then run the same 7B consultation consumer; the profile fields are the Host binding's. */
   askLine?(ctx: CoreCallContext, input: LineAskCommandV1): Promise<LineAskResultV1>;
+  /** 121-173: the platform's node-review draft ask: `askLine`'s front, stopped once the Query is accepted. */
+  askLineAccepted?(ctx: CoreCallContext, input: LineAskCommandV1): Promise<LineAskAcceptedResultV1>;
   /** One saved person's or agent's message delivered to the line's existing Task (slice-7-SPEC L11). */
   handleIntervention?(ctx: CoreCallContext, input: InterventionInput): Promise<HandleInterventionResultV1>;
   /**

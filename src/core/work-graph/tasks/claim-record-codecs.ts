@@ -434,7 +434,8 @@ export function taskReworkRefusalRefKey(ref: TaskReworkRefusalRef): string {
 
 const KNOWN_RUN_OUTCOMES: readonly string[] = ['completed', 'failed', 'cancelled', 'budget_exhausted', 'crashed', 'yielded'];
 const STOP_REQUESTERS: readonly string[] = ['human', 'goal_fan_out', 'system', 'none'];
-const BASIS_COMPARISONS: readonly string[] = ['compared', 'skipped_interrupted', 'skipped_human_cancel'];
+const BASIS_COMPARISONS: readonly string[] = ['compared', 'skipped_interrupted', 'skipped_human_cancel',
+  'skipped_node_review'];
 const TASK_REQUEUE_KEYS: readonly string[] = ['ref', 'revision', 'schemaVersion', 'task', 'planRef', 'afterRunRef',
   'afterAttemptRef', 'afterOutcome', 'afterRoundRef', 'failureClass', 'interruption', 'stopIntentRef', 'stopRequester',
   'trigger', 'basis', 'basisComparison', 'supersededEvidenceIds', 'newInputRefs', 'budget', 'reason', 'requestedBy',
@@ -549,11 +550,16 @@ export function taskRequeueSnapshotProblem(value: unknown): string | null {
     }
   }
   if (!STOP_REQUESTERS.includes(value['stopRequester'] as string)) return 'TaskRequeue stopRequester is not recognized';
-  if (value['trigger'] !== undefined) {
-    const trigger = value['trigger'];
+  const trigger = value['trigger'];
+  if (isRecord(trigger) && trigger['kind'] === 'node_review_rework') {
+    // 121-173: the node-review rework names the reduction revision the person reviewed, and nothing else.
+    if (!hasOnlyKeys(trigger, ['kind', 'reductionRevision']) || !isNonNegativeSafeInteger(trigger['reductionRevision'])) {
+      return 'TaskRequeue node_review_rework trigger must carry exactly a reduction revision';
+    }
+  } else if (trigger !== undefined) {
     if (!isRecord(trigger) || !hasOnlyKeys(trigger, ['kind', 'goalRef', 'resumedEpoch', 'pausedEpoch'])
       || trigger['kind'] !== 'goal_resume') {
-      return 'TaskRequeue trigger must be a goal_resume trigger';
+      return 'TaskRequeue trigger must be a goal_resume or node_review_rework trigger';
     }
     const goalProblem = goalRefProblem(trigger['goalRef'], 'TaskRequeue trigger goalRef');
     if (goalProblem !== null) return goalProblem;

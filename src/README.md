@@ -62,11 +62,11 @@
 
 | 要做什么 | 去哪个文件夹（必要时到文件） | 先看的可复用能力（含位置） |
 | --- | --- | --- |
-| 加一个 HTTP 路由 | `src/app/`（`core-routes.ts`、`server.ts`） | `dispatchCoreRoute`（`src/app/core-routes.ts:1814`）、`parseCoreRouteRequest`（`src/app/core-routes.ts:964`） |
-| 加一个 Host 选项 / 运行期配置 | `src/app/`（`host.ts`、`runtime-configuration.ts`）+ `src/composition/` | `createLocalWorkbenchHost`（`src/app/host.ts:612`）、`createTargetPlatform`（`src/composition/create-platform.ts:5589`） |
+| 加一个 HTTP 路由 | `src/app/`（`core-routes.ts`、`server.ts`） | `dispatchCoreRoute`（`src/app/core-routes.ts:1819`）、`parseCoreRouteRequest`（`src/app/core-routes.ts:967`） |
+| 加一个 Host 选项 / 运行期配置 | `src/app/`（`host.ts`、`runtime-configuration.ts`）+ `src/composition/` | `createLocalWorkbenchHost`（`src/app/host.ts:613`）、`createTargetPlatform`（`src/composition/create-platform.ts:5599`） |
 | 加一种记录或索引 | `src/core/record-store/`（`lookup-ports.ts`、`ports.ts`） | `RecordLookupIndex`（`src/core/record-store/lookup-ports.ts:5`）、`RecordLookupPort`（`src/core/record-store/lookup-ports.ts:35`） |
-| 加一种事件/记录编解码 | `src/core/work-graph/persistence/` | `createEventCodec`（`src/core/work-graph/persistence/event-codec-factory.ts:42`）、`canonicalRefKey`（`src/core/work-graph/persistence/record-codecs.ts:82`） |
-| 状态迁移 | `src/core/work-graph/state/`（按聚合分文件） | `transitionRun`（`src/core/work-graph/state/run-machine.ts:1400`）、`transitionTask`（`src/core/work-graph/state/task-machine.ts:802`） |
+| 加一种事件/记录编解码 | `src/core/work-graph/persistence/` | `createEventCodec`（`src/core/work-graph/persistence/event-codec-factory.ts:42`）、`canonicalRefKey`（`src/core/work-graph/persistence/record-codecs.ts:83`） |
+| 状态迁移 | `src/core/work-graph/state/`（按聚合分文件） | `transitionRun`（`src/core/work-graph/state/run-machine.ts:1400`）、`transitionTask`（`src/core/work-graph/state/task-machine.ts:821`） |
 | 加一个读模型 | `src/core/work-graph/views/` | `createWorkLineReader`（`src/core/work-graph/views/work-line-reader.ts:3208`）、`createCollectionCardSource`（`src/core/work-graph/views/decision-read-model.ts:368`） |
 | 改提示词模板或渲染 | `src/contracts/prompts/` | `renderTemplate`（`src/contracts/prompts/render-template.ts:387`）、`resolvePromptPackV1`（`src/contracts/prompts/resolve-pack.ts:79`） |
 | Kernel 补丁（vendor 冻结） | 脚本 `scripts/build-kernel-patch.mjs`；适配 `src/core/agent-runtime/`（`observed-model-run.ts`） | `runObservedModel`（`src/core/agent-runtime/observed-model-run.ts:215`） |
@@ -90,7 +90,7 @@
 | 上下文装配 | `src/core/agent-runtime/`（`context-assembler.ts`、`context-rendering.ts`、`context-secretary-recipe.ts`） | `createContextAssembler`（`src/core/agent-runtime/context-assembler.ts:27`）、`renderContext`（`src/core/agent-runtime/context-rendering.ts:430`）、`assembleSecretaryContext`（`src/core/agent-runtime/context-secretary-recipe.ts:237`） |
 | 模型调用 permit | `src/core/work-graph/tasks/`（`model-call-service.ts`、`model-call-contracts.ts`） | `createModelCallService`（`src/core/work-graph/tasks/model-call-service.ts:154`）、`modelRequestPermitIdFor`（`src/core/work-graph/tasks/model-call-contracts.ts:80`） |
 | Goal/Plan | `src/core/work-graph/tasks/`（`task-service.ts`、`plan-service.ts`） | `admitGoalCreation`（`src/core/work-graph/tasks/task-service.ts:159`）、`createPlanService`（`src/core/work-graph/tasks/plan-service.ts:1096`） |
-| 返工/重排队 | `src/core/work-graph/tasks/`（`requeue-service.ts`）+ `src/core/work-graph/state/` | `createTaskRequeueService`（`src/core/work-graph/tasks/requeue-service.ts:705`）、`newTaskRequeueRecord`（`src/core/work-graph/state/task-machine.ts:722`） |
+| 返工/重排队 | `src/core/work-graph/tasks/`（`requeue-service.ts`）+ `src/core/work-graph/state/` | `createTaskRequeueService`（`src/core/work-graph/tasks/requeue-service.ts:719`）、`newTaskRequeueRecord`（`src/core/work-graph/state/task-machine.ts:741`） |
 | 源码探索与捕获 | `src/core/workspace/`（`capture.ts`、`workspace-tools.ts`） | `CaptureRegistry`（`src/core/workspace/capture.ts:125`）、`createWorkspaceTools`（`src/core/workspace/workspace-tools.ts:85`） |
 | Git 与工作树比较 | `src/core/workspace/`（`git-read.ts`、`workspace-change-capture.ts`） | `compareGitWorkingTree`（`src/core/workspace/git-read.ts:617`）、`captureWorkspaceChange`（`src/core/workspace/workspace-change-capture.ts:684`） |
 | 重复候选 | `src/core/workspace/`（`duplicate-candidates.ts`） | `duplicateCandidates`（`src/core/workspace/duplicate-candidates.ts:66`）、`readTopLevelDeclarations`（`src/core/workspace/typescript-source-query.ts:332`）、`readStringLiterals`（`src/core/workspace/typescript-source-query.ts:332`） |

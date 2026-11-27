@@ -58,6 +58,8 @@ export function createDutyRecipient(deps: DutyRecipientDependencies): DutyRecipi
             if (duty.value === 'scribe') found.push(plainSessionRef(card.record.ref));
             continue;
           }
+          // NR-B round 3: a cancelled duty read stays `cancelled`; every other failure is `unavailable`.
+          if (duty.status === 'rejected' && duty.code === 'cancelled') return duty;
           if (duty.status !== 'ready') {
             const detail = duty.status === 'rejected' ? duty.reason : `the card's duty read was ${duty.status}`;
             return rejected('unavailable', `a Session card's duty could not be read: ${detail}`);

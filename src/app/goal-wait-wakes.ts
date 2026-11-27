@@ -405,6 +405,12 @@ export type GoalWaitQueueDependencies = {
    * dispatch request that no restart interruption holds.
    */
   rebuild(scope: WorkspaceScope, registry: GoalWaitWakes): Promise<void>;
+  /**
+   * 121-173: after a drain wakes a Goal, each of its nodes waiting for the person gets the secretary's draft of its
+   * note, asked once per node, by `ensureDrafts` (the wake loop's pass only). Each Goal on its own (NR-B 8): one that
+   * throws stays owed and the others go on; the first throw then goes to that pass's failure path.
+   */
+  ensureNodeReviewDrafts?(scope: WorkspaceScope, goalRef: GoalRef): Promise<void>;
 };
 
 export type WaitingCallV1 =
@@ -414,7 +420,8 @@ type AdmissionCandidateV1 = WaitingCallV1 & { priority: 0 | 1 | 2 };
 const admissionOrder = (left: AdmissionCandidateV1, right: AdmissionCandidateV1): number =>
   left.priority - right.priority || compareCursors(left.startCursor, right.startCursor);
 
-export function createGoalWaitQueue(deps: GoalWaitQueueDependencies): QueueHandler & { settle(): Promise<void> } {
+export function createGoalWaitQueue(deps: GoalWaitQueueDependencies):
+  QueueHandler & { settle(): Promise<void>; ensureDrafts(scope: WorkspaceScope): Promise<void> } {
   /** Scope keys whose rebuild has not finished; a failed rebuild stays for the loop's retry pass. */
   const unbuilt = new Set<string>();
   /** Each marker Query's launched start, keyed by its QueryRun; `settle()` waits for them. */
@@ -424,6 +431,12 @@ export function createGoalWaitQueue(deps: GoalWaitQueueDependencies): QueueHandl
   const tried = new Map<string, string>();
   /** After `settle()` the Host is closing: nothing new is launched. */
   let closed = false;
+  /** NR-B 8: per scope, the woken Goals whose node drafts are still owed. A Goal leaves only when its drafts are done,
+   *  so a failed one is tried again by the next drain without being woken again. Each wake gives the Goal a new mark
+   *  (NR-B r2-5): a drain removes it only when the mark it worked from is still the Goal's, so a drain that started
+   *  earlier never clears a later wake's drafts. */
+  const draftsDue = new Map<string, Map<string, { goalRef: GoalRef; mark: number }>>();
+  let lastDraftMark = 0;
   /** The scope's one registry; the Host creates it before registering this queue. */
   function registryFor(scope: WorkspaceScope): GoalWaitWakes {
     const entry = deps.registries.all().find(candidate =>
@@ -494,6 +507,13 @@ export function createGoalWaitQueue(deps: GoalWaitQueueDependencies): QueueHandl
         }
       }
       waits.takeDrainBatch(startedGoals);
+      // Every drain only records the woken Goals' drafts as owed; `ensureDrafts` asks them.
+      const due = draftsDue.get(canonicalKey(scope)) ?? new Map<string, { goalRef: GoalRef; mark: number }>();
+      draftsDue.set(canonicalKey(scope), due);
+      for (const goalRef of startedGoals) {
+        lastDraftMark += 1;
+        due.set(canonicalKey(goalRef), { goalRef, mark: lastDraftMark });
+      }
       const pendingOnPage = candidates.length > page.length;
       return {
         progressed: page.length,
@@ -514,6 +534,21 @@ export function createGoalWaitQueue(deps: GoalWaitQueueDependencies): QueueHandl
           entry.waits.onCommitted(notice);
         }
       }
+    },
+
+    async ensureDrafts(scope) {
+      const due = draftsDue.get(canonicalKey(scope));
+      if (deps.ensureNodeReviewDrafts === undefined || due === undefined) return;
+      let failure: unknown = null;
+      for (const [key, { goalRef, mark }] of [...due]) {
+        try {
+          await deps.ensureNodeReviewDrafts(scope, goalRef);
+          if (due.get(key)?.mark === mark) due.delete(key);
+        } catch (thrown) {
+          failure ??= thrown;
+        }
+      }
+      if (failure !== null) throw failure;
     },
 
     async settle() {
