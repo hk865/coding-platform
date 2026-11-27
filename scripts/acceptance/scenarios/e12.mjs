@@ -5,11 +5,13 @@
 // request (`intervention.ts:245-247`: only a stored person intervention opens it), then card → confirm → select an
 // idea → the request's plan candidate → `plans/apply` (G6F F3: the project is initialized, so not
 // `initialization/adopt`) → `driver-start` of the new Goal.
-import { newId, ready } from '../lib/http.mjs';
-import { broken, chooseModel, coldStart, driverStart, executions, interveneLine, lines, newGoalInProject, openProject, runHistory,
-  sessionHistory, sessionQueries, textOf, turnsOf, waitFor, waitGoal } from '../lib/flows.mjs';
+import { ready } from '../lib/http.mjs';
+import { broken, canonicalJson, chooseModel, coldStart, driverStart, executions, interveneLine, lines, newGoalInProject, openProject, pageGoalRef, profilePin, runHistory,
+  sessionHistory, sessionQueries, sleep, textOf, turnsOf, WaitTimeout, waitFor, waitGoal } from '../lib/flows.mjs';
 
 const MINUTE = 60_000;
+/** The replay's post-send observation window: long enough for a restarted advance to leave a Work Run or Query. */
+const REPLAY_WINDOW_MS = 2_000;
 const SEED = {
   'package.json': '{\n  "name": "g6-e12",\n  "type": "module",\n  "scripts": { "test": "node --test" }\n}\n',
   'README.md': '# g6-e12\n\nGreeting helpers.\n',
@@ -37,16 +39,244 @@ const def = {
   ],
 };
 
-async function queryCount(project) {
-  let count = 0;
-  let input = 0;
-  for (const row of await lines(project)) {
-    for (const snapshot of await sessionQueries(project, row.key)) {
-      count += 1;
-      for (const request of snapshot.run?.executionState?.requests ?? []) input += request.inputTokens ?? 0;
+/**
+ * P6K E12 replay (review row 4): every QueryRun in the workspace, keyed by ref identity, with the Goal it is
+ * attributable to: the request round's effective Goal (`run.executionState.prepared.requestEffectiveGoalId`,
+ * `query-job.ts:725`), else its line's name Goal (`work-line.ts:119`); null means attribution is unclear. `queryCount`
+ * reads this same map, so the identity rule has one copy.
+ */
+async function queryRefs(project, gaps = null) {
+  const refs = new Map();
+  for (const row of await lines(project, gaps)) {
+    for (const snapshot of await sessionQueries(project, row.key, gaps)) {
+      // P6L2 A5: attribution is the Query's own record, never the line's current display name (`work-line.ts:119` is
+      // display data). A plain Query's prepared goal is null, which stays "cannot attribute", not another Goal.
+      const goalId = snapshot.run?.executionState?.prepared?.requestEffectiveGoalId ?? null;
+      refs.set(canonicalJson(snapshot.ref), { ref: snapshot.ref, goalId,
+        startedAt: snapshot.run?.startedAt ?? null, snapshot });
     }
   }
-  return { count, input };
+  return refs;
+}
+
+/**
+ * P6L2 A5: the refs that really entered the replay's observation window. The before/after lists are compared by ref
+ * identity, then each added ref is ordered against the send boundary by its own `startedAt`: a Run that started before
+ * the send is not the replay's. A missing time or a Query that cannot be attributed is `unclear`, never excluded.
+ */
+export const addedInWindow = (added, sendAt, { goalId, scoped = false }) => {
+  const charged = [];
+  const other = [];
+  const unclear = [];
+  const boundary = Date.parse(sendAt);
+  for (const entry of added) {
+    const at = Date.parse(entry.startedAt ?? '');
+    if (!Number.isFinite(at)) { unclear.push({ ...entry, why: 'startedAt 读不到' }); continue; }
+    if (Number.isFinite(boundary) && at < boundary) continue;
+    if (scoped) { charged.push(entry); continue; }
+    if (entry.goalId === null || entry.goalId === undefined) { unclear.push({ ...entry, why: 'Query 自身记录里没有 Goal' }); continue; }
+    if (entry.goalId !== goalId) other.push(entry);
+    else charged.push(entry);
+  }
+  return { charged, other, unclear };
+};
+
+async function queryCount(project, gaps = null) {
+  let input = 0;
+  const refs = await queryRefs(project, gaps);
+  for (const { snapshot } of refs.values()) {
+    for (const request of snapshot.run?.executionState?.requests ?? []) input += request.inputTokens ?? 0;
+  }
+  return { count: refs.size, input };
+}
+
+/**
+ * P6J E12 evidence: the work Tasks inside a gate's scope (goal: every work Task; stage: that stage; module: that
+ * module), the one rule `gateCoveredTaskIds` (`decision-policy.ts:205-222`) applies; the read itself has no
+ * `coveredTaskIds` field, so it is derived from the adopted plan's own `scope`s and labelled as derived.
+ */
+export const coveredTaskIds = (tasks, gate) => {
+  const scope = gate.definition?.scope;
+  if (gate.definition?.taskKind !== 'gate' || scope === undefined) return [];
+  return tasks.filter(task => {
+    if (task.definition?.taskKind !== 'work') return false;
+    const inner = task.definition.scope;
+    if (scope.kind === 'goal') return true;
+    if (scope.kind === 'stage') return inner.kind !== 'goal' && inner.stageId === scope.stageId;
+    if (scope.kind === 'module') return inner.kind === 'module' && inner.stageId === scope.stageId && inner.moduleRef === scope.moduleRef;
+    return false;
+  }).map(task => task.ref.taskId);
+};
+
+/** The adopted version's task rows: scope, gate coverage and the work row's execution. */
+export const planEvidence = planRef => tasks => ({ readable: true, planRef,
+  tasks: tasks.map(task => ({ taskId: task.ref.taskId, taskKind: task.definition?.taskKind ?? null,
+    scope: task.definition?.scope ?? null, coveredTaskIds: coveredTaskIds(tasks, task),
+    execution: task.execution ?? null, effectivePhase: task.effectivePhase })) });
+
+/** P6J3 E12: the adoption read, pinned to the plan ref `plans/apply` returned, never the plan current later. */
+export async function adoptionEvidence(project, goalRef, created) {
+  const freshBody = await project.host.client.read('tasks/query', project.scope, { goalRef, planRef: created.plan });
+  const fresh = ready(freshBody);
+  const evidence = fresh === null
+    ? { readable: false, status: freshBody?.status ?? 'no answer', code: freshBody?.code ?? null, reason: freshBody?.reason ?? null, planRef: created.plan }
+    : planEvidence(created.plan)(fresh.tasks);
+  return { freshBody, fresh, evidence };
+}
+
+/** P6J3: wait for the new Goal and keep the closing evidence even when the wait runs out. */
+export async function closeWithWait(project, goalRef, planRef, wait) {
+  let done = null;
+  let stall = null;
+  try { done = await wait(); } catch (error) {
+    if (!(error instanceof WaitTimeout)) throw error;
+    stall = error.message;
+  }
+  return { done, final: { ...await closingEvidence(project, goalRef, planRef), stall } };
+}
+
+/**
+ * P6L E12 (diagnosis E12 row; `run-7d2-p6l.md` item 4): the old Goal's completion wait is judged on
+ * `completion-chain`, never the unit's next unjudged cell (the sixth run attributed its timeout to `reads-quiet`
+ * before the graph read started). The adopted plan is fixed before the wait and read again at its normal close or
+ * timeout by the existing `adoptionEvidence`/`closingEvidence` pair, stored as one `facts.e12OldGoal` object (never
+ * over `facts.e12`, which `adoptAndClose` writes for the new Goal). A failed read keeps its own words, no task row.
+ */
+export async function waitOldGoalClosed(ctx, project, rec, { goalRef, planRef, timeoutMs = 90 * MINUTE }) {
+  const atAdoption = (await adoptionEvidence(project, goalRef, { plan: planRef })).evidence;
+  const closed = await closeWithWait(project, goalRef, planRef, () =>
+    waitGoal(ctx, project, goalRef, { timeoutMs, rec, check: 'completion-chain' }));
+  rec.facts.e12OldGoal = { atAdoption, final: closed.final };
+  return { atAdoption, ...closed };
+}
+
+/** P6J E12: the adopted version's closing evidence, read even when the wait stopped. A failed read stays named. */
+export async function closingEvidence(project, goalRef, planRef) {
+  const body = await project.host.client.read('tasks/query', project.scope, { goalRef, planRef });
+  const tasks = ready(body);
+  return tasks === null
+    ? { readable: false, status: body?.status ?? 'no answer', code: body?.code ?? null, reason: body?.reason ?? null, planRef }
+    : planEvidence(planRef)(tasks.tasks);
+}
+
+/** The target's Runs by ref identity: `executions/list` is scoped to the Goal, and its order is a storage index. */
+async function runRefs(project, goalRef, gaps = null) {
+  const refs = new Map();
+  for (const item of await executions(project, goalRef, gaps)) {
+    refs.set(canonicalJson(item.run.ref), { ref: item.run.ref, startedAt: item.run.startedAt ?? null });
+  }
+  return refs;
+}
+
+const runIdsOf = refs => [...refs].map(entry => entry.ref.runId).sort();
+
+/**
+ * P6K E12 replay: after the first plan is adopted the platform starts the new Goal itself (INT R4), from
+ * `{advance: {schemaVersion: 1, goalRef, flowId: 'plan-adopted:<goalId>:<planId>', sessionHint: null, kind:
+ * 'select_work'}, queryProfileIds: <this workspace's, read before the adoption>}` (`host.ts:2989-3002`, `:4538`) — the
+ * seed is `canonicalJson({advance, queryProfileIds: sorted})` (`collaboration-driver.ts:1475-1477`). `workflow/driver-read`
+ * exposes the advance it is on as `current` (a snapshot has no public `seed` field), and `current` may already have
+ * advanced to `perform` or a Task, so the replay rebuilds the Goal-level `select_work` above instead of copying it,
+ * after checking that the observed `flowId` is the plan-adopted one; `current` is kept only as evidence (the platform
+ * may have advanced or cleared it), never as a gate. A first start that cannot be pinned that way is uncovered, named
+ * field by field. `pin` is the bootstrap read from before the adoption (`profilePin`): a failed read keeps the
+ * answer, is uncovered and sends no replay. The note only claims the Goal runs itself once it was observed.
+ * `atAdoption`, `planRef` and `final` stay as before; the replay evidence goes into `facts.e12.replay`.
+ */
+export async function adoptAndClose(ctx, project, rec, { newGoal, created, wait, pin = null }) {
+  const adopted = await adoptionEvidence(project, newGoal, created);
+  const atAdoption = adopted.evidence;
+  rec.facts.e12 = { atAdoption, planRef: created.plan };
+  if (atAdoption.readable) rec.note(`E12 采用 ${created.plan?.planId ?? '-'}：${atAdoption.tasks.map(task => `${task.taskId}/${task.taskKind} scope ${JSON.stringify(task.scope)} covered ${task.coveredTaskIds.join(',') || '-'} execution ${task.execution?.runId ?? '-'}`).join('；')}`);
+  const flowId = `plan-adopted:${newGoal.goalId}:${created.plan.planId}`;
+  const advance = { schemaVersion: 1, goalRef: newGoal, flowId, sessionHint: null, kind: 'select_work' };
+  if (pin?.ok !== true) {
+    rec.facts.e12.replay = { auto: null, missing: 'bootstrap-read-failed', status: 'not-read', pin: { ok: false, answer: pin?.answer ?? null } };
+    rec.uncover('replay', 'env-unavailable', `C-147 重放未覆盖；首启 bootstrap 读不到，未发重放：${textOf(pin?.answer ?? null)}`);
+  } else {
+    const autoBody = await project.host.client.read('workflow/driver-read', project.scope, { goalRef: newGoal });
+    const auto = ready(autoBody);
+    const missing = auto === null
+      ? `workflow/driver-read ${autoBody?.status ?? 'no answer'}${autoBody?.code ? `/${autoBody.code}` : ''}${autoBody?.reason ? `：${autoBody.reason}` : ''}`
+      : auto.flowId !== flowId
+        ? `workflow/driver-read 的 flowId 是 ${auto.flowId ?? '-'}，不是首启的 ${flowId}`
+        : null;
+    if (missing !== null) {
+      rec.facts.e12.replay = { auto: null, missing, status: 'not-read' };
+      // The auto-started driver was not observed, so the note never claims the Goal runs itself.
+      rec.uncover('replay', auto === null ? 'env-unavailable' : 'not-run', `C-147 重放未覆盖；${missing}`);
+    } else {
+      const gaps = [];
+      const runsBefore = await runRefs(project, newGoal, gaps);
+      const queriesBefore = await queryRefs(project, gaps);
+      // P6L2 A5: the send boundary is taken immediately before the replay; a ref that started earlier is not its.
+      const sentAt = new Date().toISOString();
+      const replay = await driverStart(ctx, project, newGoal, { advance, profileIds: pin.ids });
+      // The returned snapshot has no `replayed` field (`collaboration-driver.ts:480-492`), so a same-seed snapshot and a
+      // restarted start are told apart by the returned flowId and by the refs that are new in a short window after the
+      // send. Refs are compared by identity, never by a workspace-wide count: archiving one line and opening another
+      // changes the enumeration set without changing the count.
+      let runsAfter = runsBefore;
+      let queriesAfter = queriesBefore;
+      if (replay?.status === 'ready' && replay.value !== null) {
+        await sleep(REPLAY_WINDOW_MS);
+        runsAfter = await runRefs(project, newGoal, gaps);
+        queriesAfter = await queryRefs(project, gaps);
+      }
+      const addedRunEntries = [...runsAfter].filter(([key]) => !runsBefore.has(key)).map(([, entry]) => entry);
+      const addedQueryEntries = [...queriesAfter].filter(([key]) => !queriesBefore.has(key)).map(([, entry]) => entry);
+      const runsWindow = addedInWindow(addedRunEntries, sentAt, { goalId: newGoal.goalId, scoped: true });
+      const queriesWindow = addedInWindow(addedQueryEntries, sentAt, { goalId: newGoal.goalId });
+      const addedRuns = runsWindow.charged.map(entry => entry.ref.runId).sort();
+      const otherQueries = queriesWindow.other;
+      const chargedQueries = queriesWindow.charged;
+      const unclear = [...runsWindow.unclear, ...queriesWindow.unclear];
+      const sameFlow = replay?.value?.flowId === flowId;
+      // Only "another advancement is in flight" (`startHandle` rejects it `busy`) is no evidence. A refusal for any other
+      // reason is the driver's own answer and is judged as a failed replay, not as a gap in the scene.
+      const busy = replay?.code === 'busy';
+      rec.facts.e12.replay = {
+        auto: { flowId: auto.flowId, current: auto.current, state: auto.state ?? null },
+        status: replay?.status ?? null,
+        ...(replay?.code === undefined ? {} : { code: replay.code }),
+        ...(replay?.reason === undefined ? {} : { reason: replay.reason }),
+        flowId: replay?.value?.flowId ?? null, sameFlow, busy, gaps, windowMs: REPLAY_WINDOW_MS,
+        sentAt,
+        runs: { before: runIdsOf(runsBefore.values()), after: runIdsOf(runsAfter.values()), added: addedRuns },
+        queries: { before: queriesBefore.size, after: queriesAfter.size, added: addedQueryEntries.length,
+          other: otherQueries.map(entry => entry.ref.queryJobId) },
+      };
+      if (replay?.status !== 'ready' || replay.value === null) {
+        // A formal `rejected` is the driver's own answer. `busy` and `unavailable` are not (the client writes
+        // `unavailable` itself, `http.mjs:47`), and neither are an empty body (null), an `unparsed` body, or
+        // `ready(null)`: those keep the original answer and are uncovered, never a failed replay.
+        const formal = replay?.status === 'rejected' && replay.code !== 'busy' && replay.code !== 'unavailable';
+        if (formal) rec.fail('replay', `重放被驱动拒绝：driver-start 回 ${textOf(replay)}；首启 flowId ${flowId}`);
+        else rec.uncover('replay', replay?.code === 'busy' ? 'not-run' : 'env-unavailable',
+          `目标已自动运行，C-147 重放未覆盖；driver-start 回 ${textOf(replay)}；首启 flowId ${flowId}`);
+      } else if (!sameFlow) {
+        rec.fail('replay', `重放不是原推进：flowId ${flowId}→${replay?.value?.flowId ?? '-'}，Run ${runsBefore.size}→${runsAfter.size}`);
+      } else if (gaps.length > 0) {
+        // Without both Run and Query lists the second half of the judgement ("no extra execution") has no evidence.
+        rec.uncover('replay', 'env-unavailable', `重放已发出，但执行或 Query 列表读不到，无法判断有没有多出执行：${gaps.join('；')}`
+          + `；flowId ${flowId}，Run ${runsBefore.size}→${runsAfter.size}`);
+      } else if (unclear.length > 0) {
+        rec.uncover('replay', 'not-run', `重放返回首启的 flowId ${flowId}，但观察窗里的 ${unclear.length} 项无法归因或时序核实不了（${
+          unclear.map(entry => `${entry.ref?.queryJobId ?? entry.ref?.runId ?? '-'}：${entry.why}`).join('；')}），不能排除是这次重放引起的`);
+      } else if (addedRuns.length > 0 || chargedQueries.length > 0) {
+        rec.uncover('replay', 'not-run', `重放返回首启的 flowId ${flowId}，但 ${REPLAY_WINDOW_MS / 1000} 秒观察窗里多出 ${
+          [addedRuns.length === 0 ? '' : `Work Run ${addedRuns.join(',')}`,
+            chargedQueries.length === 0 ? '' : `Query ${chargedQueries.map(entry => entry.ref.queryJobId).join(',')}`].filter(Boolean).join('、')}`
+          + `，分不清是自然推进还是这次重放引起，无法归因`);
+      } else {
+        rec.pass('replay', `重放返回首启的 flowId ${flowId}，${REPLAY_WINDOW_MS / 1000} 秒观察窗里没有多出 Work Run 或 Query`
+          + `（Run ${runsBefore.size}→${runsAfter.size}）`);
+      }
+    }
+  }
+  const closed = await closeWithWait(project, newGoal, created.plan, wait);
+  rec.facts.e12.final = closed.final;
+  return { ...adopted, closed };
 }
 
 async function run(ctx, rec) {
@@ -57,7 +287,10 @@ async function run(ctx, rec) {
   rec.facts.userCommand = [REQUEST];
   const started = await coldStart(ctx, project, REQUEST, rec);
   const oldGoal = started.goalRef;
-  const done = await waitGoal(ctx, project, oldGoal, { timeoutMs: 90 * MINUTE, rec });
+  const oldClosed = await waitOldGoalClosed(ctx, project, rec, { goalRef: oldGoal, planRef: started.plan });
+  const done = oldClosed.done;
+  // A timeout/stall is already judged on `completion-chain`; `reads-quiet` and the post-restart cells stay not-run.
+  if (done === null) return;
   // The work ran and did not complete: the platform's failure, judged on the completion chain (lead ruling 11-14 #6).
   if (done.display.phase !== 'COMPLETED') throw broken(ctx, `the E12 Goal ended ${done.display.phase}, not COMPLETED`, 'completion-chain');
 
@@ -116,7 +349,7 @@ async function run(ctx, rec) {
   const mainBefore = ready(await host.client.read('main/read', project.scope, { goalId: null, cursor: null }));
   const known = new Set((mainBefore?.requests ?? []).map(entry => JSON.stringify(entry.requestRoot)));
   // P6 #2: the UI's direct intervention (no `intent`); a send that did not go out is the platform's answer on `new-goal`.
-  const sent = await interveneLine(project, line.key, FOLLOW);
+  const sent = await interveneLine(project, line.key, FOLLOW, { goalRef: pageGoalRef(project, line, oldGoal) });
   if (!sent.ok) throw broken(ctx, sent.said, 'new-goal');
   rec.link('message', sent.value.ref, sent.value.revision ?? null);
   rec.facts.userCommand.push(FOLLOW);
@@ -124,21 +357,23 @@ async function run(ctx, rec) {
     const main = ready(await host.client.read('main/read', project.scope, { goalId: null, cursor: null }));
     return (main?.requests ?? []).find(entry => !known.has(JSON.stringify(entry.requestRoot))) ?? null;
   }, value => value !== null, { timeoutMs: 20 * MINUTE, check: 'new-goal' });
+  // The first start's seed is fixed before the plan is adopted: one full bootstrap read (`host.ts:2989-2995`), pinned
+  // here so a profile added before the replay cannot change the seed read at send time. A failed read keeps its answer
+  // and is passed on as-is: `adoptAndClose` then sends no replay.
+  const pin = await profilePin(project.host, project.scope);
   // One follow-up asking for the Goal card before judging (G6F F4, R3).
   const created = await newGoalInProject(ctx, project, request.requestRoot, rec, 'new-goal', 1);
   const newGoal = created.goalRef;
-  const fresh = ready(await host.client.read('tasks/query', project.scope, { goalRef: newGoal }));
-  const flowId = newId('e12-new');
-  const first = await driverStart(ctx, project, newGoal, { flowId });
-  const replay = await driverStart(ctx, project, newGoal, { flowId });
-  rec.check('replay', replay?.status === first?.status && JSON.stringify(first?.value?.goalRef) === JSON.stringify(newGoal)
-    && first?.value?.flowId === replay?.value?.flowId && first?.value?.state === replay?.value?.state,
-  `同一 flowId 两次 driver-start：${first?.status}/${replay?.status}，state ${first?.value?.state}/${replay?.value?.state}`);
-  const newDone = await waitGoal(ctx, project, newGoal, { timeoutMs: 90 * MINUTE, rec });
+  const { freshBody, fresh, closed } = await adoptAndClose(ctx, project, rec, { newGoal, created, pin,
+    wait: () => waitGoal(ctx, project, newGoal, { timeoutMs: 90 * MINUTE, rec }) });
+  const newDone = closed.done;
+  const stall = closed.final.stall;
   const oldAgain = ready(await host.client.read('goals/display', project.scope, { goalRef: oldGoal }));
-  rec.check('new-goal', newGoal.goalId !== oldGoal.goalId && oldAgain?.display?.phase === 'COMPLETED' && fresh !== null
-    && fresh.tasks.length > 0 && fresh.tasks.every(task => task.effectivePhase !== 'satisfied') && newDone.display.phase === 'COMPLETED',
-  `新 Goal ${newGoal.goalId}（采用 ${created.applied.status}，起步时 ${fresh?.tasks?.length ?? 0} 个任务都没满足）→ ${newDone.display.phase}；旧 Goal 仍 ${oldAgain?.display?.phase}`);
+  if (fresh === null) rec.uncover('new-goal', 'env-unavailable',
+    `tasks/query 新 Goal：${freshBody?.status ?? 'no answer'} ${freshBody?.code ?? ''} ${freshBody?.reason ?? ''}`.trim());
+  else rec.check('new-goal', newGoal.goalId !== oldGoal.goalId && oldAgain?.display?.phase === 'COMPLETED'
+    && fresh.tasks.length > 0 && fresh.tasks.every(task => task.effectivePhase !== 'satisfied') && newDone?.display.phase === 'COMPLETED',
+  `新 Goal ${newGoal.goalId}（采用 ${created.applied.status}，起步时 ${fresh.tasks.length} 个任务都没满足）→ ${newDone?.display?.phase ?? `停下（${stall}）`}；旧 Goal 仍 ${oldAgain?.display?.phase}`);
   // C-220, judged on what the new work actually got back (#12): a successful tool result of its Runs that names the
   // old Goal or one of its Runs is a query of the completed work with its source kept.
   const oldIds = [oldGoal.goalId, ...runs.map(item => item.run.ref.runId)];

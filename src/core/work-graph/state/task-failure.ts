@@ -11,7 +11,7 @@
  *    Goal `active`, then the §4.3 "操作者与失败类别" matrix with the fence;
  *  - `priorRequeueAutoCount` / `nextRequeueAutoCount` (C8 counter along the
  *    Run chain, `previousRun` keeps the chain);
- *  - `automationVerdict` (AV-0..AV-12 with AV-7a..AV-7d for work, GV-0..GV-10
+ *  - `automationVerdict` (AV-0..AV-12 with AV-7a..AV-7e for work, GV-0..GV-10
  *    with GV-3′ for a gate);
  *  - `buildTaskFailureFacts` (`TaskRow.failure`, `TaskRow.rework`), the only
  *    producer of `TaskFailureFactsV1` (§14.1);
@@ -33,6 +33,7 @@
  * directory (§14.4).
  */
 import { sameActorKindAndId as sameActor } from '../../../contracts/actor-equality.js';
+import { checkDigestOf } from '../../../contracts/check-review.js';
 import type { ActorRef } from '../../../contracts/command-event.js';
 import { compareSourceCheckpoints } from '../../../contracts/continuation-brief.js';
 import type { ControlIntentRef, ControlIntentRequestV1 } from '../../../contracts/control-intent.js';
@@ -54,7 +55,7 @@ import {
   type TaskReworkRefusalCode, type TaskReworkRefusalRef, type TaskReworkRefusalSnapshotV1,
 } from '../../../contracts/task-requeue.js';
 import type { UnknownCallReviewV1 } from '../../../contracts/unknown-call-review.js';
-import type { RoundSnapshot, VerificationRoundRef } from '../../../contracts/verification.js';
+import type { RegisteredCommandCheck, RoundSnapshot, VerificationRoundRef } from '../../../contracts/verification.js';
 import { roundFailureFacts, runFailureOrigin, type RoundReviewFactV1 } from './no-progress.js';
 import { isPausedInterrupted, runUnresolvedBlocker } from './run-machine.js';
 import { reject, unreachable, type Rejected } from './transition.js';
@@ -803,6 +804,8 @@ export type WorkFailureInputV1 = FailureInputCommonV1 & {
    * fail-closed). Smallest complement to `reviews` (UNSPECIFIED, U5).
    */
   reviewUnreadable?: boolean;
+  /** RC: the failed checks whose current definition came from a committed person adoption (missing reads as null). */
+  adoptedCheckChange?: { checkIds: string[] } | null;
 };
 /** A gate Task: its own chain (`VerificationRoundByTask`), anchored on the first producer Run (§9 VD-15). */
 export type GateFailureInputV1 = FailureInputCommonV1 & {
@@ -821,7 +824,7 @@ export type TaskFailureInputV1 = WorkFailureInputV1 | GateFailureInputV1;
 /** AV-10 has no branch: it only states that AV-8 already covers a stored cap refusal. */
 export type WorkVerdictRow =
   | 'AV-0' | 'AV-1' | 'AV-2' | 'AV-2b' | 'AV-3' | 'AV-4' | 'AV-4c' | 'AV-5' | 'AV-5m' | 'AV-6'
-  | 'AV-7a' | 'AV-7b' | 'AV-7c' | 'AV-7d' | 'AV-8' | 'AV-9' | 'AV-11' | 'AV-12';
+  | 'AV-7a' | 'AV-7b' | 'AV-7c' | 'AV-7d' | 'AV-7e' | 'AV-8' | 'AV-9' | 'AV-11' | 'AV-12';
 export type GateVerdictRow =
   | 'GV-0' | 'GV-1' | 'GV-2' | 'GV-3' | 'GV-3′' | 'GV-4' | 'GV-5' | 'GV-6' | 'GV-7' | 'GV-8' | 'GV-9' | 'GV-10';
 export type AutomationVerdictResultV1 =
@@ -981,6 +984,16 @@ function workVerdict(view: WorkView, limit: number): { row: WorkVerdictRow; verd
     if (view.head === null) throw new Error('automationVerdict: check_incomplete is derived only from a chain head');
     return incompleteHeadVerdict(view.head, view.reverifyRefusal, derivation.row === 'FC-13', limit);
   }
+  // AV-7e (RC): a person's committed plan adoption changed the definition of a
+  // failed check, so the same successor-round path AV-7a..AV-7d use re-checks
+  // the task. Reuses the one stop derivation; never requeues.
+  if (derivation.failureClass === 'check_failed' && input.adoptedCheckChange != null && view.head !== null) {
+    const stop = reverifyHeadStop(view.head, view.reverifyRefusal, limit);
+    if (stop !== null) return { row: WORK_REVERIFY_STOP_ROW[stop.at], verdict: stop.verdict };
+    return { row: 'AV-7e', verdict: { kind: 'reverify', roundRef: { ...view.head.ref }, needsFinalize: false,
+      onlyIfSourceChanged: false, failureClass: 'check_failed',
+      retryAfterRefusal: view.reverifyRefusal !== null && view.reverifyRefusal.stale } };
+  }
   if (derivation.failureClass !== 'interrupted' && view.priorAutoCount + 1 > limit) {
     return { row: 'AV-8', verdict: stopped('auto_rework_cap_reached', { operation: 'requeue' }) };
   }
@@ -1024,6 +1037,37 @@ function reverifyHeadStop(
 }
 const WORK_REVERIFY_STOP_ROW = { cap: 'AV-7a', chain_limit: 'AV-7b', refusal: 'AV-7c' } as const;
 const GATE_REVERIFY_STOP_ROW = { cap: 'GV-6', chain_limit: 'GV-7', refusal: 'GV-8' } as const;
+
+/**
+ * RC (R-1): the failed command checks of a finalized FAIL work head whose
+ * current definition differs from the frozen one AND comes from a committed
+ * person adoption of a plan. A withdrawn check is not a change (L-1), a
+ * witness is not configurable, a check no longer scoped to the Task does not
+ * apply, and a definition outside `adoptedPlanChecks` (a hand edit or a whole
+ * list approval) is not an adoption. Null when nothing changed.
+ */
+export function adoptedCheckChangeOf(
+  head: RoundSnapshot | null,
+  currentChecks: readonly RegisteredCommandCheck[],
+  adoptedPlanChecks: readonly { checkId: string; digest: string }[],
+  taskId: string,
+): { checkIds: string[] } | null {
+  if (head === null || head.status !== 'finalized' || head.outcome !== 'FAIL') return null;
+  const checkIds: string[] = [];
+  for (const check of head.checks) {
+    if (check.phase !== 'finished' || check.outcome !== 'FAIL') continue;
+    const definition = check.definition;
+    if (definition.kind === 'witness') continue;
+    const current = currentChecks.find((candidate) => candidate.checkId === check.checkId);
+    if (current === undefined) continue;
+    const digest = checkDigestOf(current);
+    if (digest === checkDigestOf(definition)) continue;
+    if (current.taskIds !== 'all' && !current.taskIds.includes(taskId)) continue;
+    if (!adoptedPlanChecks.some((entry) => entry.checkId === current.checkId && entry.digest === digest)) continue;
+    checkIds.push(check.checkId);
+  }
+  return checkIds.length === 0 ? null : { checkIds };
+}
 
 /** GV-0..GV-10 (TD-9, C5): a gate is reworked only by successor rounds on its own chain. */
 function gateVerdict(view: GateView, limit: number): { row: GateVerdictRow; verdict: TaskAutomationVerdictV1 } {
@@ -1121,7 +1165,7 @@ function workFailureFacts(view: WorkView, policy: TaskAutomationPolicyV1, verdic
     run: runFacts(run, input.kernelRunFailedError),
     interruption: interruptionFacts(run, input.pointerIntent),
     stop: stopFacts(input.pointerIntent),
-    round: head === null ? null : roundFacts(head, input.headReview ?? null),
+    round: head === null ? null : roundFacts(head, input.headReview ?? null, input.adoptedCheckChange ?? null),
     source: sourceFacts(head, [view.requeueRefusal, view.reverifyRefusal]),
     requeueActors: workRequeueActors(view),
     reverifyActors: workReverifyActors(view),
@@ -1191,7 +1235,7 @@ function gateFailureFacts(view: GateView, policy: TaskAutomationPolicyV1, verdic
     run: anchor === null ? null : runFacts(anchor, input.kernelRunFailedError),
     interruption: null,
     stop: null,
-    round: head === null ? null : roundFacts(head, input.headReview ?? null),
+    round: head === null ? null : roundFacts(head, input.headReview ?? null, null),
     source: sourceFacts(head, [view.reverifyRefusal]),
     requeueActors: [],
     reverifyActors: gateReverifyActors(view),
@@ -1245,11 +1289,14 @@ function stopFacts(pointerIntent: StopIntentV1 | null): TaskFailureFactsV1['stop
     requester: stopRequesterOf(pointerIntent) };
 }
 
-function roundFacts(head: RoundSnapshot, review: RoundReviewFactV1 | null): NonNullable<TaskFailureFactsV1['round']> {
+function roundFacts(
+  head: RoundSnapshot, review: RoundReviewFactV1 | null, adoptedCheckChange: { checkIds: string[] } | null,
+): NonNullable<TaskFailureFactsV1['round']> {
   const facts = roundFailureFacts(head, review);
   return { roundRef: { ...head.ref }, revision: head.revision, status: head.status, outcome: head.outcome, failingChecks: facts.checks,
     gapCodes: facts.gapCodes, sourceDigest: head.identity.sourceDigest, workspaceRevision: head.identity.workspaceRevision,
-    ordinal: roundOrdinalOf(head), autoCount: head.chain.autoCount };
+    ordinal: roundOrdinalOf(head), autoCount: head.chain.autoCount,
+    ...(adoptedCheckChange === null ? {} : { adoptedCheckChange }) };
 }
 
 /**

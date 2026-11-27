@@ -86,6 +86,16 @@ export type SecretaryPreparationFactsV1 = {
    */
   effectivePolicy: { digest: string; content: CompletionPolicyContentV1 } | null;
   installedChecks: readonly RegisteredCommandCheck[] | null;
+  /**
+   * RC：人已采用且那次采用已提交的计划检查，带 checkId 和当前内容摘要；规划轮提交用它放行同 id 换定义。
+   * 没有人采用过的计划检查时是空数组；旧读者缺省读作没有。
+   */
+  adoptedPlanChecks?: readonly { checkId: string; digest: string }[];
+  /**
+   * RC L-2：计划来源的已装检查（不论当初谁批准），带 checkId 和当前内容摘要。规划提交按当前已装定义的来源判可替换；
+   * 旧读者缺省读作没有。
+   */
+  planSourceChecks?: readonly { checkId: string; digest: string }[];
   /** Read only when the caller asks (`admission: true`, a plan answer's submit); null otherwise. */
   admission: PlanAdmissionFactsV1 | null;
   /** `phase` is the formal GoalPhase for the active Plan (`COMPLETED` or `ACCEPTED_PARTIAL`, `readGoalTerminalState`),

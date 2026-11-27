@@ -9,7 +9,7 @@ import { randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { release, type } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { Budget, BudgetStop } from './lib/budget.mjs';
 import { broken, cancelItem, finalState, goalPhase, messageView, pauseGoal, projectSessions, Record, sessionHistory, sessionQueries, sha256, sleep, TERMINAL,
   turnsOf } from './lib/flows.mjs';
@@ -83,8 +83,15 @@ function treeFacts() {
   };
 }
 
+/** The scenario facts without the live Host/client (its child process is circular); the project's public fields stay. */
+function factsForReport(facts) {
+  const { project, ...rest } = facts ?? {};
+  if (project === undefined || project === null) return rest;
+  return { ...rest, project: { name: project.name, root: project.root, scope: project.scope, initial: project.initial } };
+}
+
 /** One `result.json` row: the spec's field groups only (`slice-9-SPEC.md:729-745`). */
-function rowOf(ctx, def, rec, usage, final) {
+export function rowOf(ctx, def, rec, usage, final) {
   const model = rec.facts.model ?? {};
   const project = rec.facts.project ?? null;
   const goal = rec.chain.goal.at(-1) ?? null;
@@ -105,6 +112,9 @@ function rowOf(ctx, def, rec, usage, final) {
     cachedInputTokens: usage?.cached ?? null, commandCalls: rec.httpSequence.filter(entry => entry.commandId !== null).length,
     reruns: 0,
     objectChain: rec.chain,
+    // P6J item 6: the scenario's own evidence fields (rounds, failures, plan versions, the intervention timeline, the
+    // E09 chain, C-216's candidate and adopted versions) are written into result.json, not left only in memory.
+    facts: factsForReport(rec.facts),
     artifactRefs: rec.facts.artifactRefs ?? [], checkRoundRef: rec.facts.checkRoundRef ?? null,
     roundOrdinal: rec.facts.roundOrdinal ?? null, checks: rec.checks(), evidenceRefs: rec.chain.evidence.map(entry => entry.ref),
     sourceVersions: rec.facts.sourceVersions ?? null,
@@ -117,6 +127,16 @@ function rowOf(ctx, def, rec, usage, final) {
     uncovered: rec.uncovered(), verdict: rec.verdict(),
     logs: ['checks/http.jsonl', 'checks/model-calls.jsonl', 'checks/commands.txt', 'checks/notes.md'],
   };
+}
+
+/** A/B, compaction, attached and B06 lines: each check, the recorded failure facts (spec :718) and the notes. */
+export function cellOut(def, rec) {
+  const failure = rec.failure === null ? [] : [`失败来源：failureClass=${rec.failure.failureClass}，source=${rec.failure.source}，kernelCode=${
+    rec.failure.kernelCode}，occurredAt=${rec.failure.occurredAt}，autoRetry=${rec.failure.autoRetry}，recoveryPath=${rec.failure.recoveryPath}`];
+  const lines = [...rec.checks().map(check => `${check.id}（${check.rows.join(', ')}）：${check.status}${check.code ? ` (${check.code})` : ''}。${check.note ?? ''}`),
+    ...failure, ...rec.notes];
+  // The attached cells and E08b are not result.json rows; their evidence lives here.
+  return { id: def.id, verdict: rec.verdict(), lines, facts: factsForReport(rec.facts) };
 }
 
 const MINUTE = 60_000;
@@ -347,15 +367,6 @@ async function main() {
     return { closed: closed.text, host: await ctx.start(name) };
   };
 
-  /** A/B, compaction, attached and B06 lines: each check, the recorded failure facts (spec :718) and the notes. */
-  const cellOut = (def, rec) => {
-    const failure = rec.failure === null ? [] : [`失败来源：failureClass=${rec.failure.failureClass}，source=${rec.failure.source}，kernelCode=${
-      rec.failure.kernelCode}，occurredAt=${rec.failure.occurredAt}，autoRetry=${rec.failure.autoRetry}，recoveryPath=${rec.failure.recoveryPath}`];
-    const lines = [...rec.checks().map(check => `${check.id}（${check.rows.join(', ')}）：${check.status}${check.code ? ` (${check.code})` : ''}。${check.note ?? ''}`),
-      ...failure, ...rec.notes];
-    return { id: def.id, verdict: rec.verdict(), lines };
-  };
-
   try {
     // The two 131072 cells first: each on its own Host and ledger (WA/WB), small and independent of the others.
     for (const cell of [a1, b1]) {
@@ -425,4 +436,4 @@ async function main() {
   }
 }
 
-await main();
+if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) await main();

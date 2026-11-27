@@ -620,6 +620,15 @@ export type TargetPlatformOptions = {
    */
   checkOrigins?: (scope: WorkspaceScope) => readonly InstalledCheckOriginEntryV1[];
   /**
+   * RC：人已采用且已提交的计划检查（带 id），每项还带当前内容摘要。缺席表示没有这个读来源，平台不拿别的读去猜。
+   */
+  adoptedPlanChecks?: (scope: WorkspaceScope) => readonly { checkId: string; digest: string }[];
+  /**
+   * RC L-2：计划来源的已装检查（带 id 和当前摘要），不论当初由谁批准。规划提交按当前已装定义的来源判可替换；
+   * 缺席表示没有这个读来源，仍只认人采用的集合。
+   */
+  planSourceChecks?: (scope: WorkspaceScope) => readonly { checkId: string; digest: string }[];
+  /**
    * PL §5.3.4/§6.4.3: the Host's read-only taskbook probe, already rooted in its
    * settings directory. Absent is an explicit `unavailable` for the adoption
    * notice, never `not_configured` (which means only "no settings directory").
@@ -1915,6 +1924,8 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       expiryCount: (ctx, input) => messageExpiry.readExpiryCount(ctx, input),
       // Called at read time, after `readInstalledCheckList` below is defined.
       checks: scope => readInstalledCheckList(scope),
+      ...(options.adoptedPlanChecks === undefined ? {} : { adoptedPlanChecks: options.adoptedPlanChecks }),
+      ...(options.planSourceChecks === undefined ? {} : { planSourceChecks: options.planSourceChecks }),
       knowledge: knowledgeLines,
     });
     // L8 (book ruling 6): the SAME catalog instance resolves an omitted capture
@@ -1952,6 +1963,7 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
     };
     const planDependencies: PlanServiceDependencies = { records: backend.records, materials: rawMaterials, now, eventId: randomUUID,
       automationPolicy: currentAutomationPolicy, configurationFor: currentCheckConfiguration,
+      ...(options.adoptedPlanChecks === undefined ? {} : { adoptedPlanChecks: options.adoptedPlanChecks }),
       // Slice 5 §3.2: the SAME resolved operator the settings/message owners use,
       // so plan adoption/abandon compare the exact configured Host actor.
       ...(operatorActor === undefined ? {} : { operatorActor }),
@@ -2517,9 +2529,9 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
     // owner use, over the effective Goal settings (the record-codecs default
     // reader the Goal-settings owner also applies), so an automatic reverify
     // under `every_step` returns `needs_decision` and writes nothing.
-    const automaticReverifyPolicy: AutomaticReverifyPolicyV1 = ({ goal, actorClass, countedNext, cap }) => {
+    const automaticReverifyPolicy: AutomaticReverifyPolicyV1 = ({ goal, actorClass, countedNext, cap, releasedBy }) => {
       const verdict = decisionActionPolicy({ autonomy: readEffectiveGoalSettings(goal).autonomy,
-        action: 'auto_reverify', actorClass, countedNext, cap });
+        action: 'auto_reverify', actorClass, countedNext, cap, releasedBy: releasedBy ?? null });
       return verdict === 'needs_decision' ? 'needs_decision' : 'automatic_notice';
     };
     /** L8: the ONE trigger notification. A Host callback that throws cannot change
@@ -2554,6 +2566,7 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       ...(hostInstance === undefined ? {} : { hostInstance }),
       automationPolicy: currentAutomationPolicy,
       automaticReverifyPolicy,
+      ...(options.adoptedPlanChecks === undefined ? {} : { adoptedPlanChecks: options.adoptedPlanChecks }),
       messages: { readMessage: mailbox.readMessage.bind(mailbox),
         readHostSendMessageRef: (...args) => mailbox.readHostSendMessageRef!(...args) },
       ...(authorizeConfiguration === undefined ? {} : {
@@ -5260,6 +5273,9 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
         readGoalTerminalState: goal => readGoalTerminalState(backend.records, goal),
       },
       checks: readInstalledCheckList,
+      ...(options.planSourceChecks === undefined ? {} : { planSourceChecks: options.planSourceChecks }),
+      ...(options.planSourceChecks !== undefined || options.adoptedPlanChecks === undefined ? {}
+        : { adoptedPlanChecks: options.adoptedPlanChecks }),
     });
     // PL L-03 (§AGENTS 3): each published goal-loop read joins the close drain
     // through the ONE trackedCall path; the internal injections above keep the

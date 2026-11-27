@@ -65,12 +65,27 @@ export type SettingsWorkspace = {
  */
 export type CheckApprovalV1 = {
   checkId: string;
-  plan: { proposalRef: PlanProposalRef; checksDigest: string };
+  plan: {
+    proposalRef: PlanProposalRef; checksDigest: string;
+    /** RC：人采用一份改同 id 检查定义的候选时，被换下的旧条目（原批准者、作者、依据、时间原样）。 */
+    replaced?: ReplacedPlanCheckV1[];
+  };
   approvedBy: { kind: 'person' }
     | { kind: 'agent'; duty: CheckReviewApproverDutyV1; session: SessionRef; answerRef: QueryJobAnswerRef };
   /** 只在 agent 批准时有：写这份计划的职责。 */
   author?: { duty: CheckReviewAuthorDutyV1 };
   /** 只在 agent 批准时有：这条检查改动前跑出的事实。 */
+  baseline?: CheckBaselineV1;
+  approvedAt: string;
+};
+/** RC：一条被人采用换下的计划检查，原样留在待结记录里，未采用时放回。 */
+export type ReplacedPlanCheckV1 = {
+  /** 这条旧条目在原来 `planChecks` 里的位置：回滚按原位置放回，重跑也不会换序或重复。 */
+  index: number;
+  check: RegisteredCommandCheck;
+  plan: { proposalRef: PlanProposalRef; checksDigest: string };
+  approvedBy: CheckApprovalV1['approvedBy'];
+  author?: { duty: CheckReviewAuthorDutyV1 };
   baseline?: CheckBaselineV1;
   approvedAt: string;
 };
@@ -86,6 +101,11 @@ export type CheckApproverV1 = { kind: 'person' }
 export type SettingsStoreLocation = { place: 'git-common' | 'workspace-local' | 'user-data'; reason: string | null };
 export type HostSettingsSnapshot = {
   models: SettingsModel[]; workspaces: SettingsWorkspace[];
+  /**
+   * RC：每个工作区里人采用一份计划时装上、且那次采用已提交的检查（带 id 和当前内容摘要）；待结条目不在其中。
+   * 与私有快照的派生读同形，由同一个 `adoptedPlanChecksOf` 算出。总是带上；没有采用过计划检查时是空的（lead 11-28 补充裁定 F1）。
+   */
+  adoptedPlanChecks: { scope: CoreScope; checks: { checkId: string; digest: string }[] }[];
   /**
    * C8 automatic-rework policy (Host setting `automation`) as stored: the
    * saved policy, or the defaults (3 / ask) when none was saved. A save

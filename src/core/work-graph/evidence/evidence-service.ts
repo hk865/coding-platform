@@ -117,7 +117,7 @@ import { reverifyBasis } from '../state/no-progress.js';
 import { decisionActionPolicy } from '../state/decision-policy.js';
 import { readGoalSettings as goalSettingsOf } from '../persistence/record-codecs.js';
 import {
-    countEndedGoalRuns, reworkFenceOf, reworkPermission, taskReworkRefusalEffects, type ReworkFence,
+    adoptedCheckChangeOf, countEndedGoalRuns, reworkFenceOf, reworkPermission, taskReworkRefusalEffects, type ReworkFence,
 } from '../state/task-failure.js';
 import {
     checkEventAdmission, finalizeRoundOutcome, foldVerdictChecks, frozenBindingProblem, nextTaskEvidenceIndex, outcomeFor,
@@ -911,6 +911,8 @@ export type AutomaticReverifyPolicyV1 = (input: {
     actorClass: ReworkActorClass;
     countedNext: number | null;
     cap: number;
+    /** RC R-3: a person's plan adoption changed a failed check of this work chain head; only this releases the card. */
+    releasedBy?: 'check_adoption' | null;
 }) => 'automatic_notice' | 'needs_decision';
 
 /**
@@ -944,6 +946,9 @@ export type EvidenceServiceDependencies = {
     configuration?: TrustedCheckConfiguration;
     /** R6 scoped resolver; when supplied it takes precedence over `configuration`. */
     configurationFor?: CheckConfigurationResolver;
+    /** RC R-1/R-3: the Host's committed person-adopted plan checks (id and current digest); absent means the owner
+     *  cannot prove an adoption changed a failed check, so an automatic reverify keeps today's card. */
+    adoptedPlanChecks?: (scope: WorkspaceScope) => readonly { checkId: string; digest: string }[];
     /** A.2 step 5.6: this Host instance and its lease (D-18), for VR-04. */
     hostInstance?: { hostInstanceId: string; lease: 'owned' | 'held_by_other' };
     /**
@@ -2752,10 +2757,19 @@ export function createEvidenceService(deps: EvidenceServiceDependencies): Eviden
             const exemption = reverifyExemption(predecessor);
             const countedNext = successorAutoCount(predecessor.chain?.autoCount ?? 0, actorClass, exemption);
             const cap = policy.autoReworkLimit;
+            // RC R-2/R-3: the platform's own work-chain reverify re-derives the same adopted-check change the
+            // verdict reads, from the current configuration and the Host's trusted adopted set, and releases the
+            // per-step card only for that case. Owner admission and the cap fence above stay first.
+            const releasedBy = authority === null && actorClass === 'system' && gateSubject === undefined
+                && deps.adoptedPlanChecks !== undefined
+                ? adoptedCheckChangeOf(predecessor,
+                    (deps.configurationFor !== undefined ? deps.configurationFor(scope) : deps.configuration)?.checks ?? [],
+                    deps.adoptedPlanChecks(scope), task.taskId) === null ? null : 'check_adoption' as const
+                : null;
             const verdict = deps.automaticReverifyPolicy !== undefined
-                ? deps.automaticReverifyPolicy({ goal, actorClass, countedNext, cap })
+                ? deps.automaticReverifyPolicy({ goal, actorClass, countedNext, cap, releasedBy })
                 : decisionActionPolicy({ autonomy: goalSettingsOf(goal).autonomy, action: 'auto_reverify',
-                    actorClass, countedNext, cap });
+                    actorClass, countedNext, cap, releasedBy });
             if (verdict === 'needs_decision') {
                 // 做事轮或参谋规划轮（2.8：「每步确认」下问答轮也出卡）。
                 const requester = agentWriter !== null

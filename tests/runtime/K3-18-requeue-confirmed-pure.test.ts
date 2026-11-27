@@ -33,11 +33,13 @@ const failure: TaskFailureFactsV1 = {
     lastReverifyRefusal: null, verdict: { kind: 'none' } },
 };
 
-const confirmation = (requeueConfirmedByReviewFlag: boolean) => automationConfirmationCause({
-  autonomy: 'every_step', action: 'system_requeue', countedNext: 1, cap: 3,
+const confirmationInput = (requeueConfirmedByReviewFlag: boolean) => ({
+  autonomy: 'every_step' as const, action: 'system_requeue' as const, countedNext: 1, cap: 3,
   goalRef: GOAL_REF, taskId: 't1', runRef: null, runRevision: null,
   requeueConfirmedByReview: requeueConfirmedByReviewFlag,
 });
+const confirmation = (requeueConfirmedByReviewFlag: boolean) =>
+  automationConfirmationCause(confirmationInput(requeueConfirmedByReviewFlag));
 
 describe('K3-18 (一) requeue confirmed predicate (pure)', () => {
   it('K3-18 (一): only a resolved record with a confirming disposition confirms the requeue', () => {
@@ -57,6 +59,20 @@ describe('K3-18 (一) requeue confirmed predicate (pure)', () => {
   it('K3-18 (一): the every_step system_requeue cause is suppressed only by the confirmation', () => {
     expect(confirmation(true)).toBeNull();
     expect(confirmation(false)).toEqual({
+      code: 'automation_confirmation_required', action: 'system_requeue',
+      affected: [{ ref: { aggregateType: 'Task', projectId: 'P', goalId: 'g1', taskId: 't1' }, revision: 0 }],
+    });
+  });
+
+  // R-3 (`rc-rulings.md:200-201`, §4 T2 `:256`): the adoption release is only for
+  // `auto_reverify`; every other automation action keeps its card. Today the extra
+  // `checkAdoptionConfirmed` is ignored, so this row is green.
+  // Named mutation: lift the `action === 'auto_reverify'` branch in
+  // `automationConfirmationCause`/`legacyDecisionActionPolicy` so the adoption flag releases
+  // every action; this row then gets `null` instead of the `system_requeue` card.
+  it('R-3: the adopted check releases only auto_reverify, not a system_requeue', () => {
+    const withAdoption = { ...confirmationInput(false), checkAdoptionConfirmed: true };
+    expect(automationConfirmationCause(withAdoption)).toEqual({
       code: 'automation_confirmation_required', action: 'system_requeue',
       affected: [{ ref: { aggregateType: 'Task', projectId: 'P', goalId: 'g1', taskId: 't1' }, revision: 0 }],
     });

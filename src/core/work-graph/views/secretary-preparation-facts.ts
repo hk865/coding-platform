@@ -69,6 +69,10 @@ export type SecretaryPreparationFactsDependencies = {
   expiryCount: MessageExpiryPort['readExpiryCount'];
   /** The workspace's installed checks, the same resolver the plan readers' `planChecks` reads. */
   checks: PlanCheckResolver;
+  /** RC：Host 的派生读——人已采用且那次采用已提交的计划检查（带 id 和当前摘要）；缺席读作空。 */
+  adoptedPlanChecks?: (scope: { projectId: string; workspaceId: string }) => readonly { checkId: string; digest: string }[];
+  /** RC L-2：Host 的派生读——计划来源的已装检查（不论当初谁批准）；缺席读作没有。 */
+  planSourceChecks?: (scope: { projectId: string; workspaceId: string }) => readonly { checkId: string; digest: string }[];
   /** The knowledge lines a plan answer's catalog window and module frame are read from (as the propose reads them). */
   knowledge: KnowledgeLines;
 };
@@ -560,6 +564,8 @@ async function readSecretaryFactsOnce(
   }
   const installedChecks = await deps.checks({ projectId, workspaceId });
   if (installedChecks.status !== 'ready') return installedChecks;
+  const adoptedPlanChecks = deps.adoptedPlanChecks?.({ projectId, workspaceId }) ?? [];
+  const planSourceChecks = deps.planSourceChecks?.({ projectId, workspaceId }) ?? [];
   let admission: SecretaryPreparationFactsV1['admission'] = null;
   if (withAdmission) {
     const read = await readPlanAdmission(deps, ctx, projectId, facts.effectiveGoalId, governance);
@@ -588,6 +594,8 @@ async function readSecretaryFactsOnce(
       completionPolicy: pointers.value.completionPolicy,
       effectivePolicy,
       installedChecks: installedChecks.value,
+      adoptedPlanChecks,
+      planSourceChecks,
       admission,
       goals,
       executionKind,

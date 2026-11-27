@@ -566,6 +566,10 @@ export function createTaskGate(gate: TaskGateDependencies): TaskGateFunctions {
     } else {
       return null;
     }
+    // RC: the same failure facts R-1 derives from; this boolean only releases
+    // `auto_reverify` under `every_step`, and only for a person's plan adoption.
+    const checkAdoptionConfirmed = action === 'auto_reverify' && failure.failureClass === 'check_failed'
+      && failure.round?.adoptedCheckChange != null;
     // past the automatic cap the existing fence
     // stays — the requeue/reverify owner commits its cap refusal and the Goal
     // shows that cause; the gate adds only the autonomy rule (spec §3.2
@@ -585,6 +589,7 @@ export function createTaskGate(gate: TaskGateDependencies): TaskGateFunctions {
       // K3 L22: a review answer already confirmed this system requeue; the
       // probe and the final derivation must agree.
       requeueConfirmedByReview: failure.unknownCallReview?.requeueConfirmed ?? false,
+      checkAdoptionConfirmed,
     }) === null) return null;
     // §3.3 line 629: a Run is a STORED aggregate, so its pin must be
     // its formal revision, never a fabricated 0 (the §3.3 pin check would then
@@ -617,6 +622,7 @@ export function createTaskGate(gate: TaskGateDependencies): TaskGateFunctions {
       autonomy: settings.autonomy, action, countedNext, cap: failure.automation.cap,
       goalRef: goal.ref, taskId: row.ref.taskId, runRef: failure.runRef, runRevision,
       requeueConfirmedByReview: failure.unknownCallReview?.requeueConfirmed ?? false,
+      checkAdoptionConfirmed,
     });
     if (cause === null) return null;
     const goalPin: VersionPin = { ref: goal.ref, revision: goal.revision };

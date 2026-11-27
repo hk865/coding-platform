@@ -66,7 +66,7 @@ describe('Host setting automation (C8)', () => {
     expect(pushed.at(-1)?.automation).toEqual({ schemaVersion: 1, autoReworkLimit: 3, resumeOnStartup: 'ask' });
     // §15.2 5.8: the snapshot carries the stored policy (the defaults here, none was saved).
     // RL L13: resourceCaps is always published; its content is RL-40's.
-    expect(await settings.call('snapshot', {})).toEqual({ status: 'ready', value: { models: [], workspaces: [],
+    expect(await settings.call('snapshot', {})).toEqual({ status: 'ready', value: { models: [], workspaces: [], adoptedPlanChecks: [],
       automation: { schemaVersion: 1, autoReworkLimit: 3, resumeOnStartup: 'ask' }, resourceCaps:
       expect.objectContaining({ memoryMaxMiB: null, tasksMax: null }),
       workRunTokenBudget: { saved: null, effective: 400_000_000, max: 600_000_000 },
@@ -151,7 +151,7 @@ describe('automation/save (C8, LA-6; A.2 step 5.8)', () => {
       const saved = await settings.call('automation/save', { autoReworkLimit: 5, resumeOnStartup: 'off' });
       const policy: TaskAutomationPolicyV1 = { schemaVersion: 1, autoReworkLimit: 5, resumeOnStartup: 'off' };
       // RL L13: resourceCaps is always published; its content is RL-40's.
-      expect(saved).toEqual({ status: 'ready', value: { models: expectedModels, workspaces: [], automation: policy,
+      expect(saved).toEqual({ status: 'ready', value: { models: expectedModels, workspaces: [], adoptedPlanChecks: [], automation: policy,
         resourceCaps: expect.objectContaining({ memoryMaxMiB: null, tasksMax: null }),
         workRunTokenBudget: { saved: null, effective: 400_000_000, max: 600_000_000 },
         planLoopLimits: { saved: null, effective: PLAN_LOOP_DEFAULTS, defaults: PLAN_LOOP_DEFAULTS },

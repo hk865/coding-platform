@@ -34,6 +34,8 @@ const DECISION_REQUEST_DUTIES: ReadonlySet<PlatformDutyV1> = new Set<PlatformDut
 export type DecisionPolicyVerdictV1 = 'user_only' | 'needs_decision' | 'automatic' | 'automatic_notice';
 export type DecisionPolicyInputV1 = {
   action: DecisionActionV1; actorClass: ReworkActorClass;
+  /** RC: the caller's trusted fact that a person's plan adoption released this `auto_reverify`; null otherwise. */
+  releasedBy?: 'check_adoption' | null;
   /** The old callers' fields, still accepted. */
   autonomy?: GoalAutonomyV1; countedNext?: number | null; cap?: number;
   affectedGoals?: readonly { goalRef: GoalRef; autonomy: GoalAutonomyV1; settingsRevision: number }[];
@@ -97,6 +99,7 @@ type LegacyDecisionActionV1 = Exclude<DecisionActionV1,
 /** §3.2 autonomy table: the four verdicts for one older action under one autonomy level. */
 function legacyDecisionActionPolicy(input: {
   autonomy?: GoalAutonomyV1; action: LegacyDecisionActionV1; countedNext: number | null; cap: number;
+  releasedBy?: 'check_adoption' | null;
 }): DecisionPolicyVerdictV1 {
   const everyStep = input.autonomy === 'every_step';
   switch (input.action) {
@@ -110,10 +113,14 @@ function legacyDecisionActionPolicy(input: {
       return everyStep ? 'needs_decision' : 'automatic';
     case 'system_requeue':
     case 'agent_requeue':
-    case 'auto_reverify':
       // "countedNext>cap 时两档都是 needs_decision"; the existing fences stay.
       if (input.countedNext !== null && input.countedNext > input.cap) return 'needs_decision';
       return everyStep ? 'needs_decision' : 'automatic_notice';
+    case 'auto_reverify':
+      // The cap stays first in both autonomy levels. RC: only a person's plan
+      // adoption releases the per-step card; every other caller keeps it.
+      if (input.countedNext !== null && input.countedNext > input.cap) return 'needs_decision';
+      return everyStep ? (input.releasedBy === 'check_adoption' ? 'automatic_notice' : 'needs_decision') : 'automatic_notice';
     case 'agent_dispatch':
     case 'agent_stop':
       return everyStep ? 'needs_decision' : 'automatic';
@@ -151,6 +158,7 @@ export function canSendUserMessage(input: {
 export function automationDecisionCause(input: {
   autonomy: GoalAutonomyV1; action: DecisionActionV1; actorClass: ReworkActorClass;
   countedNext: number | null; cap: number; affected: VersionPin[];
+  releasedBy?: 'check_adoption' | null;
 }): null | { code: 'automation_confirmation_required'; action: DecisionActionV1; affected: VersionPin[] } {
   const verdict = decisionActionPolicy({
     autonomy: input.autonomy,
@@ -158,6 +166,7 @@ export function automationDecisionCause(input: {
     actorClass: input.actorClass,
     countedNext: input.countedNext,
     cap: input.cap,
+    releasedBy: input.releasedBy ?? null,
   });
   if (verdict !== 'needs_decision') return null;
   const byKey = new Map<string, VersionPin>();
@@ -190,6 +199,8 @@ export function automationConfirmationCause(input: {
   goalRef: GoalRef; taskId: string; runRef: RunRef | null; runRevision: number | null;
   /** K3 (L22): the user's review answer already confirmed this system requeue. */
   requeueConfirmedByReview?: boolean;
+  /** RC: the failure facts prove a person's plan adoption changed a failed check; only acts on `auto_reverify`. */
+  checkAdoptionConfirmed?: boolean;
 }): null | { code: 'automation_confirmation_required'; action: DecisionActionV1; affected: VersionPin[] } {
   if (input.requeueConfirmedByReview === true && input.action === 'system_requeue') return null;
   if (input.countedNext > input.cap) return null;
@@ -203,6 +214,7 @@ export function automationConfirmationCause(input: {
   return automationDecisionCause({
     autonomy: input.autonomy, action: input.action, actorClass: 'system',
     countedNext: input.countedNext, cap: input.cap, affected,
+    releasedBy: input.action === 'auto_reverify' && input.checkAdoptionConfirmed === true ? 'check_adoption' : null,
   });
 }
 
@@ -291,6 +303,9 @@ export function pausedAutomationAction(input: {
   if (failure.subjectKind === 'work') {
     const failureClass = failure.failureClass;
     if (failureClass === null) return null;
+    // RC: an adopted plan check change is a person's confirmation; it never
+    // emits a card, so a paused re-derivation must not resurrect one.
+    if (failureClass === 'check_failed' && failure.round?.adoptedCheckChange != null) return null;
     if (failureClass === 'check_incomplete') {
       const head = failure.round;
       // FC-13 (an open head with only interrupted checks) is finalized first;

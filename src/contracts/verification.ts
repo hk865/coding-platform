@@ -347,19 +347,26 @@ export const CHECK_DENIED_PREFIXES: readonly string[] = [".git"];
 /**
  * 121-136: the checks a plan proposes, against the workspace's installed ones. Check ids are unique in a workspace:
  * a proposed check installed with the same content is already installed, one whose id is installed with other content
- * is a conflict, and every other one is `added` (installed when a person adopts the plan). Form time, the adoption,
- * the candidate's diagnosis and the Host install all split through this one function.
+ * is a conflict, and every other one is `added` (installed when a person adopts the plan). `replaceable` holds the ids
+ * a person's adoption may redefine in place: one of those with other content is `replaced` instead of a conflict, and
+ * the old entry is kept with the pending adoption so a settlement can put it back. Form time, the adoption, the
+ * candidate's diagnosis and the Host install all split through this one function.
  */
-export function proposedCheckSplit(installed: readonly RegisteredCommandCheck[], proposed: readonly RegisteredCommandCheck[]):
-    { added: RegisteredCommandCheck[]; conflicts: RegisteredCommandCheck[] } {
+export function proposedCheckSplit(installed: readonly RegisteredCommandCheck[], proposed: readonly RegisteredCommandCheck[],
+    replaceable?: ReadonlySet<string>):
+    { added: RegisteredCommandCheck[]; replaced: RegisteredCommandCheck[]; conflicts: RegisteredCommandCheck[] } {
     const added: RegisteredCommandCheck[] = [];
+    const replaced: RegisteredCommandCheck[] = [];
     const conflicts: RegisteredCommandCheck[] = [];
     for (const check of proposed) {
         const same = installed.find(entry => entry.checkId === check.checkId);
         if (same === undefined) added.push(check);
-        else if (canonicalJson(same as unknown as JsonValue) !== canonicalJson(check as unknown as JsonValue)) conflicts.push(check);
+        else if (canonicalJson(same as unknown as JsonValue) !== canonicalJson(check as unknown as JsonValue)) {
+            if (replaceable?.has(check.checkId) === true) replaced.push(check);
+            else conflicts.push(check);
+        }
     }
-    return { added, conflicts };
+    return { added, replaced, conflicts };
 }
 
 /**
@@ -379,10 +386,15 @@ export function withdrawableFailingChecks(input: {
     return ok ? input.failing.map(check => check.checkId) : null;
 }
 
-/** The check list a plan's coverage is judged against: the installed checks, then the ones the plan adds. */
+/** The check list a plan's coverage is judged against: the installed checks, then the ones the plan adds or replaces.
+ *  A proposed check wins over the installed one with the same id, so the judged list never names an id twice. */
 export function checksWithProposed(installed: readonly RegisteredCommandCheck[],
-    proposed: readonly RegisteredCommandCheck[]): RegisteredCommandCheck[] {
-    return [...installed, ...proposedCheckSplit(installed, proposed).added];
+    proposed: readonly RegisteredCommandCheck[],
+    replaceable?: ReadonlySet<string>): RegisteredCommandCheck[] {
+    const { added, replaced } = proposedCheckSplit(installed, proposed,
+        replaceable ?? new Set(installed.map(check => check.checkId)));
+    const proposedIds = new Set([...added, ...replaced].map(check => check.checkId));
+    return [...installed.filter(check => !proposedIds.has(check.checkId)), ...added, ...replaced];
 }
 
 /** The refusal of proposed checks whose ids are installed with other content (coordination: one check per id). */

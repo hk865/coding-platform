@@ -905,7 +905,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     : (seedConfiguration === undefined
       ? undefined : createWorkbenchRuntimeHostBindings(seedConfiguration,
         versionProvider(versionSecretSource(seedConfiguration, { models: [], selection: {}, checks: [], planOnlyChecks: [],
-          checkOrigins: [],
+          checkOrigins: [], adoptedPlanChecks: [], planSourceChecks: [],
           automation: { ...DEFAULT_TASK_AUTOMATION_POLICY }, resourceCaps: resourceCaps.current(),
           workRunTokenBudget, planLoopLimits: structuredClone(planLoopLimits),
           commandReviewLineMinutes, knowledgeLocalOnly: {},
@@ -1154,6 +1154,12 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
           || lastSnapshot?.checks.some(entry => scopeKey(entry.scope) === scopeKey(scope)) === true ? [] : checks.checks.map(
             (check): InstalledCheckOriginEntryV1 => ({ checkDigest: checkDigestOf(check), origin: { kind: 'startup' } }))),
       ],
+      // RC：人已采用且那次采用已提交的计划检查（带 id 和当前内容摘要）；待结条目不在快照里，读不到就是空。
+      adoptedPlanChecks: scope => lastSnapshot?.adoptedPlanChecks.find(
+        entry => scopeKey(entry.scope) === scopeKey(scope))?.checks ?? [],
+      // RC L-2：计划来源的已装检查（不论当初谁批准），规划提交按当前已装定义判可替换。
+      planSourceChecks: scope => lastSnapshot?.planSourceChecks.find(
+        entry => scopeKey(entry.scope) === scopeKey(scope))?.checks ?? [],
       // L-02 §6.4.3: an automatic adoption runs through the SAME wrapper at the
       // commit itself; the published `platform.plans` stays raw (the route binding
       // already wraps it, so wrapping both would export one adoption twice).
@@ -2494,6 +2500,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
   };
 
   const installFromSettings = (snapshot: HostSettingsPrivateSnapshot): void => {
+    const publishedAdoptions = lastSnapshot?.adoptedPlanChecks;
     lastSnapshot = snapshot;
     // L13: install the effective resource-cap values into the ONE holder. The
     // already-built platform, Runtime and workbench page read `current()` live,
@@ -2508,6 +2515,17 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     // every later one, before each project registers its scopes' bindings with it.
     workRunTokenBudget = snapshot.workRunTokenBudget;
     for (const project of projects.values()) installIntoProject(project, snapshot);
+    // RC R-1: the settled adoption fact is published by the line above; only now release the Goal waits of a workspace
+    // whose adopted set changed, so a pass that read the old set before this push runs once more. This is the existing
+    // settings queue and wake loop, not a second scheduler.
+    for (const entry of snapshot.adoptedPlanChecks) {
+      const before = publishedAdoptions?.find(candidate => scopeKey(candidate.scope) === scopeKey(entry.scope))?.checks ?? [];
+      // Only a GAIN is the settled publication. The pre-apply push carries the pending record, so its adopted set
+      // loses the displaced entries and is a subset of the old one; waking there would release the driver before the
+      // adoption commits. The close push adds the new (checkId, digest) and is the release point.
+      if (!entry.checks.some(check => !before.some(old => sameJson(old, check)))) continue;
+      wakeLoop.wake(entry.scope, GOAL_WAITS_QUEUE, 'commit');
+    }
     if (!rebuildRuntimeFromSettings || resolverRegistry === undefined) return;
     const configuration = buildRuntimeConfiguration(snapshot);
     const installed = createWorkbenchRuntimeHostBindings(configuration,

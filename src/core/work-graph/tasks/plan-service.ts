@@ -63,7 +63,7 @@ import {
   agentActorOf, toolCommitLookupResult, toolCommitLookupUnknownTool, toolCommitRequestId,
 } from '../model/tool-commit-arguments.js';
 import {
-  attemptOrdinalOf, automationVerdict, buildTaskFailureFacts,
+  adoptedCheckChangeOf, attemptOrdinalOf, automationVerdict, buildTaskFailureFacts,
   type GateFailureInputV1, type WorkFailureInputV1,
 } from '../state/task-failure.js';
 import { gateCoveredTaskIds, gateFixInProgress } from '../state/decision-policy.js';
@@ -260,6 +260,13 @@ export type PlanServiceDependencies = { records: GoalRecordTransactionPort & Rec
    */
   configurationFor?(scope: { projectId: string; workspaceId: string }):
     Pick<TrustedCheckConfiguration, 'configurationRevision' | 'checks'> | undefined;
+  /**
+   * RC (0.4): the checks a person adopted with a plan whose adoption has committed, by id and current content
+   * digest (the Host's derived `adoptedPlanChecks`)。它让平台分清“当前定义就是那次人采用的定义”和别的
+   * 配置来源；没有它时不带这个事实，不从别的读猜测。
+   */
+  adoptedPlanChecks?(scope: { projectId: string; workspaceId: string }):
+    readonly { checkId: string; digest: string }[];
   /**
    * Slice 5 §3.2: the exact configured operator a request-candidate
    * adoption/abandon is compared against. Absent leaves the frozen fixtures
@@ -879,6 +886,9 @@ type TaskRowRework = {
   pointers: ReadonlyMap<string, ControlIntentSnapshotV1>;
   /** LA-4: the Goal workspace's current check configuration revision (`configurationFor`); null when unknown. */
   configurationRevision: string | null;
+  /** RC: the workspace's current command checks and the checks a committed person adoption brought. */
+  currentChecks: readonly RegisteredCommandCheck[];
+  adoptedPlanChecks: readonly { checkId: string; digest: string }[];
 };
 
 /**
@@ -931,6 +941,8 @@ function workFailureInput(definition: RuntimeTask, state: CanonicalTaskState, fa
     // undecodable) is the fail-closed `reviewUnreadable` the Task row projects.
     reviews: facts.reviewsByTaskId.get(definition.taskId) ?? [],
     reviewUnreadable: selectedRun !== null && state.unknownCallReview?.status === 'unreadable',
+    adoptedCheckChange: adoptedCheckChangeOf(chain.kind === 'head' ? chain.head : null, rework.currentChecks,
+      rework.adoptedPlanChecks, definition.taskId),
   };
 }
 
@@ -974,7 +986,8 @@ function gateFailureInput(plan: PlanRevisionSnapshot, definition: RuntimeTask, s
  */
 async function taskRowReworkOf(records: GoalRecordTransactionPort, facts: CanonicalTaskFacts,
   goal: Pick<GoalSnapshot, 'desiredState' | 'workspaceRef'>, policy: TaskAutomationPolicyV1,
-  configurationFor: PlanServiceDependencies['configurationFor']): Promise<TaskRowRework | Rejection> {
+  configurationFor: PlanServiceDependencies['configurationFor'],
+  adoptedPlanChecks: PlanServiceDependencies['adoptedPlanChecks']): Promise<TaskRowRework | Rejection> {
   const selected = [...facts.byTaskId.values()].flatMap((state) => {
     const execution = state.execution;
     if (execution === null) return [];
@@ -983,9 +996,12 @@ async function taskRowReworkOf(records: GoalRecordTransactionPort, facts: Canoni
   });
   const pointers = await readPointerIntents(records, selected);
   if (pointers.status !== 'ready') return pointers;
-  const configuration = configurationFor?.({ projectId: goal.workspaceRef.projectId, workspaceId: goal.workspaceRef.workspaceId });
+  const scope = { projectId: goal.workspaceRef.projectId, workspaceId: goal.workspaceRef.workspaceId };
+  const configuration = configurationFor?.(scope);
+  const adopted = adoptedPlanChecks?.(scope) ?? [];
   return { goalDesiredState: goal.desiredState, policy, pointers: pointers.intents,
-    configurationRevision: configuration?.configurationRevision ?? null };
+    configurationRevision: configuration?.configurationRevision ?? null,
+    currentChecks: configuration?.checks ?? [], adoptedPlanChecks: adopted };
 }
 
 function taskRow(plan: PlanRevisionSnapshot, goalId: string,
@@ -2170,7 +2186,7 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
     }
     const phases = phasesOf(facts.value);
     const index = buildTaskRowIndex(activePlan);
-    const rework = await taskRowReworkOf(records, facts.value, goalFacts, automationPolicy(), deps.configurationFor);
+    const rework = await taskRowReworkOf(records, facts.value, goalFacts, automationPolicy(), deps.configurationFor, deps.adoptedPlanChecks);
     if ('status' in rework) return asReadResult(rework);
     // The task graph always contains every task of the accepted Plan; Run /
     // Lease / Reduction only update each task's state.
@@ -2266,7 +2282,7 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
     }
     const phases = phasesOf(facts.value);
     const index = buildTaskRowIndex(plan);
-    const rework = await taskRowReworkOf(records, facts.value, window.goal, automationPolicy(), deps.configurationFor);
+    const rework = await taskRowReworkOf(records, facts.value, window.goal, automationPolicy(), deps.configurationFor, deps.adoptedPlanChecks);
     if ('status' in rework) return asReadResult(rework);
     const items: ReadyTask[] = [];
     let started = after === null;
@@ -2360,7 +2376,7 @@ export function createPlanService(deps: PlanServiceDependencies): PlanServicePor
     watermark = laterCursor(watermark, interruptionRead.readThrough);
     const phases = phasesOf(facts.value);
     const index = buildTaskRowIndex(plan);
-    const rework = await taskRowReworkOf(records, facts.value, goal, automationPolicy(), deps.configurationFor);
+    const rework = await taskRowReworkOf(records, facts.value, goal, automationPolicy(), deps.configurationFor, deps.adoptedPlanChecks);
     if ('status' in rework) return asReadResult(rework);
     const tasks: GoalDisplayTaskFactsV1[] = [];
     for (const task of plan.tasks) {

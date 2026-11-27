@@ -7,11 +7,12 @@
 //   结束后用 `plans/apply` 采用；Run 还没结束就采用时，平台先硬停受影响的 Run、回 busy（`plan-adoption-stop.ts:8-19`），
 //   这正是本格要区分的那次硬停。候选已被采用（例如秘书没碰已有任务的版本）时，按 `plans/proposal` 的 `adoptedBy` 记下谁采用。
 // - 人等叫停落地最多 20 分钟（叫停没出现时最多 5 分钟），之后照常采用。没走到的支路记 uncover not-run。
-import { newId, ready } from '../lib/http.mjs';
+import { ready } from '../lib/http.mjs';
 import { answerCard, approve, broken, chooseModel, coldStart, openProject, sleep, submitRequest, taskCard, waitFor,
   waitingCards, waitRequest } from '../lib/flows.mjs';
 import { Abort } from '../lib/report.mjs';
-import { CHANGE, REQUEST, SEED, applyChange, cancelRecordText, dispositionOf, runsOf, taskNamed, waitChangeCandidate } from './e08.mjs';
+import { CHANGE, CHANGE_WAIT_MS, REQUEST, SEED, adoptedEvidence, applyChange, cancelRecordText, candidateRow, changeCandidateAtClose,
+  dispositionOf, followChangeRounds, roundLog, runsOf, taskNamed } from './e08.mjs';
 
 const MINUTE = 60_000;
 /** The same two tasks as E08, without E08's "每步确认" sentence: this Goal runs under after_plan_confirmation. */
@@ -60,6 +61,19 @@ const inOrder = steps => {
   return known.every((value, index) => index === 0 || value > known[index - 1]);
 };
 
+/**
+ * P6L E08b rule 5 (run sheet 这一轮做什么 item 2): the wait ended with no head. The last round stays in
+ * `facts.e08b.rounds`, the final candidate read (`candidateRow`) is kept in `facts.e08b.candidate`, and the three
+ * cells after the request stay `not-run` (never `fail`): a question or a probe is not a candidate, so nothing was
+ * adopted.
+ */
+export async function closeWithoutCandidate(rec, project, goalRef, requestRoot, taskId, seen) {
+  rec.facts.e08b.candidate = await candidateRow(project, goalRef, requestRoot, taskId);
+  for (const id of ['stop-delivered', 'safe-point-end', 'adopt-after-end']) {
+    rec.uncover(id, 'not-run', `没有读到可采用的候选。问题或探针不构成候选，没有发生采用，这一支没走到；${seen}`);
+  }
+}
+
 async function run(ctx, rec) {
   const host = ctx.hosts['w-accept'];
   const project = await openProject(ctx, host, 'e08b', SEED);
@@ -102,27 +116,42 @@ async function run(ctx, rec) {
   const change = await submitRequest(project, CHANGE, { goalId: goalRef.goalId });
   if (change?.status !== 'queued') throw broken(ctx, `requests/submit with goalId: ${change?.code} ${change?.reason}`, 'stop-delivered');
   rec.facts.userCommand.push(CHANGE);
-  const changeView = await waitRequest(ctx, project, change.requestRoot, 40 * MINUTE);
-  const ideasRound = changeView.rounds.at(-1);
-  if (ideasRound.ideas.length > 0) {
-    const picked = await host.client.command('requests/select-idea', project.scope, { commandId: newId('idea'), round: ideasRound.ref, index: 0 });
-    if (picked?.status !== 'queued') throw broken(ctx, `requests/select-idea on the change: ${picked?.code} ${picked?.reason}`, 'adopt-after-end');
-    rec.note(`the person selected idea 1 of ${ideasRound.ideas.length} on the change: ${ideasRound.ideas[0].title}`);
-    await waitRequest(ctx, project, change.requestRoot, 40 * MINUTE);
-  }
-  // A candidate that is still `candidate`, or one already adopted by someone else (its `status` is then not candidate).
-  // lead 11-25: no candidate means no adoption happened — the stop, the safe-point end and the adoption are not
-  // reached (`not-run`), never judged `fail` (the P6 run's secretary answered in prose and wrote no candidate).
-  const candidate = await waitChangeCandidate(ctx, project, goalRef, change.requestRoot, rec, { judge: false, onPoll: observe,
-    done: value => value?.head != null && (value.status === 'candidate' || value.head.status === 'accepted') });
-  if (candidate === null) {
+  await waitRequest(ctx, project, change.requestRoot, 40 * MINUTE);
+  // P6L E08b (diagnosis E08b row "还要改什么"; run sheet 这一轮做什么 item 2): the same request's new rounds are followed
+  // inside the candidate wait's original limit — one read after every card answer and again at close-out, keyed by
+  // `roundRef`; the newest answered round's 2–3 unselected ideas are selected exactly once; a new `needs_decision`
+  // round is answered through the shared entry and its count limit. A head still goes back to the original adoption
+  // path below; with none, the last round and the final candidate read stay and the three cells stay not-run.
+  const follow = { rounds: [], seen: new Set(), gaps: [], selected: null, asked: 0 };
+  // P6L2 B4: one absolute deadline for the whole change wait. P6LO B4: the follow runs only inside the wait's beats,
+  // after the candidate and the request were read, and at most one action per beat.
+  const changeDeadline = Date.now() + CHANGE_WAIT_MS;
+  rec.facts.e08b = { rounds: follow.rounds, evidenceGaps: follow.gaps };
+  const waited = await changeCandidateAtClose(ctx, project, goalRef, change.requestRoot, rec, {
+    deadline: changeDeadline,
+    onPoll: async (view, remaining) => {
+      const followed = await followChangeRounds(ctx, project, change.requestRoot, rec, follow,
+        { check: 'adopt-after-end', deadline: changeDeadline, once: true });
+      rec.facts.e08b.rounds = follow.rounds;
+      rec.facts.e08b.selectIdea = follow.selected;
+      await observe();
+      return followed ?? view;
+    },
+  });
+  // Close-out re-read of the same request (the wait's last read can miss a round written a moment later). P6LO B4: it
+  // only refreshes the evidence (`timeoutMs: 0`), also when the candidate came before the deadline.
+  await followChangeRounds(ctx, project, change.requestRoot, rec, follow, { check: 'adopt-after-end', timeoutMs: 0 });
+  rec.facts.e08b.rounds = follow.rounds;
+  rec.facts.e08b.selectIdea = follow.selected;
+  rec.note(`E08b 改需求的轮：${roundLog(follow.rounds)}`);
+  if (waited.candidate === null) {
     const seen = `任务卡 stop.steps：${steps.join(' → ') || '无'}；叫停请求 ${stopRequest === null ? '无' : stopRequest.state}；sub 的 Run ${
       runEnd === null ? '还在跑' : `${runEnd.outcome ?? '-'} @ ${runEnd.at}`}`;
-    for (const id of ['stop-delivered', 'safe-point-end', 'adopt-after-end']) {
-      rec.uncover(id, 'not-run', `没有读到可采用的候选。问题或探针不构成候选，没有发生采用，这一支没走到；${seen}`);
-    }
+    await closeWithoutCandidate(rec, project, goalRef, change.requestRoot, subId, seen);
     return;
   }
+  const candidate = waited.candidate;
+  rec.facts.e08b.candidate = await candidateRow(project, goalRef, change.requestRoot, subId);
 
   // 3. The person waits for the stop to land (bounded) before adopting: 20 min, or 5 min while no stop was requested.
   const waitFrom = Date.now();
@@ -150,6 +179,9 @@ async function run(ctx, rec) {
     rec.link('plan', adoptedPlan, result.applied.value.revision ?? null);
   }
   await observe();
+  const adoptedEvidenceRows = adoptedPlan === null ? { readable: false } : await adoptedEvidence(project, goalRef, adoptedPlan);
+  rec.facts.e08b.adopted = adoptedEvidenceRows;
+  if (adoptedEvidenceRows.readable) rec.note(`E08b 采用 ${adoptedPlan.planId}：任务 ${adoptedEvidenceRows.tasks.map(task => `${task.taskId}:${task.disposition}`).join(', ')}；处置记录 ${(adoptedEvidenceRows.dispositionRecord?.entries ?? []).length} 条`);
   const versions = ready(await host.client.read('plans/versions', project.scope, { goalId: goalRef.goalId, limit: 50, cursor: null }))?.items ?? [];
   const newest = [...versions].sort((left, right) => left.revision - right.revision).at(-1) ?? null;
   const adoptedAt = newest?.at ?? adoptedLocalAt;

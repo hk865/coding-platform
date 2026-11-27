@@ -184,6 +184,8 @@ export type TaskFailureFactsV1 = {
     workspaceRevision: number;
     ordinal: number;
     autoCount: number;
+    /** RC: failures whose adopted plan check definition changed; absent reads as null. */
+    adoptedCheckChange?: { checkIds: string[] } | null;
   } | null;
   source: {
     /** The head's identity stamp; null for a Run-level failure without a round. */

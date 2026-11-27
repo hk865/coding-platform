@@ -143,7 +143,8 @@ export class Report {
     const table = rows.map(row => `| ${row.scenario} | ${row.verdict} | ${row.checklistRows.join(', ')} | ${
       row.uncovered.map(item => `${item.item} (${item.code})`).join('; ') || '-'} |`);
     const cell = (name, value) => value === undefined ? [`### ${name}`, '', '没跑：`uncovered (not-run)`。', '']
-      : [`### ${name}：${value.verdict}`, '', ...value.lines.map(line => `- ${line}`), ''];
+      : [`### ${name}：${value.verdict}`, '', ...value.lines.map(line => `- ${line}`),
+        ...(value.facts === undefined ? [] : [`- 证据：${JSON.stringify(value.facts)}`]), ''];
     const readme = [
       `# 第 9 片真实验收（G6）${meta.date}`,
       '',

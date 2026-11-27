@@ -956,6 +956,39 @@ describe('automationVerdict: AV-0..AV-12 (TD-9, work Tasks)', () => {
     expect(verdictOf(work(failed, headOf(FAIL), { reverifyRefusal: reverifyRefusal('round-1', 'no_new_basis', { failureClass: 'check_failed' }) })).row)
       .toBe('AV-12');
   });
+
+  // T5 (RC §4 T5, `rc-rulings.md:259`; R-1 `:156-164`): the new AV-7e row and its order
+  // against the reverify stops. Today every cell is red because `WorkFailureInputV1` has no
+  // `adoptedCheckChange`: the extra property is ignored, so a check_failed head keeps today's
+  // path. AV-7e reads AV-12, AV-7a reads AV-8, AV-7b/AV-7c read AV-12.
+  // The chain head ordinal is the ruling's literal 32, not the production constant.
+  // Named mutation (unproven, production not landed): make the AV-7e branch skip
+  // `reverifyHeadStop` and return `reverify` directly. Then the cap-0 cell reads an AV-7e
+  // `reverify` instead of the AV-7a stop, the ordinal-32 cell reads it instead of AV-7b's
+  // `round_chain_limit`, and the fresh-refusal cell reads it instead of AV-7c's `no_new_basis`;
+  // the baseline AV-7e cell stays green.
+  const adoptedChange = { checkIds: ['c1'] };
+  const adoptedAtHead = { ...work(failed, headOf(FAIL)), adoptedCheckChange: adoptedChange };
+  const adoptedAtChain = { ...work(failed, chainAt(32, FAIL)), adoptedCheckChange: adoptedChange };
+  const adoptedAtRefusal = { ...work(failed, headOf(FAIL), {
+    reverifyRefusal: reverifyRefusal('round-1', 'no_new_basis', { failureClass: 'check_failed' }),
+  }), adoptedCheckChange: adoptedChange };
+  it.each([
+    { row: 'AV-7e', input: adoptedAtHead, limit: 3,
+      verdict: { row: 'AV-7e', verdict: { kind: 'reverify', roundRef: roundRef('round-1'),
+        needsFinalize: false, onlyIfSourceChanged: false, failureClass: 'check_failed', retryAfterRefusal: false } } },
+    { row: 'AV-7a', input: adoptedAtHead, limit: 0,
+      verdict: { row: 'AV-7a',
+        verdict: { kind: 'stopped', reason: 'auto_rework_cap_reached', detail: { operation: 'reverify' } } } },
+    { row: 'AV-7b', input: adoptedAtChain, limit: 3,
+      verdict: { row: 'AV-7b',
+        verdict: { kind: 'stopped', reason: 'not_reworkable', detail: { cause: 'round_chain_limit' } } } },
+    { row: 'AV-7c', input: adoptedAtRefusal, limit: 3,
+      verdict: { row: 'AV-7c',
+        verdict: { kind: 'stopped', reason: 'no_new_basis', detail: { operation: 'reverify' } } } },
+  ])('T5: $row', ({ input, limit, verdict }) => {
+    expect(verdictOf(input, limit)).toEqual(verdict);
+  });
 });
 
 // ------------------------------------------------------------------------ //

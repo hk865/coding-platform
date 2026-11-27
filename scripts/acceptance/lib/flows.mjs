@@ -12,7 +12,29 @@ import { Abort } from './report.mjs';
 
 export const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 export const sha256 = text => createHash('sha256').update(text).digest('hex');
-const same = (left, right) => JSON.stringify(left) === JSON.stringify(right);
+
+/**
+ * The platform's canonical JSON (`contracts/canonical-json.ts:23`: keys sorted by UTF-16 order, no spaces), for the
+ * plain JSON refs the driver handles. Only used to name a Query whose id the platform derives from a message ref.
+ */
+export const canonicalJson = value => {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(',')}}`;
+};
+
+/**
+ * P6J4 E09: the two Queries the platform opens from one message under a fixed id (`contracts/query-job.ts:174-204`):
+ * the line's planning round (`intervention-planning-<sha256(ref)>`, in the workspace of the Goal the message names)
+ * and the copy question's round (`consultation-<sha256(ref)>`). A wake that no line has claimed yet is found only so.
+ */
+export const letterQueryJobRefs = (messageRef, workspaceIds = [messageRef.workspaceId]) => {
+  const hash = sha256(canonicalJson(messageRef));
+  const job = (workspaceId, queryJobId) => ({ aggregateType: 'QueryJob', projectId: messageRef.projectId, workspaceId, queryJobId });
+  return [...new Set(workspaceIds)].map(workspaceId => job(workspaceId, `intervention-planning-${hash}`))
+    .concat([job(messageRef.workspaceId, `consultation-${hash}`)]);
+};
+const same =(left, right) => JSON.stringify(left) === JSON.stringify(right);
 export const TERMINAL = ['COMPLETED', 'FAILED', 'CANCELLED', 'ACCEPTED_PARTIAL'];
 const MINUTE = 60_000;
 /**
@@ -28,7 +50,7 @@ const STALL_MS = 32 * MINUTE;
 const DECIDE_GRACE_MS = 2 * MINUTE;
 
 /** A wait that ran out or ended early: its check is already judged `fail`; the unit stops unless the caller takes it (`orNull`). */
-class WaitTimeout extends Abort {
+export class WaitTimeout extends Abort {
   constructor(text) {
     super('not-run', text);
   }
@@ -39,6 +61,30 @@ export const orNull = promise => promise.catch(error => {
   if (error instanceof WaitTimeout) return null;
   throw error;
 });
+
+/**
+ * P6J intervention: the whole-Goal wait's stop, keeping the real reason (`WaitTimeout.message` names a timeout or the
+ * platform's own stall) instead of calling every null a 150-minute timeout.
+ */
+export const longGoalStop = (value, reason) => value === null
+  ? { phase: null, stoppedFor: reason ?? '等待结束，没有返回值' }
+  : { phase: value.display.phase, stoppedFor: value.stoppedFor };
+
+/**
+ * P6J C-216 / E05 / E09: a module path covers a file when it is the root `"."`, the file itself, or a directory above
+ * it (`slice-8-SPEC.md:183`). One rule for every module-path match; never a bare string prefix.
+ */
+export const coversPath = (modulePath, file) => modulePath === '.'
+  || file === modulePath || file.startsWith(`${modulePath.replace(/\/+$/, '')}/`);
+
+/**
+ * P6J intervention: the Goal the line's page shows — the line name's own Goal, else the page's selected Goal, exactly
+ * as the UI sends it (`member.ts:449-450`, `boot.ts:2040-2052`). Null when neither exists; the send omits `goalRef`.
+ */
+export const pageGoalRef = (project, row, selected) => {
+  const goalId = row?.name?.goalRef?.goalId ?? selected?.goalId ?? null;
+  return goalId === null ? null : { aggregateType: 'Goal', projectId: project.scope.projectId, goalId };
+};
 
 /**
  * An existing capability that ran and did the wrong thing, or did not happen in time (lead rulings Q1, 11-14 #6/#12):
@@ -54,7 +100,7 @@ export function broken(ctx, text, check) {
   return new Abort('not-run', text);
 }
 
-const said = body => `${body?.status ?? 'no answer'} ${body?.code ?? ''} ${body?.reason ?? ''}`.trim();
+export const said = body => `${body?.status ?? 'no answer'} ${body?.code ?? ''} ${body?.reason ?? ''}`.trim();
 
 /** One scenario's (or cell's) record: planned checks, their three-word results, the object chain and notes. */
 export class Record {
@@ -214,9 +260,22 @@ export async function chooseModel(ctx, host, project, fixedModelId = null) {
   };
 }
 
-async function profilesOf(host, scope) {
-  const boot = await host.client.get('/api/real/core/bootstrap');
-  return (boot?.execution?.queryProfiles ?? []).filter(profile => same(profile.scope, scope));
+/**
+ * P6K E12 (review row 3): the one full bootstrap read the first-start seed is pinned from. `ok` means the read
+ * answered; then `ids` are this workspace's profile ids, and a genuinely empty list stays `[]`. A failed read is
+ * `{ok:false, answer, ids:null}`, never folded into an empty list: the caller keeps the original answer and sends
+ * no replay. `profilesOf` delegates here so the success/failure rule has one copy.
+ */
+export async function profilePin(host, scope) {
+  const answer = await host.client.get('/api/real/core/bootstrap');
+  const profiles = answer?.execution?.queryProfiles;
+  if (!Array.isArray(profiles)) return { ok: false, answer, ids: null, profiles: [] };
+  const scoped = profiles.filter(profile => same(profile.scope, scope));
+  return { ok: true, answer, ids: scoped.map(profile => profile.id), profiles: scoped };
+}
+
+export async function profilesOf(host, scope) {
+  return (await profilePin(host, scope)).profiles;
 }
 
 // ---------------------------------------------------------------------------- waiting, cards and the driver
@@ -284,16 +343,94 @@ export async function requeueCard(project, card, rec = null) {
 }
 
 /**
+ * P6L3 D: the Workflow beat before adoption, from `workflow/driver-read`'s public `last`. `reverifyCard` compares the
+ * later `last` against this, so a beat that already happened between adoption and the stop card is not invisible.
+ */
+export async function workflowBeat(project, goalRef) {
+  const body = await project.host.client.read('workflow/driver-read', project.scope, { goalRef }, { expect: ['not_found'] });
+  const value = ready(body);
+  return value === null ? { readable: false, why: `workflow/driver-read ${said(body)}`.trim() }
+    : { readable: true, beat: JSON.stringify(value.last ?? null) };
+}
+
+/** P6LO D: how long one stop card is watched after the adoption; one deadline per card, set by `waitGoal`. */
+const REVERIFY_WATCH_MS = 2 * MINUTE;
+
+/**
+ * P6LO D (RC R-5): the public proof that the Goal's automatic selection after the adoption ran to its end with no
+ * reverify left to do. `last` moved off the pre-adoption beat, it is a finished `waiting` selection (a `waiting` result
+ * always has `next: null`, so no `reverify_round` is queued behind it), and the Goal driver no longer publishes
+ * `running` (a step or a lane in flight does). An `advance` that queued the reverify, a rejected `last` or an unchanged
+ * one is no proof.
+ */
+const selectionSettled = (driver, baseline) => driver.state !== 'running' && driver.last?.status === 'ready'
+  && driver.last.value?.state === 'waiting' && JSON.stringify(driver.last) !== baseline;
+
+/**
  * E05-D2（lead 11-26）：这次等待里人采用过候选（`adopted`：候选 id）以后，在 `no_new_basis` 停止卡上点“附上说明作为
  * 新依据”：界面的 `verification/reverify` 带 note（`src/ui/boot.ts` 的 `reverifyWrite`），前一轮是这个 Run 的链头轮，pin
- * 是读到的版本，note 只写采用了的候选 id 和链头轮里实际失败的检查 id。链头轮读不到或没有失败的检查就不点，答 null。
+ * 是读到的版本，note 只写采用了的候选 id 和链头轮里实际失败的检查 id。
  * 只发一次（`repin: false`：版本动了就记那次拒绝，不换 pin 按旧的失败清单再发）。不点“重新入队”：候选只改了检查、任务定义
  * 没变，返工的键没变，会再被 no_new_basis 拒（E05 诊断证据 5）。按这一次的真实回执记成功或被拒，被拒答 false，不抛错。
+ * P6LO D（RC R-5）：RC 落地后，采用改了失败检查的候选就算人的确认，平台下一次选择自己重检；这里只是后备，绝不抢在它前面。
+ * 每拍（`waitGoal` 的一次轮询）读一次 Workflow 和链头：链头变了留证不点（false）；`selectionSettled` 证明采用后的自动选择
+ * 已结束、没有重检待执行，才核对旧链头；其余答 'watching'。`deadline` 是这张卡唯一的期限：读回时已到期，记未覆盖、不点，
+ * 答 null，观察结束。
  */
-export async function reverifyCard(project, card, adopted, rec = null) {
-  const head = ready(await project.host.client.read('verification/round', project.scope, { subjectRunRef: card.runRef },
-    { expect: ['not_found'] }));
-  if (head === null || head.failingCheckIds.length === 0) return null;
+export async function reverifyCard(project, card, adopted, rec, before, deadline) {
+  // P6L3 D: the stop card's own Run picks its chain head from the map recorded before adoption. A candidate that lists
+  // several affected Tasks cannot lend another Task's head to this card.
+  const runId = card.runRef?.runId ?? null;
+  const headBefore = before?.readable === true && runId !== null
+    ? (before.heads ?? []).find(entry => entry.runId === runId) ?? null : null;
+  if (headBefore === null) {
+    rec?.note(`reverify card ${card.taskRef?.taskId ?? '-'}：采用前读不到这张停止卡 Run ${runId ?? '无'} 的失败链头（${before?.why ?? '没有采用前读数'}），不点`);
+    return null;
+  }
+  // R1: the head belongs to one Goal; a card that pins another Goal is never judged by it.
+  const cardGoalId = (card.source?.pins ?? []).find(pin => pin.ref?.aggregateType === 'Goal')?.ref?.goalId ?? null;
+  if (before.goalId !== null && before.goalId !== undefined && cardGoalId !== null && before.goalId !== cardGoalId) {
+    rec?.note(`reverify card ${card.taskRef?.taskId ?? '-'}：采用前链头属于目标 ${before.goalId}，卡在 ${cardGoalId}，不点`);
+    return null;
+  }
+  // P6L3 D: the fixed sleep is gone. `workflow/driver-read` is the public read that shows this beat was walked; its
+  // pre-adoption baseline was recorded with the chain-head map, so a beat between adoption and this card is not lost.
+  const goalPin = (card.source?.pins ?? []).find(pin => pin.ref?.aggregateType === 'Goal') ?? null;
+  if (goalPin === null) {
+    rec?.note(`reverify card ${card.taskRef?.taskId ?? '-'}：卡上没有 Goal pin，读不到 Workflow 这一拍，不点`);
+    return null;
+  }
+  const baseline = before.beat?.readable === true ? before.beat.beat : null;
+  if (baseline === null) {
+    rec?.note(`reverify card ${card.taskRef?.taskId ?? '-'}：采用前读不到 Workflow 这一拍（${before.beat?.why ?? '没有采用前读数'}），不点`);
+    return null;
+  }
+  const driverBody = await project.host.client.read('workflow/driver-read', project.scope, { goalRef: goalPin.ref },
+    { expect: ['not_found'] });
+  const driver = ready(driverBody);
+  const body = await project.host.client.read('verification/round', project.scope, { subjectRunRef: card.runRef },
+    { expect: ['not_found'] });
+  const head = ready(body);
+  // P6LO D: the card's one deadline is checked after the reads, so a read that comes back late never counts as proof.
+  if (Date.now() >= deadline) {
+    rec?.note(`reverify card ${card.taskRef?.taskId ?? '-'}：采用后 ${REVERIFY_WATCH_MS / MINUTE} 分钟的观察到期，没有证明平台的自动选择已结束、没有重检待执行（Workflow ${
+      driver === null ? said(driverBody) : `${driver.state}/${driver.last?.value?.state ?? driver.last?.status ?? '-'}`}，链头 ${head?.roundRef?.roundId ?? said(body)}），记未覆盖，不点`);
+    return null;
+  }
+  // A different round is a successor, even when it has already finalized: the platform opened it, so nothing to click.
+  if (head !== null && head.roundRef?.roundId !== headBefore.roundId) {
+    rec?.note(`reverify card ${card.taskRef?.taskId ?? '-'}：链头 ${headBefore.roundId} → ${head.roundRef?.roundId ?? '-'}（${head.status ?? '-'}），平台已开后继，不点`);
+    return false;
+  }
+  if (driver === null || head === null || !selectionSettled(driver, baseline)) return 'watching';
+  if (head.status === 'open') {
+    rec?.note(`reverify card ${card.taskRef?.taskId ?? '-'}：链头 ${head.roundRef.roundId} 仍开着，不点`);
+    return false;
+  }
+  if (head.status !== 'finalized' || head.failingCheckIds.length === 0) {
+    rec?.note(`reverify card ${card.taskRef?.taskId ?? '-'}：链头 ${head.roundRef.roundId} 是 ${head.status}，失败检查 ${head.failingCheckIds.length} 个，不点`);
+    return false;
+  }
   const reply = await project.host.client.write('verification/reverify', project.scope, { predecessorRoundRef: head.roundRef,
     note: `G6：人采用了候选 ${adopted.join('、')}；重新检查链头轮里失败的检查 ${head.failingCheckIds.join('、')}` },
   [{ ref: head.roundRef, revision: head.revision }], { repin: false });
@@ -301,11 +438,55 @@ export async function reverifyCard(project, card, adopted, rec = null) {
   const value = committed(reply);
   const refused = value?.kind === 'refused' ? ` refused ${JSON.stringify(value.refusal ?? null)}` : '';
   rec?.note(`reverify card ${card.taskRef.taskId} (head round ${head.roundRef.roundId}, candidates ${adopted.join(', ')}): ${said(reply)}${refused}`);
+  // A revision conflict is never a blind re-send: re-read the round, and a moved head means the platform already opened
+  // the successor. The receipt is kept either way, with no pin change.
+  if (reply?.code === 'revision_conflict') {
+    const again = ready(await project.host.client.read('verification/round', project.scope, { subjectRunRef: card.runRef },
+      { expect: ['not_found'] }));
+    if (again !== null && again.roundRef?.roundId !== head.roundRef.roundId) {
+      rec?.note(`reverify card ${card.taskRef.taskId}：revision_conflict 后复读，链头 ${head.roundRef.roundId} → ${again.roundRef.roundId}，平台已开新一轮，不点`);
+    } else {
+      rec?.note(`reverify card ${card.taskRef.taskId}：revision_conflict 后复读链头没变（${again?.roundRef?.roundId ?? '读不到'}），回执照记，不换 pin 重发`);
+    }
+    return false;
+  }
   return value !== null && value.kind !== 'refused';
 }
 
-/** `decisions/answer` with exactly the card's pins (plus the message pin for a message card). */
-export async function answerCard(ctx, project, card, selection, text = '', rec = null) {
+/**
+ * P6L2 D (RC R-5): the failed Task's chain head before adoption, read from the same Goal's task rows. The Task is the
+ * candidate's `reason.affectedTaskIds` when present, else the only failed work Task; a missing or ambiguous target is
+ * a named gap, never a guess. Only the round id and revision are kept.
+ */
+export async function failureHeadBeforeAdoption(project, goalRef, proposalRef) {
+  const graphBody = await project.host.client.read('tasks/query', project.scope, { goalRef });
+  const graph = ready(graphBody);
+  if (graph === null) return { readable: false, why: `tasks/query ${said(graphBody)}`.trim() };
+  const proposalBody = await project.host.client.read('plans/proposal', project.scope, proposalRef);
+  const affected = ready(proposalBody)?.reason?.affectedTaskIds ?? null;
+  // P6LO D: every failed work Task is counted first (an execution failure has no chain head), then the heads are taken.
+  const failed = (graph.tasks ?? []).filter(task => task.definition?.taskKind === 'work' && task.failure != null);
+  // P6L3 D: the failed work Tasks' chain heads are recorded by Run at adoption; the stop card's own `runRef` picks its
+  // own row later. An empty `affectedTaskIds` (the Host's value when the model names none) takes the only failed Task.
+  const empty = affected === null || affected === undefined || (Array.isArray(affected) && affected.length === 0);
+  const targets = empty ? (failed.length === 1 ? failed : [])
+    : failed.filter(task => Array.isArray(affected) && affected.includes(task.ref.taskId));
+  const heads = targets.filter(task => task.failure.round != null).map(task => ({ taskId: task.ref.taskId,
+    runId: task.failure.runRef?.runId ?? null,
+    roundId: task.failure.round.roundRef?.roundId ?? null, revision: task.failure.round.revision ?? null,
+    status: task.failure.round.status ?? null })).filter(head => head.runId !== null);
+  if (heads.length === 0) {
+    return { readable: false, affected, failed: failed.map(task => task.ref.taskId),
+      why: `采用前失败链头无法定位（affectedTaskIds ${JSON.stringify(affected)}，失败 work Task ${failed.map(task => task.ref.taskId).join(', ') || '无'}）` };
+  }
+  return { readable: true, goalId: goalRef.goalId, heads };
+}
+
+/**
+ * `decisions/answer` with exactly the card's pins (plus the message pin for a message card). P6LO B4: a caller's
+ * absolute `deadline` is checked right before the write, after the letter read a message card needs.
+ */
+export async function answerCard(ctx, project, card, selection, text = '', rec = null, deadline = Infinity) {
   let pins = card.source.pins;
   if (card.source.kind === 'message') {
     // A message card names its message in `source.key` (`goal-decisions.ts:106-112`); its pin is read, not guessed.
@@ -314,6 +495,7 @@ export async function answerCard(ctx, project, card, selection, text = '', rec =
     if (message === null) return false;
     pins = [{ ref: messageRef, revision: message.revision }, ...pins];
   }
+  if (Date.now() >= deadline) return false;
   const answer = await project.host.client.write('decisions/answer', project.scope,
     { source: card.source, selection, text, annotations: [] }, pins);
   rec?.link('card', card.source, null);
@@ -361,13 +543,47 @@ function applyCandidate(project, goalPin, proposalPin) {
   }, [goalPin]);
 }
 
+/**
+ * P6L E05 (diagnosis E05, next-run item 1): an adoption the platform refuses stops the preparation as before, but the
+ * facts first keep who wrote the candidate, the entry it was submitted through, its own check definitions and the raw
+ * receipt. The candidate is model-written (the driver has no candidate-writing entry), so the driver never rewrites it
+ * or gives a differing definition a new check id; the facts answer "which candidate rewrote the same check".
+ */
+async function refusedAdoptionOf(project, card, proposal, reply) {
+  const body = await project.host.client.read('plans/proposal', project.scope, proposal.ref);
+  const read = ready(body);
+  return { cardKey: card.cardKey, proposalRef: proposal.ref,
+    author: read?.submittedBy ?? null,
+    entry: { requestRef: read?.requestRef ?? null, sourceMessageRef: read?.sourceMessageRef ?? null,
+      sourcePart: read?.sourcePart ?? null },
+    checks: read?.checks ?? [],
+    candidate: read === null ? null : { basedOn: read.basedOn, draft: read.draft, reason: read.reason },
+    proposalRead: { status: body?.status ?? 'no answer', code: body?.code ?? null, reason: body?.reason ?? null },
+    receipt: { status: reply?.status ?? 'no answer', code: reply?.code ?? null, reason: reply?.reason ?? null,
+      text: JSON.stringify(reply ?? null) } };
+}
+
 /** The candidate the person adopts: its proposal id (E05-D2 names it), else false. */
 async function adoptCandidateCard(ctx, project, card, rec, check) {
   const goal = card.source.pins.find(pin => pin.ref.aggregateType === 'Goal');
   const proposal = card.source.pins.find(pin => pin.ref.aggregateType === 'PlanProposal');
+  // P6L2 D: the failed chain head is read before the adoption moves the plan pointer.
+  if (rec !== null && rec !== undefined) {
+    rec.facts.reverifyHead = { ...await failureHeadBeforeAdoption(project, goal.ref, proposal.ref),
+      beat: await workflowBeat(project, goal.ref) };
+  }
   const reply = await applyCandidate(project, goal, proposal);
   if (reply.code === 'revision_conflict' || reply.code === 'busy') return false;
-  if (committed(reply) === null) throw broken(ctx, `plans/apply ${proposal.ref.proposalId}: ${said(reply)}`, check);
+  if (committed(reply) === null) {
+    if (rec !== null && rec !== undefined) {
+      const refused = await refusedAdoptionOf(project, card, proposal, reply);
+      rec.facts.refusedAdoptions = [...(rec.facts.refusedAdoptions ?? []), refused];
+      rec.note(`人采用候选 ${proposal.ref.proposalId}（版本 ${proposal.revision}）被拒：${refused.receipt.status} ${
+        refused.receipt.code ?? ''} ${refused.receipt.reason ?? ''}；候选由模型写，驱动不改候选、不自造检查 ID（驱动自写分支不适用）；候选检查 ${
+        refused.checks.map(entry => entry.checkId).join(', ') || '读不到'}；回执原文 ${refused.receipt.text}`);
+    }
+    throw broken(ctx, `plans/apply ${proposal.ref.proposalId}: ${said(reply)}`, check);
+  }
   rec?.note(`人采用了候选 ${proposal.ref.proposalId}（版本 ${proposal.revision}）。`);
   return proposal.ref.proposalId;
 }
@@ -388,6 +604,8 @@ export async function waitGoal(ctx, project, goalRef, { until = TERMINAL, timeou
   // E05-D2：这次等待里人采用过的候选 id，和已经点过“附上说明并重新检查”的停止卡，每张只点一次。
   const adopted = [];
   const reverified = new Set();
+  // P6LO D: each stop card's one deadline, set the first time it is seen after an adoption.
+  const reverifyEnds = new Map();
   const quiet = { seen: null, since: Date.now() };
   let ended = null;
   let stoppedFor = null;
@@ -418,9 +636,13 @@ export async function waitGoal(ctx, project, goalRef, { until = TERMINAL, timeou
       const selection = answer(card);
       if (selection === null) {
         if (taskCauseOf(card) === 'no_new_basis' && adopted.length > 0 && !reverified.has(card.cardKey)) {
-          const reverify = await reverifyCard(project, card, adopted, rec);
-          if (reverify !== null) reverified.add(card.cardKey);
-          if (reverify === true) { open += 1; answered.add(card.cardKey); }
+          // P6LO D: one read per beat until the card's one deadline; while watched the card is still in hand.
+          if (!reverifyEnds.has(card.cardKey)) reverifyEnds.set(card.cardKey, Date.now() + REVERIFY_WATCH_MS);
+          const reverify = await reverifyCard(project, card, adopted, rec, rec?.facts.reverifyHead ?? null,
+            reverifyEnds.get(card.cardKey));
+          if (reverify === 'watching' || reverify === true) open += 1;
+          if (reverify !== 'watching') reverified.add(card.cardKey);
+          if (reverify === true) answered.add(card.cardKey);
           continue;
         }
         // 没有选项的返工确认卡：人点“重新入队”；入队成功才算人已处理这张卡。
@@ -609,11 +831,17 @@ export async function reviewNodes(project, goalRef, rec = null) {
   }
 }
 
-/** `workflow/driver-start` with this workspace's Query profiles (`collaboration-driver.ts:100-103`). */
-export async function driverStart(ctx, project, goalRef, { flowId, taskId, sessionHint = null }) {
-  const ids = (await profilesOf(project.host, project.scope)).map(profile => profile.id);
+/**
+ * `workflow/driver-start` with this workspace's Query profiles (`collaboration-driver.ts:100-103`). `advance` replays a
+ * start the platform already made (E12): the seed is the canonical `{advance, queryProfileIds}`, so the original
+ * `WorkflowAdvanceInput` plus the same profiles is the same seed, and the platform answers the original snapshot.
+ * `profileIds` are the ids pinned before the plan was adopted (E12): a replay must not read them again at send time,
+ * because a profile added in between would change the seed. Without it the read stays as before.
+ */
+export async function driverStart(ctx, project, goalRef, { flowId, taskId, sessionHint = null, advance = null, profileIds = null }) {
+  const ids = profileIds ?? (await profilesOf(project.host, project.scope)).map(profile => profile.id);
   return project.host.client.read('workflow/driver-start', project.scope, {
-    advance: { schemaVersion: 1, goalRef, flowId, sessionHint, kind: 'select_work', ...(taskId === undefined ? {} : { taskId }) },
+    advance: advance ?? { schemaVersion: 1, goalRef, flowId, sessionHint, kind: 'select_work', ...(taskId === undefined ? {} : { taskId }) },
     queryProfileIds: ids,
   });
 }
@@ -638,10 +866,22 @@ const settled = round => round.status === 'ended' || round.status === 'unknown';
  * round's close reason, instead of running out its time.
  */
 export async function waitCandidate(ctx, project, goalRef, requestRoot, what, { timeoutMs = 30 * MINUTE, check,
-  done = value => value?.head !== null && value?.head !== undefined && value.status === 'candidate' } = {}) {
+  done = value => value?.head !== null && value?.head !== undefined && value.status === 'candidate', questionsRec = null } = {}) {
   let closed = null;
+  let asks = 0;
+  const deadline = Date.now() + timeoutMs;
   return waitFor(ctx, what, async () => {
-    const last = (await readRequest(project, requestRoot))?.rounds.at(-1);
+    let view = await readRequest(project, requestRoot);
+    // INT2 C4 (lead 11-28): given `questionsRec`, a plan round that asked the person first is answered inside this same
+    // wait, the way every plan round's questions are (`answerPlanQuestions`, the same cap, only the time left), and the
+    // wait for the candidate goes on.
+    if (questionsRec !== null && asks < PLAN_QUESTION_MAX && askedQuestions(view?.rounds.at(-1))) {
+      const answered = await answerPlanQuestions(ctx, project, requestRoot, view, questionsRec,
+        { max: PLAN_QUESTION_MAX - asks, check, waitCheck: check, timeoutMs: Math.max(0, deadline - Date.now()) });
+      asks += answered.asks;
+      view = answered.view;
+    }
+    const last = view?.rounds.at(-1);
     closed = last !== undefined && settled(last) && last.closeCode !== null && last.closeCode !== undefined
       ? `the request's last round ${last.ref.queryJobId} closed without a candidate: ${last.closeCode}`
         + `${last.closeMessage ? ` (${last.closeMessage})` : ''}`
@@ -650,10 +890,12 @@ export async function waitCandidate(ctx, project, goalRef, requestRoot, what, { 
   }, done, { timeoutMs, check, ended: async () => closed ?? await stalledEntry(ctx, project) });
 }
 
-/** Wait until every round of the request has settled; returns the request view. */
-export async function waitRequest(ctx, project, requestRoot, timeoutMs = 30 * MINUTE) {
+/** Wait until every round of the request has settled; returns the request view. `check` names the cell a timeout
+ * judges (omitted: the unit's next unjudged check; null: none). */
+export async function waitRequest(ctx, project, requestRoot, timeoutMs = 30 * MINUTE, check) {
   return waitFor(ctx, 'the request rounds to settle', () => readRequest(project, requestRoot),
-    view => view !== null && view.rounds.length > 0 && view.rounds.every(settled), { timeoutMs, ended: () => stalledEntry(ctx, project) });
+    view => view !== null && view.rounds.length > 0 && view.rounds.every(settled),
+    { timeoutMs, check, ended: () => stalledEntry(ctx, project) });
 }
 
 /** P6I D1: a Query claimed or prepared this long, by the meter's own readings, was not run by the platform. */
@@ -707,7 +949,7 @@ async function stillUnchanged(item) {
  * Plan in one adoption; the Host starts the Goal driver itself, `host.ts:4094-4101`). A round that answers with
  * ideas gets `requests/select-idea` of the first idea; a round without a draft gets one plain follow-up.
  */
-export async function coldStart(ctx, project, text, rec) {
+export async function coldStart(ctx, project, text, rec, { beforeAdopt } = {}) {
   const submitted = await submitRequest(project, text);
   if (submitted?.status !== 'queued') throw broken(ctx, `requests/submit: ${said(submitted)}`);
   const requestRoot = submitted.requestRoot;
@@ -745,6 +987,9 @@ export async function coldStart(ctx, project, text, rec) {
       round === undefined ? 'none' : askedQuestions(round) ? 'asked questions' : 'had no draft'})`);
   }
   const { draft, binding, goalsBeforeConfirm } = await confirmCard(ctx, project, round, rec);
+  // P6J C-216: the caller can fix the observation that already existed before this adoption (the check asks for an
+  // observation of the existing repository *before* it is adopted, not only the adoption's own capture).
+  await beforeAdopt?.(round);
   const adopted = await adoptBinding(ctx, project, binding);
   rec.link('plan', adopted.receipt.plan, null);
   await settleAutonomy(ctx, project, binding.goalRef, rec);
@@ -752,8 +997,9 @@ export async function coldStart(ctx, project, text, rec) {
 }
 
 /** The person confirms the round's first Goal card draft (`goals/confirm-draft`); a refusal is the platform's on `check`. */
-async function confirmCard(ctx, project, round, rec, check) {
-  const draft = round.goalCardDrafts[0];
+export async function confirmCard(ctx, project, round, rec, check) {
+  const draft = round?.goalCardDrafts?.[0];
+  if (draft === undefined) throw broken(ctx, `the round ${round?.ref?.queryJobId ?? '?'} carried no Goal card draft`, check);
   // What existed before the person's confirm: the draft must not have become a Goal by itself (C-46).
   const goalsBeforeConfirm = (ready(await project.host.client.read('goals/list', project.scope, { workspace: project.scope }))?.goals ?? [])
     .map(goal => goal.ref.goalId);
@@ -802,25 +1048,33 @@ const CARD_ASK = '这是一项新工作：请先给出它的目标卡（单独�
 const IDEAS_ASK = '目标卡我确认了。请给 2–3 个做法思路，我来选一个。';
 /** G7 W5: the person's fixed answer to a plan round's questions. */
 export const PLAN_QUESTIONS_ANSWER = '按你推荐的做法；没提到的按最简单的处理';
+/** The plan round's questions are answered at most this many times on one request (`answerPlanQuestions`'s cap). */
+export const PLAN_QUESTION_MAX = 2;
 /** The request's latest answered round; confirm and select-idea only take that one (`request-service.ts:780-783`). */
 const latestAnswered = view => [...view.rounds].reverse().find(round => round.answer !== null);
+/** The round's saved answer as JSON; a missing or non-JSON answer is null (`requests/read` keeps it as text). */
+export function savedAnswerOf(round) {
+  try { return JSON.parse(round?.answer ?? 'null'); } catch { return null; }
+}
+
 /** The round's saved answer is the plan round's questions (`needs_decision`, `answer-tools.ts:262-266`). */
-const askedQuestions = round => {
-  try { return JSON.parse(round?.answer ?? 'null')?.kind === 'needs_decision'; } catch { return false; }
-};
+export const askedQuestions = round => savedAnswerOf(round)?.kind === 'needs_decision';
 
 /**
  * The person's follow-ups on one request while `needed(view)` holds, at most `max`: each is `text` on the same
  * request (`continues`, plus `extra`), then the rounds settle. Returns the last view and how many were sent; a refused
- * follow-up is the platform's failure on `check`.
+ * follow-up is the platform's failure on `check`; `waitCheck` is the settle wait's own check (omitted: the next
+ * unjudged; null: none).
  */
-async function followUps(ctx, project, requestRoot, view, { needed, text, max, extra = {}, what, check, onSent }) {
+async function followUps(ctx, project, requestRoot, view, { needed, text, max, extra = {}, what, check, waitCheck, onSent, timeoutMs,
+  settle = true }) {
   let asks = 0;
   for (; asks < max && needed(view); asks += 1) {
     const sent = await submitRequest(project, text, { continues: requestRoot, ...extra });
     if (sent?.status !== 'queued') throw broken(ctx, `request follow-up ${what}: ${said(sent)}`, check);
     onSent?.();
-    view = await waitRequest(ctx, project, requestRoot);
+    // P6LO B5: `settle: false` (always with `max: 1`) leaves the follow to the caller.
+    if (settle) view = await waitRequest(ctx, project, requestRoot, timeoutMs, waitCheck);
   }
   return { view, asks };
 }
@@ -829,14 +1083,17 @@ async function followUps(ctx, project, requestRoot, view, { needed, text, max, e
  * G7 W5: a plan round that asked the person questions (instead of writing the candidate) is answered the way the
  * request thread takes it, at most `max` times (default 2): one follow-up with `PLAN_QUESTIONS_ANSWER`, recorded in
  * `userCommand`. A request round's question cards resume nothing (`plan-readers.ts:2729`: only intervention rounds
- * form a group), so the person's channel is the request itself. Returns the request view after the last answer.
+ * form a group), so the person's channel is the request itself. Returns the request view after the last answer and how
+ * many answers were sent (the caller's shared count, E08b); `timeoutMs` is the enclosing wait's remaining limit and
+ * `waitCheck` is passed to each settle wait.
  */
-export async function answerPlanQuestions(ctx, project, requestRoot, view, rec, { max = 2, extra = {}, check } = {}) {
+export async function answerPlanQuestions(ctx, project, requestRoot, view, rec, { max = PLAN_QUESTION_MAX, extra = {}, check, waitCheck, timeoutMs,
+  settle = true } = {}) {
   const answered = await followUps(ctx, project, requestRoot, view, { needed: current => askedQuestions(current.rounds.at(-1)),
-    text: PLAN_QUESTIONS_ANSWER, max, extra, what: "answering the plan round's questions", check,
+    text: PLAN_QUESTIONS_ANSWER, max, extra, what: "answering the plan round's questions", check, waitCheck, timeoutMs, settle,
     onSent: () => { rec.facts.userCommand.push(PLAN_QUESTIONS_ANSWER); } });
   if (answered.asks > 0) rec.note(`the plan round asked questions; the person answered ${answered.asks} time(s) (cap ${max})`);
-  return answered.view;
+  return answered;
 }
 
 /**
@@ -1018,13 +1275,17 @@ export async function openRoleLine(ctx, project, duty, scope, rec) {
 
 // ---------------------------------------------------------------------------- reads
 
-export async function sessionQueries(project, sessionRef) {
+export async function sessionQueries(project, sessionRef, gaps = null) {
   const items = [];
   let cursor = null;
   do {
-    const page = ready(await project.host.client.read('sessions/queries', project.scope,
-      { sessionRef, page: { limit: 100, ...(cursor === null ? {} : { cursor }) } }));
-    if (page === null) break;
+    const body = await project.host.client.read('sessions/queries', project.scope,
+      { sessionRef, page: { limit: 100, ...(cursor === null ? {} : { cursor }) } });
+    const page = ready(body);
+    if (page === null) {
+      gaps?.push(`sessions/queries ${sessionRef.sessionId}: ${said(body)}`);
+      break;
+    }
     items.push(...page.items);
     cursor = page.nextCursor ?? null;
   } while (cursor !== null);
@@ -1116,7 +1377,7 @@ export function turnsOf(entries) {
         current.input.push(event.payload.input.text);
       } else if (event.type === 'assistant.message_completed') {
         current.messages.set(event.payload.message.messageId, partsText(event.payload.message.content));
-        for (const call of event.payload.toolCalls ?? []) current.calls.set(call.callId, { name: call.name, args: call.arguments, status: null, at: event.meta.occurredAt ?? entry.recordedAt });
+        for (const call of event.payload.toolCalls ?? []) current.calls.set(call.callId, { callId: call.callId, name: call.name, args: call.arguments, status: null, at: event.meta.occurredAt ?? entry.recordedAt });
       } else if (event.type.startsWith('tool.') && event.type !== 'tool.started') {
         const call = current.calls.get(event.payload.callId);
         if (call !== undefined) call.status = event.type;
@@ -1132,8 +1393,9 @@ export function turnsOf(entries) {
             code: rejectedValue?.code ?? result?.error?.code ?? null, reason: rejectedValue?.reason ?? result?.error?.message ?? '' });
         }
         if (event.type === 'tool.completed' && result?.status === 'success') {
+          // `at` is when the result was recorded, so results of different Runs can be put back in their real order.
           current.results.push({ callId: event.payload.callId, name: call?.name ?? null, args: call?.args ?? null, values,
-            text: partsText(result.output), changedPaths: result.effects?.changedPaths ?? [] });
+            text: partsText(result.output), changedPaths: result.effects?.changedPaths ?? [], at: event.meta.occurredAt ?? entry.recordedAt ?? null });
         }
       } else if (event.type === 'run.completed') {
         current.finalId = event.payload.finalMessageId;
@@ -1142,6 +1404,11 @@ export function turnsOf(entries) {
   }
   return [...turns.values()].map(entry => ({ ...entry, input: entry.input.join('\n'),
     final: entry.finalId === null ? null : entry.messages.get(entry.finalId) ?? null }));
+}
+
+/** The last turn that actually completed with a final answer, or null when none did. */
+export function lastFinalOf(turns) {
+  return turns.map(turn => turn.final).filter(text => text !== null).at(-1) ?? null;
 }
 
 /** Every line of the project, archived ones included (`sessions/find`). */
@@ -1256,9 +1523,13 @@ export async function taskRounds(project, goalRef, taskId, gaps = null, { latest
     }
     const rounds = [];
     for (const entry of head.chain.rounds) {
-      const round = JSON.stringify(entry.roundRef) === JSON.stringify(head.roundRef) ? head
-        : ready(await project.host.client.read('verification/round', project.scope, { roundRef: entry.roundRef }));
+      if (JSON.stringify(entry.roundRef) === JSON.stringify(head.roundRef)) { rounds.push(head); continue; }
+      const body = await project.host.client.read('verification/round', project.scope, { roundRef: entry.roundRef });
+      const round = ready(body);
+      // P6J4 E05: an older round that does not answer is named with the read's own words, so the report says which
+      // round of which Run is missing and why (quick check row 6).
       if (round !== null) rounds.push(round);
+      else gaps?.push(`verification/round ${entry.roundRef?.roundId ?? '?'}（Run ${item.run.ref.runId} 的旧轮）: ${said(body)}`);
     }
     out.push({ item, head, rounds });
   }

@@ -496,6 +496,8 @@ export function createGoalDecisionCauseReader(
         // L22: the user's review answer or released "I'll handle it" already
         // confirmed the one system requeue of the original Run.
         requeueConfirmedByReview: failure.unknownCallReview?.requeueConfirmed ?? false,
+        checkAdoptionConfirmed: action === 'auto_reverify' && failure.failureClass === 'check_failed'
+          && failure.round?.adoptedCheckChange != null,
       });
       if (derived === null) continue;
       causes.push(cause({ goal, code: derived.code, action: derived.action, affected: derived.affected,

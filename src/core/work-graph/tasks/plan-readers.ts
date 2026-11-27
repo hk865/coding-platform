@@ -43,6 +43,7 @@ import {
 import {
   checkCapabilitiesOf, checksWithProposed, reviewPacketItemOf, type CheckCapabilityV1, type RegisteredCommandCheck,
 } from '../../../contracts/verification.js';
+import { checkDigestOf } from '../../../contracts/check-review.js';
 import type {
   TaskRequeueRef, TaskRequeueSnapshotV1, TaskReworkRefusalRef, TaskReworkRefusalSnapshotV1,
 } from '../../../contracts/task-requeue.js';
@@ -2739,6 +2740,10 @@ export type PlanReadersDependencies = {
   readReview?: PlanSourceLineageDeps['readReview'];
   goals?: PlanGoalReads;
   checks?: PlanCheckResolver;
+  /** RC L-2：计划来源的已装检查（不论当初谁批准）；候选诊断按它算合法可替换编号。 */
+  planSourceChecks?: (scope: WorkspaceScope) => readonly { checkId: string; digest: string }[];
+  /** 只接了上一轮接口的平台回退用它：人采用的计划检查本身也是计划来源的子集。 */
+  adoptedPlanChecks?: (scope: WorkspaceScope) => readonly { checkId: string; digest: string }[];
 };
 
 export type PlanCandidatesReadV1 = {
@@ -3111,7 +3116,13 @@ export function createPlanReaders(deps: PlanReadersDependencies): PlanReaders {
       // lead 11-17 补充裁定 1（G8A A2）：覆盖 = 已装的检查 + 这份计划自带的检查；一条配置都没有的工作区，已装的就是空
       // 清单，候选的诊断照样按计划自带的检查算，不读成“不知道”（否则参谋第一次带检查的计划停在诊断卡上，到不了批准）。
       if (read.status === 'ready') {
-        return { status: 'ready', value: checkCapabilitiesOf(checksWithProposed(read.value ?? [], proposed)) };
+        // RC L-2：只有来源是计划、且当前装的就是那条计划检查（同 id 同摘要）的编号可替换；新候选的摘要不参与。
+        const installed = read.value ?? [];
+        const source = deps.planSourceChecks?.(scope) ?? deps.adoptedPlanChecks?.(scope) ?? [];
+        const replaceable = new Set(source.filter(entry =>
+          installed.some(check => check.checkId === entry.checkId && checkDigestOf(check) === entry.digest))
+          .map(entry => entry.checkId));
+        return { status: 'ready', value: checkCapabilitiesOf(checksWithProposed(installed, proposed, replaceable)) };
       }
       if (read.status === 'rejected') return read;
       if (read.status === 'not_ready') return read;

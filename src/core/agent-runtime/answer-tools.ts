@@ -52,7 +52,7 @@ import {
   type CommandRerunAdviceSubjectV1, type CommandRerunAdviceV1,
 } from '../../contracts/command-rerun-advice.js';
 import {
-  checkReviewAnswerProblem, checkReviewAnswerText, parseCheckReviewAnswer, type CheckReviewFormV1,
+  checkDigestOf, checkReviewAnswerProblem, checkReviewAnswerText, parseCheckReviewAnswer, type CheckReviewFormV1,
   type CheckReviewSubjectV1,
 } from '../../contracts/check-review.js';
 import type { InitialPlanningSetupV2 } from '../../contracts/initial-planning.js';
@@ -672,11 +672,17 @@ export function answerProblems(
     }
     if (facts !== null && facts.admission !== null && parsed.status === 'parsed' && parsed.response.kind === 'plan') {
       // 121-136: the plan's own checks join the installed ones for its coverage; one installed under the same id with
-      // other content is refused (C5), and its adoption installs the rest.
+      // other content is refused (C5), and its adoption installs the rest. RC: an id whose current definition is a
+      // person's committed plan adoption may be redefined in place, so that adoption's own checks are not a conflict.
       const proposed = parsed.response.checks ?? [];
       const installed = facts.installedChecks;
       if (installed !== null) {
-        const { conflicts } = proposedCheckSplit(installed, proposed);
+        // RC L-2：来源是计划（不论当初谁批准）的已装检查就可以替换，判的是当前已装定义（同 id 同摘要），
+        // 与候选的新摘要无关；没有计划来源读时退回人采用的集合。
+        const replaceable = new Set((facts.planSourceChecks ?? facts.adoptedPlanChecks ?? []).filter(entry =>
+          installed.some(check => check.checkId === entry.checkId && checkDigestOf(check) === entry.digest))
+          .map(entry => entry.checkId));
+        const { conflicts } = proposedCheckSplit(installed, proposed, replaceable);
         if (conflicts.length > 0) problems.push({ section: 'checks', reason: checkConflictProblem(conflicts) });
       }
       for (const reason of planRoundAnswerIssues({ plan: parsed.response.plan, admission: facts.admission,

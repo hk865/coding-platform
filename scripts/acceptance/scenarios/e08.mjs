@@ -12,12 +12,13 @@
 import { newId, ready } from '../lib/http.mjs';
 import { queryRunKey, scopeKey } from '../lib/budget.mjs';
 import { Abort } from '../lib/report.mjs';
-import { answerCard, approve, broken, chooseModel, coldStart, executions, openProject, readRequest, sleep, stalledEntry, submitRequest,
-  taskCard, taskRounds, waitFor, waitGoal, waitingCards, waitRequest } from '../lib/flows.mjs';
+import { answerCard, answerPlanQuestions, approve, askedQuestions, broken, chooseModel, coldStart, executions, openProject,
+  PLAN_QUESTION_MAX, readRequest, sessionTurns, sleep, stalledEntry, submitRequest, taskCard, taskRounds, waitFor, waitGoal,
+  WaitTimeout, waitingCards, waitRequest } from '../lib/flows.mjs';
 
 const MINUTE = 60_000;
 /** The hard limit of the wait for the change candidate. */
-const CHANGE_WAIT_MS = 30 * MINUTE;
+export const CHANGE_WAIT_MS = 30 * MINUTE;
 export const SEED = {
   'package.json': '{\n  "name": "g6-e08",\n  "type": "module",\n  "scripts": { "test": "node --test" }\n}\n',
   'README.md': '# g6-e08\n\nA tiny calculator.\n',
@@ -62,72 +63,88 @@ export async function runsOf(project, goalRef, taskId, gaps = null) {
  * A request whose last round closed without a candidate ends the wait at once (as `waitCandidate`, flows.mjs).
  * `onPoll` lets the caller read what it watches meanwhile.
  */
-export async function waitChangeCandidate(ctx, project, goalRef, requestRoot, rec, { check, timeoutMs = CHANGE_WAIT_MS, onPoll,
-  done = value => value?.head !== null && value?.head !== undefined && value.status === 'candidate', judge = true } = {}) {
+export async function waitChangeCandidate(ctx, project, goalRef, requestRoot, rec, { timeoutMs = CHANGE_WAIT_MS,
+  deadline = Date.now() + timeoutMs, onPoll, pollMs = 10_000,
+  done = value => value?.head !== null && value?.head !== undefined && value.status === 'candidate' } = {}) {
   const answered = new Set();
-  let closed = null;
-  const read = async () => {
+  // P6LO B4: one write attempt per beat, committed or refused; the caller's absolute deadline is used, never rebuilt
+  // here, and `answerCard` checks it right before the write (after the letter read a message card needs).
+  const answerOne = async () => {
     for (const card of await waitingCards(project, goalRef, rec)) {
       if (card.source.kind === 'candidate' || answered.has(card.cardKey)) continue;
       const selection = approve(card);
       if (selection === null) continue;
-      if (await answerCard(ctx, project, card, selection, '', rec)) {
+      if (await answerCard(ctx, project, card, selection, '', rec, deadline)) {
         answered.add(card.cardKey);
         rec.note(`while the change candidate was written the person answered ${card.source.kind} card ${card.cardKey}`);
       }
+      return true;
     }
-    if (onPoll !== undefined) await onPoll();
-    const last = (await readRequest(project, requestRoot))?.rounds.at(-1);
-    closed = last !== undefined && (last.status === 'ended' || last.status === 'unknown') && last.closeCode != null
-      ? `the request's last round ${last.ref.queryJobId} closed without a candidate: ${last.closeCode}${last.closeMessage ? ` (${last.closeMessage})` : ''}`
-      : null;
-    return ready(await project.host.client.read('plans/request-candidate', project.scope, { goalRef, requestRef: requestRoot }));
+    return false;
   };
-  if (judge) {
-    return waitFor(ctx, 'the changed plan candidate', read, done, { timeoutMs, check,
-      ended: async () => closed ?? await stalledEntry(ctx, project) });
-  }
+  const readCandidate = async () => ready(await project.host.client.read('plans/request-candidate', project.scope, { goalRef, requestRef: requestRoot }));
+  const closedBecause = last => last !== undefined && (last.status === 'ended' || last.status === 'unknown') && last.closeCode != null
+    ? `the request's last round ${last.ref.queryJobId} closed without a candidate: ${last.closeCode}${last.closeMessage ? ` (${last.closeMessage})` : ''}`
+    : null;
   // lead 11-25 (E08b, P6 run: the model answered in prose, no candidate ever came, the 30-minute wait judged
   // adopt-after-end fail): without a candidate nothing is adopted, so this wait judges nothing and returns null — on
   // the timeout, on a round closed without a candidate, or once the request's last round has settled and no Query of
   // the project has been in flight for 5 minutes (nothing left that could still write the candidate).
-  const deadline = Date.now() + timeoutMs;
+  // P6L E08b: the candidate is read before the caller's poll, so a head that is already there is returned without
+  // acting on the request; the poll then re-reads the same request (`requests/read`) and follows the rounds that
+  // appeared after a card answer, always inside this wait's own deadline (`remaining`).
+  const started = deadline - timeoutMs;
   let idleSince = null;
   for (;;) {
     await ctx.budget.tick();
-    const value = await read();
-    if (done(value)) return value;
-    const last = (await readRequest(project, requestRoot))?.rounds.at(-1);
+    // P6LO B4: every beat reads the candidate and the request first, then takes at most one action: a card answer, or
+    // (when no card was answered) the caller's poll, which may select or answer once.
+    const candidate = await readCandidate();
+    // P6LO E08: the clock is read when the candidate comes back; one read past the hard limit is late, never taken.
+    if (done(candidate) && Date.now() < deadline) return candidate;
+    const view = await readRequest(project, requestRoot);
+    const acted = Date.now() < deadline && await answerOne();
+    const followed = acted || Date.now() >= deadline || onPoll === undefined ? view : await onPoll(view, deadline - Date.now());
+    const last = (followed ?? view)?.rounds.at(-1);
+    const closed = closedBecause(last);
     const settledRound = last !== undefined && (last.status === 'ended' || last.status === 'unknown');
     const quiet = settledRound && ctx.budget.inFlight({ scopes: [scopeKey(project.scope)] }).queries === 0;
     idleSince = quiet ? idleSince ?? Date.now() : null;
     const why = closed ?? await stalledEntry(ctx, project) ?? (idleSince !== null && Date.now() - idleSince >= 5 * MINUTE
       ? `the request's last round ${last.ref?.queryJobId ?? '-'} ended without a candidate and no Query ran for 5 min`
-      : Date.now() > deadline ? `no candidate after ${Math.round(timeoutMs / MINUTE)} min` : null);
+      : Date.now() >= deadline ? `no candidate after ${Math.round((deadline - started) / MINUTE)} min` : null);
     if (why !== null) { rec.note(`改需求没有候选：${why}`); return null; }
-    await sleep(10_000);
+    await sleep(pollMs);
   }
 }
 
 /**
  * P6I D2, r3 (lead 11-27): the change candidate read once more after the wait gave up, and whose it is when there is
  * none. The wait's last read can miss a candidate written a moment later, so an adoptable head read here goes back to
- * the caller (`candidate`), which adopts it as usual; past the wait's hard limit (`pastDeadline`) it is a timeout
+ * the caller (`candidate`), which adopts it as usual; read back at or past the wait's `deadline` it is a timeout
  * instead, written with the state read. A failed read is written as that, and a head in another state (stale, not
  * adopted) with its state. Only a read that answers with no head at all is a missing candidate: `changeRoundOwner`.
  */
-export async function lastChangeCandidate(project, goalRef, requestRoot, { pastDeadline }) {
+export function isUsableHead(value) {
+  return value?.head !== null && value?.head !== undefined && (value.status === 'candidate' || value.head.status === 'accepted');
+}
+
+export async function lastChangeCandidate(project, goalRef, requestRoot, { deadline,
+  isUsable = value => value.status === 'candidate', acceptLate = false }) {
+  const candidateBody = await project.host.client.read('plans/request-candidate', project.scope, { goalRef, requestRef: requestRoot });
+  // P6LO E08: the wait's absolute deadline, compared when the read comes back (a read sent in time can answer late).
+  const pastDeadline = Date.now() >= deadline;
   const late = pastDeadline ? `改需求的候选过了 ${CHANGE_WAIT_MS / MINUTE} 分钟的等待时限（超时）；` : '';
   const missing = (owner, text) => ({ candidate: null, owner, text: `${late}${text}` });
-  const candidateBody = await project.host.client.read('plans/request-candidate', project.scope, { goalRef, requestRef: requestRoot });
   const candidate = ready(candidateBody);
   if (candidate === null) {
     return missing('unknown', `改需求的候选读不到（${candidateBody?.status ?? '没答'} ${candidateBody?.code ?? ''} ${candidateBody?.reason ?? ''}）`);
   }
   if (candidate.head !== null && candidate.head !== undefined) {
-    if (candidate.status !== 'candidate') return missing('unknown', `改需求的候选在，状态是 ${candidate.status}，不是 candidate`);
-    if (!pastDeadline) return { candidate, owner: null, text: null };
-    return missing('unknown', '最后一次复读才读到候选，状态 candidate');
+    if (!isUsable(candidate)) return missing('unknown', `改需求的候选在，状态是 ${candidate.status}，不是可采用的 head`);
+    // P6L3 E08: the same hard deadline as the wait, unless the caller (E08b) passes its own close-out criterion.
+    if (pastDeadline && !acceptLate) return missing('unknown', '最后一次复读才读到候选，过了等待时限');
+    return { candidate, owner: null, text: null };
   }
   const round = await changeRoundOwner(project, requestRoot);
   return missing(round.owner, round.text);
@@ -255,6 +272,256 @@ async function judgeOldEvidence(project, goalRef, adoptedPlan, div, completed, r
   } else rec.pass('old-evidence', note);
 }
 
+/**
+ * P6J E08 evidence (item 6): each round's `kind` (the platform's `roundKind`), `ideas.length`, its Run's tool
+ * calls and refusals (so a refused `submit_plan_round` is tied to the round it happened in), the selected idea and the
+ * close code. `tools` is read from the frozen tool specs of this Query's own model request (`requests[].prompt.
+ * toolSpecsRef`, `query-job.ts:691-700`), never from the Host permission projection; a missing/empty `requests` list or
+ * an unreadable body is a named gap (`tools: null`, `toolsGap`) and never folded into an empty or old grant table.
+ * A line history read that fails is named in `gaps`. Each call keeps its `args`, and each successful result its
+ * `values`, so a caller can tell which Task a call was for and keep the raw result (P6L C-222).
+ */
+export async function roundEvidence(project, view, gaps = []) {
+  const out = [];
+  for (const round of view.rounds) {
+    // The Query's own `queries/read` gives the Kernel Run/Turn binding; a platform QueryRun id is not the Kernel id.
+    const readBody = await project.host.client.read('queries/read', project.scope, round.ref);
+    const read = ready(readBody);
+    const hop = { queries: read === null ? `${readBody?.status ?? 'no answer'} ${readBody?.code ?? ''}`.trim() : 'ready', history: 'not-read' };
+    let kernel = null;
+    let tools = null;
+    let toolsGap = null;
+    if (read === null) {
+      gaps.push(`queries/read ${round.ref?.queryJobId ?? '?'}: ${readBody?.status ?? 'no answer'} ${readBody?.code ?? ''}`);
+      toolsGap = `queries/read 读不到，读不到这次 Query 的模型请求（${readBody?.status ?? 'no answer'} ${readBody?.code ?? ''}）`.trim();
+    } else {
+      kernel = read.run?.run?.executionState?.history?.kernel ?? null;
+      const requests = read.run?.run?.executionState?.requests;
+      if (!Array.isArray(requests)) {
+        toolsGap = 'executionState.requests 缺失，读不到这次 Query 的模型请求';
+      } else if (requests.length === 0) {
+        toolsGap = '这次 Query 没有进入模型请求（executionState.requests 为空）';
+      } else {
+        const names = [];
+        for (const request of requests) {
+          const ref = request?.prompt?.toolSpecsRef;
+          if (ref === undefined || ref === null) {
+            toolsGap = `模型请求 ${request?.requestId ?? '?'} 没有 toolSpecsRef`;
+            break;
+          }
+          const specBody = await project.host.client.read('materials/open', project.scope, { ref, usage: 'historical_explanation' });
+          const material = ready(specBody);
+          const frozen = material === null ? null : toolNamesOf(material.body);
+          if (frozen === null) {
+            toolsGap = `materials/open ${ref.artifactId ?? ref.digest ?? '?'}: ${
+              material === null ? `${specBody?.status ?? 'no answer'} ${specBody?.code ?? ''}`.trim() : '正文不是工具表'}`;
+            break;
+          }
+          names.push(...frozen);
+        }
+        if (toolsGap === null) tools = [...new Set(names)];
+      }
+      if (kernel === null) hop.history = 'missing binding';
+    }
+    if (toolsGap !== null) gaps.push(`E08 round ${round.ref?.queryJobId ?? '?'}: ${toolsGap}`);
+    const calls = [];
+    const refusals = [];
+    const results = [];
+    if (kernel !== null && round.session != null) {
+      const turnGaps = [];
+      for (const turn of await sessionTurns(project, round.session, turnGaps)) {
+        if (turn.runId !== kernel.runId || turn.turnId !== kernel.turnId) continue;
+        for (const call of turn.calls.values()) calls.push({ callId: call.callId, name: call.name, status: call.status, args: call.args ?? null });
+        refusals.push(...turn.refusals.map(entry => ({ callId: entry.callId, tool: entry.tool, code: entry.code, reason: entry.reason })));
+        for (const result of turn.results) results.push({ callId: result.callId, name: result.name, args: result.args ?? null, values: result.values });
+      }
+      hop.history = turnGaps.length === 0 ? 'ready' : `unreadable: ${turnGaps.join('；')}`;
+      gaps.push(...turnGaps);
+    }
+    out.push({ roundRef: round.ref, kind: round.kind, status: round.status, answer: round.answer, ideas: round.ideas.length,
+      selectedIdea: round.selectedIdea, closeCode: round.closeCode, kernel, tools, toolsGap, read: hop, calls, refusals,
+      results });
+  }
+  return out;
+}
+
+/** The rounds' one-line log: each round's `roundRef` (the field `roundEvidence` keeps) with its kind and idea count. */
+export function roundLog(rounds) {
+  return rounds.map(round => `${round.roundRef?.queryJobId ?? '?'}:${round.kind}/ideas ${round.ideas}`).join('；');
+}
+
+/** A `roundRef`'s identity, so a re-read appends only rounds that were not recorded yet. */
+const roundKey = ref => `${ref?.projectId ?? ''}/${ref?.workspaceId ?? ''}/${ref?.queryJobId ?? ''}`;
+
+/**
+ * P6L E08b (diagnosis E08b row "还要改什么"; run sheet 这一轮做什么 item 2): follow the same request's new rounds.
+ * Each call re-reads `requestRoot` and appends the rounds that appeared since the last call, keyed by `roundRef`, through
+ * the one `roundEvidence` extractor (answer, tools, calls, refusals). The newest answered round with 2–3 ideas and none
+ * selected yet gets exactly one `requests/select-idea`; a `needs_decision` round is answered through the existing
+ * `answerPlanQuestions` entry and its count limit. `timeoutMs` is the enclosing wait's remaining limit: a select/question
+ * wait never outlives it, and a call at/after the limit (close-out) only appends, never acts.
+ * Returns the last request view; a failed re-read is a named gap and leaves the rounds already recorded untouched.
+ */
+export async function followChangeRounds(ctx, project, requestRoot, rec, state, { check, timeoutMs = CHANGE_WAIT_MS,
+  deadline = Date.now() + Math.max(0, timeoutMs), once = false, pollMs = 10_000 } = {}) {
+  const append = async view => {
+    const fresh = view.rounds.filter(round => !state.seen.has(roundKey(round.ref)));
+    if (fresh.length === 0) return;
+    for (const round of fresh) state.seen.add(roundKey(round.ref));
+    state.rounds.push(...await roundEvidence(project, { rounds: fresh }, state.gaps));
+  };
+  let view = await readRequest(project, requestRoot);
+  if (view === null) {
+    state.gaps.push(`requests/read ${requestRoot?.queryJobId ?? '?'}: 没答，这一读的新轮没记上`);
+    return null;
+  }
+  await append(view);
+  const closedOut = timeoutMs <= 0 || deadline <= Date.now();
+  const remaining = () => Math.max(0, deadline - Date.now());
+  // P6L2 B3: a round already recorded is refreshed in place when it settles, never frozen at first sight. At close-out
+  // every round is read again for its latest answer, tools and refusals.
+  const refresh = async (refreshAll = false) => {
+    for (const round of view.rounds) {
+      const key = roundKey(round.ref);
+      if (!refreshAll && state.seen.has(key) && (round.status === 'ended' || round.status === 'unknown')) continue;
+      if (!refreshAll && !state.seen.has(key)) continue;
+      state.seen.add(key);
+      const [fresh] = await roundEvidence(project, { rounds: [round] }, state.gaps);
+      const at = state.rounds.findIndex(entry => roundKey(entry.roundRef) === key);
+      if (at === -1) state.rounds.push(fresh);
+      else state.rounds[at] = fresh;
+    }
+  };
+  await refresh();
+  // P6L3 B5: the rounds known at the answer are remembered; follow the same root until a round not in that set appears
+  // or the enclosing deadline passes. A failed re-read is a gap and the follow keeps reading, never an early exit.
+  const followForNewRound = async known => {
+    for (;;) {
+      if (view.rounds.some(round => !known.has(roundKey(round.ref)))) return;
+      if (remaining() === 0) {
+        state.gaps.push(`requests/read ${requestRoot?.queryJobId ?? '?'}: 答卡后到截止没看到新轮（超时），新轮没记上`);
+        return;
+      }
+      await sleep(Math.min(pollMs, remaining()));
+      const next = await readRequest(project, requestRoot);
+      if (next === null) {
+        state.gaps.push(`requests/read ${requestRoot?.queryJobId ?? '?'}: 答卡后的新轮没读到，继续跟同一个根`);
+        continue;
+      }
+      view = next;
+      await append(view);
+    }
+  };
+  const selectedRoundKey = () => (state.selected?.round === null || state.selected?.round === undefined ? null : roundKey(state.selected.round));
+  const selectedByPlatform = round => (view.rounds ?? []).some(entry => entry.selectedIdea?.round !== undefined
+    && entry.selectedIdea?.round !== null && roundKey(entry.selectedIdea.round) === roundKey(round.ref));
+  for (;;) {
+    // P6L3 B4: no action is started once the shared deadline has passed; the close-out read still runs.
+    if (!closedOut && remaining() === 0) { await refresh(true); return view; }
+    const newestAnswered = [...view.rounds].reverse().find(round => round.answer !== null && round.answer !== undefined);
+    if (newestAnswered === undefined) return view;
+    if (!closedOut && selectedRoundKey() !== roundKey(newestAnswered.ref) && !selectedByPlatform(newestAnswered)
+      && newestAnswered.selectedIdea == null && newestAnswered.ideas.length >= 2 && newestAnswered.ideas.length <= 3) {
+      const picked = await project.host.client.command('requests/select-idea', project.scope,
+        { commandId: newId('idea'), round: newestAnswered.ref, index: 0 });
+      if (picked?.status !== 'queued') throw broken(ctx, `requests/select-idea on the change: ${picked?.code} ${picked?.reason}`, check);
+      state.selected = { round: newestAnswered.ref, index: 0, status: picked.status };
+      rec.note(`the person selected idea 1 of ${newestAnswered.ideas.length} on the change: ${newestAnswered.ideas[0]?.title ?? '-'}`);
+      // P6L2 B4: the selection's wait is observational too: a timeout is a gap, never the next cell's fail.
+      let next;
+      try {
+        next = await waitRequest(ctx, project, requestRoot, remaining(), null);
+      } catch (error) {
+        if (!(error instanceof WaitTimeout)) throw error;
+        state.gaps.push(`requests/read ${requestRoot?.queryJobId ?? '?'}: 选案后等新轮超时（${error.message}），新轮没记上`);
+        return view;
+      }
+      if (next === null) return view;
+      view = next;
+      await append(view);
+      if (once || closedOut) return view;
+      continue;
+    }
+    const last = view.rounds.at(-1);
+    const answeredKey = last === undefined ? null : roundKey(last.ref);
+    if (!closedOut && state.asked < PLAN_QUESTION_MAX && askedQuestions(last) && !state.askedRounds?.has(answeredKey)) {
+      const known = new Set(view.rounds.map(round => roundKey(round.ref)));
+      // P6LO B5: the shared entry sends the one answer without its own settle wait; once it is queued the round counts
+      // as answered, and the one follow layer below reads the same root (a failed read is a gap; a visible new round or
+      // the deadline ends it).
+      const answered = await answerPlanQuestions(ctx, project, requestRoot, view, rec, { check, max: 1, settle: false });
+      state.asked += answered.asks;
+      state.askedRounds = state.askedRounds ?? new Set();
+      state.askedRounds.add(answeredKey);
+      await followForNewRound(known);
+      if (once || closedOut) return view;
+      continue;
+    }
+    // Close-out: the last state of every recorded round is read again; an existing gap stays.
+    if (closedOut) await refresh(true);
+    return view;
+  }
+}
+
+/**
+ * P6L E08b rule 4 (run sheet item 2): the change candidate's wait as before, and — when it gave none — the close-out
+ * read of `lastChangeCandidate`. A head read while the wait's own limit still holds goes back to the caller, which
+ * adopts it on the original `applyChange` path. P6L2 B4: the close-out applies the same "adoptable head" condition, so a
+ * head found at the final re-read also goes back; the observation timeout itself judges nothing.
+ */
+export async function changeCandidateAtClose(ctx, project, goalRef, requestRoot, rec, { timeoutMs = CHANGE_WAIT_MS,
+  deadline = Date.now() + timeoutMs, onPoll } = {}) {
+  const candidate = await waitChangeCandidate(ctx, project, goalRef, requestRoot, rec,
+    { timeoutMs, deadline, onPoll, done: isUsableHead });
+  if (candidate !== null) return { candidate, last: null };
+  const last = await lastChangeCandidate(project, goalRef, requestRoot,
+    { deadline, isUsable: isUsableHead, acceptLate: true });
+  return { candidate: last.candidate, last };
+}
+
+/** Tool names in one frozen tool-specs body (`JSON.stringify` of the request's `configuration.tools`), or null when the
+ * body is not that table. Only names are kept: descriptions are not evidence. */
+export function toolNamesOf(body) {
+  if (typeof body !== 'string') return null;
+  let parsed;
+  try { parsed = JSON.parse(body); } catch { return null; }
+  if (!Array.isArray(parsed)) return null;
+  const names = [];
+  for (const entry of parsed) {
+    if (entry === null || typeof entry !== 'object' || typeof entry.name !== 'string' || entry.name.length === 0) return null;
+    names.push(entry.name);
+  }
+  return names;
+}
+
+/** P6J E08b evidence: the candidate's `proposalRef` and its frozen `draft.tasks[t-sub]`, read from `plans/proposal`. */
+export async function candidateRow(project, goalRef, requestRoot, taskId) {
+  const body = await project.host.client.read('plans/request-candidate', project.scope, { goalRef, requestRef: requestRoot });
+  const candidate = ready(body);
+  // A failed read is not "no candidate": no candidate is a real `{head:null, status:'closed'}` (`plan-service.ts:2577`).
+  if (candidate === null) return { readable: false, status: body?.status ?? 'no answer', code: body?.code ?? null,
+    reason: body?.reason ?? null, proposalRef: null, task: null };
+  const head = candidate.head ?? null;
+  if (head === null || head === undefined) return { readable: true, status: candidate.status, proposalRef: null, task: null };
+  const proposalBody = await project.host.client.read('plans/proposal', project.scope, head.ref);
+  const proposal = ready(proposalBody);
+  if (proposal === null) return { readable: false, candidateReadable: true, status: candidate.status, proposalRef: head.ref,
+    revision: head.revision, proposalRead: `${proposalBody?.status ?? 'no answer'} ${proposalBody?.code ?? ''}`.trim(),
+    task: null };
+  return { readable: true, status: candidate.status, proposalRef: head.ref, revision: head.revision,
+    task: (proposal?.draft?.tasks ?? []).find(task => task.taskId === taskId) ?? null };
+}
+
+/** P6J E08b evidence: the adopted version's task rows and its disposition record. */
+export async function adoptedEvidence(project, goalRef, adoptedPlan) {
+  const graph = ready(await project.host.client.read('tasks/query', project.scope, { goalRef, planRef: adoptedPlan }));
+  if (graph === null) return { readable: false };
+  return { readable: true, planRef: adoptedPlan,
+    tasks: graph.tasks.map(task => ({ taskId: task.ref.taskId, taskKind: task.definition?.taskKind ?? null,
+      disposition: task.disposition, effectivePhase: task.effectivePhase, execution: task.execution ?? null })),
+    dispositionRecord: graph.plan?.dispositionRecord ?? null };
+}
+
 async function run(ctx, rec) {
   const host = ctx.hosts['w-accept'];
   const project = await openProject(ctx, host, 'e08', SEED);
@@ -346,23 +613,37 @@ async function run(ctx, rec) {
   }
   rec.facts.changeMoment = { mulRuns: moment.mul.length, subRuns: subRuns0, claimableNow: subCardAtChange?.dispatch?.claimableNow ?? null };
 
-  const changeView = await waitRequest(ctx, project, change.requestRoot, 40 * MINUTE);
+  let changeView = await waitRequest(ctx, project, change.requestRoot, 40 * MINUTE);
+  // P6J E08 (diagnosis row E08): a round that answers with questions is answered on the same request, then the new
+  // round is read again; if that one gives ideas, the person selects one through the existing `select-idea` entry and
+  // the candidate is awaited.
+  changeView = (await answerPlanQuestions(ctx, project, change.requestRoot, changeView, rec, { check: 'versions' })).view;
+  const evidenceGaps = [];
+  const rounds = await roundEvidence(project, changeView, evidenceGaps);
+  rec.facts.e08 = { rounds, evidenceGaps };
+  rec.note(`E08 改需求的轮：${roundLog(rounds)}`);
   // The person's decision on the change starts with an idea (G6F F2): the first one of the round that gave ideas.
   const ideasRound = changeView.rounds.at(-1);
+  let selected = null;
   if (ideasRound.ideas.length > 0) {
     const picked = await host.client.command('requests/select-idea', project.scope, { commandId: newId('idea'), round: ideasRound.ref, index: 0 });
     if (picked?.status !== 'queued') throw broken(ctx, `requests/select-idea on the change: ${picked?.code} ${picked?.reason}`, 'versions');
+    selected = { round: ideasRound.ref, index: 0, status: picked.status };
     rec.note(`the person selected idea 1 of ${ideasRound.ideas.length} on the change: ${ideasRound.ideas[0].title}`);
-    await waitRequest(ctx, project, change.requestRoot, 40 * MINUTE);
+    // P6J item 6: re-read the rounds after the selection so `selectedIdea` and the new round are the ones recorded.
+    changeView = await waitRequest(ctx, project, change.requestRoot, 40 * MINUTE);
+    rec.facts.e08.rounds = await roundEvidence(project, changeView, evidenceGaps);
   }
+  rec.facts.e08.selectIdea = selected;
   // P6 diagnosis 2 #10/#11: no candidate is still `versions` fail (lead); P6I D2: it names the platform when the change
   // round never ran, else the model. What sub's task card shows at that moment (the secretary's hold, sub's Runs) goes
   // into the notes. P6I r3: before that the candidate is read once more, and one adoptable within the hard limit is
   // adopted as usual (the wait's last read can miss a candidate written a moment later).
   const changeWaitEnds = Date.now() + CHANGE_WAIT_MS;
-  let candidate = await waitChangeCandidate(ctx, project, goalRef, change.requestRoot, rec, { judge: false, timeoutMs: CHANGE_WAIT_MS });
+  let candidate = await waitChangeCandidate(ctx, project, goalRef, change.requestRoot, rec,
+    { timeoutMs: CHANGE_WAIT_MS, deadline: changeWaitEnds });
   if (candidate === null) {
-    const last = await lastChangeCandidate(project, goalRef, change.requestRoot, { pastDeadline: Date.now() > changeWaitEnds });
+    const last = await lastChangeCandidate(project, goalRef, change.requestRoot, { deadline: changeWaitEnds });
     if (last.candidate === null) {
       const card = subId === null ? null : await taskCard(project, goalRef, subId);
       const holds = (card?.holds ?? []).map(hold => `${hold.kind}/${hold.state}${hold.expired ? '/expired' : ''} by ${hold.placedBy?.kind}${
@@ -381,6 +662,7 @@ async function run(ctx, rec) {
     candidate = last.candidate;
   }
 
+  rec.facts.e08.candidate = await candidateRow(project, goalRef, change.requestRoot, subId);
   // hold-before-adopt (P6 observation, read only): before the person adopts, sub carries the secretary's own hold
   // (`hold_claim`, `skill-platform-secretary.txt:27`), held and not expired (`work-line.ts:373-404`), and no new Run.
   if (!rec.results.has('hold-before-adopt')) {
@@ -407,6 +689,9 @@ async function run(ctx, rec) {
   if (applied?.status !== 'committed') throw broken(ctx, `plans/apply of the change: ${applied?.code} ${applied?.reason}`, 'versions');
   const adoptedPlan = applied.value.ref;
   if (busy.length > 0) rec.note(`采用前平台停了受影响的 Run（busy ${busy.length} 次：${busy.map(entry => entry.reason).join('；')}）`);
+  const adoptedEvidenceRows = await adoptedEvidence(project, goalRef, adoptedPlan);
+  rec.facts.e08.adopted = adoptedEvidenceRows;
+  if (adoptedEvidenceRows.readable) rec.note(`E08 采用 ${adoptedPlan.planId}：任务 ${adoptedEvidenceRows.tasks.map(task => `${task.taskId}:${task.disposition}`).join(', ')}；处置记录 ${(adoptedEvidenceRows.dispositionRecord?.entries ?? []).length} 条`);
   // Judge `versions` first, while the adoption receipt is fresh. A failed read is an environment gap;
   // only a list that was read but has fewer than two versions is a missing version.
   const versionsBody = await host.client.read('plans/versions', project.scope, { goalId: goalRef.goalId, limit: 50, cursor: null });

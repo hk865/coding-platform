@@ -156,8 +156,8 @@
 | `controlIntentStateOf` | `src/core/work-graph/state/control-intent-machine.ts:341` | 意图快照的机器状态 | 迁移前 |
 | `transitionControlIntent` | `src/core/work-graph/state/control-intent-machine.ts:895` | 意图主迁移（Queued→Applied/Superseded/OutcomeUnknown） | 控制请求提交与观测 |
 | `decisionActionPolicy`、`DecisionPolicyInputV1`、`DecisionPolicyVerdictV1` | `src/core/work-graph/state/decision-policy.ts:60`、`:35`、`:34` | 五层策略的唯四值表：总是问你 → 已有待答卡 → 匹配的规则 → 出厂默认（按受影响目标的档位） → 越界出卡；旧调用方的旧入参照收 | owner、工具、Workflow、路由都查它；平台的调用写 `actorClass: 'system'` |
-| `canSendUserMessage` | `src/core/work-graph/state/decision-policy.ts:140` | S5-AU-04 的 notify_person/ask_person 准入 | 准备向用户发消息 |
-| `automationConfirmationCause` | `src/core/work-graph/state/decision-policy.ts:187` | 从策略与已存受影响 refs 派生确认原因 | 需要 automation_confirmation_required 时 |
+| `canSendUserMessage` | `src/core/work-graph/state/decision-policy.ts:147` | S5-AU-04 的 notify_person/ask_person 准入 | 准备向用户发消息 |
+| `automationConfirmationCause` | `src/core/work-graph/state/decision-policy.ts:196` | 从策略与已存受影响 refs 派生确认原因 | 需要 automation_confirmation_required 时 |
 | `validateAutonomyRule`、`AutonomyRuleLimitsV1`、`matchAutonomyRule`、`nextAutonomyRuleSetRevision` | `src/core/work-graph/state/autonomy-rules.ts:104`、`:18`、`:73`、`:104` | 自主规则的唯一校验（两个具名拒绝 `rule_action_fixed`、`rule_limit_over_cap`）、唯一匹配（委托的 `writeScope` 是路径表，不当责任范围比）和规则集的下一个 revision | 规则服务的三个写与策略入口匹配规则时；不要另写校验或匹配 |
 | `nextCapacityEpisode`、`capacityEpisodeCloses`、`closeCapacityEpisode` | `src/core/work-graph/state/role-capacity-episode.ts:20`、`:15`、`:20` | 容量 episode 的编号、关闭判定与关闭后的记录 | 容量服务开、关 episode 时；不要另算编号或关闭条件 |
 | `decideGoalCopy`、`DecideGoalCopy` | `src/core/work-graph/state/goal-copy.ts:30` | 复制的唯一纯决定：源必须 `cancelled`；`revision_conflict`/`invalid` 的拒绝文案都出自这里，同一 ref 勾选两次也是 `invalid`；产出新 Goal 的 `objective`、`settings`、`continuedFrom`、`copiedInterventions`（勾中的候选 ref，按勾选顺序）、`retract`（未勾中的候选 ref，按候选顺序）与 `selection`（`selection_only`/`retraction_pending`，`retract` 非空即后者） | 复制确认在提交前判；不要在服务里另判源状态、revision 或勾选 |
@@ -289,12 +289,13 @@
 | `briefReady`、`BriefReadyFacts` | `src/core/work-graph/state/session-handoff.ts:349` | 简报就绪：受保护的最终归档提交成功且完整路由集已保存（`closed` 且每根有回执或被明确跳过）；`pending`/`partial` 不是成功 | 推进在归档 after 写里设 `brief.ready`；读取按同一规则判 `waiting` |
 | `deriveReworkClass` | `src/core/work-graph/state/task-failure.ts:201` | 失败分类（FC-1..FC-17） | 重排队前 |
 | `reworkFenceOf` | `src/core/work-graph/state/task-failure.ts:147` | 人工停止围栏 | 判定谁能重做 |
-| `reworkPermission` | `src/core/work-graph/state/task-failure.ts:432` | Goal 活动 + 操作者/失败类别矩阵 | 允许重排队前 |
-| `automationVerdict` | `src/core/work-graph/state/task-failure.ts:836` | 按策略给自动化裁决 | 失败后自动处理 |
-| `buildTaskFailureFacts` | `src/core/work-graph/state/task-failure.ts:1078` | 组装失败事实读模型 | 展示失败与重做 |
-| `runErrorOf` | `src/core/work-graph/state/task-failure.ts:729` | 从终态负载与对账取错误与来源 | 统一错误展示 |
-| `attemptOrdinalOf` | `src/core/work-graph/state/task-failure.ts:1368` | Run 在它的链上是第几次尝试（从 1）：链上每个带 `requeueRef` 的 Run 开一次新尝试，接续（`previousRun`）留在同一次；复用 `chainRunIds` 防环 | 轨道横条 `attempt.ordinal` 与 `TaskRow.attemptOrdinal`；不要另写走链 |
-| `taskReworkRefusalEffects` | `src/core/work-graph/state/task-failure.ts:1529` | 拒绝重做的 effects | 拒绝记录同一提交 |
+| `reworkPermission` | `src/core/work-graph/state/task-failure.ts:435` | Goal 活动 + 操作者/失败类别矩阵 | 允许重排队前 |
+| `automationVerdict` | `src/core/work-graph/state/task-failure.ts:840` | 按策略给自动化裁决 | 失败后自动处理 |
+| `adoptedCheckChangeOf` | `src/core/work-graph/state/task-failure.ts:1049` | RC 的派生读：失败的 work 链头里，当前定义不同于冻结定义、仍适用于该 Task、且来自已提交的人采用计划检查的编号；撤回、witness、别的来源不算 | AV-7e 与自动重检的放行判定 |
+| `buildTaskFailureFacts` | `src/core/work-graph/state/task-failure.ts:1123` | 组装失败事实读模型 | 展示失败与重做 |
+| `runErrorOf` | `src/core/work-graph/state/task-failure.ts:731` | 从终态负载与对账取错误与来源 | 统一错误展示 |
+| `attemptOrdinalOf` | `src/core/work-graph/state/task-failure.ts:1394` | Run 在它的链上是第几次尝试（从 1）：链上每个带 `requeueRef` 的 Run 开一次新尝试，接续（`previousRun`）留在同一次；复用 `chainRunIds` 防环 | 轨道横条 `attempt.ordinal` 与 `TaskRow.attemptOrdinal`；不要另写走链 |
+| `taskReworkRefusalEffects` | `src/core/work-graph/state/task-failure.ts:1576` | 拒绝重做的 effects | 拒绝记录同一提交 |
 | `controlIntentRecordOf` | `src/core/work-graph/state/control-intent-machine.ts:388` | 由请求与 next 生成意图记录 | 控制提交 |
 | `projectTaskPhase` | `src/core/work-graph/state/task-machine.ts:241` | 相位 + 原因的精简投影 | 展示/守卫 |
 | `taskMachineStateOf` | `src/core/work-graph/state/task-machine.ts:255` | Task 定义的机器状态 | Task 迁移前 |

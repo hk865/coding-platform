@@ -987,7 +987,13 @@ export function installS6B3SettingsSpy(): () => void {
 export function armS6B3SettingsFaults(world: S6B3World, point: S6B3SettingsPoint): {
   reached: Promise<void>; release(): void;
 } {
-  const directory = world.settingsDirectory;
+  return armS6B3SettingsFaultsAt(world.settingsDirectory, point);
+}
+
+/** The same named-point arm for a Host whose settings directory the caller knows (a G8/G8B world's own). */
+export function armS6B3SettingsFaultsAt(directory: string, point: S6B3SettingsPoint): {
+  reached: Promise<void>; release(): void;
+} {
   const token = settingsWrapper.tokens.get(directory);
   if (token === undefined) throw new Error('S6B3: no Host start captured a settings instance token for this world');
   const arms = settingsWrapper.active.get(directory) ?? new Map<S6B3SettingsPoint, S6B3SettingsArm>();

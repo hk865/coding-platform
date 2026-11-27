@@ -17,6 +17,7 @@ import type { ToolDefinition } from '../../vendor/coding-agent/dist/public-api.j
 import type { UnknownCallReviewV1 } from '../../src/contracts/unknown-call-review.js';
 import { createGoalSettingsService } from '../../src/core/work-graph/tasks/goal-settings-service.js';
 import { createGoalDecisionCauseReader } from '../../src/core/work-graph/tasks/goal-decision-reader.js';
+import { automationConfirmationCause } from '../../src/core/work-graph/state/decision-policy.js';
 import type { TaskRow } from '../../src/core/work-graph/model/plan-contracts.js';
 import type { GoalDecisionCauseReadV1 } from '../../src/core/work-graph/model/decision-contracts.js';
 import {
@@ -188,5 +189,24 @@ describe('K3-18 (五) a released "I\'ll handle it" removes the ordinary card', (
     expect(row.failure?.automation.verdict).toMatchObject({ kind: 'requeue' });
     expect(row.failure?.unknownCallReview).toEqual({ status: 'resolved', hold: 'released', requeueConfirmed: true });
     expect(confirmationCauses(await causes(f))).toEqual([]);
+  });
+});
+
+// RC §5 (TDD red): the confirmation predicate's pure input, beside the world
+// rows above that reach the same cause through the real reader.
+describe('K3-18 (cause) an adopted check change releases the auto_reverify cause', () => {
+  it('K3-18 (cause): checkAdoptionConfirmed suppresses the every_step auto_reverify cause only', () => {
+    // Red today: `automationConfirmationCause` ignores `checkAdoptionConfirmed`
+    // (state/decision-policy.ts:187-207), so the every_step auto_reverify input
+    // still returns a cause. An adopted plan check is the confirmation: null.
+    // Named mutation (unproven, production not landed): remove the
+    // `checkAdoptionConfirmed` release from `automationConfirmationCause`.
+    const base = { autonomy: 'every_step' as const, action: 'auto_reverify' as const, countedNext: 1, cap: 3,
+      goalRef: GOAL_B, taskId: 'b-work', runRef: null, runRevision: null };
+    const adoptionConfirmed = { ...base, checkAdoptionConfirmed: true };
+    expect(automationConfirmationCause(adoptionConfirmed)).toBeNull();
+    // Not a blanket release: without the adoption fact the ordinary card stays.
+    expect(automationConfirmationCause(base)).toMatchObject({ code: 'automation_confirmation_required',
+      action: 'auto_reverify' });
   });
 });

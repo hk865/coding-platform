@@ -10,7 +10,7 @@
 // (its Task done and every wait of it settled), or the window ends.
 import { newId, ready } from '../lib/http.mjs';
 import { broken, chooseModel, coldStart, createGoal, driverStart, ensurePolicy, executions, findAll, interveneLine, lines, messageBody,
-  messageRefOf, openProject, orNull, proposeAndApply, runHistory, sessionTurns, sleep, testCheck, textOf, turnsOf, waitFor,
+  messageRefOf, openProject, orNull, pageGoalRef, proposeAndApply, runHistory, sessionTurns, sleep, testCheck, textOf, lastFinalOf, turnsOf, waitFor,
   waitGoal } from '../lib/flows.mjs';
 
 const MINUTE = 60_000;
@@ -90,8 +90,347 @@ const same = (left, right) => left !== null && right !== null && left !== undefi
   && left.sessionId === right.sessionId && left.messageId === right.messageId;
 const claimSession = item => item?.outbox?.claim?.sessionRef?.sessionId ?? null;
 
-async function waitsOf(project, sessionRef) {
-  return ready(await project.host.client.read('sessions/facts', project.scope, sessionRef))?.waits ?? [];
+/**
+ * P6J waiting (diagnosis row `waiting`): the independent second question — a member send that waits, is not on the
+ * first chain, and names README (the scenario's step 3). Read on every poll so its open window is never outside the
+ * observation. The README question is locked first: before it appears a fallback second question is never returned, so
+ * it is never used to archive the sending line early (quick-check row 5).
+ */
+export const secondQuestionOf = (sends, chainRefs) => {
+  const independent = sends.filter(entry => entry.args?.waitAfterSend === true && !chainRefs.some(ref => same(ref, entry.ref)));
+  return independent.find(entry => String(entry.args?.text ?? '').includes('README')) ?? null;
+};
+
+/**
+ * P6L waiting (diagnosis row `waiting`; run sheet item 5): `reply-first` and the expiry outcome are one verdict on ONE
+ * letter snapshot. `expiredAt`, `response.respondedAt` and `acceptedInputs` are read from the same object, so a reply
+ * that came 128 ms after the expiry can never be written as "reply first" in either cell. A reply before the expiry
+ * that its own response acceptance consumes is the pass; one still open or already expired is `uncovered`, never a pass.
+ */
+export const replyFirstVerdict = message => {
+  if (message === null || message === undefined) return { status: 'uncovered', code: 'env-unavailable', note: 'messages/read 读不到' };
+  const respondedAt = message.response?.respondedAt ?? null;
+  if (respondedAt === null) return { status: 'uncovered', code: 'not-run', note: '还开着，没有回复抢先' };
+  if (message.expiredAt != null && Date.parse(respondedAt) >= Date.parse(message.expiredAt)) {
+    return { status: 'uncovered', code: 'not-run', order: 'expired-first',
+      note: `先到期了（${message.expiredAt}），回复在 ${respondedAt}，不是回复抢先` };
+  }
+  const by = (message.acceptedInputs ?? []).find(entry => entry.consumesWait === true);
+  return { status: by?.part === 'response' ? 'pass' : 'fail', order: 'reply-first',
+    note: `回复 ${respondedAt}；消费它的接受 ${by === undefined ? '无' : `${by.part}@${by.acceptedAt}`}；expiredAt ${message.expiredAt ?? '无'}` };
+};
+
+/** P6J waiting `disconnect`: the one open wait with a recipient, re-read immediately before the far side is archived. */
+export const openWaitForDisconnect = waits => [...waits].filter(entry => entry.state?.state === 'open'
+  && entry.recipient?.sessionId !== undefined && entry.expiredAt == null).at(-1) ?? null;
+
+/** P6J waiting: a second question's state after a re-read, and the one action it allows. */
+export const secondStepOf = ({ message, readFailure = null, hasReceiver = false }) => {
+  if (readFailure !== null) return { kind: 'gap', note: `messages/read 读不到：${readFailure}` };
+  if (message === null || message === undefined) return { kind: 'gap', note: 'messages/read 没有回答' };
+  const accepted = (message.acceptedInputs ?? []).some(input => input.consumesWait === true);
+  if (message.withdrawnAt != null || message.waitCancelledAt != null) {
+    return { kind: 'closed', note: `已不开放（撤回 ${message.withdrawnAt ?? '无'}，取消 ${message.waitCancelledAt ?? '无'}）` };
+  }
+  if (message.response?.respondedAt != null) {
+    return { kind: 'reply-first', message, verdict: replyFirstVerdict(message) };
+  }
+  if (accepted || message.expiredAt != null) {
+    return { kind: 'closed', note: `已不开放（到期 ${message.expiredAt ?? '无'}，已消费 ${accepted}）` };
+  }
+  if (!hasReceiver) return { kind: 'no-receiver', note: '没有可转交的另一条线' };
+  return { kind: 'transfer', message };
+};
+
+/**
+ * P6L waiting (diagnosis row `waiting`, run sheet item 5): the existing transfer entry is the archive request's own
+ * `wait.transfer` (`session-archive.ts:15-18`), one `sessions/archive-line` call naming the original wait's Run, its
+ * letter and the receiving line. There is no standalone `waits/dispose(transfer)`: a live sender line is refused it.
+ * A rejected archive keeps the first refusal raw; the caller re-reads the same letter (`secondWaitRound`) and judges a
+ * reply that landed since. Shared by the poll loop and the after-chain branch.
+ */
+export async function transferWait(project, send, value, other) {
+  const gaps = [];
+  const fresh = await message(project, send.ref, gaps);
+  if (gaps.length > 0) return { kind: 'gap', note: gaps.join('；') };
+  if (fresh === null) return { kind: 'gap', note: 'messages/read 没有回答' };
+  const step = secondStepOf({ message: fresh, hasReceiver: other !== undefined });
+  if (step.kind !== 'transfer') return step;
+  const sender = send.line;
+  const cardBody = await project.host.client.read('sessions/read', project.scope, sender);
+  const card = ready(cardBody);
+  if (card === null) return { kind: 'gap', note: `sessions/read ${sender.sessionId}: ${cardBody?.status ?? 'no answer'}` };
+  const waitGaps = [];
+  const wait = (await waitsOf(project, sender, waitGaps)).find(entry => entry.messageRef?.messageId === send.ref.messageId) ?? null;
+  if (waitGaps.length > 0) return { kind: 'gap', note: waitGaps.join('；') };
+  if (wait === null || wait.originalRun === null || wait.originalRun === undefined) {
+    return { kind: 'gap', note: `sessions/facts ${sender.sessionId} 里读不到 ${send.ref.messageId} 的原等待 Run，归档的 wait.transfer 无从给出` };
+  }
+  // P6L2 B8: an open responsibility of the sending line must carry its own disposal choice in the same request, or
+  // the Host refuses the archive (`archive_disposal_required`). Only a task still active and unsatisfied needs one.
+  const taskGaps = [];
+  const tasks = [];
+  // P6L2 B8: `sessions/read.links` are `SessionWorkLink`s: relation and target live under `link.ref`, and `until`
+  // marks an ended responsibility.
+  for (const link of (card.links ?? []).filter(entry => entry.until == null
+    && entry.ref?.relation === 'responsible' && entry.ref?.target?.kind === 'task')) {
+    const taskRef = link.ref.target.ref;
+    const goalRef = { aggregateType: 'Goal', projectId: taskRef.projectId, goalId: taskRef.goalId };
+    const row = ready(await project.host.client.read('tasks/query', project.scope, { goalRef }))?.tasks
+      ?.find(entry => entry.ref.taskId === taskRef.taskId) ?? null;
+    if (row === null) { taskGaps.push(`tasks/query 里读不到责任 Task ${taskRef.taskId}`); continue; }
+    if (row.disposition === 'active' && row.effectivePhase !== 'satisfied') {
+      tasks.push({ target: { kind: 'task', ref: taskRef }, disposition: { kind: 'drop' } });
+    }
+  }
+  if (taskGaps.length > 0) return { kind: 'gap', note: taskGaps.join('；') };
+  const archived = await project.host.client.write('sessions/archive-line', project.scope,
+    { sessionRef: sender, reason: 'G6 waiting: archive the sending line and transfer its open wait', tasks,
+      wait: { kind: 'transfer', runRef: wait.originalRun, messageRef: wait.messageRef, to: other.key } },
+    [{ ref: { aggregateType: 'Session', ...sender }, revision: card.record.revision }]);
+  // P6LO B9: the transfer is judged on `closeSecondQuestion`'s final reads of the same letter and sending line, so no
+  // re-read is taken here; `deadline` is the letter's deadline read before the archive.
+  if (archived?.status !== 'ready' || !['archived', 'pending'].includes(archived.value?.state)) {
+    // The first refusal is kept raw; the caller re-reads the same letter and judges a reply that landed since.
+    return { kind: 'transfer-refused', message: fresh, archived, deadline: value.deadline, sender, to: other.key,
+      note: `归档发信线 ${sender.sessionId}：${archived?.status ?? 'no answer'} ${archived?.value?.state ?? archived?.code ?? ''} ${archived?.reason ?? ''}`.trim() };
+  }
+  return { kind: 'transfer', message: fresh, archived, deadline: value.deadline, sender, to: other.key };
+}
+
+/** Slice 1 S1-MSG-01 (`mailbox-archive.ts:76-84`): a reply target is same-workspace, active, not unavailable, not being archived, not a read-only copy. */
+export const replyTargetEligible = (record, workspaceId) => record !== null && record !== undefined
+  && record.workspaceId === workspaceId && record.lifecycle === 'active' && record.health !== 'unavailable'
+  && (record.archiveRequest ?? null) === null && record.provenance?.kind !== 'readonly_copy';
+
+/**
+ * P6J4 waiting (quick check row 5): the line the open README wait may move to, chosen on every round from the lines'
+ * real state — never a member line or the secretary, and only one whose SessionCard is an eligible reply target
+ * (`replyTargetEligible`), so a line being archived or retired is never chosen. P6J4b: answers `{ row, gaps }`; a line
+ * list or card that cannot be read is named in `gaps`, so "no eligible line" is never told from a read that failed.
+ */
+export const receiverFor = (project, { memberLines, secretary }) => async () => {
+  const gaps = [];
+  const memberIds = new Set((await memberLines(gaps)).map(line => line.sessionId));
+  for (const row of await lines(project, gaps)) {
+    if (memberIds.has(row.key.sessionId) || row.key.sessionId === secretary.sessionId) continue;
+    const body = await project.host.client.read('sessions/read', project.scope, row.key);
+    const card = ready(body);
+    if (card === null) gaps.push(`sessions/read ${row.key.sessionId}: ${body?.status ?? 'no answer'} ${body?.code ?? ''}`.trim());
+    else if (replyTargetEligible(card.record, project.scope.workspaceId)) return { row, gaps };
+  }
+  return { row: undefined, gaps };
+};
+
+/** A receiver callback may answer a row itself or `{ row, gaps }` (`receiverFor`). */
+const pickedOf = picked => (picked?.key !== undefined ? { row: picked, gaps: [] } : { row: picked?.row, gaps: picked?.gaps ?? [] });
+
+/**
+ * P6J waiting: one round on the locked README letter, shared by `followChain`'s polls and the after-chain re-read.
+ * Always re-reads the letter, re-selects the qualified receiver line on this round (never a line chosen earlier), and
+ * takes the one action `secondStepOf` allows. A transfer the platform refuses because the reply landed re-reads the
+ * same letter and returns `reply-first`.
+ */
+export async function secondWaitRound(project, send, { receiverOf = async () => undefined, allowTransfer = true } = {}) {
+  const gaps = [];
+  const fresh = await message(project, send.ref, gaps);
+  if (gaps.length > 0) return { kind: 'gap', note: gaps.join('；'), gaps };
+  if (fresh === null) return { kind: 'gap', note: 'messages/read 没有回答', gaps };
+  const picked = allowTransfer ? pickedOf(await receiverOf()) : { row: undefined, gaps: [] };
+  const other = picked.row;
+  const step = secondStepOf({ message: fresh, hasReceiver: other !== undefined });
+  // P6J4b: an open letter with no receiver found while the line reads failed is a gap, not "no eligible line".
+  if (step.kind === 'no-receiver' && picked.gaps.length > 0) {
+    return { kind: 'gap', note: `接收线读不全：${picked.gaps.join('；')}`, message: fresh, gaps: [...gaps, ...picked.gaps] };
+  }
+  // The letter as this round read it travels with every outcome (a committed transfer's lost re-read is filled from it).
+  if (step.kind !== 'transfer') return { ...step, message: step.message ?? fresh, gaps };
+  const outcome = await transferWait(project, send, fresh, other);
+  if (outcome.kind === 'transfer-refused' || outcome.kind === 'gap') {
+    const again = await message(project, send.ref);
+    if (again?.response?.respondedAt != null) {
+      return { kind: 'reply-first', message: again, verdict: replyFirstVerdict(again), attempt: outcome,
+        gaps, note: `转交没成（${outcome.note}），复读同一封信：回复先到` };
+    }
+  }
+  return { ...outcome, gaps };
+}
+
+/**
+ * P6J waiting: one poll's handling of the README question. The question is locked first (a fallback second question is
+ * never touched); then `secondWaitRound` reads the letter, re-selects the receiver and transfers at most once. `prior`
+ * is the last round's record, so a later poll re-reads and judges the letter but never transfers a second time.
+ */
+export async function secondQuestionRound(project, { sends, chainRefs, prior = null, receiverOf = async () => undefined }) {
+  const send = secondQuestionOf(sends, chainRefs);
+  if (send === null) return null;
+  const attempted = prior?.attempted === true;
+  const outcome = await secondWaitRound(project, send, { receiverOf, allowTransfer: !attempted });
+  const first = prior === null || !same(prior.send.ref, send.ref);
+  const transferred = outcome.kind === 'transfer' || outcome.kind === 'transfer-refused';
+  const attempt = outcome.attempt ?? (transferred ? outcome : prior?.attempt ?? null);
+  // Once the wait really moved, a later reply is not "first": keep the transfer as the recorded outcome while still
+  // re-reading the letter every round for its facts.
+  const recorded = attempt?.kind === 'transfer' && !transferred ? attempt : outcome;
+  return { send,
+    outcome: recorded,
+    attempted: attempted || attempt !== null,
+    attempt,
+    firstSeenAt: first ? new Date().toISOString() : prior.firstSeenAt,
+    firstValue: first ? outcome.message ?? null : prior.firstValue,
+    value: outcome.message ?? prior?.value ?? null,
+    gaps: outcome.gaps ?? prior?.gaps ?? [] };
+}
+
+/**
+ * P6J waiting: the one result handling of the README question, shared by the poll loop's outcome and the after-chain
+ * re-read. A reply is always judged by `replyFirstVerdict` on one letter snapshot, so the `reply-first` and `transfer`
+ * cells never contradict each other; a completed archive keeps the transfer check. `verdict` is the one computation
+ * `closeSecondQuestion` already made on the final snapshot; when absent it is made here from the same letter.
+ */
+export const judgeSecond = (rec, { outcome, attempt = null, secondText, secondMsg, verdict = null, acceptanceGap = null, final = null }) => {
+  // P6LO B9: an archive attempt (this round's or an earlier one) is judged only on the close-out's final reads of the same
+  // letter and sending line (`final`): any of them missing is uncovered; the handler is the intended receiver, the
+  // wait's disposition is transfer and the sender is archived → the deadline is compared with the one read before the
+  // archive (`tried.deadline`). The first receipt and its inner rejection only go into the note. A proven transfer
+  // settles reply-first as well: a reply after it is not "reply first".
+  const tried = [outcome, attempt].find(entry => entry?.kind === 'transfer' || entry?.kind === 'transfer-refused') ?? null;
+  const rejection = tried?.archived?.value?.rejection ?? null;
+  const receipt = tried === null ? '' : `；首次归档回执 ${tried.archived?.status ?? 'no answer'} ${tried.archived?.value?.state ?? tried.archived?.code ?? ''}${
+    rejection === null ? '' : `（内层拒绝 ${rejection.code ?? '-'} ${rejection.reason ?? ''}）`}${tried.kind === 'transfer-refused' ? `：${tried.note ?? '无原因'}` : ''}`;
+  if (tried !== null) {
+    const toSession = tried.to?.sessionId ?? attempt?.to?.sessionId ?? null;
+    const done = `归档发信的成员线 ${tried.sender?.sessionId ?? '-'}，wait.transfer → ${toSession ?? '-'}${receipt}`;
+    const moved = final?.message ?? null;
+    const senderRecord = final?.senderRecord ?? null;
+    const handler = moved?.replyHandler?.sessionRef?.sessionId ?? null;
+    const disposed = moved?.archiveWaitDisposition?.kind ?? null;
+    const senderArchived = senderRecord?.record?.lifecycle === 'archived';
+    if (moved === null || senderRecord === null) {
+      const missing = [moved === null ? final?.messageGap ?? '这封信没有终读' : null,
+        senderRecord === null ? final?.senderGap ?? '发信线没有终读' : null].filter(entry => entry !== null);
+      rec.uncover('transfer', 'env-unavailable', `${done}；终读缺：${missing.join('；')}，handler、归档处置、发信线和期限都无从核对`);
+    } else if (handler !== null && handler === toSession && disposed === 'transfer' && senderArchived) {
+      rec.check('transfer', moved.deadline === tried.deadline, `${done}；终读 handler ${handler}，归档处置 ${disposed}，发信线已归档，期限 ${
+        tried.deadline ?? '-'} → ${moved.deadline ?? '-'}`);
+      rec.uncover('reply-first', 'not-run', `${secondText}：转交已证实，之后的回复不算回复抢先`);
+      return;
+    } else {
+      rec.uncover('transfer', 'not-run', `${done}；终读：handler ${handler ?? '无'}，预定接收线 ${toSession ?? '无'}，归档处置 ${disposed ?? '无'}，发信线 ${
+        senderArchived ? '已归档' : '未归档'}：转交没有实际发生`);
+    }
+  }
+  if (outcome.kind === 'reply-first') {
+    const first = verdict ?? replyFirstVerdict(outcome.message ?? secondMsg);
+    // P6J4b: a reply whose acceptance could not be read to the end is a gap; only complete reads judge "not consumed".
+    if (first.status === 'fail' && acceptanceGap !== null) {
+      rec.uncover('reply-first', 'env-unavailable', `${secondText}：回复 ${outcome.message?.response?.respondedAt ?? '-'} 已读到，接受记录读不到（${acceptanceGap}），消费无从判${receipt}`);
+    } else if (first.status === 'pass') rec.pass('reply-first', `${secondText}：${first.note}${receipt}`);
+    else if (first.status === 'fail') rec.fail('reply-first', `${secondText}：${first.note}${receipt}`);
+    else rec.uncover('reply-first', first.code, `${secondText}：${first.note}${receipt}`);
+    // P6L waiting: the same verdict decides this cell too. An expiry that came first is never written as "reply first".
+    if (tried === null) {
+      rec.uncover('transfer', 'not-run', first.order === 'expired-first'
+        ? `${secondText}：先到期了（${outcome.message?.expiredAt ?? '未知'}），回复在 ${outcome.message?.response?.respondedAt ?? '未知'}，转交没有发生`
+        : `${secondText}：回复先到（${outcome.message?.response?.respondedAt ?? '未知'}），转交没有发生`);
+    }
+    return;
+  }
+  if (outcome.kind === 'gap') {
+    rec.uncover('reply-first', 'env-unavailable', `${secondText}：${outcome.note}${receipt}`);
+    if (tried === null) rec.uncover('transfer', 'env-unavailable', `${secondText}：${outcome.note}`);
+  } else if (tried !== null) {
+    rec.uncover('reply-first', 'not-run', `${secondText}：还开着（没有回复），回复抢先没有发生${receipt}`);
+  } else if (outcome.kind === 'closed') {
+    rec.uncover('reply-first', 'not-run', `${secondText}：${outcome.note}；没有回复抢先`);
+    rec.uncover('transfer', 'not-run', `${secondText}：${outcome.note}；转交没有发生`);
+  } else {
+    rec.uncover('reply-first', 'not-run', `${secondText}：${outcome.note ?? '还开着，没有回复抢先'}`);
+    rec.uncover('transfer', 'not-run', `${outcome.note ?? '没有可转交的另一条线'}`);
+  }
+};
+
+/**
+ * P6J4 waiting: the README question's last round after the chain. The same letter is always re-read through the same
+ * round handler (the loop may have ended before the reply, or after a refused transfer the reply came); an earlier
+ * attempt only forbids a second transfer, never the re-read. The one result handling then judges it (`judgeSecond`).
+ */
+export async function closeSecondQuestion(ctx, project, rec, { chain, secondSend, seenOpen, receiverOf, acceptanceMs = 10 * MINUTE }) {
+  const prior = chain.second !== null && chain.second !== undefined && same(chain.second.send.ref, secondSend.ref) ? chain.second : null;
+  const final = await secondQuestionRound(project, { sends: [secondSend], chainRefs: [], prior, receiverOf });
+  const outcome = final?.outcome ?? { kind: 'gap', note: 'messages/read 读不到' };
+  // P6L waiting: only a reply that came before the expiry and is not yet shown consumed needs the acceptance poll. The
+  // one complete letter that comes back is the snapshot both cells are judged on (`replyFirstVerdict`).
+  const acceptance = outcome.kind === 'reply-first' && outcome.verdict?.order === 'reply-first' && outcome.verdict.status !== 'pass'
+    ? await consumingAcceptance(ctx, project, secondSend.ref, { timeoutMs: acceptanceMs }) : { consumed: null, gap: null };
+  const secondMsg = acceptance.consumed ?? outcome.message ?? await message(project, secondSend.ref);
+  const secondText = `第二个问题 ${secondSend.ref.messageId}（期限 ${secondMsg?.deadline ?? '-'}；${seenOpen}）`;
+  const verdict = replyFirstVerdict(secondMsg);
+  // P6L3 B9: the final letter and sending line are read again at close-out, after the archive, and judge the transfer
+  // whatever the first receipt said. A read failure is named, never folded into "not transferred".
+  let last = null;
+  let finalMsg = secondMsg;
+  // P6LO B9: any archive attempt, also one a reply followed, gets the final reads.
+  if ([outcome, final?.attempt].some(entry => entry?.kind === 'transfer' || entry?.kind === 'transfer-refused')) {
+    const messageGaps = [];
+    const letter = await message(project, secondSend.ref, messageGaps);
+    const senderBody = await project.host.client.read('sessions/read', project.scope, secondSend.line);
+    const senderRecord = ready(senderBody);
+    last = { message: letter, messageGap: messageGaps[0] ?? null, senderRecord,
+      senderGap: senderRecord === null ? `sessions/read ${secondSend.line.sessionId}: ${senderBody?.status ?? 'no answer'} ${senderBody?.code ?? ''}`.trim() : null };
+    if (letter !== null) finalMsg = letter;
+  }
+  const secondTextFor = `第二个问题 ${secondSend.ref.messageId}（期限 ${finalMsg?.deadline ?? '-'}；${seenOpen}）`;
+  judgeSecond(rec, { outcome, attempt: final?.attempt ?? null, secondText: secondTextFor, secondMsg: finalMsg, verdict,
+    acceptanceGap: acceptance.gap, final: last });
+  return final;
+}
+
+/**
+ * P6J4b: the reply's consuming acceptance, polled up to 10 minutes. The poll judges nothing (`check: null`): it returns
+ * the letter that shows it consumed, or null with the last read's failure when the last read did not answer (acceptance
+ * records only grow, so a later complete read supersedes an earlier failed one).
+ */
+export async function consumingAcceptance(ctx, project, ref, { timeoutMs = 10 * MINUTE, everyMs } = {}) {
+  let gap = null;
+  const consumed = await orNull(waitFor(ctx, 'the reply acceptance to consume the second wait', async () => {
+    const gaps = [];
+    const value = await message(project, ref, gaps);
+    gap = gaps[0] ?? null;
+    return value;
+  }, value => (value?.acceptedInputs ?? []).some(entry => entry.consumesWait === true), { timeoutMs, everyMs, check: null }));
+  return { consumed, gap: consumed === null ? gap : null };
+}
+
+/**
+ * Lead ruling Q7, the last step: the member wait still open just before its far side is archived. The member lines'
+ * waits are read, the newest open one with a recipient is taken, and P6J its own `messageRef` is re-read on its line
+ * immediately before the archive: only a wait still open then is a real disconnect object. A read that fails is a gap.
+ */
+export async function disconnectTarget(project, memberLines) {
+  let target = null;
+  let holder = null;
+  const beforeGaps = [];
+  for (const line of memberLines) {
+    const open = openWaitForDisconnect(await waitsOf(project, line, beforeGaps));
+    if (open !== null) { target = open; holder = line; }
+  }
+  if (beforeGaps.length > 0) return { target: null, code: 'env-unavailable', note: `归档前读 sessions/facts 失败：${beforeGaps.join('；')}；开着的等待读不全` };
+  if (target === null) return { target: null, code: 'not-run', note: '归档前重读成员线：已没有开着的等待（都已回答或处理），断开无从造出' };
+  const freshGaps = [];
+  const fresh = openWaitForDisconnect((await waitsOf(project, holder, freshGaps)).filter(entry => same(entry.messageRef, target.messageRef)));
+  if (freshGaps.length > 0) {
+    return { target: null, code: 'env-unavailable', note: `归档前重读 sessions/facts 失败：${freshGaps.join('；')}；等待 ${target.messageRef.messageId} 是否仍开着读不到` };
+  }
+  if (fresh === null) return { target: null, code: 'not-run', note: `归档前重读同一个 messageRef ${target.messageRef.messageId}：已不开放，断开没有发生` };
+  return { target: fresh, holder };
+}
+
+async function waitsOf(project, sessionRef, gaps = null) {
+  const body = await project.host.client.read('sessions/facts', project.scope, sessionRef);
+  const value = ready(body);
+  if (value === null && body?.status !== 'not_found') gaps?.push(`sessions/facts ${sessionRef.sessionId}: ${body?.status ?? 'no answer'} ${body?.code ?? ''}`);
+  return value?.waits ?? [];
 }
 
 /** The saved message, or null; given `gaps`, a read that does not answer is named there. */
@@ -163,6 +502,208 @@ async function readExpiryInput(project, runRef, messageRef) {
   return accepted === undefined ? { text: '', gaps } : { text: accepted.text, gaps: [] };
 }
 
+/**
+ * P6K ruling (waiting window): the one moment the existing expiry poll first sees `expiredAt`, kept as evidence: that
+ * observed moment (`observedAt`) and the letter's own `expiredAt`, the original yielding Run's status/`endedAt`
+ * (`executions/list`), the Task's eligibility at that moment (`tasks/query`: disposition/effectivePhase) and the line's
+ * occupancy (`sessions/read`: availability and `record.occupancy`). A read that does not answer is a gap; nothing here
+ * judges.
+ */
+export async function expiryWindow(project, { goalRef, messageRef, expiredAt, runId, taskId, line }) {
+  const observedAt = new Date().toISOString();
+  const gaps = [];
+  const runs = await executions(project, goalRef, gaps);
+  const row = runs.find(item => item.run.ref.runId === runId) ?? null;
+  if (row === null) gaps.push(`executions/list 里没有原 Run ${runId}`);
+  const taskBody = await project.host.client.read('tasks/query', project.scope, { goalRef });
+  const graph = ready(taskBody);
+  if (graph === null) gaps.push(taskBody === null ? 'tasks/query 没有回答' : `tasks/query: ${taskBody?.status ?? 'no answer'} ${taskBody?.code ?? ''}`.trim());
+  const task = (graph?.tasks ?? []).find(entry => entry.ref.taskId === taskId) ?? null;
+  if (graph !== null && task === null) gaps.push(`tasks/query 里找不到 ${taskId}`);
+  const cardBody = await project.host.client.read('sessions/read', project.scope, line);
+  const card = ready(cardBody);
+  if (card === null) gaps.push(`sessions/read ${line.sessionId}: ${cardBody?.status ?? 'no answer'} ${cardBody?.code ?? ''}`.trim());
+  return {
+    letter: { ...messageRef, expiredAt, observedAt },
+    run: row === null ? null : { runId, status: row.run.status ?? null, endedAt: row.run.endedAt ?? null },
+    task: task === null ? null : { disposition: task.disposition ?? null, effectivePhase: task.effectivePhase ?? null,
+      eligibility: task.eligibility ?? null },
+    line: card === null ? null : { sessionId: line.sessionId, availability: card.availability ?? null,
+      occupancy: card.record?.occupancy ?? null },
+    gaps };
+}
+
+/**
+ * P6K ruling (waiting window): what the moment says about a claimable continuation, as evidence only. A gap or a
+ * missing Run/Task/line read never claims a window; a Task without `eligibility` cannot be told; an ineligible Task is
+ * skipped with its reasons (the platform's own `!row.eligibility.eligible`, `workflow.ts:2940`); a satisfied (or
+ * otherwise terminal) Task is where the platform skips (`workflow.ts:2936-2937`); an occupied line names its holder.
+ * Even an eligible, unsatisfied Task on a free line never proves a claimable window: `eligibility` is only the
+ * Task-state check, and the platform also checks claim deferral/occupancy (`plan-service.ts:1032`,
+ * `workflow.ts:2936`), so that case says it cannot confirm a claim.
+ */
+export const claimableVerdict = window => {
+  if (window === null || window.gaps.length > 0 || window.run === null || window.task === null || window.line === null) {
+    return '无法确认可领取';
+  }
+  const eligibility = window.task.eligibility ?? null;
+  if (eligibility === null) return '无法确认可领取';
+  if (eligibility.eligible !== true) {
+    const reasons = (eligibility.reasons ?? []).map(reason => reason?.code ?? JSON.stringify(reason));
+    return `观察时（${window.letter.observedAt ?? '缺口'}）Task 不可领取，平台会跳过（eligibility ${String(eligibility.eligible)}${
+      reasons.length === 0 ? '' : `：${reasons.join(', ')}`}）`;
+  }
+  if (window.task.effectivePhase === 'satisfied' || window.task.effectivePhase === 'failed'
+    || window.task.disposition !== 'active') {
+    const how = window.task.effectivePhase === 'satisfied' ? '已满足'
+      : window.task.effectivePhase === 'failed' ? '已失败' : `处置 ${window.task.disposition ?? '-'}`;
+    return `观察时（${window.letter.observedAt ?? '缺口'}）Task ${how}（${window.task.effectivePhase ?? '-'}/${window.task.disposition ?? '-'}），平台会跳过`;
+  }
+  const occupancy = window.line.occupancy ?? null;
+  if (window.line.availability !== 'idle' || occupancy !== null) {
+    const holding = [];
+    if (window.line.availability !== 'idle') holding.push(`availability ${window.line.availability ?? '-'}`);
+    if (occupancy !== null) holding.push(`${occupancy.kind ?? '占用'} ${occupancy.executionRef?.runId ?? occupancy.executionRef?.queryJobId ?? '-'}`);
+    return `观察时（${window.letter.observedAt ?? '缺口'}）线 ${window.line.sessionId} 被 ${holding.join('，')} 占着`;
+  }
+  return '观察时无法确认可领取（eligibility 只是 Task 状态资格，平台还会查领取暂缓/占用：plan-service.ts:1032、workflow.ts:2936）';
+};
+
+/**
+ * P6K (diagnosis "只能等第六次" table, waiting row): extra evidence only, judged nowhere. It copies what the public
+ * reads already give — the original letter's `expiredAt`, the interjection Run's final answer and `endedAt`, the moment
+ * the Task became satisfied, the Runs of that Task that carry a continuation (with their claim and start times), and the
+ * letter's `acceptedInputs`. P6K ruling (waiting satisfied moment): the satisfying moment is the CURRENT effective
+ * satisfied reduction's `reducedAt` (`plan-service.ts:1010`, `plan-readers.ts:2562`), never derived from a Run; the
+ * satisfying Run's own `endedAt` is kept beside it, and a missing reduction is a gap ("归约证据缺失"). The note opens
+ * with the `expiredAt`–`satisfiedAt` window so a continuation that was claimable during it can be read. P6K ruling
+ * (waiting window): the expiry poll passes in the moment it took (`expiryWindow`, whose `expiredAt` and `observedAt`
+ * stay separate), and the final `acceptedInputs` come from the last successfully read original letter of the chain
+ * (`chainLetter`), not an older re-read, so an acceptance the chain saw is never dropped and each entry keeps its
+ * `executionRef`. When the chain read nothing, that is a gap and the last previously known acceptance (`lastLetter`,
+ * the restart re-read) is kept instead of falling back to the older `letter` the expiry poll took. Read failures go
+ * into `gaps`, into the note; nothing here throws or judges. `letter` is the already-read `messages/read` snapshot, so
+ * no read is repeated for it.
+ */
+export async function waitingEvidence(project, rec, { goalRef, wait = null, taskId, interjectRunId = null, letter = null,
+  window = null, chainLetter = null, lastLetter = null } = {}) {
+  const gaps = [];
+  const evidence = { letter: wait?.messageRef?.messageId ?? null, expiredAt: null, observedAt: null, interject: null,
+    satisfiedAt: null, satisfiedRunId: null, satisfiedRunEndedAt: null, continuations: [], claimable: null,
+    acceptedInputs: [], gaps };
+  evidence.expiredAt = letter?.expiredAt ?? null;
+  evidence.observedAt = window?.letter?.observedAt ?? null;
+  if (evidence.expiredAt === null) gaps.push('原信没有 expiredAt');
+  const runs = await executions(project, goalRef, gaps);
+  if (interjectRunId === null) gaps.push('插话 Run：没有 Run 接这条插话');
+  else {
+    const row = runs.find(item => item.run.ref.runId === interjectRunId) ?? null;
+    if (row === null) gaps.push(`插话 Run ${interjectRunId}：executions/list 里没有`);
+    else {
+      const final = lastFinalOf(turnsOf(await runHistory(project, row.run.ref, gaps)));
+      evidence.interject = { runId: interjectRunId, endedAt: row.run.endedAt ?? null, final };
+      if (row.run.endedAt == null) gaps.push(`插话 Run ${interjectRunId} 没有 endedAt`);
+      if (final === null) gaps.push(`插话 Run ${interjectRunId} 的轮里没有最终回答`);
+    }
+  }
+  const taskBody = await project.host.client.read('tasks/query', project.scope, { goalRef });
+  const graph = ready(taskBody);
+  if (graph === null) gaps.push(taskBody === null ? 'tasks/query 没有回答' : `tasks/query: ${taskBody?.status ?? 'no answer'} ${taskBody?.code ?? ''}`.trim());
+  if (graph !== null) {
+    const task = (graph.tasks ?? []).find(entry => entry.ref.taskId === taskId);
+    if (task === undefined) gaps.push(`tasks/query 里找不到 ${taskId}`);
+    else if (task.effectivePhase !== 'satisfied') gaps.push(`Task ${taskId} 还不是 satisfied（${task.effectivePhase ?? '-'}）`);
+    else {
+      const reduction = task.reduction ?? null;
+      if (reduction?.phase !== 'satisfied' || reduction.reducedAt == null) gaps.push(`Task ${taskId} 的归约证据缺失`);
+      else evidence.satisfiedAt = reduction.reducedAt;
+      const runId = task.execution?.runId ?? null;
+      const row = runId === null ? null : runs.find(item => item.run.ref.runId === runId) ?? null;
+      evidence.satisfiedRunId = runId;
+      if (runId === null) gaps.push(`让 Task ${taskId} 满足的 Run 在 tasks/query 行里没有`);
+      else if (row?.run.endedAt == null) gaps.push(`让 Task ${taskId} 满足的 Run ${runId} 在 executions/list 里没有 endedAt`);
+      else evidence.satisfiedRunEndedAt = row.run.endedAt;
+    }
+  }
+  const linked = item => item.run.requeueRef != null || item.run.continuation != null
+    || item.run.consumedWait != null || item.run.previousRun != null;
+  evidence.continuations = runs.filter(item => item.run.task?.taskId === taskId && linked(item)).map(item => ({
+    runId: item.run.ref.runId, status: item.run.status ?? null, outcome: item.run.outcome ?? null, endedAt: item.run.endedAt ?? null,
+    claim: claimSession(item), claimedAt: item.outbox?.claim?.claimedAt ?? null, startedAt: item.run.startedAt ?? null,
+    requeueRef: item.run.requeueRef ?? null, continuation: item.run.continuation ?? null,
+    consumedWait: item.run.consumedWait ?? null, previousRun: item.run.previousRun ?? null }));
+  evidence.claimable = { window, verdict: claimableVerdict(window) };
+  const letterRead = chainLetter ?? lastLetter;
+  if (chainLetter === null) {
+    gaps.push(lastLetter === null ? '追链没有成功读到的原信，此前也没有已知的接受读数'
+      : '追链没有成功读到的原信，接受记录沿用此前最后一次已知的读数');
+  }
+  const accepted = letterRead?.acceptedInputs ?? null;
+  if (accepted === null) gaps.push('追链和此前读数都没有 acceptedInputs');
+  else evidence.acceptedInputs = accepted.map(entry => ({ ...entry, part: entry.part ?? null,
+    consumesWait: entry.consumesWait === true, acceptedAt: entry.acceptedAt ?? null }));
+  const continuations = evidence.continuations.length === 0 ? '无'
+    : evidence.continuations.map(entry => `${entry.runId} ${entry.status}/${entry.outcome ?? '-'}，ended ${
+      entry.endedAt ?? '-'}，claim ${entry.claim ?? '-'}，claimed ${entry.claimedAt ?? '缺口'}，started ${
+      entry.startedAt ?? '缺口'}，requeueRef ${entry.requeueRef?.runId ?? '-'}，continuation ${
+      entry.continuation?.kind ?? '-'}/${entry.continuation?.messageRef?.messageId ?? '-'}，consumedWait ${
+      entry.consumedWait?.kind ?? '-'}，previousRun ${entry.previousRun?.runId ?? '-'}`).join('；');
+  const acceptedText = evidence.acceptedInputs.length === 0 ? '无（0 条接受）'
+    : evidence.acceptedInputs.map(entry => `${entry.part}/${entry.consumesWait}@${entry.acceptedAt ?? '-'}`).join(', ');
+  const w = evidence.claimable.window;
+  const occupancyText = w?.line?.occupancy == null ? '无'
+    : `${w.line.occupancy.kind ?? '占用'} ${w.line.occupancy.executionRef?.runId ?? w.line.occupancy.executionRef?.queryJobId ?? '-'}`;
+  const windowText = w === null ? '观察时缺失（没有观察到 expiredAt）'
+    : `原信 ${w.letter.messageId} expiredAt ${w.letter.expiredAt}；observedAt ${w.letter.observedAt ?? '缺口'}；原 Run ${
+      w.run?.runId ?? '-'} ${w.run?.status ?? '-'}/ended ${w.run?.endedAt ?? '缺口'}；Task ${
+      w.task?.disposition ?? '-'}/${w.task?.effectivePhase ?? '-'}；线 ${w.line?.sessionId ?? '-'} ${
+      w.line?.availability ?? '-'}/占用 ${occupancyText}${w.gaps.length === 0 ? '' : `；缺口 ${w.gaps.join('；')}`}`;
+  rec.facts.waitingEvidence = evidence;
+  rec.note(`P6K waiting 取证（窗口 expiredAt ${evidence.expiredAt ?? '缺口'}–satisfiedAt ${evidence.satisfiedAt ?? '缺口'}；原信 ${
+    evidence.letter ?? '-'}；只取证，不改判据）：原信 expiredAt ${evidence.expiredAt ?? '缺口'}；observedAt ${
+    evidence.observedAt ?? '缺口'}；插话 Run ${evidence.interject?.runId ?? '无'} 的最终回答「${
+    evidence.interject?.final ?? '缺口'}」，结束 ${evidence.interject?.endedAt ?? '缺口'}；Task ${taskId} 的满足时刻 ${
+    evidence.satisfiedAt ?? '缺口'}（Task 的 satisfied 归约 reducedAt${
+    evidence.satisfiedRunId === null ? '' : `；让任务满足的 Run ${evidence.satisfiedRunId} 结束于 ${
+      evidence.satisfiedRunEndedAt ?? '缺口'}`}）；到期窗口证据：${windowText}；判定：${evidence.claimable.verdict}；接续：${
+    continuations}；acceptedInputs：${acceptedText}${gaps.length === 0 ? '' : `；读缺口：${gaps.join('；')}`}`);
+  return evidence;
+}
+
+/**
+ * P6K ruling (waiting real finalize): the close tail of `run()` — the extra evidence and the `consumes` verdict on the
+ * member's current wait — as one entry, so a test can feed the same path the scenario takes (`tasks/query` empty
+ * included) instead of hand-writing the later verdict. `chain` is `followChain`'s result; `memberLines` re-reads the
+ * lines that ran the Task.
+ */
+export async function finalizeWaiting(project, rec, { goalRef, wait, taskId, interjectRunId = null, letter = null,
+  window = null, chainLetter = null, lastLetter = null, chain, memberLines }) {
+  const evidence = await waitingEvidence(project, rec, { goalRef, wait, taskId, interjectRunId, letter, window,
+    chainLetter, lastLetter });
+  // P6 diagnosis 2 #28: `consumes` is judged on the member's current wait — the first message of the chain, else the
+  // member's other waits (a continuation line may have asked again) — that has acceptances; a wait nobody accepted yet
+  // is not run here (the platform half of #26 is judged on restart-kept), never a fail on an empty list.
+  const memberWaits = [];
+  for (const entry of (await memberSends(project, await memberLines())).filter(item => item.args?.waitAfterSend === true)) {
+    if (!memberWaits.some(item => item.ref.messageId === entry.ref.messageId)) memberWaits.push({ ref: entry.ref, line: entry.line });
+  }
+  const current = [];
+  for (const candidate of [...chain.chain.map((value, index) => ({ ref: chain.chainRefs[index], value })),
+    ...await Promise.all(memberWaits.filter(item => !chain.chainRefs.some(ref => same(ref, item.ref)))
+      .map(async item => ({ ref: item.ref, value: await message(project, item.ref) })))]) {
+    if ((candidate.value?.acceptedInputs ?? []).length > 0) current.push(candidate);
+  }
+  const consumedOn = current[0] ?? null;
+  const accepted = consumedOn?.value?.acceptedInputs ?? [];
+  if (consumedOn === null) {
+    rec.uncover('consumes', 'not-run', `成员的等待（${[...chain.chainRefs, ...memberWaits.map(item => item.ref)].map(ref => ref.messageId).join(', ')}）还没有一条被执行接受，消费无从判`);
+  } else {
+    rec.check('consumes', accepted.filter(entry => entry.consumesWait === true).length === 1,
+      `等待 ${consumedOn.ref.messageId} 的接受条目：${accepted.map(entry => `${entry.part}:${entry.consumesWait}@${entry.acceptedAt}`).join(', ')}（只认一次真实接受消费等待）`);
+  }
+  return { evidence, memberWaits };
+}
+
 /** Bodies of host notices already read, by messageId: a notice's text never changes. */
 const bodies = new Map();
 
@@ -200,26 +741,49 @@ async function watch(ctx, read, done, ms) {
  * before its expiry); or the chain is over (the Task is no longer active-unsatisfied and every wait of the chain is
  * settled); or the authorization window ends. A quiet moment is never taken as the end. P6 #18: a late reply that is
  * saved but not yet accepted (a reply opens no round) is an event too.
+ * P6J4: every poll also runs the README question's round (`secondQuestionRound`) with the receiver re-chosen then.
  */
-async function followChain(ctx, project, { memberLines, first, goalRef, windowEnd }) {
+export async function followChain(ctx, project, { memberLines, first, goalRef, windowEnd, receiverOf = async () => undefined }) {
   const capAt = Date.now() + CHAIN_CAP_MS;
   let taskDoneAt = null;
+  // P6J waiting: the independent second question is followed on every poll beside the first chain, so its open window
+  // is observed even while the first chain still waits. Its read gaps are kept apart from the first chain's.
+  let second = null;
+  let transfer = null;
+  // P6K ruling (waiting accepted record): the last successfully read original letter of the chain, passed to the evidence.
+  let lastLetter = null;
   for (;;) {
     await ctx.budget.tick();
-    // A read gap in this poll (member list, a line's history, a message) leaves the chain unknown.
-    const gaps = [];
-    const sends = await memberSends(project, await memberLines(gaps), gaps);
+    const chainGaps = [];
+    const secondGaps = [];
+    const sendGaps = [];
+    const sends = await memberSends(project, await memberLines(sendGaps), sendGaps);
+    chainGaps.push(...sendGaps);
+    secondGaps.push(...sendGaps);
     // lead 11-25 (P6 run: the chain read [647b, 647b]): one entry per message id, the first question never twice.
     const followups = sends.filter(entry => entry.args?.followupOf?.messageId === first.messageRef.messageId).map(entry => entry.ref);
     const chainRefs = [...new Map([first.messageRef, ...followups].map(ref => [ref.messageId, ref])).values()];
     const chain = [];
-    for (const ref of chainRefs) chain.push(await message(project, ref, gaps));
+    for (const ref of chainRefs) chain.push(await message(project, ref, chainGaps));
+    if (chain[0] != null) lastLetter = chain[0];
+    // P6J waiting: one shared round — lock the README question first, re-read it, re-select the qualified receiver on
+    // this round, and transfer at most once. A reply that came first is judged on its acceptance by `judgeSecond`.
+    const round = await secondQuestionRound(project, { sends, chainRefs, prior: second, receiverOf });
+    if (round !== null) {
+      second = round;
+      transfer = round.attempt ?? transfer;
+      secondGaps.push(...(round.gaps ?? []));
+    }
     const expired = chain.filter(value => value?.expiredAt != null).length;
     const late = lateReplyOf(chain[0]);
     const saved = lateSaved(chain[0]);
     const answeredFirst = chain[0]?.expiredAt == null
       && (chain[0]?.response != null || (chain[0]?.acceptedInputs ?? []).some(entry => entry.part === 'response'));
-    const task = (ready(await project.host.client.read('tasks/query', project.scope, { goalRef }))?.tasks ?? []).find(entry => entry.ref.taskId === 't-wait');
+    const taskGaps = [];
+    const taskBody = await project.host.client.read('tasks/query', project.scope, { goalRef });
+    const task = ready(taskBody)?.tasks?.find(entry => entry.ref.taskId === 't-wait');
+    if (ready(taskBody) === null && taskBody?.status !== 'not_found') taskGaps.push(`tasks/query: ${taskBody?.status ?? 'no answer'} ${taskBody?.code ?? ''}`);
+    chainGaps.push(...taskGaps);
     const taskOpen = task === undefined || (task.disposition === 'active' && task.effectivePhase !== 'satisfied');
     const over = !taskOpen && chain.every(settledWait);
     // A direct follow-up gets expiry count 2 when its parent has an expiry record. A second expiry is an event only
@@ -240,8 +804,8 @@ async function followChain(ctx, project, { memberLines, first, goalRef, windowEn
     const ended = secondAccepted && secondSaid && (late !== undefined || saved || answeredFirst) ? 'events' : over ? 'chain-over'
       : taskDoneAt !== null && now - taskDoneAt > TASK_DONE_GRACE_MS ? 'task-done'
       : now > capAt ? 'cap' : now > windowEnd ? 'window' : null;
-    if (ended !== null) return { chain, chainRefs, expired, late, saved, answeredFirst, ended, task,
-      secondAccepted, secondConsumer, secondSaid, expiryInput, gaps };
+    if (ended !== null) return { chain, chainRefs, letter: lastLetter, expired, late, saved, answeredFirst, ended, task,
+      secondAccepted, secondConsumer, secondSaid, expiryInput, gaps: chainGaps, secondGaps, second, transfer };
     await sleep(15_000);
   }
 }
@@ -328,11 +892,15 @@ async function run(ctx, rec) {
   // (`dispatch.ts:330`), which consumes no wait; the Host then sends each party of the line's open waits one
   // interruption notice (`host.ts:3359`, `host-notices.ts:113-146`). That Run is an extra turn on the member line the
   // chain below runs after; the notes say so.
+  // P6K (diagnosis "只能等第六次" waiting row): the Run that claims the interjection is kept for the evidence read below.
+  let interjectRunId = null;
   const interruptBefore = {
     member: new Set((await hostNotices(project, member, '中断通知')).map(entry => entry.item.ref.messageId)),
     secretary: new Set((await hostNotices(project, secretary.key, '中断通知')).map(entry => entry.item.ref.messageId)),
   };
-  const interject = await interveneLine(project, member, INTERJECT);
+  const memberRow = (await lines(project)).find(row => row.key.sessionId === member.sessionId) ?? null;
+  const interject = await interveneLine(project, member, INTERJECT,
+    { goalRef: memberRow === null ? goal.ref : pageGoalRef(project, memberRow, goal.ref) });
   rec.facts.userCommand.push(INTERJECT);
   if (!interject.ok) rec.fail('interject-keeps-wait', `等待 ${wait.messageRef.messageId} 开着时插话被拒：${interject.said}`);
   else {
@@ -344,6 +912,7 @@ async function run(ctx, rec) {
         && item.run.consumedWait.messageRef?.messageId === interject.value.ref.messageId) ?? null,
       member: await fresh(member, interruptBefore.member), secretary: await fresh(secretary.key, interruptBefore.secretary),
     }), value => value.run !== null && value.member.length > 0 && value.secretary.length > 0, INTERJECT_WATCH_MS);
+    interjectRunId = after.run?.run.ref.runId ?? null;
     const kept = (await waitsOf(project, member)).find(entry => same(entry.messageRef, wait.messageRef));
     // Under the default wake the secretary may answer within the 2-minute deadline: `sessions/facts` then lists the wait
     // as answered, or not at all once a Run consumed it (`session-facts-contracts.ts:87-88`); the record is read then.
@@ -404,24 +973,45 @@ async function run(ctx, rec) {
   // P6 diagnosis 2 #25: a wait the secretary answered before its deadline never expires (`expiredAt` stays null, the
   // reply sits in the reply slot with no acceptance yet); the wait ends on the reply too, and that branch is not run.
   // The expiry is then judged on the member's current wait at the end (`judgeCurrentExpiry`).
-  const expired = await waitFor(ctx, 'the expiry or the reply', () => message(project, wait.messageRef),
-    value => value?.expiredAt != null || value?.response != null || (value?.acceptedInputs ?? []).length > 0,
+  // P6K ruling (waiting window): the FIRST poll that shows `expiredAt` also takes the moment's evidence once — the same
+  // original letter, the original yielding Run, the Task's eligibility and the line's occupancy — inside this existing
+  // poll, with no extra timer. A read that fails is a gap inside the point, never a throw.
+  let expiryWindowPoint = null;
+  // P6L2 A7: every successfully read original letter updates the one last-known snapshot; a later failed read never
+  // erases an acceptance the chain already saw.
+  let lastKnown = null;
+  const expired = await waitFor(ctx, 'the expiry or the reply', async () => {
+    const value = await message(project, wait.messageRef);
+    if (value !== null) lastKnown = value;
+    if (value?.expiredAt != null && expiryWindowPoint === null) {
+      expiryWindowPoint = await expiryWindow(project, { goalRef: goal.ref, messageRef: wait.messageRef,
+        expiredAt: value.expiredAt, runId: yieldRunId, taskId: work.run.task.taskId, line: member });
+    }
+    return value;
+  }, value => value?.expiredAt != null || value?.response != null || (value?.acceptedInputs ?? []).length > 0,
     { timeoutMs: 20 * MINUTE, check: 'expiry-once' });
   const firstAccepted = expired.acceptedInputs ?? [];
+  if (expired !== null) lastKnown = expired;
   const expiredFirst = expired.expiredAt != null;
   if (!expiredFirst) {
     rec.uncover('expiry-once', 'not-run', `收信方在到期之前就回答了（回复 ${expired.response?.respondedAt ?? '-'}；接受 ${
       firstAccepted.map(entry => entry.part).join(',') || '无'}），这条等待不会到期`);
   } else {
-    const consumed = await orNull(waitFor(ctx, 'the expiry acceptance to consume the wait', () => message(project, wait.messageRef),
-      value => (value?.acceptedInputs ?? []).some(entry => entry.consumesWait === true), { timeoutMs: 20 * MINUTE, check: 'expiry-once' }));
+    const consumed = await orNull(waitFor(ctx, 'the expiry acceptance to consume the wait', async () => {
+      const value = await message(project, wait.messageRef);
+      if (value !== null) lastKnown = value;
+      return value;
+    }, value => (value?.acceptedInputs ?? []).some(entry => entry.consumesWait === true), { timeoutMs: 20 * MINUTE, check: 'expiry-once' }));
     rec.check('expiry-once', consumed !== null && (consumed.acceptedInputs.find(entry => entry.consumesWait)?.part === 'expiry'),
       `expiredAt ${expired.expiredAt}；记下时消费 ${firstAccepted.some(entry => entry.consumesWait)}；之后由 ${consumed?.acceptedInputs?.find(entry => entry.consumesWait)?.part ?? '无'} 消费`);
   }
   // P6: the continuing Run: the acceptance that consumed the wait names its Run, whose `consumedWait` is `expiry` or
   // `wait_reply` on this message with the original Run, on the member line (`dispatch.ts:289-290`, `:325-330`).
+  // P6K: the re-read is kept for the waiting evidence below (null when restart-kept's first half did not read).
+  let latest = null;
   if (keptOk) {
-    const latest = await message(project, wait.messageRef);
+    latest = await message(project, wait.messageRef);
+    if (latest !== null) lastKnown = latest;
     const consumer = (latest?.acceptedInputs ?? []).find(entry => entry.consumesWait === true) ?? null;
     const next = consumer?.executionRef?.aggregateType === 'Run'
       ? (await executions(project, goal.ref)).find(item => item.run.ref.runId === consumer.executionRef.runId) ?? null : null;
@@ -438,8 +1028,12 @@ async function run(ctx, rec) {
     }
   }
 
-  // The rest of the chain, as it really comes (second review #12).
-  const chain = await followChain(ctx, project, { memberLines, first: wait, goalRef: goal.ref, windowEnd: Date.parse(ctx.cfg.window.to) });
+  // The rest of the chain, as it really comes (second review #12). The independent README question is followed in the
+  // same rounds, and a qualified receiver line is re-selected on every round, so a line that qualifies later still lets
+  // one transfer happen there, not after the first chain exits.
+  const nextReceiver = receiverFor(project, { memberLines, secretary: secretary.key });
+  const chain = await followChain(ctx, project, { memberLines, first: wait, goalRef: goal.ref, windowEnd: Date.parse(ctx.cfg.window.to),
+    receiverOf: nextReceiver });
   const why = chain.ended === 'window' ? ['not-run', '授权窗口结束时还没来']
     : chain.ended === 'cap' ? ['not-run', `等了 ${CHAIN_CAP_MS / MINUTE} 分钟还没来`]
     : chain.ended === 'task-done' ? ['env-unavailable',
@@ -459,28 +1053,13 @@ async function run(ctx, rec) {
     rec.uncover('second-expiry', why[0], `${why[1]}；第二次到期已记下，但它的 expiry 接受和后继输入还没出现`);
   } else rec.uncover('second-expiry', why[0], `${why[1]}；同一追问链实际到期 ${chain.expired} 次（没有时钟缝，不伪造）`);
 
+  // P6K (diagnosis "只能等第六次" waiting row): copy the extra waiting evidence into the notes and judge `consumes` on
+  // the member's current wait, in one entry (`finalizeWaiting`); a read that fails goes into the note's gaps instead of
+  // throwing, and the checks after the evidence still run.
+  const { memberWaits } = await finalizeWaiting(project, rec, { goalRef: goal.ref, wait, taskId: work.run.task.taskId, interjectRunId,
+    letter: expired, window: expiryWindowPoint, chainLetter: chain.letter, lastLetter: lastKnown, chain, memberLines });
+
   const firstOfChain = chain.chain[0];
-  // P6 diagnosis 2 #28: `consumes` is judged on the member's current wait — the first message of the chain, else the
-  // member's other waits (a continuation line may have asked again) — that has acceptances; a wait nobody accepted yet
-  // is not run here (the platform half of #26 is judged on restart-kept), never a fail on an empty list.
-  const memberWaits = [];
-  for (const entry of (await memberSends(project, await memberLines())).filter(item => item.args?.waitAfterSend === true)) {
-    if (!memberWaits.some(item => item.ref.messageId === entry.ref.messageId)) memberWaits.push({ ref: entry.ref, line: entry.line });
-  }
-  const current = [];
-  for (const candidate of [...chain.chain.map((value, index) => ({ ref: chain.chainRefs[index], value })),
-    ...await Promise.all(memberWaits.filter(item => !chain.chainRefs.some(ref => same(ref, item.ref)))
-      .map(async item => ({ ref: item.ref, value: await message(project, item.ref) })))]) {
-    if ((candidate.value?.acceptedInputs ?? []).length > 0) current.push(candidate);
-  }
-  const consumedOn = current[0] ?? null;
-  const accepted = consumedOn?.value?.acceptedInputs ?? [];
-  if (consumedOn === null) {
-    rec.uncover('consumes', 'not-run', `成员的等待（${[...chain.chainRefs, ...memberWaits.map(item => item.ref)].map(ref => ref.messageId).join(', ')}）还没有一条被执行接受，消费无从判`);
-  } else {
-    rec.check('consumes', accepted.filter(entry => entry.consumesWait === true).length === 1,
-      `等待 ${consumedOn.ref.messageId} 的接受条目：${accepted.map(entry => `${entry.part}:${entry.consumesWait}@${entry.acceptedAt}`).join(', ')}（只认一次真实接受消费等待）`);
-  }
   // P6 #18 / Q9, diagnosis 2 #28: a reply is late only after the expiry itself consumed the wait; one accepted then must
   // not consume; one saved and not yet accepted (a reply opens no round) is a pass: "已保存，等成员下一轮".
   if (chain.late !== undefined) rec.check('late-reply', chain.late.consumesWait === false, `迟回 ${chain.late.acceptedAt} consumesWait ${chain.late.consumesWait}`);
@@ -504,20 +1083,17 @@ async function run(ctx, rec) {
     }
   }
 
-  // The member's second question (long deadline), found by the member's own send (P6 #17: under the default wake the
-  // secretary may answer it before the driver ever sees it open). Q8: a reply before its expiry judges reply-first;
-  // only a question still open is transferred by the person; otherwise the transfer is uncovered.
+  // The member's second question (long deadline), found by the member's own send. P6J waiting: `followChain` already
+  // tracked it on every poll, so its open window was observed even while the first chain waited; only a second question
+  // sent after the chain ended is watched for here.
   const isChain = ref => chain.chainRefs.some(entry => same(entry, ref));
-  // lead 11-25: the member not sending the second question is a branch not reached (the model's choice), not the
-  // platform failing: watched without judging, then `uncovered (not-run)` with that fact.
-  const secondSend = await watch(ctx, async () => {
+  const secondSend = chain.second?.send ?? await watch(ctx, async () => {
     const sends = (await memberSends(project, await memberLines())).filter(entry => entry.args?.waitAfterSend === true && !isChain(entry.ref));
-    return sends.find(entry => String(entry.args?.text ?? '').includes('README')) ?? sends[0] ?? null;
+    return secondQuestionOf(sends, chain.chainRefs);
   }, value => value !== null, 30 * MINUTE);
+  const seenOpen = chain.second === null ? '链结束后才读到'
+    : `第一次在 ${chain.second.firstSeenAt} 轮询到（当时回复 ${chain.second.firstValue?.response?.respondedAt ?? '无'}，到期 ${chain.second.firstValue?.expiredAt ?? '无'}）`;
   // P6 diagnosis 2 #29: re-read after the restart; never a member line (a continuation line is one too).
-  const memberIds = new Set((await memberLines()).map(line => line.sessionId));
-  const other = (await lines(project)).find(row => !memberIds.has(row.key.sessionId) && row.key.sessionId !== secretary.key.sessionId
-    && row.status?.own !== 'archived');
   if (secondSend === null) {
     const noSecond = '成员 30 分钟里没有发第二个要等的问题（waitAfterSend、不在第一条等待链上），这一支没走到';
     rec.uncover('reply-first', 'not-run', noSecond);
@@ -525,49 +1101,7 @@ async function run(ctx, rec) {
     rec.note(`waiting: ${noSecond}；reply-first、transfer 记未覆盖（lead 11-25）`);
   } else {
     rec.link('message', secondSend.ref);
-    const secondMsg = await message(project, secondSend.ref);
-    const respondedAt = secondMsg?.response?.respondedAt ?? null;
-    const secondText = `第二个问题 ${secondSend.ref.messageId}（期限 ${secondMsg?.deadline ?? '-'}）`;
-    if (secondMsg === null) {
-      rec.uncover('reply-first', 'env-unavailable', `${secondText}：messages/read 读不到`);
-      rec.uncover('transfer', 'env-unavailable', `${secondText}：messages/read 读不到`);
-    } else if (respondedAt !== null && (secondMsg.expiredAt == null || Date.parse(respondedAt) < Date.parse(secondMsg.expiredAt))) {
-      const consumed = await orNull(waitFor(ctx, 'the reply acceptance to consume the second wait', () => message(project, secondSend.ref),
-        value => (value?.acceptedInputs ?? []).some(entry => entry.consumesWait === true), { timeoutMs: 10 * MINUTE, check: 'reply-first' }));
-      const by = consumed?.acceptedInputs?.find(entry => entry.consumesWait === true);
-      rec.check('reply-first', by?.part === 'response' && consumed.expiredAt == null,
-        `${secondText}：回复 ${respondedAt}；消费它的接受 ${by === undefined ? '无' : `${by.part}@${by.acceptedAt}`}；expiredAt ${consumed?.expiredAt ?? '无'}`);
-      rec.uncover('transfer', 'env-unavailable', `${secondText}：转交前已被回答（默认叫醒，P6 #17）`);
-    } else if (secondMsg.expiredAt != null) {
-      rec.uncover('reply-first', 'not-run', `${secondText}：先到期了（${secondMsg.expiredAt}），没有回复抢先`);
-      rec.uncover('transfer', 'env-unavailable', `${secondText}：转交前已到期`);
-    } else if (other === undefined) {
-      rec.uncover('reply-first', 'not-run', `${secondText}：还开着，没有回复抢先`);
-      rec.uncover('transfer', 'env-unavailable', '工作区里没有可转交的另一条线');
-    } else {
-      rec.uncover('reply-first', 'not-run', `${secondText}：还开着（没有回复），回复抢先没有发生，转去做转交（P6 Q8）`);
-      // lead 11-25: a wait is transferred only once its sending line is archived, archiving or retired
-      // (`STATE-MACHINES-SPEC.md:3727`, `message-machine.ts:1185-1194`: otherwise `invalid waiting_line_live`). The person
-      // archives the member line first (`sessions/archive-line`), then transfers; an archive the platform refuses (e.g.
-      // the line still has an unfinished Task to hand over or drop) leaves the transfer not reached.
-      const sender = secondSend.line;
-      const card = ready(await project.host.client.read('sessions/read', project.scope, sender));
-      const archived = card === null ? null : await project.host.client.write('sessions/archive-line', project.scope,
-        { sessionRef: sender, reason: 'G6 waiting: archive the sending line before transferring its open wait', tasks: [], wait: null },
-        [{ ref: { aggregateType: 'Session', ...sender }, revision: card.record.revision }]);
-      const archiveText = `归档发信的成员线 ${sender.sessionId}：${card === null ? 'sessions/read 读不到' : `${archived?.status ?? 'no answer'} ${
-        archived?.value?.state ?? archived?.code ?? ''} ${archived?.reason ?? ''}`.trim()}`;
-      if (archived?.status !== 'ready' || !['archived', 'pending'].includes(archived.value?.state)) {
-        rec.uncover('transfer', 'not-run', `${secondText}：${archiveText}；发信线没有归档，平台按规格不许转交，这一支没走到`);
-      } else {
-        const transferred = await project.host.client.command('waits/dispose', project.scope,
-          { commandId: newId('transfer'), messageRef: secondSend.ref, mode: 'transfer', to: other.key });
-        const moved = await message(project, secondSend.ref);
-        rec.check('transfer', transferred?.status === 'committed' && moved?.deadline === secondMsg.deadline,
-          `${archiveText}；waits/dispose transfer → ${other.key.sessionId}：${transferred?.status} ${transferred?.code ?? ''} ${transferred?.reason ?? ''}；期限 ${secondMsg.deadline} → ${moved?.deadline}`);
-        rec.note('waiting: 成员线为转交已归档；之后的断开格读的是成员线上仍开着的等待，可能因此记未覆盖');
-      }
-    }
+    await closeSecondQuestion(ctx, project, rec, { chain, secondSend, seenOpen, receiverOf: nextReceiver });
   }
   // P6HD (diagnosis row 14): the public read already gives the acceptance order (`run.input_accepted` with its
   // `sourceRef` and text, `flows.mjs` `turnsOf`); copy it in order, per Run and turn, keeping the source ref. Whether
@@ -593,16 +1127,12 @@ async function run(ctx, rec) {
   // archive the line on its far side; the queue must show a `disconnect` item for that wait and that line, and each
   // side must get its own new Host notice naming that line (`disconnect-notices.ts:66-69`, `:186-194`;
   // `host-notices.ts:99`: "断开通知 · Session X · …").
-  let target;
-  let holder = member;
-  for (const line of await memberLines()) {
-    const open = (await waitsOf(project, line)).filter(entry => entry.state?.state === 'open' && entry.recipient?.sessionId !== undefined).at(-1);
-    if (open !== undefined) { target = open; holder = line; }
-  }
-  if (target === undefined) {
-    rec.uncover('disconnect', 'env-unavailable', '归档前成员线上已没有开着的等待（都已回答或处理），断开无从造出');
+  const picked = await disconnectTarget(project, await memberLines());
+  if (picked.target === null) {
+    rec.uncover('disconnect', picked.code, picked.note);
     return;
   }
+  const { target, holder } = picked;
   const far = { projectId: target.recipient.projectId, sessionId: target.recipient.sessionId };
   // Quick check #16 / P6 #14: a notice is the platform's own (`host`, `wake:false`, no reply wanted) and its body,
   // read through `messages/body`, names that line. Each must then be tied to THIS wait: a notice whose body or public

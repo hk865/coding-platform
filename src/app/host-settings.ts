@@ -84,6 +84,7 @@ import type {
   HostSettingsPort,
   HostSettingsSnapshot,
   OpenSettingsWorkspace,
+  ReplacedPlanCheckV1,
   SaveResourceCapSettings,
   SettingsAccessFixed,
   SettingsModel,
@@ -201,6 +202,11 @@ export type HostSettingsPrivateSnapshot = {
   /** 每个工作区设置里的检查各从哪来（已批准清单、计划），按内容摘要；没有已批准清单的工作区，Host 再接上它启动配置的
    *  检查，交给平台写进没过的检查的输出（`checkOrigins`）。 */
   checkOrigins: { scope: CoreScope; origins: InstalledCheckOriginEntryV1[] }[];
+  /** RC：每个工作区里人采用一份计划时装上的检查，带 id 和当前内容摘要；跳过 `planAdoption` 仍指向同一候选的待结条目
+   *  （那一次采用还没提交，不能算“已采用”）。这是派生读，不是新记录。 */
+  adoptedPlanChecks: { scope: CoreScope; checks: { checkId: string; digest: string }[] }[];
+  /** RC L-2：每个工作区里计划来源的已装检查（不论当初是谁批准的），带 id 和当前内容摘要；规划提交按它判可替换。 */
+  planSourceChecks: { scope: CoreScope; checks: { checkId: string; digest: string }[] }[];
   /** C8 automatic-rework policy as stored, or the defaults (3 / true) when the
    * file has none. The Host installs it from A.2 step 5.6 on; `automation/save`
    * (5.8) changes it at runtime. */
@@ -525,10 +531,26 @@ function parseStoredChecks(value: unknown): RegisteredCommandCheck[] {
 }
 
 /** A plan as a stored check or a pending adoption names it: the candidate and its checks' digest. */
-function validPlanSource(value: unknown): value is CheckApprovalV1['plan'] {
+function validPlanRef(value: unknown): value is { proposalRef: PlanProposalRef; checksDigest: string } {
   return isRecord(value) && isRecord(value['proposalRef']) && value['proposalRef']['aggregateType'] === 'PlanProposal'
     && nonEmpty(value['proposalRef']['projectId']) && nonEmpty(value['proposalRef']['workspaceId'])
     && nonEmpty(value['proposalRef']['proposalId']) && nonEmpty(value['checksDigest']);
+}
+
+/** RC：人采用改同 id 检查定义的候选时随待结记录存下的旧条目；每条检查、来源、批准者、时间都要是存得下的形状。 */
+function validReplacedPlanChecks(value: unknown): value is ReplacedPlanCheckV1[] {
+  return Array.isArray(value) && value.every(entry => isRecord(entry)
+    && isRegisteredCommandCheck(entry['check']) && validPlanRef(entry['plan']) && validApprovedBy(entry)
+    && nonEmpty(entry['approvedAt']) && typeof entry['index'] === 'number'
+    && Number.isSafeInteger(entry['index']) && entry['index'] >= 0);
+}
+
+/** A plan as a stored check or a pending adoption names it: the candidate, its checks' digest and, on a pending
+ *  adoption, the old entries a person's replacement displaced. */
+function validPlanSource(value: unknown): value is CheckApprovalV1['plan'] {
+  if (!validPlanRef(value)) return false;
+  const replaced = (value as { replaced?: unknown }).replaced;
+  return replaced === undefined || validReplacedPlanChecks(replaced);
 }
 
 /** G8B B1f：批准者是人，或带职责、批准线和回答的 agent；agent 批的条目另带作者和改动前的事实。 */
@@ -569,6 +591,23 @@ function parseStoredPlanAdoption(value: unknown): CheckApprovalV1['plan'] {
 /** The checks plans brought to one workspace, in install order. */
 const savedPlanChecks = (entry: PersistedWorkspaceV1 | undefined): RegisteredCommandCheck[] =>
   (entry?.planChecks ?? []).map(planned => structuredClone(planned.check));
+
+/** RC：每个工作区里计划来源的已装检查（带 id 和当前摘要），不管当初是谁批准的。 */
+const planSourceChecksOf = (workspaces: readonly PersistedWorkspaceV1[]):
+  { scope: CoreScope; checks: { checkId: string; digest: string }[] }[] =>
+  workspaces.map(workspace => ({ scope: { ...workspace.scope },
+      checks: (workspace.planChecks ?? []).map(planned => ({ checkId: planned.check.checkId,
+        digest: checkDigestOf(planned.check) })) }));
+
+/** RC：人采用一份计划装上、且那次采用已提交的检查；`planAdoption` 还指向同一候选时不算。 */
+const adoptedPlanChecksOf = (workspaces: readonly PersistedWorkspaceV1[]):
+  { scope: CoreScope; checks: { checkId: string; digest: string }[] }[] =>
+  workspaces.map(workspace => ({ scope: { ...workspace.scope },
+      checks: (workspace.planChecks ?? [])
+        .filter(planned => planned.approvedBy.kind === 'person'
+          && (workspace.planAdoption === undefined
+            || !sameJson(planned.plan.proposalRef, workspace.planAdoption.proposalRef)))
+        .map(planned => ({ checkId: planned.check.checkId, digest: checkDigestOf(planned.check) })) }));
 
 /** 一个工作区设置里的检查各从哪来：先是已批准清单本身（不含后接的计划检查，绑着那次保存的回答），再是计划带来的每一条。 */
 function savedCheckOrigins(entry: PersistedWorkspaceV1): InstalledCheckOriginEntryV1[] {
@@ -968,6 +1007,10 @@ export async function createHostSettings(
         && (savedPlanChecks(workspace).length > 0 || workspace.withdrawnChecks !== undefined))
       .map(workspace => ({ scope: { ...workspace.scope }, checks: savedPlanChecks(workspace) })),
     checkOrigins: workspaces.map(workspace => ({ scope: { ...workspace.scope }, origins: savedCheckOrigins(workspace) })),
+    // RC：人采用一份计划装上的检查才算“已采用”，而且那一次采用要已提交：`planAdoption` 还指着同一个候选时，条目只是装上了、
+    // 还没结清，不能报给平台。
+    adoptedPlanChecks: adoptedPlanChecksOf(workspaces),
+    planSourceChecks: planSourceChecksOf(workspaces),
     automation: { ...(automation ?? DEFAULT_TASK_AUTOMATION_POLICY) },
     resourceCaps: {
       memoryMaxBytes: effectiveResourceCaps().memoryMaxMiB * MIB,
@@ -1012,7 +1055,9 @@ export async function createHostSettings(
 
   /** Closes a settled plan adoption; a close that cannot be written stays in the file only and settles the same way.
    *  G8B B2：采用上了的计划还带着它装的检查，其中人撤回过的，留痕一起去掉（agent 批准装不回撤回过的，只能是人采用）；
-   *  没采用上的，检查已经收回，留痕不动。 */
+   *  没采用上的，检查已经收回，留痕不动。RC：关掉待结记录后要再推一次快照，否则 Host 的 `adoptedPlanChecks`
+   *  读到的还是“采用未提交”的上一版（那版按待结记录滤掉了新条目）。这次推送只刷新内存快照，失败不改已提交的采用；
+   *  下一次设置推送或 Host 启动会重读。 */
   const closePlanAdoption = async (scope: CoreScope): Promise<void> => {
     const index = workspaces.findIndex(entry => scopeKey(entry.scope) === scopeKey(scope));
     const entry = workspaces[index];
@@ -1022,6 +1067,10 @@ export async function createHostSettings(
       .map(planned => planned.check.checkId));
     const still = (withdrawnChecks ?? []).filter(withdrawn => !back.has(withdrawn.check.checkId));
     workspaces[index] = still.length === 0 ? closed : { ...closed, withdrawnChecks: still };
+    // RC R-1：采用提交后的顺序是先发布已结清的采用事实（`notify` 同步换掉 Host 的派生读），再落盘关记录；
+    // 这样提交引出的 Goal 唤醒（下一个事件循环排空）一定读到新的 `adoptedPlanChecks`，不会继续等旧的
+    // `system_requeue` 卡。落盘失败只留记录，下一次设置推送或 Host 启动照旧重读。
+    await notify().catch(() => undefined);
     await persist().catch(() => undefined);
   };
 
@@ -1029,8 +1078,9 @@ export async function createHostSettings(
    * 121-136 A3: settles one workspace's pending plan adoption, if any, inside the settings queue every adoption entry
    * takes (the Host runs the platform's own adoptions in it too). The candidate's own record, read here, answers
    * whether it was adopted (`accepted` is written in the adoption's commit, whoever adopted it). Adopted keeps the
-   * checks. Not adopted first takes this plan's checks back out of the saved configuration and, with `install`, out of
-   * the Host's (a workspace left with no saved checks goes back to its start-up checks, or none; R2：人撤过检查的工作区装空配置,
+   * checks. Not adopted first takes this plan's checks back out of the saved configuration (a person's replacements put
+   * the displaced entries back) and, with `install`, out of the Host's (a workspace left with no saved checks goes back
+   * to its start-up checks, or none; R2：人撤过检查的工作区装空配置,
    * `planOnlyChecks`); the start passes
    * `false` and installs once, after every record settled. Either way the record then closes. A candidate that cannot
    * be read, or a take-back that cannot be saved or installed, stays pending and answers why; `null`: nothing pending.
@@ -1049,7 +1099,16 @@ export async function createHostSettings(
     catch { read = undefined; }
     if (read?.status !== 'ready') return stillPending('the plan candidate could not be read');
     if (read.value.adoption !== 'adopted') {
-      const kept = (entry.planChecks ?? []).filter(planned => !sameJson(planned.plan.proposalRef, pending.proposalRef));
+      const displaced = pending.replaced ?? [];
+      const displacedIds = new Set(displaced.map(old => old.check.checkId));
+      // RC L-4：先去掉本候选的新条目和已经回填过的 displaced 编号（中途停机后重跑会看到上一次回填的旧条目），
+      // 再按原位置回填一遍。清单和配置版本因此可重复。
+      const kept = (entry.planChecks ?? []).filter(planned =>
+        !sameJson(planned.plan.proposalRef, pending.proposalRef) && !displacedIds.has(planned.check.checkId));
+      for (const old of [...displaced].sort((left, right) => left.index - right.index)) {
+        const { index, ...oldEntry } = old;
+        kept.splice(Math.min(index, kept.length), 0, structuredClone(oldEntry));
+      }
       const { planChecks: _taken, ...rest } = entry;
       workspaces[index] = kept.length === 0 ? rest : { ...rest, planChecks: kept };
       try { await persist(); }
@@ -1137,8 +1196,11 @@ export async function createHostSettings(
     };
   };
 
-  const snapshotOf = (): HostSettingsSnapshot => ({
+  const snapshotOf = (): HostSettingsSnapshot => {
+    const adoptedPlanChecks = adoptedPlanChecksOf(workspaces);
+    return {
     models: models.map(publicModel),
+    adoptedPlanChecks,
     workspaces: assembly.listWorkspaces().map(facts => {
       const persistedFacts = workspaces.find(entry => scopeKey(entry.scope) === scopeKey(facts.scope));
       return {
@@ -1194,7 +1256,8 @@ export async function createHostSettings(
     },
     structuralApproval: { saved: structuredClone(structuralApproval), defaults: { ...DEFAULT_STRUCTURAL_APPROVAL } },
     replyDeadline: { saved: { ...replyDeadlineMinutes }, default: DEFAULT_REPLY_DEADLINE_MINUTES },
-  });
+    };
+  };
 
   // Restore every persisted directory registration through the real owners
   // BEFORE the Host listens. A failed restore is an explicit startup failure.
@@ -1725,11 +1788,12 @@ export async function createHostSettings(
    * order: an earlier adoption of this workspace left pending settles; the adoption owner's original receipt answers a
    * replay (`replay`), with no read of the current checks and no install; a candidate whose adoption has ended (adopted,
    * not adopted, stale) gets the owner's own answer from `apply` with nothing installed; a plan whose checks are all
-   * installed already (`proposedCheckSplit`) is the plain `apply`, with no install grant. Otherwise the plan's checks
-   * pass the proposal validation a saved Answer's do (`trustedCheckProposal`); the ones not installed are saved with the
-   * plan, the approver and the time in the same write as the pending record (`planAdoption`), then installed, and `apply`
-   * adopts with the request's own identity. Committed closes the record; any other answer settles it
-   * (`settlePlanAdoption`), and a settle that cannot finish answers that it is pending. The Host's platform adoption
+   * installed already or replaced by identical entries (nothing in `proposedCheckSplit`) is the plain `apply`, with no
+   * install grant. Otherwise the plan's checks pass the proposal validation a saved Answer's do (`trustedCheckProposal`);
+   * the ones not installed, and a person's redefinitions of checks plans brought, are saved with the plan, the approver
+   * and the time in the same write as the pending record (`planAdoption`, which also keeps the displaced entries), then
+   * installed, and `apply` adopts with the request's own identity. Committed closes the record; any other answer settles
+   * it (`settlePlanAdoption`), and a settle that cannot finish answers that it is pending. The Host's platform adoption
    * also passes `judge`, the A13 decision bound to its candidate version: it runs before the install and again before
    * `apply`, so a candidate that moved while queued is not installed, and a post-install refusal settles the record.
    */
@@ -1758,12 +1822,23 @@ export async function createHostSettings(
     if (refusedBefore !== null) return refusedBefore;
     const installed = await adoption.confirmInstalledChecks(ctx, { scope });
     if (installed.status !== 'ready') return notInstalled('unavailable', 'the installed checks could not be read');
-    const { added, conflicts } = proposedCheckSplit(installed.value.checks, read.value.checks);
-    if (conflicts.length > 0) return notInstalled('invalid', checkConflictProblem(conflicts));
-    // 121-136 A1: a check identical to an installed one is installed already; only a real addition needs the grant.
-    if (added.length === 0) return await apply();
-    // G8B B1f：agent 批准的每条新检查都要有改动前跑会失败的事实（同 id、同摘要）。
+    const index = workspaces.findIndex(entry => scopeKey(entry.scope) === scopeKey(scope));
+    const previous = index >= 0 ? workspaces[index] : undefined;
     const approval = input.approval;
+    // RC：只有人采用能把一条已装的计划检查换成同 id 的新定义（旧条目随待结记录存下）；agent 批准和平台自动采用仍判冲突。
+    // 可替换 id 还要求当前装的那条同 id 检查就是计划带来的那一条（同摘要），启动配置/已批准清单的同 id 检查不算。
+    const installedById = new Map(installed.value.checks.map(check => [check.checkId, check]));
+    const replaceable = approval.kind === 'person' && previous !== undefined
+      ? new Set((previous.planChecks ?? []).filter(planned => {
+        const installedCheck = installedById.get(planned.check.checkId);
+        return installedCheck !== undefined && checkDigestOf(installedCheck) === checkDigestOf(planned.check);
+      }).map(planned => planned.check.checkId)) : undefined;
+    const { added, replaced, conflicts } = proposedCheckSplit(installed.value.checks, read.value.checks, replaceable);
+    if (conflicts.length > 0) return notInstalled('invalid', checkConflictProblem(conflicts));
+    // 121-136 A1: a check identical to an installed one is installed already; only a real addition or replacement needs
+    // the grant.
+    if (added.length === 0 && replaced.length === 0) return await apply();
+    // G8B B1f：agent 批准的每条新检查都要有改动前跑会失败的事实（同 id、同摘要）。
     // 拒绝（人的决定不能被 agent 推翻）：人撤回过的检查（B2 的留痕），只有人采用能再装上。
     const withdrawn = workspaces.find(entry => scopeKey(entry.scope) === scopeKey(scope))?.withdrawnChecks ?? [];
     const retaken = approval.kind === 'agent'
@@ -1780,23 +1855,37 @@ export async function createHostSettings(
     const checked = await trustedCheckProposal(scope, { owner: proposalRef, what: 'plan', read: async () => ready }, null);
     if (checked.status === 'rejected') return notInstalled(checked.response.code, checked.response.reason);
 
-    const index = workspaces.findIndex(entry => scopeKey(entry.scope) === scopeKey(scope));
-    const previous = index >= 0 ? workspaces[index] : undefined;
     const { facts, proposal } = checked.value;
-    const plan = { proposalRef: structuredClone(proposalRef), checksDigest: proposal.checksDigest };
+    const planRef = { proposalRef: structuredClone(proposalRef), checksDigest: proposal.checksDigest };
+    const replacedIds = new Set(replaced.map(check => check.checkId));
+    // RC L-4：旧条目连同它原来在 `planChecks` 里的位置一起存进待结记录；回滚按原位置放回，
+    // 重跑（停机、通知失败）也得到同一份清单和同一个配置版本。
+    const displaced = (previous?.planChecks ?? []).map((planned, index) => ({ index, planned }))
+      .filter(({ planned }) => replacedIds.has(planned.check.checkId));
+    const planAdoption: CheckApprovalV1['plan'] = {
+      ...planRef,
+      ...(displaced.length === 0 ? {} : { replaced: displaced.map(({ index, planned }) =>
+        ({ index, ...structuredClone(planned) })) }),
+    };
     const approvedAt = now();
+    const addedEntries = added.map((check): PlanCheckEntryV1 => ({
+      check: structuredClone(check), plan: structuredClone(planRef),
+      // 人批的条目字节不变；agent 批的另记批准线、作者和这条检查的改动前事实。
+      ...(approval.kind === 'person' ? { approvedBy: { kind: 'person' as const } } : {
+        approvedBy: { kind: 'agent' as const, duty: approval.duty, session: { ...approval.session },
+          answerRef: structuredClone(approval.answerRef) },
+        author: { duty: approval.author }, baseline: { ...baselineOf(check)! } }),
+      approvedAt }));
+    // RC：替换来的新条目是人批的，旧条目原样进待结记录。
+    const replacedEntries = replaced.map((check): PlanCheckEntryV1 => ({
+      check: structuredClone(check), plan: structuredClone(planRef),
+      approvedBy: { kind: 'person' }, approvedAt }));
     const next: PersistedWorkspaceV1 = {
       ...(previous ?? { scope: { ...scope }, name: facts.name, root: facts.root,
         writeAllowed: facts.writeAllowed, commandsAllowed: facts.commandsAllowed }),
-      planChecks: [...(previous?.planChecks ?? []), ...added.map((check): PlanCheckEntryV1 => ({
-        check: structuredClone(check), plan: structuredClone(plan),
-        // 人批的条目字节不变；agent 批的另记批准线、作者和这条检查的改动前事实。
-        ...(approval.kind === 'person' ? { approvedBy: { kind: 'person' as const } } : {
-          approvedBy: { kind: 'agent' as const, duty: approval.duty, session: { ...approval.session },
-            answerRef: structuredClone(approval.answerRef) },
-          author: { duty: approval.author }, baseline: { ...baselineOf(check)! } }),
-        approvedAt }))],
-      planAdoption: plan,
+      planChecks: [...(previous?.planChecks ?? []).filter(planned => !replacedIds.has(planned.check.checkId)),
+        ...addedEntries, ...replacedEntries],
+      planAdoption,
     };
     if (previous !== undefined) workspaces[index] = next; else workspaces.push(next);
     try { await persist(); }

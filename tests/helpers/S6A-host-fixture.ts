@@ -472,6 +472,9 @@ export type S6ASubmitInput = {
 };
 
 export type S6AHostWorld = S6ARequestWorld & {
+  /** The settings directory this world's Host starts with, derived once from the Host options (as `patchOptions` does).
+   *  A method, not a property: worlds without a settings directory read `settingsDirectory` as absent (PL-25). */
+  readonly settingsDirectoryOf: () => string;
   readonly scripted: S6AScriptedModel;
   readonly gates: {
     /** (a) The next claim commit of a Query on the Session (after an `assigned` commit: not yet claimed). */
@@ -561,6 +564,8 @@ export async function openS6AHostWorld(options: S6AHostWorldOptions): Promise<S6
   const modelHolds = new Map<string, ModelHold[]>();
   const boundaryLog = new Map<string, { request: ModelRequest; signal: AbortSignal }[]>();
   const gates: GateEntry[] = [];
+  /** The settings directory the Host starts with; `patchOptions` records it once (the Host derives the same one). */
+  let resolvedSettingsDirectory: string | undefined;
   const window = options.secretaryBudget?.contextWindowTokens ?? S6A_SECRETARY_WINDOW_TOKENS;
   const maxTokens = options.secretaryBudget?.maxTokens === undefined ? null : options.secretaryBudget.maxTokens;
   const secretaryWork = options.secretaryWork === true;
@@ -629,6 +634,8 @@ export async function openS6AHostWorld(options: S6AHostWorldOptions): Promise<S6
     const kernelPath = hostOptions.kernelStores?.entries[0]?.databasePath;
     const settings = hostOptions.storage.kind === 'memory' && hostOptions.settings === undefined && kernelPath !== undefined
       ? { settingsDirectory: join(dirname(kernelPath), 'host-settings') } : hostOptions.settings;
+    resolvedSettingsDirectory ??= settings?.settingsDirectory
+      ?? (hostOptions.storage.kind === 'sqlite' ? join(hostOptions.storage.directory, 'host-settings') : undefined);
     const workflow = !secretaryWork || hostOptions.workflow === undefined ? hostOptions.workflow : {
       ...hostOptions.workflow,
       bindings: [...hostOptions.workflow.bindings, { workspace: { ...S6A_SCOPE }, sessionRole: structuredClone(S6A_SECRETARY_ROLE),
@@ -790,6 +797,10 @@ export async function openS6AHostWorld(options: S6AHostWorldOptions): Promise<S6
 
   const world = Object.create(base) as S6AHostWorld;
   const extra: Omit<S6AHostWorld, keyof S6ARequestWorld> & Pick<S6ARequestWorld, 'reopen' | 'makeUnavailableSecretary' | 'close'> = {
+    settingsDirectoryOf() {
+      if (resolvedSettingsDirectory === undefined) throw new Error('S6A: the Host start captured no settings directory');
+      return resolvedSettingsDirectory;
+    },
     scripted: {
       async script(session, replies, scope) {
         const script = await scriptOf(session, scope);
