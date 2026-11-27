@@ -179,19 +179,27 @@ describe('E3P Plan goal bar', () => {
     }
   }, 120_000);
 
-  it('PA-43 重新入队 on a cancelled Goal copies it through copy-draft and copy-confirm', async () => {
+  it('PA-43 重新入队 on a cancelled Goal asks first, then copies through copy-draft and copy-confirm', async () => {
     const opened = await openE3GW0();
     worlds.push(opened.world);
     await cancelGoal(opened.world, opened.world.goals.first);
     const { page, log } = await bootE3N(opened.world, 'Plan', { search: '?goal=ag2b-goal' });
+    const dialog = (): FakeElement | undefined => findElement(page.root, (element) => hasClass(element, 'decision')
+      && element.getAttribute('role') === 'alertdialog' && element.getAttribute('aria-label') === '确认重新入队');
     try {
       await planReady(log);
       click(goalbarButton(page.root, '重新入队')!);
-      /* 具名改坏: `copyGoal` 改调 `goals/control`；这一句红。 */
-      await expect.poll(() => countRoute(log, 'goals/copy-confirm'), { timeout: 8_000, interval: 25 }).toBe(1);
+      await waitFor(() => countRoute(log, 'goals/copy-draft') === 1, 8_000);
+      await waitFor(() => dialog() !== undefined);
+      await quietPage(log);
+      /* 具名改坏: 不先开确认框、直接复制；这一句红。 */
+      expect(countRoute(log, 'goals/copy-confirm')).toBe(0);
+      expect(textOf(dialog())).toContain('重新入队：复制成一个新目标');
+      click(findButton(dialog()!, '复制成新目标')!);
+      /* 具名改坏: `confirmCopy` 改调 `goals/control`；这一句红。 */
+      await waitFor(() => countRoute(log, 'goals/copy-confirm') === 1, 8_000);
       await answerOf(log, 'goals/copy-confirm');
       await quietPage(log);
-      expect(countRoute(log, 'goals/copy-draft')).toBe(1);
       expect(countRoute(log, 'goals/copy-confirm')).toBe(1);
       expect((callsTo(log, 'goals/copy-confirm')[0]!.input as Record<string, unknown>)['selectedInterventions']).toEqual([]);
       expect(countRoute(log, 'goals/control')).toBe(0);

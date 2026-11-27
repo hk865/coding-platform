@@ -23,6 +23,9 @@ body { margin: 0; background: #1F1F1F; }
 .gc-val { color: var(--text); }
 .gc-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
 .gc-note { font-size: 12px; line-height: 18px; color: var(--text-3); }
+.dc-checks { display: flex; flex-direction: column; gap: 2px; }
+.dc-check { display: flex; align-items: center; gap: 8px; font-size: 12px; line-height: 20px; color: var(--text-2); cursor: pointer; }
+.dc-check input { margin: 0; width: 12px; height: 12px; flex: none; accent-color: var(--text-2); }
 .gc .menu-wrap .btn { margin-left: -8px; color: var(--text); }
 .xp-t { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; line-height: 18px; }
 .menu.at-left { left: 0; right: auto; min-width: 300px; }
@@ -48,8 +51,9 @@ body { margin: 0; background: #1F1F1F; }
 /* which plan the two maps show: sat right-aligned in the tab strip before the strip held 文件 / 命令 / Diff; now in the map
    tools row, still on the right (after the spacer, before 这一版的改动 / 图例), so it does not read as a third toggle */
 .ptools .pmeta { flex: 0 1 auto; font-size: 12px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-/* the plan card's row label 工作线 (review fix, decision 25: was 成员) is one character wider than the kit's 32px label column:
-   it stays on one line and runs into the column gap, so the values keep their approved place */
+/* the plan card's key column is as wide as the widest key (键列按最宽的键): 检查缺口 is four characters and used to run
+   into the 12px column gap and over the value; the value column keeps the rest */
+.opt-kv { grid-template-columns: minmax(32px, max-content) minmax(0, 1fr); }
 .opt-kv dt { white-space: nowrap; }
 /* rework 2026-10-06 · data/taskpanel.snippet.html [0] PART A, verbatim (the integration step moves these rules into kit.css) */
 /* taskpanel · PART A — the 任务图 thumbnail (decision 28) */
@@ -300,6 +304,9 @@ body { margin: 0; background: #1F1F1F; }
                   <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="m3.25 8.5 3 3 6.5-7"></path></svg>
                 </sc-if>
                 <span>{{b.text}}</span>
+                <sc-if value="{{b.askCheck}}" hint-placeholder-val="{{ false }}">
+                  <button class="btn-text" type="button" onClick="{{b.askCheckGo}}" title="{{b.askCheckTip}}">让秘书补检查</button>
+                </sc-if>
                 <span class="t">{{b.t}}</span>
               </div>
             </sc-if>
@@ -476,7 +483,7 @@ body { margin: 0; background: #1F1F1F; }
                 </dl>
                 <sc-if value="{{b.gc.live}}" hint-placeholder-val="{{ true }}">
                   <div class="plan-foot">
-                    <span class="note">确认后秘书出方案；方案采用前不改项目代码。</span>
+                    <span class="note">{{b.gc.note}}</span>
                     <button class="btn" type="button" onClick="{{b.gc.iterate}}" title="在输入框里写要改的地方，发出后生成新的一版">
                       <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.75 3.25h10.5v7.25H8l-3 2.5v-2.5H2.75Z"></path></svg>
                       在对话里修改
@@ -582,7 +589,7 @@ body { margin: 0; background: #1F1F1F; }
                     </div>
                   </sc-for>
                 </div>
-                <sc-if value="{{b.pl.live}}" hint-placeholder-val="{{ true }}">
+                <sc-if value="{{b.pl.foot}}" hint-placeholder-val="{{ true }}">
                   <div class="plan-foot">
                     <span class="note">{{b.pl.note}}</span>
                     <button class="btn" type="button" onClick="{{b.pl.iterate}}" title="在输入框里写要改的地方，发出后生成新的一版，只改这一个方案">
@@ -644,7 +651,7 @@ body { margin: 0; background: #1F1F1F; }
               </button>
             </sc-if>
             <sc-if value="{{gb.canRequeue}}" hint-placeholder-val="{{ false }}">
-              <button class="btn btn-sm" type="button" onClick="{{gb.requeue}}">
+              <button class="{{gb.requeueCls}}" type="button" onClick="{{gb.requeue}}" aria-disabled="{{gb.requeueOff}}">
                 <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="M12.75 3.25v3h-3"></path><path d="M12.5 6.25A5 5 0 1 0 13 9.25"></path></svg>
                 重新入队
               </button>
@@ -658,6 +665,32 @@ body { margin: 0; background: #1F1F1F; }
             <div class="dc-foot">
               <button class="btn btn-sm first" type="button" onClick="{{gb.keep}}" onKeyDown="{{gb.key}}" ref="{{gb.keepRef}}">不取消</button>
               <button class="btn btn-sm btn-primary" type="button" onClick="{{gb.cancel}}" onKeyDown="{{gb.key}}">取消目标</button>
+            </div>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{gb.copy.show}}" hint-placeholder-val="{{ false }}">
+          <div class="decision" role="alertdialog" aria-label="确认重新入队" onKeyDown="{{gb.copy.key}}">
+            <p class="dc-title">{{gb.copy.title}}</p>
+            <p class="dc-line">{{gb.copy.objective}}</p>
+            <p class="dc-line">{{gb.copy.autonomy}}</p>
+            <p class="dc-line">{{gb.copy.position}}</p>
+            <sc-if value="{{gb.copy.hasWait}}" hint-placeholder-val="{{ false }}"><p class="dc-line">{{gb.copy.waitFor}}</p></sc-if>
+            <sc-if value="{{gb.copy.hasParallel}}" hint-placeholder-val="{{ false }}"><p class="dc-line">{{gb.copy.parallel}}</p></sc-if>
+            <sc-if value="{{gb.copy.hasReconfirm}}" hint-placeholder-val="{{ false }}"><p class="dc-line">{{gb.copy.reconfirm}}</p></sc-if>
+            <sc-if value="{{gb.copy.available}}" hint-placeholder-val="{{ false }}">
+              <div class="dc-checks">
+                <sc-for list="{{gb.copy.checks}}" as="c" hint-placeholder-count="2">
+                  <label class="dc-check"><input type="checkbox" checked="{{c.on}}" disabled="{{c.disabled}}" onChange="{{c.toggle}}" /><span>{{c.text}}</span></label>
+                </sc-for>
+              </div>
+              <p class="dc-line">{{gb.copy.hint}}</p>
+            </sc-if>
+            <sc-if value="{{gb.copy.unavailable}}" hint-placeholder-val="{{ false }}"><p class="dc-line">旧的干预这次读不到，复制时一条都不带。</p></sc-if>
+            <sc-if value="{{gb.copy.hasError}}" hint-placeholder-val="{{ false }}"><p class="dc-line"><span class="tx-failed">{{gb.copy.error}}</span></p></sc-if>
+            <div class="dc-foot">
+              <button class="btn btn-sm first" type="button" onClick="{{gb.copy.close}}" onKeyDown="{{gb.copy.key}}" ref="{{gb.copy.keepRef}}">不复制</button>
+              <button class="btn btn-sm btn-primary{{gb.copy.confirmCls}}" type="button" onClick="{{gb.copy.confirm}}" onKeyDown="{{gb.copy.key}}" aria-disabled="{{gb.copy.off}}">复制成新目标</button>
             </div>
           </div>
         </sc-if>
@@ -1459,6 +1492,12 @@ body { margin: 0; background: #1F1F1F; }
 </div>
 </x-dc>
 <script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["dark","light"],"default":"dark"},"start":{"editor":"enum","options":["冲突待决定","目标卡待确认","方案第 1 版","方案第 2 版","已采用","已采用 · 并行执行"],"default":"目标卡待确认"},"$preview":{"width":1440,"height":900}}'>
+/* 121-171: what "让秘书补检查" does. The visible words already say it; the title
+   only adds what happens after the person adds what to check and sends it. */
+const ASK_CHECK_TIP = '在下面的输入框里预填一句，你补上要查什么再发；秘书会起草带新检查的计划，采用后生效。';
+/* the change row's mark, as the frozen plan board draws it: one symbol, never the contract's English word */
+const DELTA_MARK = { changed: '~', cancelled: '−', superseded: '→' };
+
 class Component extends DCLogic {
   constructor(...args) {
     super(...args);
@@ -1504,7 +1543,20 @@ class Component extends DCLogic {
       const patch = {};
       if (s.err && s.err !== s.errKeep) patch.err = '';
       if (pending.length !== (s.pending || []).length) patch.pending = pending;
+      /* P2: the automatic re-adoption has no caller to catch its failure, so
+         the read carries it once; write it to the composer's foot exactly once. */
+      const adoptError = (this.props.data || {}).adoptError;
+      if (adoptError && adoptError !== this._lastAdoptError) {
+        this._lastAdoptError = adoptError;
+        patch.err = adoptError.text;
+        patch.errKeep = adoptError.keep ? adoptError.text : '';
+      }
       if (Object.keys(patch).length > 0) this.setState(patch);
+    }
+    if (this._focusInput) {
+      this._focusInput = false;
+      const input = document.getElementById('plan-input');
+      if (input) input.focus();
     }
   }
 
@@ -4846,6 +4898,7 @@ class Component extends DCLogic {
           items: this.autos().map((x) => ({ label: x.label, desc: x.desc, on: x.key === myAuto.key, cls: 'menu-item two' + (x.key === myAuto.key ? ' is-on' : ''),
             pick: () => set({ autoV: merge('autoV', v, x.key), menu: null }) })) },
         autoNote: myAuto.note,
+        note: '确认后秘书出方案；方案采用前不改项目代码。',
         iterate: () => {
           const st = this.state || {}; const cid = this.nextCanned(st.events, 'G'); const cur = String(st.draft || '');
           set({ iterating: true, iterKey: 'G', draft: cur.trim() && !this.isPrefill(st) ? cur : cid ? P[cid].say : '', askRef: '', askSq: '', askId: null, askKind: null, menu: null, pane: 'chat', confirmCancel: false, dec: null });
@@ -4902,7 +4955,7 @@ class Component extends DCLogic {
       return {
         title: '方案 · 第 ' + v + ' 版', scope: '3 个方案', stText: isLive ? '未采用' : status === 'adopted' ? '已采用' : '已由第 ' + (v + 1) + ' 版取代', live: isLive,
         stCls: 'st', stTip: '', stOff: 'false', adoptCls: 'btn btn-primary', adoptTip: '', adoptOff: 'false',
-        hasDelta: delta.length > 0, delta: delta, opts: opts, adoptLabel: '采用方案 ' + pick,
+        hasDelta: delta.length > 0, delta: delta, opts: opts, adoptLabel: '采用方案 ' + pick, foot: isLive,
         note: D.cf === 'wait' ? '采用后等目标 1 完成再开始，之后按“' + AU.label + '”执行。' : AU.plan,
         iterate: () => {
           const st = this.state || {}; const key = st.pick || 'A'; const cid = this.nextCanned(st.events, key); const cur = String(st.draft || '');
@@ -5727,6 +5780,72 @@ class Component extends DCLogic {
     const selected = data.selectedDisplay;
     const read = this.props.readState || null;
     const progress = data.progress;
+    /* D49-13/4b: the plan page's 重新入队 is the same two-step copy as Main's;
+       only the reconfirm sentence differs (it must not send the person away). */
+    const copyDraft = s.copyDraft || null;
+    const copyPicks = Array.isArray(s.copyPick) ? s.copyPick : [];
+    let copy = { show: false };
+    if (s.copyOpen && copyDraft) {
+      const checks = (copyDraft.candidates || []).map((candidate) => {
+        const on = copyPicks.indexOf(candidate.ref.messageId) >= 0;
+        const reason = candidate.selectable ? '' : '（' + candidate.reasonWord + '）';
+        const retract = !candidate.selectable || on || candidate.retractable ? ''
+          : '（撤不回：' + candidate.retractWord + '）';
+        return {
+          text: candidate.text + reason + retract,
+          on: on,
+          disabled: !candidate.selectable,
+          toggle: () => {
+            const next = copyPicks.slice();
+            const at = next.indexOf(candidate.ref.messageId);
+            if (at >= 0) next.splice(at, 1); else if (candidate.selectable) next.push(candidate.ref.messageId);
+            set({ copyPick: next });
+          }
+        };
+      });
+      copy = {
+        show: true, title: '重新入队：复制成一个新目标',
+        objective: '目标：' + copyDraft.objective, autonomy: '自治：' + copyDraft.autonomy,
+        position: '排在原来的位置。',
+        hasWait: !!copyDraft.waitFor, waitFor: copyDraft.waitFor,
+        hasParallel: !!copyDraft.parallel, parallel: copyDraft.parallel,
+        hasReconfirm: !!(copyDraft.waitFor || copyDraft.parallel),
+        reconfirm: '确认就照这个复制；要改，复制以后告诉秘书。',
+        available: copyDraft.available, checks: checks,
+        hint: '勾上的，会在新目标的第一版方案采用后发给原来的线，旧消息标“已转交”；没勾的会撤回。',
+        unavailable: !copyDraft.available,
+        hasError: !!s.copyErr, error: s.copyErr || '',
+        off: s.copyBusy ? 'true' : 'false', confirmCls: s.copyBusy ? ' is-off' : '',
+        close: () => { this.cancelClosed('copy'); set({ copyOpen: false, copyDraft: null, copyPick: [], copyErr: '' }); },
+        key: (e) => this.cancelKey('copy', e, () => {
+          this.cancelClosed('copy');
+          set({ copyOpen: false, copyDraft: null, copyPick: [], copyErr: '' });
+        }),
+        keepRef: (el) => this.cancelRef('copy', el),
+        confirm: () => {
+          if (s.copyBusy) return;
+          const selected = (copyDraft.candidates || [])
+            .filter((candidate) => candidate.selectable && copyPicks.indexOf(candidate.ref.messageId) >= 0)
+            .map((candidate) => candidate.ref);
+          set({ copyBusy: true, copyErr: '' });
+          Promise.resolve(actions.confirmCopy(copyDraft, selected)).then(() => {
+            set({ copyBusy: false, copyOpen: false, copyDraft: null, copyPick: [] });
+          }).catch((e) => {
+            /* The conflict text says the draft was reread; replace it here
+               while the dialog stays open, keeping the ticks that still exist. */
+            if (e && e.rereadCopy) {
+              Promise.resolve(actions.readCopyDraft(copyDraft.goalId)).then((draft) => {
+                const ids = (draft.candidates || []).map((candidate) => candidate.ref.messageId);
+                set({ copyBusy: false, copyDraft: draft, copyOpen: true,
+                  copyPick: copyPicks.filter((id) => ids.indexOf(id) >= 0), copyErr: this.planMsg(e) });
+              }).catch((again) => set({ copyBusy: false, copyErr: this.planMsg(again) }));
+              return;
+            }
+            set({ copyBusy: false, copyErr: this.planMsg(e) });
+          });
+        }
+      };
+    }
     const gb = Object.assign({}, base.gb, {
       sq: 'sq z10 s-' + (selected ? selected.st : 'pending'),
       word: selected ? selected.word : '状态未读',
@@ -5742,9 +5861,19 @@ class Component extends DCLogic {
       keepRef: (el) => this.cancelRef('goal', el),
       key: (e) => this.cancelKey('goal', e, () => { this.cancelClosed('goal'); set({ confirmCancel: false }); }),
       cancel: () => { set({ confirmCancel: false }); this.planControl('cancel'); },
-      requeue: () => {
-        if (selectedId === null || typeof actions.copyGoal !== 'function') return;
-        Promise.resolve(actions.copyGoal(selectedId)).catch((e) => set({ err: this.planMsg(e) }));
+      requeueCls: 'btn btn-sm' + (s.copyBusy ? ' is-off' : ''),
+      requeueOff: s.copyBusy ? 'true' : 'false',
+      copy: copy,
+      requeue: (e) => {
+        if (selectedId === null || typeof actions.readCopyDraft !== 'function' || s.copyBusy) return;
+        /* Keep the opener element; the click event may be gone by the time the
+           draft read answers and the dialog takes the focus. */
+        const opener = e && e.currentTarget ? e.currentTarget : null;
+        set({ copyBusy: true, err: '', copyOpen: false, copyDraft: null, copyPick: [], copyErr: '' });
+        Promise.resolve(actions.readCopyDraft(selectedId)).then((draft) => {
+          this.cancelOpened('copy', { currentTarget: opener });
+          set({ copyBusy: false, copyDraft: draft, copyOpen: true, copyPick: [], copyErr: '' });
+        }).catch((e2) => set({ copyBusy: false, err: this.planMsg(e2) }));
       }
     });
     return Object.assign({}, base, {
@@ -5769,10 +5898,15 @@ class Component extends DCLogic {
       };
     };
     const rest = (draft.completion || []).slice(1);
+    const note = draft.fromGoal === null || draft.fromGoal === undefined
+      ? '确认后秘书出方案；方案采用前不改项目代码。'
+      : '这是加在已完成的目标' + (draft.fromGoal.ordinal === null ? '' : ' ' + draft.fromGoal.ordinal)
+        + '「' + draft.fromGoal.objective
+        + '」上的工作，要确认成一个接续的新目标；原目标的完成不变。确认后秘书出方案；方案采用前不改项目代码。';
     return {
       title: '目标卡', stText: '待确认', live: true, ro: false,
       hasDelta: false, delta: [],
-      goal: draft.objective,
+      goal: draft.objective, note: note,
       scopeSum: '—', scope: xp('scope', '明细', false),
       ovlLead: '—', cfText: '', cons: xp('cons', '明细', false),
       acc0: (draft.completion || [])[0] || '', acc: Object.assign(xp('acc', '另 ' + rest.length + ' 条', true), { items: rest }),
@@ -5799,7 +5933,7 @@ class Component extends DCLogic {
   }
   /* §2.8: the plan card. The options are the round's ideas; the body and status
      are the candidate's, and every task/risk jump is unconnected (Plan B). */
-  planCardVals(doc) {
+  planCardVals(doc, adoptNote) {
     const s = this.state || {};
     const set = (p) => this.setState(p);
     const actions = this.props.actions || {};
@@ -5821,6 +5955,10 @@ class Component extends DCLogic {
     const proposal = doc.proposal;
     const issues = proposal === null ? 0 : proposal.issues.length;
     const canAdopt = doc.live && proposal !== null && issues === 0;
+    /* DPS-1: while a stopping adoption waits, the page adopts again by itself;
+       the person's one click must not send another `plans/apply`. */
+    const adopting = !!adoptNote;
+    const adoptable = canAdopt && !adopting;
     const shownKey = selected === null ? pick : ids[selected];
     /* lead 1: nothing selected yet, the first idea is a local preview: its 怎么做
        shows and its two detail sections do not (aria-checked still reads `selected`). */
@@ -5868,7 +6006,8 @@ class Component extends DCLogic {
             Promise.resolve(actions.selectIdea(doc.round, i)).catch((e) => set({ err: this.planMsg(e) }));
           }
         } : nc,
-        hasBody: on || i === preview, hasKv: false, how: idea.detail, kv: [],
+        hasBody: on || i === preview, hasKv: on && doc.facts.length > 0,
+        how: idea.detail, kv: on ? doc.facts : [],
         secs: i === preview ? [] : [sec('tasks', '任务 ' + taskCount, true), sec('checks', '检查 ' + doc.checks.length, true),
           sec('risks', '风险', false)]
       };
@@ -5880,23 +6019,23 @@ class Component extends DCLogic {
       hasDelta: doc.hasDelta,
       delta: doc.delta.map((item) => {
         if (!dataMode) {
-          return { dm: item.dm, text: item.text, hasRef: true, noRef: false,
+          return { dm: DELTA_MARK[item.dm], text: item.text, hasRef: true, noRef: false,
             cls: 'pd-ref is-off', title: '还没接通', off: 'true', go: nc, over: nc, out: nc };
         }
         const on = inMap(item.ref);
-        return { dm: item.dm, text: item.text, hasRef: on, noRef: !on, cls: 'pd-ref', title: '', off: 'false',
+        return { dm: DELTA_MARK[item.dm], text: item.text, hasRef: on, noRef: !on, cls: 'pd-ref', title: '', off: 'false',
           go: on ? jump(item.ref) : nc, over: on ? hoverTask(item.ref) : nc, out: on ? unTask : nc };
       }),
       opts: opts,
-      adoptLabel: '采用方案 ' + shownKey, adoptCls: 'btn btn-primary' + (canAdopt ? '' : ' is-off'),
-      adoptTip: canAdopt ? '' : proposal !== null && issues > 0 ? '' : '还没接通',
-      adoptOff: canAdopt ? 'false' : 'true',
-      note: '', live: doc.live,
+      adoptLabel: '采用方案 ' + shownKey, adoptCls: 'btn btn-primary' + (adoptable ? '' : ' is-off'),
+      adoptTip: doc.stale ? doc.staleText : adopting ? '采用中，停下后自动再采用' : adoptable ? '' : proposal !== null && issues > 0 ? '' : '还没接通',
+      adoptOff: adoptable ? 'false' : 'true',
+      note: adoptNote || '', live: doc.live, foot: doc.foot,
       iterate: () => set({
         iterating: true, iterKey: shownKey, draft: '', askRef: '', askSq: '', askCardKey: '',
         menu: null, pane: 'chat', confirmCancel: false, dcOpen: false
       }),
-      adopt: canAdopt ? () => {
+      adopt: adoptable ? () => {
         set({ err: '', errKeep: '' });
         Promise.resolve(actions.adoptPlan(proposal))
           .catch((e) => { const err = this.planMsg(e); set({ err: err, errKeep: e && e.keep === true ? err : '' }); });
@@ -5942,6 +6081,20 @@ class Component extends DCLogic {
       opts: opts
     };
   }
+  /* 121-171: "让秘书补检查" hands the sentence to this page's composer without
+     sending it. It closes the three overlays that cover the composer and drops
+     the pending change/goal-card/ask state, so sending goes through
+     `askSecretary(text, [])`. Words already in the composer are kept. The input
+     exists only after the redraw, so the caret is placed in componentDidUpdate. */
+  askCheckInComposer(draft) {
+    const s = this.state || {};
+    this._focusInput = true;
+    this.setState({
+      dcOpen: false, picked: null, facts: false, confirmCancel: false, copyOpen: false, pane: 'chat',
+      iterating: false, iterKey: null, askCardKey: '', askRef: '', askSq: '',
+      draft: String(s.draft || '').trim() === '' ? draft : s.draft
+    });
+  }
   /* §2.10: the decision card is the Goal's first queue card. Only the `answer`
      primary is wired; every form action and the path jump stay unconnected. */
   planDecisionVals(data, baseDc) {
@@ -5954,7 +6107,8 @@ class Component extends DCLogic {
     if (rows.length === 0 || !s.dcOpen || s.confirmCancel) return Object.assign({}, base, { show: false });
     const row = rows[(s.dcAt || 0) % rows.length];
     const v = row.view;
-    const stepPrimary = v.primary !== null && v.primary.key !== 'answer';
+    const speak = v.primary !== null && v.primary.key === 'speak';
+    const stepPrimary = v.primary !== null && v.primary.key !== 'answer' && !speak;
     const isChoice = v.options.length > 0;
     const needsPick = isChoice && s.picked === null;
     const close = (patch) => set(Object.assign({ dcOpen: false, picked: null, facts: false }, patch || {}));
@@ -6010,11 +6164,12 @@ class Component extends DCLogic {
         dcOpen: false, picked: null, facts: false, pane: 'chat', confirmCancel: false
       }),
       hasPrimary: v.primary !== null || isChoice,
-      primaryLabel: v.primary !== null ? v.primary.label : '确定',
-      primaryGo: stepPrimary ? nc : () => { if (s.picked !== null) submit(s.picked); },
-      primaryTip: stepPrimary ? '还没接通' : '',
-      primaryCls: 'btn btn-sm btn-primary' + (stepPrimary || needsPick ? ' is-off' : ''),
-      primaryOff: stepPrimary || needsPick ? 'true' : 'false',
+      primaryLabel: speak ? '让秘书补检查' : v.primary !== null ? v.primary.label : '确定',
+      primaryGo: speak ? () => this.askCheckInComposer(v.primary.draft)
+        : stepPrimary ? nc : () => { if (s.picked !== null) submit(s.picked); },
+      primaryTip: speak ? ASK_CHECK_TIP : stepPrimary ? '还没接通' : '',
+      primaryCls: 'btn btn-sm btn-primary' + ((stepPrimary || needsPick) && !speak ? ' is-off' : ''),
+      primaryOff: (stepPrimary || needsPick) && !speak ? 'true' : 'false',
       acts: v.acts.map((a) => ({
         label: a.label, cls: 'btn btn-sm btn-line is-off', tip: '还没接通', off: 'true', go: nc
       }))
@@ -6036,6 +6191,7 @@ class Component extends DCLogic {
     const blank = {
       isUser: false, isRun: false, isAgent: false, isSys: false, sysPlan: false, sysCheck: false,
       isLine: false, isCf: false, isGcard: false, isPlan: false,
+      askCheck: false, askCheckGo: nc, askCheckTip: '',
       text: '', t: '',
       line: { text: '', act: '', hasAct: false, open: false, cls: 'btn-text', title: '', off: 'false', toggle: nc },
       cf: null, gc: null, pl: null
@@ -6099,7 +6255,7 @@ class Component extends DCLogic {
     }
     const doc = data.plan || null;
     if (doc !== null && doc.ideas.length > 0) {
-      blocks.push(Object.assign({}, blank, { isPlan: true, pl: this.planCardVals(doc) }));
+      blocks.push(Object.assign({}, blank, { isPlan: true, pl: this.planCardVals(doc, data.adoptNote) }));
     }
     for (const version of data.versions || []) {
       blocks.push(Object.assign({}, blank, {
@@ -6110,10 +6266,19 @@ class Component extends DCLogic {
         })
       }));
     }
+    /* P4: this Goal's plan notices are events, so they come before the tail's
+       current-state note (121-147) and use the plain system row: no icon. */
+    for (const text of data.planNotices || []) {
+      blocks.push(Object.assign({}, blank, { isSys: true, text: text }));
+    }
     /* An uncovered required requirement is a current-state note, not an event:
-       it sits at the conversation's tail with no time slot and no icon. */
+       it sits at the conversation's tail with no time slot and no icon. Its
+       button prefills the composer below; the row itself stays last. */
     for (const gap of data.gaps || []) {
-      blocks.push(Object.assign({}, blank, { isSys: true, text: gap.text }));
+      blocks.push(Object.assign({}, blank, {
+        isSys: true, text: gap.text,
+        askCheck: true, askCheckGo: () => this.askCheckInComposer(gap.draft), askCheckTip: ASK_CHECK_TIP
+      }));
     }
     const dc = this.planDecisionVals(data, base.dc);
     const armed = !!s.iterating && (s.iterKey === 'G'
@@ -6168,7 +6333,7 @@ class Component extends DCLogic {
       : { show: false };
     return Object.assign({}, base, {
       blocks: blocks, dc: dc, arm: arm, ledger: ledger, autoLabel: autoText, autoDesc: '',
-      composerOpen: !dc.show && !s.confirmCancel,
+      composerOpen: !dc.show && !s.confirmCancel && !s.copyOpen,
       hasAsk: !!s.askCardKey && !!s.askRef, askRef: s.askCardKey ? s.askRef || '' : '',
       askSq: s.askSq || 'sq z8 s-pending',
       clearAsk: () => set({ askRef: '', askSq: '', askCardKey: '' }),

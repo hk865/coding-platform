@@ -42,8 +42,8 @@ import {
 } from './adapters/main.js';
 import {
   adaptPlan, adoptedPlanDoc, candidateReadOf, ideasRoundOf, versionRowsOf,
-  type MainPageRead, type PlanCandidateRead, type PlanData, type PlanDoc, type PlanProposalRef,
-  type PlanProposalShape, type PlanVersionRow,
+  type MainPageRead, type PlanCandidateFacts, type PlanCandidateRead, type PlanData, type PlanDoc,
+  type PlanProposalRef, type PlanProposalShape, type PlanVersionRow,
 } from './adapters/plan.js';
 import {
   auxChangedRowsOf, auxCommandViewOf, auxDiffHunksOf, auxDiffViewOf, auxFileListOf, auxFilePageOf, auxLeafCountsOf, auxTaskDetailOf,
@@ -137,6 +137,15 @@ type AdoptedPlanState = {
   cards: Map<string, { revision: number; doc: PlanDoc }>;
 };
 let pageAdoptedPlans: AdoptedPlanState | null = null;
+
+/** P2 (DPS-1): `plans/apply` answered `busy` because it is stopping the affected
+ * work. The page keeps the one proposal it waits to adopt again; every Plan
+ * publish checks it, and a closed or reloaded page simply loses it. */
+let pendingAdoption: { goalId: string; proposal: PlanProposalShape } | null = null;
+/** One automatic re-adoption in flight at a time. */
+let pendingAdoptionBusy = false;
+/** P2: the automatic retry's failure, delivered to the page by the next read once. */
+let pendingAdoptError: { text: string; keep: boolean } | null = null;
 
 /** One Goal reference of the shown project: the one builder the line and right-panel readers share (READS-10 a). */
 function goalRefIn(projectId: string, goalId: string): { aggregateType: 'Goal'; projectId: string; goalId: string } {
@@ -525,9 +534,6 @@ export type BoardActions = {
   /** §2.3: one `goals/reorder` write with every Goal's current revision, then
    * the same refresh loop rereads the list. */
   reorderGoal: (goalId: string, direction: 'up' | 'down') => Promise<void>;
-  /** §2.7 A10: `goals/copy-draft` then `goals/copy-confirm`, both from the
-   * draft's own source revision, then the same refresh loop rereads. */
-  copyGoal: (goalId: string) => Promise<void>;
   /** D49-13: the first step of the two-step requeue; the dialog reads the answer. */
   readCopyDraft: (goalId: string) => Promise<MainCopyDraft>;
   /** D49-13: the confirmation, with the revision the first step read. */
@@ -684,6 +690,9 @@ export async function bootBoardPage(): Promise<void> {
   const root = document.querySelector('x-dc');
   if (!root) return;
   pageAdoptedPlans = { pending: new Map(), cards: new Map() };
+  pendingAdoption = null;
+  pendingAdoptionBusy = false;
+  pendingAdoptError = null;
   pageRunSteps = new Map();
   pageRunWorkspaces = new Map();
   pageRunHosts = new Map();
@@ -1241,28 +1250,6 @@ export async function bootBoardPage(): Promise<void> {
       }
       await refresh.reread();
     },
-    async copyGoal(goalId: string): Promise<void> {
-      const scope = latestNavScope;
-      if (scope === null) throw new Error(writeTextOf(new Error('no navigation scope')));
-      const goalRef = { aggregateType: 'Goal' as const, projectId: scope.projectId, goalId };
-      try {
-        const draft = readyRouteValue<GoalCopyDraftResultV1>(
-          await client.post('goals/copy-draft', scope, { goalRef }), 'goals/copy-draft');
-        /* A10: the confirm pins the revision the draft just read and copies no
-           intervention; `goals/copy-confirm` is a plain route, so its input is
-           sent as-is and committed is its own receipt. */
-        committedRouteValue(await client.post('goals/copy-confirm', scope, {
-          commandId: crypto.randomUUID(),
-          sourceGoalRef: goalRef,
-          expectedSourceRevision: draft.source.revision,
-          selectedInterventions: [],
-        }), 'goals/copy-confirm');
-      } catch (error) {
-        throw new Error(writeTextOf(error));
-      }
-      await refresh.reread();
-    },
-
     async readCopyDraft(goalId: string): Promise<MainCopyDraft> {
       const scope = latestNavScope;
       const nav = latest;
@@ -1370,6 +1357,15 @@ export async function bootBoardPage(): Promise<void> {
            `Plan.dc.html:4506`), checks included. */
         pageAdoptedPlans?.pending.set(data.selectedGoalId, proposal);
       } catch (error) {
+        /* P2 (DPS-1): the Host is stopping the affected work and will adopt
+           again by itself once it has stopped; the person clicks once. This is
+           not a failure, so no error reaches the page. */
+        if (error instanceof RouteReadError && error.code === 'busy'
+          && error.reason === 'stopping_affected_work') {
+          pendingAdoption = { goalId: data.selectedGoalId, proposal };
+          await refresh.reread();
+          return;
+        }
         /* §2.3: a revision conflict is shown and the page rereads; `busy` keeps
            its one-click retry text and does not reread. The stop behind `busy`
            still reaches the page as rereads, so that error carries `keep`: the
@@ -2372,6 +2368,11 @@ export async function bootBoardPage(): Promise<void> {
         }
       }
       view.updateProps(props);
+      /* P2: a Plan read is also the moment the waiting re-adoption checks the
+         affected Tasks; the page already shows the "采用中…" note. */
+      if (boardName === 'Plan' && snapshot.error === null && snapshot.data !== null) {
+        void reapplyAdoption(client, snapshot.data as PlanData, () => { void refresh.reread(); });
+      }
       scheduleLiveRunTimer(snapshot.data);
     },
     subscribe: (handlers, cursor) => subscribeChanges(tokenOf, handlers, cursor),
@@ -4603,6 +4604,62 @@ export async function readMain(
   return { data, cursor: navRead.cursor };
 }
 
+/** P2: the one Task row's phase in this read, or '' when the map has no row. */
+function taskPhaseOf(data: PlanData, taskId: string): string {
+  return data.tasks?.tasks.find((task) => task.definition.taskId === taskId)?.effectivePhase ?? '';
+}
+
+/** P2: the plan card's one "采用中…" sentence while the re-adoption waits. */
+function adoptNoteOf(data: PlanData, pending: { goalId: string; proposal: PlanProposalShape }): string {
+  const plan = data.plan;
+  if (data.selectedGoalId !== pending.goalId || plan === null || plan.proposal === null
+    || plan.proposal.ref.proposalId !== pending.proposal.ref.proposalId
+    || plan.proposal.revision !== pending.proposal.revision) return '';
+  const running = plan.delta.filter((row) => taskPhaseOf(data, row.ref) === 'running');
+  if (running.length === 0) return '采用中：受影响的执行已经停下，正在再采用一次。';
+  return '采用中：等' + running.map((row) => '「' + row.text + '」').join('') + '停下，停下后自动再采用一次。';
+}
+
+/** P2 (DPS-1): after a Plan read, adopt the waiting proposal again once none of
+ * the affected Tasks is running. A changed Goal or candidate drops the wait; a
+ * second `busy` keeps it for the next publish; any other failure goes to the
+ * composer's foot once, through `PlanData.adoptError`. */
+async function reapplyAdoption(client: ReturnType<typeof createHostClient>, data: PlanData,
+  reread: () => void): Promise<void> {
+  const pending = pendingAdoption;
+  if (pending === null || pendingAdoptionBusy) return;
+  const plan = data.plan;
+  if (data.selectedGoalId !== pending.goalId || plan === null || plan.proposal === null
+    || plan.proposal.ref.proposalId !== pending.proposal.ref.proposalId
+    || plan.proposal.revision !== pending.proposal.revision) {
+    pendingAdoption = null;
+    return;
+  }
+  if (plan.delta.some((row) => taskPhaseOf(data, row.ref) === 'running')) return;
+  const scope = data.scope;
+  if (scope === null || data.selectedGoalRevision === null) return;
+  pendingAdoptionBusy = true;
+  try {
+    committedRouteValue(await client.write('plans/apply', scope, {
+      input: { proposalRef: pending.proposal.ref, expectedProposalRevision: pending.proposal.revision, decisionRefs: [] },
+      meta: {
+        requestId: crypto.randomUUID(),
+        expected: [{ ref: { aggregateType: 'Goal' as const, projectId: scope.projectId, goalId: pending.goalId },
+          revision: data.selectedGoalRevision }],
+      },
+    }), 'plans/apply');
+    pageAdoptedPlans?.pending.set(pending.goalId, pending.proposal);
+    pendingAdoption = null;
+  } catch (error) {
+    if (error instanceof RouteReadError && error.code === 'busy' && error.reason === 'stopping_affected_work') return;
+    pendingAdoption = null;
+    pendingAdoptError = { text: planWriteTextOf(error), keep: error instanceof RouteReadError && error.code === 'busy' };
+  } finally {
+    pendingAdoptionBusy = false;
+  }
+  reread();
+}
+
 /**
  * E3 Plan A §2.2: the Plan read. The chrome is `readNav`'s one read; the centre
  * is the shared `readMainThread` (its first page only, no notice tokens); the
@@ -4651,8 +4708,20 @@ export async function readPlan(
     } catch (error) {
       /* `not_found` is "this request has no candidate"; any other failure only
          turns the plan card unconnected (M8), never the whole page. */
-      cand = { head: null, status: 'closed', impact: { marks: [] },
+      cand = { head: null, status: 'closed', impact: { marks: [] }, facts: null,
         error: !(error instanceof RouteReadError && error.code === 'not_found') };
+    }
+  }
+  /* P1: the selected candidate's diagnosis, review, taskbook and standard
+     change. A failed read only makes those rows say so; it never fails the page. */
+  if (cand !== null && cand.head !== null && nav.selectedGoalId !== null) {
+    try {
+      cand.facts = readyRouteValue<PlanCandidateFacts>(await client.post('decisions/candidate-card', scope, {
+        goalRef: { aggregateType: 'Goal', projectId: scope.projectId, goalId: nav.selectedGoalId },
+        proposalRef: cand.head.ref,
+      }), 'decisions/candidate-card');
+    } catch (error) {
+      logReadError(error);
     }
   }
   /* §2.2 step 4: the adopted versions; `not_found` is the empty page and any
@@ -4671,10 +4740,13 @@ export async function readPlan(
   }
   /* §2.4 step 7 (B1): the open right-panel tab; the panel starts on 任务图 (first read). */
   const aux = await readPageAux(client, boot, scope, nav, demand);
+  const adoptError = pendingAdoptError;
+  pendingAdoptError = null;
   const data = adaptPlan({
     main: adaptMain({ nav, ...thread, line: opened.line, requestFeedback: null, aux }),
-    pages: thread.pages, cand, versions,
+    pages: thread.pages, cand, versions, adoptNote: '', adoptError,
   });
+  if (pendingAdoption !== null) data.adoptNote = adoptNoteOf(data, pendingAdoption);
   /* The adopted card is the one the page just adopted: its proposal read
      (above) carries the draft the closed candidate no longer does. */
   if (nav.selectedGoalId !== null) {
@@ -5435,12 +5507,12 @@ function planWriteTextOf(error: unknown): string {
     return '这个任务已经满足，处置不能再改。';
   }
   if (code === 'invalid' && reason.includes('no longer has a valid active required carrier')) {
-    return '它是这项要求唯一的承担者。延后或取消前要先加一个新的承担者：在主对话里请参谋改计划。';
+    return '它是这项要求唯一的承担者。延后或取消前要先加一个新的承担者：告诉秘书，秘书会起草新的计划。';
   }
   if (code === 'invalid' && reason.includes('source gate task')) return '验收不能改。';
   if (code === 'invalid' && reason.includes('the Goal is cancelled')) return '目标已取消，计划不能再改。';
   if (code === 'revision_conflict' && reason.includes('is no longer a future task')) {
-    return '这个任务已经跑过，只能改处置；要换做法，在主对话里请参谋加一个替代任务。';
+    return '这个任务已经跑过，只能改处置；要换做法，告诉秘书，秘书会起草带替代任务的计划。';
   }
   if (code === 'revision_conflict') return '计划刚变过，等页面刷新后再点一次。';
   return writeTextOf(error);

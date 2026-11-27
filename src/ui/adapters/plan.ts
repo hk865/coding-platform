@@ -18,6 +18,9 @@ import { AUTONOMY_TEXT, goalTaskIdsOf, taskStageOf } from './goals.js';
 import { decideTextOf, goalControlsOf, type NavInbox } from './nav.js';
 import { gapTextOf } from './task-map.js';
 import {
+  askCheckDraftOf, candidateFactsOf, candidateStaleTextOf, subjectGoalId, type CandidateFactsRead,
+} from './decide.js';
+import {
   lastAnsweredRoundOf, requestRootKey, type MainData, type MainPageCursorV1, type MainPageV1, type MainRequestRead, type MainRoundRead,
 } from './main.js';
 
@@ -52,6 +55,8 @@ type PlanRoundRead = MainRoundRead & {
 type PlanRequestRead = Omit<MainRequestRead, 'rounds'> & {
   goalId: string | null;
   candidate: unknown | null;
+  /** D49-21: a request opened from a completed Goal's line names that Goal. */
+  source?: { goalRef: { goalId: string } };
   rounds: PlanRoundRead[];
 };
 
@@ -66,8 +71,16 @@ export type PlanGoalCard = {
   draft: {
     requestRoot: QueryJobRef; round: QueryJobRef; index: number;
     objective: string; completion: string[]; autonomyText: string;
+    /** D49-21: the completed Goal this request was opened from, when it names one. */
+    fromGoal: { ordinal: number | null; objective: string } | null;
   } | null;
   confirmed: { text: string }[];
+};
+
+/** `decisions/candidate-card`'s value as the Plan page reads it: A1's four
+ * facts plus the card's own status and stale reason. */
+export type PlanCandidateFacts = CandidateFactsRead & {
+  card: { candidateStatus: string | null; staleReason: string | null };
 };
 
 export type PlanCandidateRead = {
@@ -75,6 +88,8 @@ export type PlanCandidateRead = {
   status: 'candidate' | 'stale' | 'closed';
   impact: { marks: { taskId: string; change: 'changed' | 'cancelled' | 'superseded';
     after: { task: { title: string } } }[] };
+  /** P1: null when the candidate-card read failed; the card then says so per row. */
+  facts: PlanCandidateFacts | null;
   error: boolean;
 };
 
@@ -87,6 +102,14 @@ export type PlanDoc = {
   live: boolean;
   error: boolean;
   stText: string;
+  /** P1: the selected candidate's diagnosis, review, taskbook and standard change. */
+  facts: { k: string; v: string }[];
+  /** P1: `plans/request-candidate` says stale, or the candidate card does. */
+  stale: boolean;
+  /** P1: the reason word for a stale candidate; the adopt button's title. */
+  staleText: string;
+  /** P1: the foot is drawn for a live or a stale candidate (lead 1 乙). */
+  foot: boolean;
   hasDelta: boolean;
   delta: { dm: 'changed' | 'cancelled' | 'superseded'; text: string; ref: string }[];
   ideas: { title: string; detail: string }[];
@@ -102,6 +125,7 @@ export type PlanVersionRow = { revision: number; at: string; reasonLabel: string
  * and keeps its tasks and checks on the read-only card. */
 export function adoptedPlanDoc(doc: PlanDoc, proposal: PlanProposalShape): PlanDoc {
   return { ...doc, proposal, live: false, selectable: false, stText: '已采用',
+    facts: [], stale: false, staleText: '', foot: false,
     tasks: tasksOf(proposal.draft), checks: planChecksOf(proposal.draft) };
 }
 
@@ -117,7 +141,13 @@ export type PlanData = MainData & {
   goalCard: PlanGoalCard;
   plan: PlanDoc | null;
   versions: PlanVersionRow[];
-  gaps: { taskId: string; text: string }[];
+  gaps: { taskId: string; text: string; draft: string }[];
+  /** P4: this Goal's `plan_notice` lines, already the page's words. */
+  planNotices: string[];
+  /** P2: the auto re-adoption's one-shot failure, written to the composer foot. */
+  adoptError: { text: string; keep: boolean } | null;
+  /** P2: "采用中…" on the plan card's foot while a re-adoption waits. */
+  adoptNote: string;
   inbox: NavInbox & { local: boolean; remote: boolean };
   gb: { canPause: boolean; canResume: boolean; canCancel: boolean; canRequeue: boolean };
 };
@@ -125,8 +155,9 @@ export type PlanData = MainData & {
 /** The one gap word the Plan page draws; the phrase stays in `gapTextOf`'s table. */
 const UNCOVERED_TEXT = gapTextOf(['uncovered_requirement']);
 
-/** 121-147: an active Task whose failure round has no check covering a
- * required requirement is a current-state note on the conversation's tail. No
+/** 121-147/121-171: an active Task whose failure round has no check covering a
+ * required requirement is a current-state note on the conversation's tail. The
+ * row keeps only the fact; its button prefills the composer with `draft`. No
  * other gap code belongs here. */
 function gapsOf(tasks: MainData['tasks']): PlanData['gaps'] {
   if (tasks === null) return [];
@@ -137,15 +168,15 @@ function gapsOf(tasks: MainData['tasks']): PlanData['gaps'] {
     if (!Array.isArray(codes) || !codes.includes('uncovered_requirement')) continue;
     gaps.push({
       taskId: task.definition.taskId,
-      text: '缺项：' + task.definition.title + '：' + UNCOVERED_TEXT
-        + '。要补检查，在主对话里说，参谋会起草带新检查的计划。',
+      text: '缺项：' + task.definition.title + '：' + UNCOVERED_TEXT + '。',
+      draft: askCheckDraftOf(task.definition.title),
     });
   }
   return gaps;
 }
 
 /** §2.7: the newest round carrying goal-card drafts, and its request root. */
-function goalCardOf(pages: readonly MainPageRead[]): PlanGoalCard {
+function goalCardOf(pages: readonly MainPageRead[], goals: MainData['goals']): PlanGoalCard {
   for (const page of pages) {
     for (const request of page.requests) {
       for (let index = request.rounds.length - 1; index >= 0; index -= 1) {
@@ -155,6 +186,8 @@ function goalCardOf(pages: readonly MainPageRead[]): PlanGoalCard {
           .filter((row) => row.confirmedGoalRef !== null)
           .map((row) => ({ text: '已确认目标卡，自治档位：' + AUTONOMY_TEXT[row.draft.autonomy] }));
         const first = round.goalCardDrafts.find((row) => row.confirmedGoalRef === null) ?? null;
+        const sourceId = request.source?.goalRef.goalId ?? '';
+        const source = sourceId === '' ? undefined : goals.find((goal) => goal.goalId === sourceId);
         return {
           draft: first === null ? null : {
             requestRoot: request.requestRoot,
@@ -163,6 +196,7 @@ function goalCardOf(pages: readonly MainPageRead[]): PlanGoalCard {
             objective: first.draft.objective,
             completion: first.draft.completion,
             autonomyText: AUTONOMY_TEXT[first.draft.autonomy],
+            fromGoal: source === undefined ? null : { ordinal: source.ordinal, objective: source.objective },
           },
           confirmed,
         };
@@ -185,8 +219,68 @@ export function ideasRoundOf(pages: readonly MainPageRead[]): { request: PlanReq
   return null;
 }
 
-export function planChecksOf(draft: PlanRevisionDraft): { k: string; v: string }[] {
-  const checks: { k: string; v: string }[] = [];
+/** P4: one `plan_notice` summary in the page's words. The three shapes the
+ * server writes today are rewritten without machine prefixes, task ids, route
+ * names or duty codes; any other shape draws nothing rather than the raw text. */
+export function planNoticeTextOf(summary: string): string {
+  if (summary.startsWith('阶段 ')) return stageNoticeTextOf(summary);
+  if (summary.includes('usage:') && summary.includes('lines:')) return deviationNoticeTextOf(summary);
+  const noLine = /^任务 \S+「(.+?)」的检查已跑完，执行结果审阅在等：/.exec(summary);
+  if (noLine !== null) return '任务 ' + noLine[1]! + '的检查已跑完，执行结果审阅在等；项目里没有审阅线。';
+  return '';
+}
+
+/** One token reading in the page's words. The server writes `1200000` and
+ * `at least 900000, incomplete` in deviation summaries; stage summaries write
+ * the same reading as `至少 900000，不全`. `unknown`, a reason tail and any
+ * unreadable value are `未知`, never the English reason. */
+function tokenReadingOf(raw: string): string {
+  const text = raw.trim();
+  const english = /^(at least )?(\d+)(, incomplete)?$/.exec(text);
+  if (english !== null) {
+    return (english[1] === undefined ? '' : '至少 ') + english[2]! + ' token'
+      + (english[3] === undefined ? '' : '（不全）');
+  }
+  const chinese = /^至少 (\d+)，不全$/.exec(text);
+  if (chinese !== null) return '至少 ' + chinese[1]! + ' token（不全）';
+  return '未知';
+}
+
+/** Stage end: keep the three readings and the rework count; drop the stage and
+ * task ids, the next stage's size classes and the over-line tail. */
+function stageNoticeTextOf(summary: string): string {
+  const parts = summary.split(' · ');
+  const after = (prefix: string): string => {
+    const part = parts.find((entry) => entry.startsWith(prefix));
+    return part === undefined ? '' : part.slice(prefix.length);
+  };
+  const token = after('token ');
+  const growth = after('增长 ');
+  const lines = after('行数 ');
+  if (token === '' || growth === '' || lines === '') return '';
+  const rework = after('返工 ');
+  /* A line reading has no added/deleted counts; an unknown one drops the
+     server's English reason the same way the tokens do. */
+  const lineText = lines.startsWith('未知') ? '未知' : lines;
+  return '阶段结束：用量 ' + tokenReadingOf(token) + '，增长 ' + tokenReadingOf(growth) + '，改了 ' + lineText + '。'
+    + (rework === '' ? '' : '返工 ' + rework + '。');
+}
+
+/** Deviation: the two readings plus the adviser's own words. A summary whose
+ * numbers cannot be read is the one fixed sentence, never the raw prefixes. */
+function deviationNoticeTextOf(summary: string): string {
+  const usage = /usage: ([^;\n]+); growth: ([^\n]+)/.exec(summary);
+  const lines = /lines: (at least )?(\d+) \(added (\d+), deleted (\d+)\)(, incomplete)?/.exec(summary);
+  if (usage === null || lines === null) return '偏差的读数暂时读不到。';
+  const humanAt = summary.indexOf(' · 参谋不改计划 · ');
+  const human = humanAt < 0 ? '' : summary.slice(humanAt + ' · 参谋不改计划 · '.length).trim();
+  return '偏差：用量 ' + tokenReadingOf(usage[1]!) + '，增长 ' + tokenReadingOf(usage[2]!) + '，改了 '
+    + (lines[1] === undefined ? '' : '至少 ') + lines[2]! + ' 行（新增 ' + lines[3]! + '、删除 ' + lines[4]! + '）'
+    + (lines[5] === undefined ? '' : '，不全')
+    + (human === '' ? '' : '；参谋不改计划：' + human);
+}
+
+export function planChecksOf(draft: PlanRevisionDraft): { k: string; v: string }[] {  const checks: { k: string; v: string }[] = [];
   for (const obligation of draft.obligations) {
     if (obligation.verificationRequirements.length === 0) checks.push({ k: obligation.title, v: '' });
     for (const requirement of obligation.verificationRequirements) {
@@ -218,7 +312,7 @@ export function tasksOf(draft: PlanRevisionDraft): { name: string; items: { task
 }
 
 /** §2.2 step 3/§2.8: the shown candidate and its request. */
-function planOf(pages: readonly MainPageRead[], cand: PlanCandidateRead | null): PlanDoc | null {
+function planOf(pages: readonly MainPageRead[], cand: PlanCandidateRead | null, nav: MainData): PlanDoc | null {
   const found = ideasRoundOf(pages);
   if (found === null) return null;
   const { request, round } = found;
@@ -227,7 +321,12 @@ function planOf(pages: readonly MainPageRead[], cand: PlanCandidateRead | null):
   const askRound = lastAnsweredRoundOf(request) ?? round.ref;
   const proposal = cand?.head ?? null;
   const error = cand?.error === true;
-  const live = !error && cand?.status === 'candidate' && proposal?.status === 'candidate';
+  /* P1: the card's own status decides the stale reason; `plans/request-candidate`
+     alone keeps the old sentence (the card read can fail on its own). */
+  const cardStale = cand?.facts?.card.candidateStatus === 'stale';
+  const stale = cand?.status === 'stale' || cardStale;
+  const live = !error && !stale && cand?.status === 'candidate' && proposal?.status === 'candidate';
+  const staleText = cardStale ? candidateStaleTextOf(cand?.facts?.card.staleReason) : '已由新的一版取代';
   return {
     requestRoot: request.requestRoot,
     round: round.ref,
@@ -236,8 +335,11 @@ function planOf(pages: readonly MainPageRead[], cand: PlanCandidateRead | null):
     proposal,
     live,
     error,
-    stText: error ? '还没接通' : proposal === null ? '' : live ? '未采用'
-      : cand?.status === 'stale' ? '已由新的一版取代' : '',
+    stText: error ? '还没接通' : proposal === null ? '' : live ? '未采用' : stale ? staleText : '',
+    facts: cand === null ? [] : candidateFactsOf(cand.facts, proposal?.draft ?? null, nav),
+    stale,
+    staleText,
+    foot: live || stale,
     hasDelta: live && (cand?.impact.marks.length ?? 0) > 0,
     delta: (cand?.impact.marks ?? []).map((mark) => ({ dm: mark.change, text: mark.after.task.title, ref: mark.taskId })),
     ideas: round.ideas,
@@ -271,15 +373,23 @@ function inboxOf(main: MainData): PlanData['inbox'] {
 export function adaptPlan(input: {
   main: MainData; pages: MainPageRead[]; cand: PlanCandidateRead | null;
   versions: PlanVersionRow[];
+  adoptNote: string; adoptError: { text: string; keep: boolean } | null;
 }): PlanData {
   const main = input.main;
+  const notices = input.pages[0]?.notices ?? [];
   return {
     ...main,
     mapTaskIds: goalTaskIdsOf(main.tasks),
-    goalCard: goalCardOf(input.pages),
-    plan: planOf(input.pages, input.cand),
+    goalCard: goalCardOf(input.pages, main.goals),
+    plan: planOf(input.pages, input.cand, main),
     versions: input.versions,
     gaps: gapsOf(main.tasks),
+    planNotices: main.selectedGoalId === null ? [] : notices
+      .filter((notice) => notice.category === 'plan_notice' && subjectGoalId(notice.subject) === main.selectedGoalId)
+      .map((notice) => planNoticeTextOf(notice.summary))
+      .filter((text) => text !== ''),
+    adoptError: input.adoptError,
+    adoptNote: input.adoptNote,
     inbox: inboxOf(main),
     gb: goalControlsOf(main.selectedDisplay),
   };
@@ -328,6 +438,7 @@ export function candidateReadOf(value: unknown): PlanCandidateRead {
         };
       }),
     },
+    facts: null,
     error: false,
   };
 }

@@ -69,7 +69,7 @@ describe('E3U Main goal bar and rail', () => {
       expect(countRoute(log, 'goals/copy-draft')).toBe(1);
       expect(countRoute(log, 'goals/copy-confirm')).toBe(0);
       click(findButton(page.root, '复制成新目标')!);
-      /* 具名改坏: `copyGoal` 改调 `goals/control`；`goals/control` 零次红。 */
+      /* 具名改坏: `confirmCopy` 改调 `goals/control`；`goals/control` 零次红。 */
       await expect.poll(() => callsTo(log, 'goals/copy-confirm').filter((call) => call.reply !== undefined).length,
         { timeout: 8_000, interval: 25 }).toBe(1);
       expect((callsTo(log, 'goals/copy-confirm')[0]!.input as { selectedInterventions: unknown }).selectedInterventions)

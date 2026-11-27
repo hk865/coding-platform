@@ -64,6 +64,11 @@ export function gateChanges(log: PageLog): void {
   });
 }
 
+/** The cause code of one queue card (`source.key` is its JSON). */
+export function parsedCode(card: { source: { key?: string } }): unknown {
+  try { return (JSON.parse(String(card.source.key ?? '')) as { code?: unknown }).code; } catch { return undefined; }
+}
+
 export function routeOf(url: string): string {
   const at = url.indexOf(CORE);
   return at < 0 ? url : url.slice(at + CORE.length);

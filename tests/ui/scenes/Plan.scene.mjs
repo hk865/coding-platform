@@ -25,6 +25,83 @@ for (const request of MR.value.requests) for (const round of request.rounds) {
   if (id === 'scene-req-2') round.runRef = qr(id, 'scene-run-2');
   if (id === 'scene-req-3') round.runRef = qr(id, 'scene-run-3');
 }
+/* 4c: the selected candidate, its facts and the stale variant on the second Goal. */
+const TASKS = HAVE.routes['tasks/query'].value;
+const GAP_ROW = TASKS.tasks.find((task) => task.ref.taskId === 'scene-work-2');
+GAP_ROW.failure.round.gapCodes = ['uncovered_requirement'];
+GAP_ROW.failure.automation.verdict = { kind: 'stopped', reason: 'verification_uncovered', detail: {} };
+const DRAFT = {
+  ...structuredClone(TASKS.plan),
+  tasks: TASKS.tasks.map((task) => ({ ...task.definition })),
+  obligations: [{ obligationId: 'scene-ob', title: '场景验收', requirementLevel: 'required',
+    taskIds: TASKS.tasks.map((task) => task.ref.taskId),
+    verificationRequirements: [{ requirementId: 'scene-check', requirementLevel: 'required', kind: 'static',
+      description: 'npm run typecheck' }] }],
+};
+const CANDIDATE = {
+  ref: { aggregateType: 'PlanProposal', projectId: 'e3w-scene', workspaceId: 'e3w-scene', proposalId: 'scene-candidate' },
+  revision: 2, status: 'candidate', issues: [], draft: DRAFT,
+};
+const CANDIDATE_READ = (stale) => ({ status: 'ready', value: {
+  head: stale ? { ...CANDIDATE, status: 'stale' } : CANDIDATE, status: stale ? 'stale' : 'candidate',
+  closedReason: null, previous: null,
+  impact: { marks: [{ taskId: 'scene-work-2', change: 'changed', after: { task: { title: '改重叠文件二' } } }] },
+} });
+const CANDIDATE_FACTS = (stale) => ({ status: 'ready', value: {
+  card: { candidateStatus: stale ? 'stale' : 'candidate', staleReason: stale ? '来源已撤回' : null },
+  diagnosis: [{ obligationId: 'scene-ob', requirementId: 'scene-req', kind: 'static', code: 'no_registered_check',
+    message: '检查「scene static」还没有登记，采用后不会跑。' }],
+  exactReview: { status: 'ready', value: { status: 'decided', verdict: 'fix', findings: [
+    { taskId: 'scene-work-1', text: '改重叠文件一 要补一条检查' },
+    { taskId: null, text: '总述里写清谁改哪一段' },
+  ] } },
+  exportRead: { status: 'ready', stages: [
+    { state: 'written', stageId: 'S1', path: 'docs/taskbooks/scene-S1.md', bytes: 2048 },
+    { state: 'missing', stageId: 'S2', path: 'docs/taskbooks/scene-S2.md' },
+  ] },
+  standardChange: { status: 'ready', value: null },
+} });
+/* The completed-Goal request's source and the plan notice (a deviation summary). */
+const DONE_GOAL = {
+  ...HAVE.routes['goals/list'].value.goals[0],
+  ref: { ...HAVE.routes['goals/list'].value.goals[0].ref, goalId: 'scene-goal-done' },
+  ordinal: 4, objective: '场景已完成目标', order: 4,
+  activePlanRevision: null,
+  display: { phase: 'COMPLETED' },
+};
+const GOALS = {
+  ...HAVE.routes['goals/list'],
+  value: { ...HAVE.routes['goals/list'].value,
+    goals: [...HAVE.routes['goals/list'].value.goals, DONE_GOAL] },
+};
+const SOURCE_REQUEST = MR.value.requests.find((request) => request.requestRoot.queryJobId === 'scene-req-1');
+SOURCE_REQUEST.source = { goalRef: { goalId: DONE_GOAL.ref.goalId } };
+const PLAN_NOTICE = (goalId) => ({ itemKey: `deviation-notice:${goalId}:scene`, category: 'plan_notice',
+  subject: { kind: 'goal', goalRef: { aggregateType: 'Goal', projectId: 'e3w-scene', goalId } },
+  position: { kind: 'commit', cursor: 'c0000000002', itemKey: `deviation-notice:${goalId}:scene` },
+  summary: 'usage: 2100000; growth: 2100000\nlines: 21 (added 21, deleted 0)\nchanged files: src/ui/views.ts'
+    + ' · 参谋不改计划 · 场景：这一版不改计划', objects: [], rework: null });
+MR.value.notices.push(PLAN_NOTICE('scene-goal'));
+const MR2 = structuredClone(MR);
+MR2.value.goalId = 'scene-goal-2';
+MR2.value.notices = [PLAN_NOTICE('scene-goal-2')];
+/* The stop card the gap row's button also opens. */
+const UNCOVERED = {
+  cardKey: 'scene-uncovered', state: 'waiting_answer', readOnly: false, actions: ['answer'],
+  source: { kind: 'goal_cause', key: JSON.stringify({ code: 'verification_uncovered' }),
+    subject: { kind: 'goal', goalRef: { aggregateType: 'Goal', projectId: 'e3w-scene', goalId: 'scene-goal' } },
+    pins: [{ ref: { aggregateType: 'Goal', projectId: 'e3w-scene', goalId: 'scene-goal' }, revision: 1 }] },
+  subject: { kind: 'goal', goalRef: { aggregateType: 'Goal', projectId: 'e3w-scene', goalId: 'scene-goal' } },
+  senderSessionRef: null, requestRef: null, objects: [], options: [], answerMessageRef: null, answer: null,
+  application: null, candidateStatus: null, staleReason: null, closedReason: null,
+  openedAt: '2026-11-07T00:50:00.000Z',
+  taskRef: { projectId: 'e3w-scene', goalId: 'scene-goal', taskId: 'scene-work-2' }, runRef: null,
+};
+HAVE.routes['decisions/queue'].value.waitingAnswer.push(UNCOVERED);
+HAVE.routes['decisions/queue'].value.counts.waitingAnswer += 1;
+MR.value.cards.push(UNCOVERED);
+MR2.value.cards.push({ ...UNCOVERED, subject: { kind: 'goal', goalRef: { aggregateType: 'Goal', projectId: 'e3w-scene', goalId: 'scene-goal-2' } } });
+
 const LIVE = HAVE.routes['executions/steps'];
 const ENDED = { status: 'ready', value: { kind: 'steps',
   summary: { startedAt: '2026-11-07T08:30:00+08:00', lastAt: '2026-11-07T08:34:00+08:00', live: false, reads: 2,
@@ -51,11 +128,19 @@ const RUNNING = {
 
 export const scene = {
   now: HAVE.now,
-  routes: { ...HAVE.routes, 'main/read': MR },
+  routes: { ...HAVE.routes, 'main/read': MR, 'goals/list': GOALS },
   reply(route, input) {
     const line = LINE.reply(route, input);
     if (line !== undefined) return line;
-    if (route === 'main/read') return MR;
+    if (route === 'goals/list') return GOALS;
+    if (route === 'main/read') return input?.goalId === 'scene-goal-2' ? MR2 : MR;
+    if (route === 'plans/request-candidate') {
+      return input?.goalRef?.goalId === 'scene-goal-2' ? CANDIDATE_READ(true) : CANDIDATE_READ(false);
+    }
+    if (route === 'decisions/candidate-card') {
+      return input?.goalRef?.goalId === 'scene-goal-2' ? CANDIDATE_FACTS(true) : CANDIDATE_FACTS(false);
+    }
+    if (route === 'plans/apply') return { status: 'rejected', code: 'busy', reason: 'stopping_affected_work' };
     if (route === 'executions/steps') {
       const run = input?.ref?.runId;
       if (run === 'scene-run-2') return input.after === 7 ? MORE : ENDED;

@@ -557,9 +557,9 @@ export function conversationOf(pages: readonly MainPageV1[], nav: NavData): Main
         }));
       } else if (round.status === 'ended' && round.closeMessage !== null) {
         /* §2.4: a failed secretary round is still the secretary's line, never a
-           system line; a null `closeCode` leaves only the message. */
+           system line; the page shows the message alone, the code stays in logs. */
         rows.push(logRowOf(root, {
-          text: round.closeCode === null ? round.closeMessage : round.closeCode + ': ' + round.closeMessage,
+          text: round.closeMessage,
           isAgent: true,
           round: round.ref,
           selectable,

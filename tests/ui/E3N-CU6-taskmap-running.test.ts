@@ -14,8 +14,9 @@ import {
 } from './helpers/boot-page.js';
 import { FakeElement } from './helpers/dom.js';
 import { click, hover, pressKey } from './helpers/E3N-interact.js';
+import { typeInto } from './helpers/E3D-page.js';
 import {
-  bootE3N, callsTo, countRoute, quietPage, routesSince, textOf, waitFor, type PageLog,
+  bootE3N, callsTo, countRoute, hasClass, parsedCode, quietPage, routesSince, textOf, waitFor, type PageLog,
 } from './helpers/E3N-page.js';
 import { openStuckRunWorld } from './helpers/E3U-stuck-run-world.js';
 import { DONE_TASK_A, DONE_TASK_B, openDoneDeliveryWorld } from './helpers/E3DN-done-world.js';
@@ -29,6 +30,8 @@ import { plain } from '../helpers/AG2b-collaboration-fixture.js';
 import { openP1World } from '../helpers/P1-round-fixture.js';
 import { write } from '../helpers/P1-reads.js';
 import { waitFor as waitForRoute } from '../scenarios/harness.js';
+import { heartbeatUntil } from '../helpers/IV-host-fixture.js';
+import type { DecisionQueueReadV1 } from '../../src/core/work-graph/model/decision-contracts.js';
 import { relationGroup } from './helpers/E3A-page.js';
 import { dayCalendar, hourCalendar, hourCell, sceneData, sceneView, type Row } from './helpers/e35-scene.js';
 
@@ -238,7 +241,94 @@ describe('CU6 task graph: running command, 停止, gaps, 更多, optional and th
       await quietPage(plan.log);
       const last = findAllClass(plan.page.root, 'sys-line').at(-1)!;
       expect(textOf(last).startsWith('缺项：cu6r4-work：没有检查覆盖的必需要求'), textOf(last)).toBe(true);
-      expect(textOf(last)).toContain('在主对话里说');
+      expect(textOf(last)).not.toContain('在主对话里说');
+      expect(textOf(last)).not.toContain('参谋');
+      /* ⑥ 121-171: the row's button prefills the composer and sends nothing. */
+      const input = (): FakeElement | undefined => findElement(plan.page.root,
+        (element) => element.getAttribute('id') === 'plan-input');
+      const submits = countRoute(plan.log, 'requests/submit');
+      const asks = countRoute(plan.log, 'requests/ask');
+      click(findButton(last, '让秘书补检查')!);
+      const prefill = '给任务“cu6r4-work”补一个检查，覆盖它还没有检查的必需要求：';
+      await waitFor(() => input()?.value === prefill);
+      expect(document.activeElement).toBe(input());
+      await quietPage(plan.log);
+      /* 具名改坏: 按钮自己发 `requests/submit`；这两句红。 */
+      expect(countRoute(plan.log, 'requests/submit')).toBe(submits);
+      expect(countRoute(plan.log, 'requests/ask')).toBe(asks);
+      /* 具名改坏: 预填覆盖人已经写的话；这一句红。 */
+      typeInto(plan.page.root, 'plan-input', '先查登录');
+      click(findButton(last, '让秘书补检查')!);
+      await waitFor(() => input()?.value === '先查登录');
+      /* Start ⑦ from an empty composer: the button never overwrites words. */
+      typeInto(plan.page.root, 'plan-input', '');
+
+      /* ⑦ 121-171: the same button on the verification_uncovered stop card. The
+         card is inferred from the code path (no other row runs it), so a world
+         that never reaches it skips this half instead of inventing one. */
+      const stopQueue = async (): Promise<DecisionQueueReadV1> => {
+        const body = (await w.world.post('decisions/queue', plain(S6A_SCOPE, {
+          workspace: S6A_SCOPE, goalRef: goal, sections: ['waiting_answer'], page: { limit: 100 },
+        }))).body as { value?: DecisionQueueReadV1 };
+        return body.value as DecisionQueueReadV1;
+      };
+      const stopRead = await heartbeatUntil(w.world, stopQueue, (queue) => queue.waitingAnswer.some((entry) =>
+        entry.source.kind === 'goal_cause' && entry.taskRef?.taskId === 'cu6r4-work'
+        && parsedCode(entry) === 'verification_uncovered'), 600);
+      /* The world does reach this card (the run above shows it); the row must
+         not pass by skipping it. */
+      expect(stopRead.waitingAnswer.some((entry) => entry.source.kind === 'goal_cause'
+        && entry.taskRef?.taskId === 'cu6r4-work' && parsedCode(entry) === 'verification_uncovered')).toBe(true);
+      {
+        const stopCardOf = (root: FakeElement): FakeElement | undefined => findElement(root,
+          (element) => element.tagName.toLowerCase() === 'section' && hasClass(element, 'decision'));
+        const titleOf = (root: FakeElement): string => textOf(findClass(stopCardOf(root)!, 'dc-title'));
+        const openStop = async (root: FakeElement): Promise<void> => {
+          click(findClass(root, 'gb-decide')!);
+          await waitFor(() => stopCardOf(root) !== undefined);
+          for (let i = 0; i < 12 && !titleOf(root).includes('没有覆盖验收的检查'); i += 1) {
+            const before = titleOf(root);
+            click(findElement(stopCardOf(root)!, (element) => element.tagName.toLowerCase() === 'button'
+              && element.getAttribute('aria-label') === '下一条')!);
+            await waitFor(() => titleOf(root) !== before);
+          }
+          expect(titleOf(root)).toContain('没有覆盖验收的检查');
+        };
+        const stopPrefill = '给任务“cu6r4-work”补一个检查，覆盖它还没有检查的必需要求：';
+        await openStop(plan.page.root);
+        const primary = findButton(stopCardOf(plan.page.root)!, '让秘书补检查');
+        expect(primary).toBeDefined();
+        expect(primary!.getAttribute('aria-disabled')).not.toBe('true');
+        click(findButton(stopCardOf(plan.page.root)!, '详情')!);
+        await waitFor(() => textOf(stopCardOf(plan.page.root)!).includes('要补检查，告诉秘书要查什么，秘书会起草带新检查的计划'));
+        const planSubmits = countRoute(plan.log, 'requests/submit');
+        click(findButton(stopCardOf(plan.page.root)!, '让秘书补检查')!);
+        await waitFor(() => input()?.value === stopPrefill);
+        expect(document.activeElement).toBe(input());
+        await quietPage(plan.log);
+        expect(countRoute(plan.log, 'requests/submit')).toBe(planSubmits);
+        await plan.page.restore();
+
+        const main = await bootE3N(w.world, 'Main', { search: '?goal=' + goal.goalId, mode: 'controlled' });
+        try {
+          await waitFor(() => findAllClass(main.page.root, 'sys-line').length > 0 || findClass(main.page.root, 'goalbar') !== undefined);
+          await quietPage(main.log);
+          await openStop(main.page.root);
+          const mainPrimary = findButton(stopCardOf(main.page.root)!, '让秘书补检查');
+          expect(mainPrimary).toBeDefined();
+          expect(mainPrimary!.getAttribute('aria-disabled')).not.toBe('true');
+          const composer = (): FakeElement | undefined => findElement(main.page.root,
+            (element) => element.getAttribute('id') === 'composer-input');
+          const mainSubmits = countRoute(main.log, 'requests/submit');
+          click(mainPrimary!);
+          await waitFor(() => composer()?.value === stopPrefill);
+          expect(document.activeElement).toBe(composer());
+          await quietPage(main.log);
+          expect(countRoute(main.log, 'requests/submit')).toBe(mainSubmits);
+        } finally {
+          await main.page.restore();
+        }
+      }
     } finally {
       await plan.page.restore();
     }

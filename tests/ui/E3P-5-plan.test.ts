@@ -112,7 +112,7 @@ describe('E3P Plan plan card', () => {
       const rows = delta === undefined ? [] : descendants(delta).filter((element) => element.tagName.toLowerCase() === 'li');
       expect(rows.length).toBe(1);
       /* 具名改坏: 用 `previous` 比两版草稿；这一句红。 */
-      expect(textOf(findClass(rows[0]!, 'dm'))).toBe('changed');
+      expect(textOf(findClass(rows[0]!, 'dm'))).toBe('~');
       expect(textOf(descendants(rows[0]!).find((element) => isButton(element) && hasClass(element, 'pd-ref')))).toBe('PA work v2');
       click(section(card, '任务')!);
       click(section(planCard(page.root)!, '检查')!);

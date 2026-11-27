@@ -86,8 +86,26 @@ const candidateGoal = QUEUE_BASE.value.waitingAnswer[0].source.pins.find((pin) =
 const candidates = candidateScene(candidateGoal, HAVE.routes.bootstrap.workspaces[0].scope.workspaceId);
 QUEUE_BASE.value.waitingAnswer = QUEUE_BASE.value.waitingAnswer.filter((card) => !card.cardKey.startsWith('scene-card-4a'));
 QUEUE_BASE.value.counts.waitingAnswer = QUEUE_BASE.value.waitingAnswer.length;
-// Goal 2 opens on a conflict. Both paths are leaves in the Main catalog.
 const [firstGoal, secondGoal] = HAVE.routes['goals/list'].value.goals;
+/* 4c: the verification_uncovered stop card for the Task whose round has the gap. */
+const MAIN_TASKS = HAVE.routes['tasks/query'].value;
+const MAIN_GAP = MAIN_TASKS.tasks.find((task) => task.ref.taskId === 'scene-work-2');
+MAIN_GAP.failure.round.gapCodes = ['uncovered_requirement'];
+MAIN_GAP.failure.automation.verdict = { kind: 'stopped', reason: 'verification_uncovered', detail: {} };
+const MAIN_UNCOVERED = {
+  cardKey: 'scene-uncovered', state: 'waiting_answer', readOnly: false, actions: ['answer'],
+  source: { kind: 'goal_cause', key: JSON.stringify({ code: 'verification_uncovered' }),
+    subject: { kind: 'goal', goalRef: firstGoal.ref },
+    pins: [{ ref: firstGoal.ref, revision: firstGoal.revision }] },
+  subject: { kind: 'goal', goalRef: firstGoal.ref }, senderSessionRef: null, requestRef: null,
+  objects: [], options: [], answerMessageRef: null, answer: null, application: null,
+  candidateStatus: null, staleReason: null, closedReason: null, openedAt: '2026-11-07T00:50:00.000Z',
+  taskRef: { projectId: firstGoal.ref.projectId, goalId: firstGoal.ref.goalId, taskId: 'scene-work-2' }, runRef: null,
+};
+QUEUE_BASE.value.waitingAnswer.push(MAIN_UNCOVERED);
+QUEUE_BASE.value.counts.waitingAnswer = QUEUE_BASE.value.waitingAnswer.length;
+MR.value.cards.push(MAIN_UNCOVERED);
+// Goal 2 opens on a conflict. Both paths are leaves in the Main catalog.
 const workspace = HAVE.routes.bootstrap.workspaces[0].scope;
 const conflictSubject = { kind: 'goal', goalRef: secondGoal.ref };
 const conflictKey = 'scene-goal-files';

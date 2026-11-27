@@ -6,7 +6,7 @@ import { g8Check, g8NewGoal, g8PlanCall, g8PlanForm, openG8Project } from '../he
 import { G8B_ROLE } from '../helpers/G8B-world.js';
 import { heartbeatUntil } from '../helpers/IV-host-fixture.js';
 import { click } from './helpers/E3N-interact.js';
-import { bootE3N, callsOf, count, descendants, hasClass, openedPage, quietPage, textOf } from './helpers/E3N-page.js';
+import { bootE3N, callsOf, count, descendants, hasClass, openedPage, parsedCode, quietPage, textOf } from './helpers/E3N-page.js';
 import { card, cardButton, cardFacts, factOf, isOff, sectionRows, settle, stepConfirm, typeInto } from './helpers/E3D-page.js';
 
 /**
@@ -18,9 +18,6 @@ const cleanup: (() => Promise<void>)[] = [];
 afterEach(async () => { await Promise.allSettled(cleanup.splice(0).reverse().map((close) => close())); });
 const PASSES = 600;
 
-const parsedCode = (card: { source: { key?: string } }): unknown => {
-  try { return (JSON.parse(String(card.source.key ?? '')) as { code?: unknown }).code; } catch { return undefined; }
-};
 const evidenceFacts = (root: Parameters<typeof sectionRows>[0]): Record<string, string> => {
   const open = card(root);
   const list = open === undefined ? undefined : descendants(open).find((element) => hasClass(element, 'dc-facts')
@@ -110,7 +107,7 @@ it('② a refused re-verify keeps the step with the reason and the exit fact', a
     click(stepConfirm(page.root)!);
     await settle(() => callsOf(log, 'verification/reverify').some((call) => call.reply !== undefined), 10_000);
     await settle(() => (textOf(card(page.root)!) || '').includes('没有重新检查：'), 3_000);
-    expect(textOf(card(page.root)!)).toContain('没有重新检查：没有检查覆盖必需的要求。要补检查，在主对话里说，参谋会起草带新检查的计划；你采用以后再重新检查。');
+    expect(textOf(card(page.root)!)).toContain('没有重新检查：没有检查覆盖必需的要求。要补检查，告诉秘书要查什么，秘书会起草带新检查的计划；你采用以后再重新检查。');
     expect(textOf(card(page.root)!)).not.toContain('写入失败。');
     expect(count(log, 'settings/checks/withdraw')).toBe(1);
     expect(count(log, 'verification/reverify')).toBe(1);
@@ -133,7 +130,7 @@ it('② a refused re-verify keeps the step with the reason and the exit fact', a
     click(cardButton(page.root, '详情')!);
     await settle(() => factOf(page.root, '最近重新检查被拒绝') !== undefined, 3_000);
     expect(factOf(page.root, '最近重新检查被拒绝')).toContain('人工重新检查被拒绝：没有检查覆盖必需的要求');
-    expect(factOf(page.root, '出路')).toBe('要补检查，在主对话里说，参谋会起草带新检查的计划');
+    expect(factOf(page.root, '出路')).toBe('要补检查，告诉秘书要查什么，秘书会起草带新检查的计划');
     const main = cardButton(page.root, '撤回这些检查并重新检查');
     expect(isOff(main)).toBe(true);
     expect(main!.getAttribute('title')).toBe('没有检查覆盖这条要求，再点也会被拒；先按详情里的出路加检查');

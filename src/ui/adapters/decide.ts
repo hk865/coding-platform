@@ -304,6 +304,8 @@ export type DecideAct = {
   tip: string;
   /** 说明框的话进这一步的哪一栏；null 表示不随这次操作发出。 */
   wordsField: 'note' | 'reason' | null;
+  /** 只有 speak 带；计划页和主对话的“让秘书补检查”用它预填输入框。 */
+  draft?: string;
 };
 
 export type DecideActionKey =
@@ -342,6 +344,18 @@ export function reworkRefusalWordOf(code: string): string {
   return REWORK_REFUSAL_WORD[code] ?? '';
 }
 
+/** 121-171: the way out when no check covers a required requirement, the same
+ * sentence on every page (it is also drawn on the Plan page and Main). The
+ * request goes to the secretary (decision 37); where Decide goes is the
+ * button's own words. */
+const ASK_CHECK_EXIT = '要补检查，告诉秘书要查什么，秘书会起草带新检查的计划';
+
+/** 121-171: the sentence "让秘书补检查" prefills into the composer. The person
+ * adds what to check and sends it; the platform never sends it for them. */
+export function askCheckDraftOf(taskTitle: string): string {
+  return '给任务“' + taskTitle + '”补一个检查，覆盖它还没有检查的必需要求：';
+}
+
 /** Y6 (a): one committed policy refusal as a sentence. `rework` is the Task
  * row's `rework` summary, read only to name the earlier requeue (`matchedRequeueRef`). */
 export function reworkRefusalTextOf(
@@ -367,8 +381,7 @@ export function reworkRefusalTextOf(
   }
   if (code === 'source_unchanged') return '没有重新检查：源码自上一轮以来没有变化。先改文件再验收。';
   if (code === 'verification_uncovered') {
-    return '没有重新检查：没有检查覆盖必需的要求。要补检查，在主对话里说，参谋会起草带新检查的计划；'
-      + '你采用以后再重新检查。';
+    return '没有重新检查：没有检查覆盖必需的要求。' + ASK_CHECK_EXIT + '；你采用以后再重新检查。';
   }
   if (code === 'auto_rework_cap_reached') return '没有重新检查：已达自动返工上限。';
   return '没有重新检查：' + (reworkRefusalWordOf(code) || '没有通过') + '。';
@@ -623,7 +636,7 @@ export function factsOf(row: Record<string, unknown>, checkRows?: Record<string,
   const lastReverify = asRecord(automation.lastReverifyRefusal);
   if (rows.exit !== false && (stopReason === 'verification_uncovered'
     || (asText(lastReverify.code) === 'verification_uncovered' && lastReverify.stale !== true))) {
-    out.push({ k: '出路', v: '要补检查，在主对话里说，参谋会起草带新检查的计划' });
+    out.push({ k: '出路', v: ASK_CHECK_EXIT });
   }
   return out;
 }
@@ -1160,7 +1173,7 @@ function actsOf(
     } else if (stop === 'gate_needs_fix') {
       add('fix', '添加修复任务', 'fix', true);
     } else if (stop === 'verification_uncovered') {
-      add('speak', '去主对话说', null, true, { tip: '说明框里的话不随这次发出' });
+      add('speak', '去主对话说', null, true, { tip: '说明框里的话不随这次发出', draft: askCheckDraftOf(taskNameOf(row)) });
     } else if (stop === 'budget_exhausted') {
       if (!gate) {
         add('defer', '延后任务', 'defer', false);

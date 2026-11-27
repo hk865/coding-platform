@@ -1874,6 +1874,10 @@ textarea.dc-input { min-height: 52px; }
 </div>
 </x-dc>
 <script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","options":["dark","light"],"default":"dark"},"scale":{"editor":"enum","options":["40 个任务","600 个任务"],"default":"40 个任务"},"goalsHref":{"default":"Goals.dc.html"},"$preview":{"width":1440,"height":900}}'>
+/* 121-171: what "让秘书补检查" does. The visible words already say it; the title
+   only adds what happens after the person adds what to check and sends it. */
+const ASK_CHECK_TIP = '在下面的输入框里预填一句，你补上要查什么再发；秘书会起草带新检查的计划，采用后生效。';
+
 class Component extends DCLogic {
   constructor(...args) {
     super(...args);
@@ -1927,6 +1931,21 @@ class Component extends DCLogic {
     }
   }
 
+  /* 121-171: "让秘书补检查" hands the sentence to this page's composer without
+     sending it. It closes the overlays that cover the composer and drops the
+     pending change/ask state, so sending goes through `askSecretary`. Words
+     already in the composer are kept; the caret is placed after the redraw. */
+  askCheckInComposer(draft) {
+    const s = this.state || {};
+    this._focusInput = true;
+    this.setState({
+      dcOpen: false, facts: false, confirmCancel: false, copyOpen: false, pane: 'chat',
+      editingRound: null, askCardKey: '', askRef: '', askSq: '',
+      draft: String(s.draft || '').trim() === '' ? draft : s.draft
+    });
+  }
+
+
   componentDidUpdate(prev) {
     const s = this.state || {};
     if (prev && prev.theme !== this.props.theme && s.theme) this.setState({ theme: null });
@@ -1959,6 +1978,11 @@ class Component extends DCLogic {
     if (prev && prev.scale !== this.props.scale) {
       const R = s.line ? this.railLines() : null; const known = !!R && R.rows.concat(R.archived).some((r) => r.id === s.line);
       this.setState(this.mapReset(Object.assign({ ptab: /^x\d+$/.test(s.ptab || '') ? 'task' : (s.ptab || 'task') }, s.line && !known ? this.lvLeave() : {})));
+    }
+    if (this._focusInput) {
+      this._focusInput = false;
+      const input = document.getElementById('composer-input');
+      if (input) input.focus();
     }
   }
 
@@ -4018,7 +4042,8 @@ class Component extends DCLogic {
       const same = decideRows.filter((r) => r.level === row.level);
       const k = same.indexOf(row);
       const adopt = v !== null && v.primary !== null && v.primary.key === 'adopt';
-      const stepPrimary = v !== null && v.primary !== null && v.primary.key !== 'answer' && !adopt;
+      const speak = v !== null && v.primary !== null && v.primary.key === 'speak';
+      const stepPrimary = v !== null && v.primary !== null && v.primary.key !== 'answer' && !adopt && !speak;
       const isChoice = !!v && !v.readOnly && v.options.length > 0;
       /* M9: the one answerable card's own pick, words and annotations; they are
          keyed by cardKey (Decide's rule), so a reread that puts another card at
@@ -4119,13 +4144,14 @@ class Component extends DCLogic {
         annotations: annotations,
         hasReplyFail: replyErr !== '', replyFail: replyErr,
         hasPrimary: v === null || v.primary !== null || isChoice || hasAnswerBox,
-        primaryLabel: v === null ? '标为已读' : hasAnswerBox && !isChoice ? '确定' : v.primary ? v.primary.label : '确定',
+        primaryLabel: v === null ? '标为已读' : speak ? '让秘书补检查' : hasAnswerBox && !isChoice ? '确定' : v.primary ? v.primary.label : '确定',
         primaryGo: v === null
           ? () => {
             Promise.resolve(actions.markNoticeSeen(row.key))
               .then(() => closeCard())
               .catch((e) => closeCard({ err: msg(e) }));
           }
+          : speak ? () => this.askCheckInComposer(v.primary.draft)
           : adopt ? (primaryOff ? nc : () => writeCard(() => actions.writeCandidate(row.key, 'adopt')))
             : stepPrimary ? nc
             : hasAnswerBox && !isChoice
@@ -4133,7 +4159,7 @@ class Component extends DCLogic {
               : reproposePicked
                 ? () => { if (!cardBusy && note.trim() !== '') submitAnswer('repropose'); }
                 : () => { if (!cardBusy && (picked !== null || wordsOnly)) submitAnswer(picked); },
-        primaryTip: adopt ? v.primary.tip : reproposePicked ? REPROPOSE_GUIDE
+        primaryTip: speak ? ASK_CHECK_TIP : adopt ? v.primary.tip : reproposePicked ? REPROPOSE_GUIDE
           : hasAnswerBox && !isChoice && note.trim() === '' ? '写一句再点确定'
             : stepPrimary ? '还没接通' : '',
         primaryCls: 'btn btn-sm btn-primary' + (primaryOff ? ' is-off' : ''),
