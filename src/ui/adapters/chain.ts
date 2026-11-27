@@ -7,7 +7,7 @@
  * ten executions (§2.4); the page never re-sorts it. The task bar's words are
  * the TaskMap tables' own (`task-map.ts`), not a second copy here.
  */
-import type { ArchivedLinePageV1, LineControlV1, LineExecutionItemV1, LineRowV1, LineWokenByV1, WorkLineDetailV1, WorkLineSectionPageV1 } from '../../contracts/work-line.js';
+import type { ArchivedLinePageV1, LineControlV1, LineExecutionItemV1, LineRowV1, WorkLineDetailV1, WorkLineSectionPageV1 } from '../../contracts/work-line.js';
 import type { RunOutcome, RunRef } from '../../contracts/dispatch.js';
 import type { TaskExecutionRecord } from '../../contracts/execution-read.js';
 import type { SessionHistoryEntry } from '../../contracts/session-activity.js';
@@ -22,10 +22,10 @@ import {
   ACTOR_WORD, CHECK_RESULT_WORD, FAILURE_CLASS_WORD, PHASE_WORD, RUN_RESULT_WORD, gapTextOf,
   lineNameOf, localShortAt, planVersionText, requirementWordOf, taskStateOfRow, taskWhyOf,
 } from './task-map.js';
-import { decideTextOf, dutyWordOf, lineHref, lineNameOfSession, lineStatusView,
-  type LineKey, type NavData, type NavLine, type NavWakeBy } from './nav.js';
+import { decideTextOf, dutyWordOf, lineHref, lineStatusView, railCardOf, wakeByOf,
+  type LineKey, type NavData, type NavLine, type RailCard } from './nav.js';
 import { requeueVisible, reviewOfTaskRow, type LineReview } from './line-shared.js';
-import { briefRowsOf } from './member.js';
+import { briefRowsOf, seededNameOf } from './member.js';
 import { firstLine } from './run-steps.js';
 import type { MainRunSteps } from './main.js';
 
@@ -203,7 +203,7 @@ export type ChainRailRow = {
   st: string; word: string; dot: string;
   task: string | null; chainSessions: SessionRef[];
   pinned: boolean; current: boolean;
-  card: { name: string; word: string; rows: Array<{ k: string; v: string }> };
+  card: RailCard;
 };
 export type ChainLine = {
   key: SessionRef; name: string;
@@ -494,45 +494,6 @@ function planTextOf(run: TaskExecutionRecord, graph: TaskGraph | null): string {
       ? '；当前是计划第 ' + String(current) + ' 版，这个任务原样保留' : '');
 }
 
-/** §2.8: who last woke the line, named from the same page's lines; a sender
- * Session this page cannot name stays a Session reference, and a Host message
- * has no Session. The message's removed `intent` is never read. */
-function wakeByOf(wake: LineWokenByV1 | null, lines: readonly NavLine[]): NavWakeBy | null {
-  if (wake === null || wake.at === '') return null;
-  return {
-    at: wake.at,
-    senderName: lineNameOfSession(lines, wake.senderSessionRef),
-    senderSessionRef: wake.senderSessionRef,
-  };
-}
-
-/** The card's one row: the sender and the instant, never a message kind. */
-function wakeByTextOf(wake: NavWakeBy | null): string {
-  if (wake === null || wake.at === '') return '没有记录';
-  /* §2.8: the row writes the Session/line that woke it; a sender this page
-     cannot name still shows its Session id rather than a bare placeholder. */
-  const sender = wake.senderSessionRef !== null
-    ? (wake.senderName !== '' ? '“' + wake.senderName + '”' : '一条不在列表里的工作线')
-      + '（' + wake.senderSessionRef.sessionId + '）'
-    : '你或平台';
-  return '最近由' + sender + '的消息叫醒（' + localShortAt(wake.at) + '）';
-}
-
-function railCardOf(
-  name: string, word: string, responsibleNow: string[], lastActivityAt: string, wakeBy: NavWakeBy | null,
-): ChainRailRow['card'] {
-  return {
-    name,
-    word,
-    rows: [
-      { k: '负责', v: responsibleNow.length === 0 ? '未分配' : responsibleNow.join('、') },
-      { k: '正在做', v: word },
-      { k: '最近一步', v: lastActivityAt === '' ? '没有记录' : lastActivityAt },
-      { k: '叫醒', v: wakeByTextOf(wakeBy) },
-    ],
-  };
-}
-
 function railRowOf(line: NavLine, selected: SessionRef | null): ChainRailRow {
   return {
     key: line.key,
@@ -546,7 +507,7 @@ function railRowOf(line: NavLine, selected: SessionRef | null): ChainRailRow {
     chainSessions: line.chainSessions as SessionRef[],
     pinned: line.pinned,
     current: sameSessionRef(selected, line.key),
-    card: railCardOf(line.name, line.word, line.responsibleNow, line.lastActivityAt, line.wokenBy),
+    card: railCardOf(line),
   };
 }
 
@@ -568,7 +529,8 @@ function archivedRowOf(row: LineRowV1, selected: SessionRef | null, nav: NavData
     chainSessions: row.chainSessions,
     pinned: row.pinned,
     current: sameSessionRef(selected, row.key),
-    card: railCardOf(name, view.word, responsible, row.lastActivityAt, wakeBy),
+    card: railCardOf({ name, word: view.word, responsibleNow: responsible,
+      lastActivityAt: row.lastActivityAt, wokenBy: wakeBy }),
   };
 }
 
@@ -621,9 +583,9 @@ const BRIEF_CHECKPOINT_WORD: Record<'round_open' | 'requeue' | 'brief', string> 
   round_open: '检查轮次开始', requeue: '重新入队', brief: '本次执行开始前',
 };
 
-/** The continuation brief's own facts: Member's three shared rows plus the
+/** The continuation brief's own facts: Member's four shared rows plus the
  * prototype `cbrief`'s check, change, source and rework rows. */
-function chainBriefRowsOf(brief: ContinuationBriefV1): Array<{ k: string; v: string }> {
+function chainBriefRowsOf(brief: ContinuationBriefV1, seededName: string): Array<{ k: string; v: string }> {
   const failed = brief.checks === null ? [] : brief.checks.failing;
   const self = brief.workspace.selfChanged;
   const changed = self.confirmed.concat(self.possible);
@@ -640,7 +602,7 @@ function chainBriefRowsOf(brief: ContinuationBriefV1): Array<{ k: string; v: str
   const messages = inputs.messages.map((message) => firstLine(message.excerpt.text));
   const omittedText = (count: number): string => count > 0 ? '；另有 ' + String(count) + ' 条' : '';
   const rows = [
-    ...briefRowsOf(brief),
+    ...briefRowsOf(brief, seededName),
     { k: '失败的检查', v: failed.length === 0 ? '没有' : failed.map((check) => check.checkId
       + '：' + (check.outcome === null ? '没有结果' : CHECK_RESULT_WORD[check.outcome] ?? check.outcome)
       + '，阶段 ' + (PHASE_WORD[check.phase] ?? check.phase)
@@ -704,6 +666,8 @@ export function adaptChain(source: ChainSource, ui: ChainUi): ChainData {
   const trace = chainTraceOf(source);
   const attempts = source.runs.map((run, index) => {
     const brief = source.briefs[run.run.ref.runId] ?? null;
+    const briefRows = brief === null ? null : chainBriefRowsOf(brief.brief,
+      seededNameOf(brief.brief, source.line?.chainSessions ?? [], [...nav.lines, ...nav.archived]));
     const requeue = requeueOf(brief);
     const item: LineExecutionItemV1 | null = source.executions?.items.find((entry) =>
       entry.kind === 'execution' && entry.runRef.runId === run.run.ref.runId) ?? null;
@@ -717,7 +681,7 @@ export function adaptChain(source: ChainSource, ui: ChainUi): ChainData {
       startedAt: run.attempt.startedAt ?? (item !== null && item.kind === 'execution' ? item.startedAt : null),
       endedAt: run.attempt.endedAt,
       requeue,
-      brief: brief === null ? null : { rows: chainBriefRowsOf(brief.brief) },
+      brief: briefRows === null ? null : { rows: briefRows },
       steps: source.runStepsByRun.get(run.run.ref.runId) ?? null,
       stepRows: source.runStepsByRun.has(run.run.ref.runId)
         ? chainStepRowsOf(source.runStepsByRun.get(run.run.ref.runId)!, ordinal,

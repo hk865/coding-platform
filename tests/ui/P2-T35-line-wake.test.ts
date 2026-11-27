@@ -18,9 +18,9 @@ import { withConfiguredHost } from '../helpers/S7C-member-fixture.js';
  * executor line, so the wake opens its text round (`p2-frozen.md:128`, table `:142`); the Host opens a round only
  * for a role with a configured Query profile (`host.ts` `queryProfileOf`), so the Host is started with the Work
  * role's profile (`withS6AWorkProfile`, as `S7B2-consumable-sessions.ts` and `XWR-rounds` do).
- * Current tree: `railCardOf` writes only 负责/正在做/最近一步 (`adapters/chain.ts:311-315`),
- * and `navLineOf` drops any wake source (`adapters/nav.ts:216`), so the row is red at the
- * card assertion, not at setup.
+ * Current tree: the line card's `railCardOf` (`adapters/nav.ts`) writes the 叫醒 row from
+ * the navigation read's `wokenBy`, so the row is red at the no-Session-id assertion, not
+ * at setup.
  */
 
 const sessionIdOf = (row: unknown): string => asText(asRecord(asRecord(row)['key'])['sessionId']);
@@ -65,6 +65,8 @@ describe('P2-T35 the line card names who woke the line', () => {
         'lines/read');
       /* Frozen: Session/line name, not the message intent. */
       expect(wakeRow.v.includes(wakerText) || wakeRow.v.includes(sent.sender.ref.sessionId)).toBe(true);
+      /* G3b R2: a person-facing row never prints an internal id (lead 11-26, B9/甲). */
+      expect(wakeRow.v).not.toContain(sent.sender.ref.sessionId);
       expect(JSON.stringify(card)).not.toContain('inquiry');
       /* G2 projects the wake source on the line row (`LineRowV1.wokenBy`), inside `WorkLineDetailV1.row`. */
       expect(lineRead.row.wokenBy?.senderSessionRef, 'lines/read 的被谁叫醒')

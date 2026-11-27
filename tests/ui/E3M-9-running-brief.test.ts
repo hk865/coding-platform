@@ -114,9 +114,13 @@ describe('E3M-9 the running line and the continuation brief', () => {
       expect(textOf(findClass(brief!, 'sys-line'))).toBe('接续说明：只用已保存的事实组装');
       const keys = elementsOf(brief, 'dt').map(textOf);
       const values = elementsOf(brief, 'dd').map(textOf);
-      expect(keys).toEqual(['接续方式', '停下原因', '上次停在']);
+      expect(keys).toEqual(['接续方式', '停下原因', '上次停在', '工作记录']);
       /* 具名改坏: the expected 接续方式 literal becomes `交接`; this row reds here. */
       expect(values.slice(0, 2)).toEqual(['返工', '检查未通过']);
+      /* B4: this world's requeue runs in the same Session, so the history stays
+         (the brief read above says `same_session_history`). 具名改坏: this
+         branch writes the 另开 sentence; this row reds. */
+      expect(values[3]).toBe('接着原来的工作记录做，带着原来的历史');
       expect(values.every((value) => value.length > 0)).toBe(true);
       expect(callsOf(booted.log, 'executions/brief')
         .filter((call) => isDeepStrictEqual(call.input, { runRef: nextRun }))).toHaveLength(1);

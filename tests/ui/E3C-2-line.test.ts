@@ -67,9 +67,12 @@ describe('E3C-2 the Chain line rows', () => {
       await settle(() => railCard(page.root) !== undefined);
       /* Hand count (reply §1): the world's clock is set to S6A_AT 09:00:00.000Z and
          `createGoal` advances it once by 1 s (S6A-cards-fixture.ts:233) before any
-         line exists, so every line's lastActivityAt is 09:00:01.000Z.
-         具名改坏: 卡里的最近一步写死 `—`；本行的字面断言红。 */
-      expect(dlValue(railCard(page.root), '最近一步') ?? '').toContain('2026-10-23T09:00:01.000Z');
+         line exists, so every line's lastActivityAt is 09:00:01.000Z. The card writes
+         it as the browser-local MM-DD HH:mm, never the stored ISO string.
+         具名改坏: 卡里的最近一步写死 `—`；本行的本地时刻断言红。 */
+      const lastStep = dlValue(railCard(page.root), '最近一步') ?? '';
+      expect(lastStep).toMatch(/^\d{2}-\d{2} \d{2}:\d{2}$/);
+      expect(lastStep).not.toContain('T09:00');
     } finally {
       await page.restore();
     }

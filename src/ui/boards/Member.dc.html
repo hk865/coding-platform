@@ -308,29 +308,31 @@ button.deliv:hover .on { color: var(--text); }
 
       <div class="mh-acts" role="group" aria-label="控制这次执行">
         <sc-if value="{{c.canPause}}" hint-placeholder-val="{{ true }}">
-          <button class="btn btn-sm" type="button" onClick="{{c.pause}}" onMouseEnter="{{c.tipPause}}" onMouseLeave="{{untip}}" onFocus="{{c.tipPause}}" onBlur="{{untip}}">
+          <button class="{{c.pauseCls}}" type="button" aria-disabled="{{c.pauseOff}}" onClick="{{c.pause}}" onMouseEnter="{{c.tipPause}}" onMouseLeave="{{untip}}" onFocus="{{c.tipPause}}" onBlur="{{untip}}">
             <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="M5.75 3.75v8.5M10.25 3.75v8.5"></path></svg>
             暂停
           </button>
         </sc-if>
         <sc-if value="{{c.canResume}}" hint-placeholder-val="{{ false }}">
-          <button class="btn btn-sm" type="button" onClick="{{c.resume}}" onMouseEnter="{{c.tipResume}}" onMouseLeave="{{untip}}" onFocus="{{c.tipResume}}" onBlur="{{untip}}">
+          <button class="{{c.resumeCls}}" type="button" aria-disabled="{{c.resumeOff}}" onClick="{{c.resume}}" onMouseEnter="{{c.tipResume}}" onMouseLeave="{{untip}}" onFocus="{{c.tipResume}}" onBlur="{{untip}}">
             <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="M5.25 3.5v9l7-4.5Z"></path></svg>
             继续
           </button>
         </sc-if>
         <sc-if value="{{c.canCancel}}" hint-placeholder-val="{{ true }}">
-          <button class="btn btn-sm" type="button" onClick="{{c.askCancel}}" onMouseEnter="{{c.tipCancel}}" onMouseLeave="{{untip}}" onFocus="{{c.tipCancel}}" onBlur="{{untip}}">
+          <button class="{{c.cancelCls}}" type="button" aria-disabled="{{c.cancelOff}}" onClick="{{c.askCancel}}" onMouseEnter="{{c.tipCancel}}" onMouseLeave="{{untip}}" onFocus="{{c.tipCancel}}" onBlur="{{untip}}">
             <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><rect x="4" y="4" width="8" height="8" rx="1.25"></rect></svg>
             取消
           </button>
         </sc-if>
         <sc-if value="{{c.canRequeue}}" hint-placeholder-val="{{ false }}">
-          <button class="btn btn-sm" type="button" onClick="{{c.requeue}}" onMouseEnter="{{c.tipRequeue}}" onMouseLeave="{{untip}}" onFocus="{{c.tipRequeue}}" onBlur="{{untip}}">
+          <button class="{{c.requeueCls}}" type="button" aria-disabled="{{c.requeueOff}}" onClick="{{c.requeue}}" onMouseEnter="{{c.tipRequeue}}" onMouseLeave="{{untip}}" onFocus="{{c.tipRequeue}}" onBlur="{{untip}}">
             <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="M12.75 3.25v3h-3"></path><path d="M12.5 6.25A5 5 0 1 0 13 9.25"></path></svg>
             重新入队
           </button>
         </sc-if>
+        <sc-if value="{{c.canHandle}}"><button class="{{c.handleCls}}" type="button" onClick="{{c.handle}}" title="{{c.handleTip}}" aria-disabled="{{c.handleOff}}">我来处理</button></sc-if>
+        <sc-if value="{{c.canResumeReview}}"><button class="{{c.resumeReviewCls}}" type="button" onClick="{{c.resumeReview}}" title="{{c.resumeReviewTip}}" aria-disabled="{{c.resumeReviewOff}}">继续</button></sc-if>
         <sc-if value="{{tipAt.acts}}" hint-placeholder-val="{{ false }}">
           <div class="hcard" role="tooltip">
             <div class="hc-head">
@@ -719,29 +721,31 @@ button.deliv:hover .on { color: var(--text); }
         </div>
         <div class="lv-acts" role="group" aria-label="控制这条工作线">
           <sc-if value="{{lv.acts.canPause}}" hint-placeholder-val="{{ true }}">
-            <button class="btn btn-sm" type="button" onClick="{{lv.acts.pause}}" onMouseEnter="{{lv.acts.tipPause}}" onMouseLeave="{{lv.untip}}" onFocus="{{lv.acts.tipPause}}" onBlur="{{lv.untip}}">
+            <button class="btn btn-sm{{lv.acts.ctlCls}}" type="button" aria-disabled="{{lv.acts.ctlOff}}" onClick="{{lv.acts.pause}}" onMouseEnter="{{lv.acts.tipPause}}" onMouseLeave="{{lv.untip}}" onFocus="{{lv.acts.tipPause}}" onBlur="{{lv.untip}}">
               <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="M5.75 3.75v8.5M10.25 3.75v8.5"></path></svg>
               暂停
             </button>
           </sc-if>
           <sc-if value="{{lv.acts.canResume}}" hint-placeholder-val="{{ false }}">
-            <button class="btn btn-sm" type="button" onClick="{{lv.acts.resume}}" onMouseEnter="{{lv.acts.tipResume}}" onMouseLeave="{{lv.untip}}" onFocus="{{lv.acts.tipResume}}" onBlur="{{lv.untip}}">
+            <button class="btn btn-sm{{lv.acts.ctlCls}}" type="button" aria-disabled="{{lv.acts.ctlOff}}" onClick="{{lv.acts.resume}}" onMouseEnter="{{lv.acts.tipResume}}" onMouseLeave="{{lv.untip}}" onFocus="{{lv.acts.tipResume}}" onBlur="{{lv.untip}}">
               <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="M5.25 3.5v9l7-4.5Z"></path></svg>
               继续
             </button>
           </sc-if>
           <sc-if value="{{lv.acts.canCancel}}" hint-placeholder-val="{{ true }}">
-            <button class="btn btn-sm" type="button" onClick="{{lv.acts.askCancel}}" onMouseEnter="{{lv.acts.tipCancel}}" onMouseLeave="{{lv.untip}}" onFocus="{{lv.acts.tipCancel}}" onBlur="{{lv.untip}}">
+            <button class="btn btn-sm{{lv.acts.ctlCls}}" type="button" aria-disabled="{{lv.acts.ctlOff}}" onClick="{{lv.acts.askCancel}}" onMouseEnter="{{lv.acts.tipCancel}}" onMouseLeave="{{lv.untip}}" onFocus="{{lv.acts.tipCancel}}" onBlur="{{lv.untip}}">
               <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><rect x="4" y="4" width="8" height="8" rx="1.25"></rect></svg>
               取消
             </button>
           </sc-if>
           <sc-if value="{{lv.acts.canRequeue}}" hint-placeholder-val="{{ false }}">
-            <button class="btn btn-sm" type="button" onClick="{{lv.acts.requeue}}" onMouseEnter="{{lv.acts.tipRequeue}}" onMouseLeave="{{lv.untip}}" onFocus="{{lv.acts.tipRequeue}}" onBlur="{{lv.untip}}">
+            <button class="btn btn-sm{{lv.acts.ctlCls}}" type="button" aria-disabled="{{lv.acts.ctlOff}}" onClick="{{lv.acts.requeue}}" onMouseEnter="{{lv.acts.tipRequeue}}" onMouseLeave="{{lv.untip}}" onFocus="{{lv.acts.tipRequeue}}" onBlur="{{lv.untip}}">
               <svg class="ico sm" viewBox="0 0 16 16" aria-hidden="true"><path d="M12.75 3.25v3h-3"></path><path d="M12.5 6.25A5 5 0 1 0 13 9.25"></path></svg>
               重新入队
             </button>
           </sc-if>
+          <sc-if value="{{lv.acts.canHandle}}"><button class="{{lv.acts.handleCls}}" type="button" onClick="{{lv.acts.handle}}" title="{{lv.acts.handleTip}}" aria-disabled="{{lv.acts.handleOff}}">我来处理</button></sc-if>
+          <sc-if value="{{lv.acts.canResumeReview}}"><button class="{{lv.acts.resumeReviewCls}}" type="button" onClick="{{lv.acts.resumeReview}}" title="{{lv.acts.resumeReviewTip}}" aria-disabled="{{lv.acts.resumeReviewOff}}">继续</button></sc-if>
           <sc-if value="{{lv.tipAt.acts}}" hint-placeholder-val="{{ false }}">
             <div class="hcard" role="tooltip">
               <div class="hc-head"><span class="hc-name">{{lv.tc.name}}</span></div>
@@ -2210,14 +2214,26 @@ class Component extends DCLogic {
   /* ---- E3 Member §2.1: with `props.data` the page's nine data groups come
      from the adapter; only the local state (theme, panel, density, tab, drafts,
      tips, the open run, the selected record and its trace row) is the page's. */
-  memberTip(kind, line) {
+  memberTip(kind, line, groups) {
     const att = line === null ? 1 : (line.attempt.ordinal || 1);
     const when = line !== null && line.status.advancing ? line.status.advText : '当前这一步结束后';
+    /* The group head is a Task, so its card is that Task's own card —
+       its square, name and reason sentence, never the pause control's. Clicking
+       the head goes to Main, where the Task lives. */
+    if (String(kind).indexOf('grp:') === 0 && line !== null) {
+      const group = groups.find((entry) => entry.key === kind.slice(4));
+      if (group !== undefined) {
+        return { hasSq: true, sq: 'sq z8 ' + this.sqAt(group.st || 'pending'), name: group.name, tx: 'tx-plain', word: group.tip,
+          why: '', rows: [], hint: '点一下回到主画面看这个任务' };
+      }
+    }
     /* The task card is the task's own reason word (`line.task.tip`); a line
        without a task keeps the pause fallback. */
     if (kind === 'task' && line !== null && line.task !== null) {
+      /* B3: the plan the Run was claimed under, and a newer current plan as a
+         fact (E3 5.4b-1), never as an expiry. */
       return { hasSq: true, sq: 'sq z8 ' + this.sqAt(line.task.st), name: line.task.name, tx: 'tx-plain',
-        word: line.task.tip, why: '', rows: [], hint: '' };
+        word: line.task.tip, why: '', rows: line.claimedPlan.map((r) => ({ k: r.k, v: r.v, cls: '' })), hint: '' };
     }
     const C = {
       pause: ['暂停', '到下一个安全点停下', [['何时', when + '生效；在那之前它还在做'], ['保留', '改动和工作记录都保留'], ['之后', '只有你能继续，系统不会自动继续']], '点一下请求暂停'],
@@ -2237,6 +2253,9 @@ class Component extends DCLogic {
   memberDataVals(D, s, set, DUTY, read) {
     const actions = this.props.actions || {};
     const line = D.line;
+    /* B6: a record selected on one line must not resolve against another
+       line's groups, so opening a line drops the old selection. */
+    const openLineFromRail = (key) => { set({ psel: null }); actions.openLine(key); };
     /* M10 (Decide's D11): a failed first read has no data; the base's error text and its retry are the only body. */
     const err = read !== null && read.status === 'error' ? String(read.message || '') : '';
     const canRetry = err !== '' && typeof read.retry === 'function';
@@ -2253,13 +2272,27 @@ class Component extends DCLogic {
     const tipTo = (k) => () => { if ((this.state || {}).tip !== k) set({ tip: k }); };
     const untip = () => { if ((this.state || {}).tip) set({ tip: null }); };
     const tipAt = { acts: ['pause', 'resume', 'cancel', 'requeue'].indexOf(tip) >= 0, state: tip === 'arrive', task: tip === 'task', mode: tip === 'mbranch' || tip === 'mint' };
-    const tc = this.memberTip(tip || 'pause', line);
+    const tc = this.memberTip(tip || 'pause', line, line === null ? [] : line.groups);
     const draftMode = s.mode || 'branch';
     const isBranch = draftMode === 'branch';
     const draft = this.draftOf(s, draftMode);
     const empty = !draft.trim();
     const status = line === null ? { live: false, advancing: false, still: true, word: '', dot: 'dot s-idle', advText: '' } : line.status;
-    const report = (error) => console.error(error);
+    const lineKey = line === null ? '' : line.key.projectId + '|' + line.key.sessionId;
+    const busy = line !== null && s.mBusy === lineKey;
+    const errText = s.mErr && s.mErr.line === lineKey ? s.mErr.text : '';
+    const sendKey = lineKey + '|' + draftMode;
+    const sending = s.mSending === sendKey;
+    /* One write at a time on the shown line: every control greys while it is in
+       flight and a second click sends nothing (boot's own latch is the second
+       guard). A failure stays in this line's composer foot until the next
+       control or send; it is keyed by line, so another line never shows it. */
+    const writeFailed = (error) => set({ mErr: { line: lineKey, text: String(error && error.message ? error.message : error) } });
+    const lineAct = (go) => () => {
+      if ((this.state || {}).mBusy === lineKey) return;
+      set({ mErr: null, mBusy: lineKey });
+      go().catch(writeFailed).finally(() => { if ((this.state || {}).mBusy === lineKey) set({ mBusy: null }); });
+    };
     /* A8: a Query command's 停止 cancels its own run; a Work one opens this
        line's existing cancel confirmation, whose 取消执行 stays the one path. */
     const stopStep = (stop, failKey) => {
@@ -2274,7 +2307,7 @@ class Component extends DCLogic {
       if (stop.kind === 'query') { this.stopQueryRunOf(stop, failKey, set); return; }
       set({ lvConfirm: true, tip: null, densMenu: false });
     };
-    const control = (kind) => { this.props.actions.controlLine(kind).catch(report); };
+    const control = (kind) => { lineAct(() => this.props.actions.controlLine(kind))(); };
     const hs = {
       /* §2.6: the head writes the line's duty word (执行者 …), even when
          `lines/list` names the line after its running task. */
@@ -2296,14 +2329,30 @@ class Component extends DCLogic {
       groups: D.startup.groups, toggle: toggleStartup,
       hasError: !!D.startup.error, error: D.startup.error || '',
       retry: () => { const a = this.props.actions; if (a && typeof a.readMore === 'function') a.readMore({}); } };
+    /* B7: the line Task's review acts, worded as Main's line view. */
+    const review = line === null ? null : line.review;
+    const canHandle = review !== null && review.canHandle;
+    const canResumeReview = review !== null && review.canResumeReview;
+    const ctlCls = 'btn btn-sm' + (busy ? ' is-off' : '');
+    const handleCls = 'btn btn-sm' + (busy ? ' is-off' : '');
     const c = {
       canPause: line !== null && line.canPause,
       canResume: line !== null && line.canResume,
       canCancel: line !== null && line.canCancel,
       canRequeue: line !== null && line.canRequeue,
+      pauseCls: ctlCls, resumeCls: ctlCls, cancelCls: ctlCls, requeueCls: ctlCls,
+      pauseOff: busy ? 'true' : 'false', resumeOff: busy ? 'true' : 'false',
+      cancelOff: busy ? 'true' : 'false', requeueOff: busy ? 'true' : 'false',
       pause: () => control('pause'), resume: () => control('resume'),
-      requeue: () => { this.props.actions.requeueLine().catch(report); },
+      requeue: lineAct(() => this.props.actions.requeueLine()),
       askCancel: (e) => { this.cancelOpened('goal', e); set({ confirm: true, tip: null, densMenu: false }); },
+      canHandle: canHandle, canResumeReview: canResumeReview,
+      handleCls: handleCls, resumeReviewCls: handleCls,
+      handleTip: '先暂停这项任务，你自己看过再点继续',
+      resumeReviewTip: '放开这条核对记录，按原来的任务和那次执行接着做',
+      handleOff: busy ? 'true' : 'false', resumeReviewOff: busy ? 'true' : 'false',
+      handle: lineAct(() => this.props.actions.holdReview()),
+      resumeReview: lineAct(() => this.props.actions.releaseReviewHold()),
       tipPause: tipTo('pause'), tipResume: tipTo('resume'), tipCancel: tipTo('cancel'), tipRequeue: tipTo('requeue'),
     };
     const confirmOpen = !!s.confirm && c.canCancel;
@@ -2390,6 +2439,13 @@ class Component extends DCLogic {
     const ptab = s.ptab || 'sess';
     const psel = s.psel || null;
     const rowById = {};
+    /* B6: opening a Run record asks for its network record once; closing it or
+       picking another row withdraws that demand (the closed detail shows none). */
+    const pickRecord = (id, runRef) => {
+      const closing = psel === id;
+      set({ psel: closing ? null : id });
+      actions.readMore({ memberRunHosts: closing || runRef === undefined ? null : runRef });
+    };
     const groups = (line === null ? [] : line.groups).map((g, gi) => {
       const groupRows = [];
       g.rows.forEach((e, i) => {
@@ -2397,30 +2453,30 @@ class Component extends DCLogic {
         const id = g.key + ':' + String(i);
         const on = psel === id;
         if (e.kind === 'run') {
-          rowById[id] = { name: '工作记录 · ' + e.head, word: e.word, at: e.at, task: g.name };
+          rowById[id] = { name: '工作记录 · ' + e.head, word: e.word, at: e.at, task: g.name, runRef: e.runRef };
           groupRows.push({ isRec: true, isKid: false, isWait: false, name: '工作记录 · ' + e.head,
             sub: e.word, meta: e.at, dot: 'dot s-idle', on: on,
-            cls: 'row' + (on ? ' is-on' : ''), pick: () => set({ psel: on ? null : id }) });
+            cls: 'row' + (on ? ' is-on' : ''), pick: () => pickRecord(id, e.runRef) });
         } else if (e.kind === 'ask') {
           rowById[id] = { name: e.question, word: e.phase || '', at: e.at, task: g.name, ask: e };
           groupRows.push({ isRec: false, isKid: true, isWait: false, name: e.question,
             sub: '咨询 · ' + (e.answer === null ? '正在回答' : '已回答'), meta: e.at, on: on,
-            cls: 'row kid' + (on ? ' is-on' : ''), pick: () => set({ psel: on ? null : id }) });
+            cls: 'row kid' + (on ? ' is-on' : ''), pick: () => pickRecord(id) });
         } else if (e.kind === 'message') {
           rowById[id] = { name: e.text, word: '', at: e.at, task: g.name };
           groupRows.push({ isRec: true, isKid: false, isWait: false, name: e.text,
             sub: '直接干预', meta: e.at, dot: 'dot s-idle', on: on,
-            cls: 'row' + (on ? ' is-on' : ''), pick: () => set({ psel: on ? null : id }) });
+            cls: 'row' + (on ? ' is-on' : ''), pick: () => pickRecord(id) });
         } else if (e.kind === 'brief') {
           rowById[id] = { name: '接续说明', word: '', at: '', task: g.name };
           groupRows.push({ isRec: true, isKid: false, isWait: false, name: '接续说明',
             sub: '', meta: '', dot: 'dot s-idle', on: on,
-            cls: 'row' + (on ? ' is-on' : ''), pick: () => set({ psel: on ? null : id }) });
+            cls: 'row' + (on ? ' is-on' : ''), pick: () => pickRecord(id) });
         } else {
           rowById[id] = { name: e.text, word: '', at: e.at, task: g.name };
           groupRows.push({ isRec: true, isKid: false, isWait: false, name: e.text,
             sub: '', meta: e.at, dot: 'dot s-idle', on: on,
-            cls: 'row' + (on ? ' is-on' : ''), pick: () => set({ psel: on ? null : id }) });
+            cls: 'row' + (on ? ' is-on' : ''), pick: () => pickRecord(id) });
         }
       });
       const groupGoal = g.goalRef === null ? null : g.goalRef.goalId;
@@ -2461,19 +2517,26 @@ class Component extends DCLogic {
           aFrom: line.title + '（只读副本）',
           acts: [{ label: '据此直接干预', go: () => set({ mode: 'intervene',
             drafts: Object.assign({}, (this.state || {}).drafts || {}, { intervene: this.samples().intervene }) }) }],
-          hasActs: true, actsCls: 'd-acts', close: () => set({ psel: null }) });
+          hasActs: true, actsCls: 'd-acts', close: () => pickRecord(psel) });
       } else {
         const acts = [];
         acts.push({ label: '看改动', go: () => { set({ ptab: 'chg' }); this.props.actions.readMore({ changesOpen: true }); } });
         if (cview !== psel) acts.push({ label: '在中间查看', go: () => set({ cview: psel, pane: 'chat' }) });
         if (cview === psel) acts.push({ label: '回到这条工作线', go: () => set({ cview: null }) });
+        /* B6: the open Run detail lists this Run's hosts ahead of the still
+           unconnected relation; another row never shows another Run's read. */
+        const rel = [];
+        if (picked.runRef !== undefined && D.runHosts !== null && D.runHosts.runRef.runId === picked.runRef.runId) {
+          rel.push({ k: '连过的主机', items: [], files: [], text: D.runHosts.text, hasText: true });
+        }
+        rel.push({ k: '', items: [], files: [], text: '还没接通', hasText: true });
         det = Object.assign({}, noDet, { label: '工作记录详情', isRec: true, dot: 'dot', name: picked.name,
           tx: 'tx-plain', word: picked.word, why: '',
           crumbs: [line.title, picked.task, picked.name].map((x, i, a) => ({ name: x, sep: i > 0, cls: 'c' + (i === a.length - 1 ? ' is-on' : '') })),
           agent: line.duty.word,
           sem: '还没接通',
-          rel: [{ k: '', items: [], files: [], text: '还没接通', hasText: true }],
-          acts: acts, hasActs: acts.length > 0, close: () => set({ psel: null }) });
+          rel: rel,
+          acts: acts, hasActs: acts.length > 0, close: () => pickRecord(psel) });
       }
     }
 
@@ -2535,13 +2598,15 @@ class Component extends DCLogic {
     }
     const lvModeKey = line === null ? 'line' : line.key.projectId + '/' + line.key.sessionId;
     const lvAsk = (s.lvMode || 'ask') !== 'act';
-    const lvDraft = String((s.lvDrafts || {})[lvModeKey + '|' + (lvAsk ? 'ask' : 'act')] || '');
+    const lvSendKey = lvModeKey + '|' + (lvAsk ? 'ask' : 'act');
+    const lvSending = s.mSending === lvSendKey;
+    const lvDraft = String((s.lvDrafts || {})[lvSendKey] || '');
     const lvShow = showLv && line !== null;
     const lv = {
       show: lvShow, hide: !lvShow, id: line === null ? '' : line.key.sessionId, name: line === null ? '' : line.title,
       dot: status.dot, sub: line === null ? '' : line.sub,
       isBackBtn: true, isBackLink: false,
-      back: () => { if (D.ownKey !== null) this.props.actions.openLine(D.ownKey); },
+      back: () => { if (D.ownKey !== null) openLineFromRail(D.ownKey); },
       backLabel: D.ownName === '' ? '回到这条工作线' : '回到 ' + D.ownName,
       backTip: '回到这条工作线自己的页面',
       pageMember: lvShow, pageChain: lvShow, hasPanel: false, togglePanel: () => {},
@@ -2560,10 +2625,21 @@ class Component extends DCLogic {
       why: { has: line !== null && line.scopeText !== '', k: '负责范围', v: line === null ? '' : line.scopeText },
       acts: { canPause: line !== null && line.canPause, canResume: line !== null && line.canResume,
         canCancel: line !== null && line.canCancel, canRequeue: line !== null && line.canRequeue,
+        ctlCls: busy ? ' is-off' : '', ctlOff: busy ? 'true' : 'false',
         pause: () => control('pause'), resume: () => control('resume'),
-        askCancel: (e) => { this.cancelOpened('line', e); set({ lvConfirm: true, tip: null }); }, requeue: () => { this.props.actions.requeueLine().catch(report); },
+        askCancel: (e) => { this.cancelOpened('line', e); set({ lvConfirm: true, tip: null }); },
+        requeue: lineAct(() => this.props.actions.requeueLine()),
+        canHandle: canHandle, canResumeReview: canResumeReview,
+        handleCls: handleCls, resumeReviewCls: handleCls,
+        handleTip: '先暂停这项任务，你自己看过再点继续',
+        resumeReviewTip: '放开这条核对记录，按原来的任务和那次执行接着做',
+        handleOff: busy ? 'true' : 'false', resumeReviewOff: busy ? 'true' : 'false',
+        handle: lineAct(() => this.props.actions.holdReview()),
+        resumeReview: lineAct(() => this.props.actions.releaseReviewHold()),
         tipPause: tipTo('pause'), tipResume: tipTo('resume'), tipCancel: tipTo('cancel'), tipRequeue: tipTo('requeue') },
-      banner: { has: false, text: '' }, items: lvRows,
+      /* B5: another line open in the centre uses Chain's one archive banner. */
+      banner: { has: line !== null && line.archivedText !== '', text: line === null ? '' : line.archivedText },
+      items: lvRows,
       confirm: { show: !!s.lvConfirm && line !== null && line.canCancel,
         line: '任务记为“已取消”，之后只有你能重新入队；改动和工作记录保留。',
         keep: () => { this.cancelClosed('line'); set({ lvConfirm: false }); },
@@ -2582,12 +2658,20 @@ class Component extends DCLogic {
         ph: lvAsk ? '问点什么…' : '要它改什么…', draft: lvDraft,
         onDraft: (ev) => { const v = ev && ev.target ? ev.target.value : '';
           const cur = this.state || {};
-          set({ lvDrafts: Object.assign({}, cur.lvDrafts || {}, { [lvModeKey + '|' + (lvAsk ? 'ask' : 'act')]: v }) }); },
-        quotes: [], foot: lvAsk ? '复制一份上下文来回答，不改文件，也不打扰它' : '下一个安全点交给它',
-        sendCls: 'send' + (lvDraft.trim() === '' ? ' is-off' : ''), sendOff: lvDraft.trim() === '',
-        send: () => { const text = lvDraft.trim(); if (text === '') return;
+          set({ lvDrafts: Object.assign({}, cur.lvDrafts || {}, { [lvSendKey]: v }) }); },
+        quotes: [], foot: errText || (lvAsk ? '复制一份上下文来回答，不改文件，也不打扰它' : '下一个安全点交给它'),
+        sendCls: 'send' + (lvDraft.trim() === '' || lvSending ? ' is-off' : ''),
+        sendOff: lvDraft.trim() === '' || lvSending,
+        send: () => {
+          const text = lvDraft.trim();
+          if (text === '' || (this.state || {}).mSending === lvSendKey) return;
+          set({ mErr: null, mSending: lvSendKey });
+          /* Cleared only on success: a failed send keeps its words (Main's lvSending rule). */
           const p = lvAsk ? this.props.actions.askLine(text) : this.props.actions.interveneLine(text);
-          p.then(() => set({ lvDrafts: Object.assign({}, (this.state || {}).lvDrafts || {}, { [lvModeKey + '|' + (lvAsk ? 'ask' : 'act')]: '' }) })).catch(report); },
+          p.then(() => set({ lvDrafts: Object.assign({}, (this.state || {}).lvDrafts || {}, { [lvSendKey]: '' }) }))
+            .catch(writeFailed)
+            .finally(() => { if ((this.state || {}).mSending === lvSendKey) set({ mSending: null }); });
+        },
         sendLabel: lvAsk ? '开只读副本来问' : '发出直接干预' }
     };
 
@@ -2606,10 +2690,14 @@ class Component extends DCLogic {
         name: name, word: arch ? '' : m.word, sub: sub, dot: m.dot, current: m.current ? 'page' : null,
         cls: 'row wl-line lv-line' + (arch ? ' is-arch' : '') + (m.current ? ' is-current' : ''),
         open: !!s.arch, chev: 'ico xs chev' + (s.arch ? ' is-open' : ''),
-        pick: m.synth ? () => { if (D.ownKey !== null) this.props.actions.openLine(D.ownKey); }
-          : () => this.props.actions.openLine(m.key),
-        hover: () => {}, unhover: () => {}, card: false, cardCls: '',
-        c: { dot: m.dot, tx: 'tx-plain', word: m.word, live: '', rows: [], hint: '' }
+        pick: m.synth ? () => { if (D.ownKey !== null) openLineFromRail(D.ownKey); }
+          : () => openLineFromRail(m.key),
+        /* B1: a live line draws Chain's card from the page's own reads; the main
+           conversation and the archived rows keep no card and send no hover. */
+        hover: m.card === null ? () => {} : tipTo('row:' + m.id), unhover: untip,
+        card: m.card !== null && tip === 'row:' + m.id, cardCls: 'hcard lv-card',
+        c: { dot: m.dot, tx: 'tx-plain', word: m.word, live: '', rows: m.card === null ? [] : m.card.rows,
+          hint: m.card === null ? '' : '点一下在中间打开这条工作线' }
       };
     };
     const wl = {
@@ -2677,11 +2765,19 @@ class Component extends DCLogic {
       onDraft: (ev) => { const v = ev && ev.target ? ev.target.value : '';
         const cur = this.state || {};
         set({ drafts: Object.assign({}, cur.drafts || {}, { [this.curMode(cur)]: v }) }); },
-      footNote: footNote,
-      sendCls: 'send' + (empty ? ' is-off' : ''), sendOff: empty,
-      send: () => { const text = draft.trim(); if (text === '') return;
+      footNote: errText || footNote,
+      sendCls: 'send' + (empty || sending ? ' is-off' : ''), sendOff: empty || sending,
+      send: () => {
+        const text = draft.trim();
+        if (text === '' || (this.state || {}).mSending === sendKey) return;
+        set({ mErr: null, mSending: sendKey });
+        /* The draft is cleared only once the send is answered, so a failure
+           keeps its words (Main's lvSending rule). */
         const p = isBranch ? this.props.actions.askLine(text) : this.props.actions.interveneLine(text);
-        p.then(() => set({ drafts: Object.assign({}, (this.state || {}).drafts || {}, { [draftMode]: '' }) })).catch(report); },
+        p.then(() => set({ drafts: Object.assign({}, (this.state || {}).drafts || {}, { [draftMode]: '' }) }))
+          .catch(writeFailed)
+          .finally(() => { if ((this.state || {}).mSending === sendKey) set({ mSending: null }); });
+      },
       sendLabel: isBranch ? '开只读副本来问' : '发出直接干预',
       pt: pt, groups: groups,
       chg: chg, hasDet: !!det, det: det || noDet,
@@ -2818,8 +2914,16 @@ class Component extends DCLogic {
     };
     const c = {
       canPause: ctl === 'working', canResume: ctl === 'paused', canCancel: ctl === 'working' || ctl === 'pausing' || ctl === 'paused', canRequeue: ctl === 'cancelled',
+      pauseCls: 'btn btn-sm', resumeCls: 'btn btn-sm', cancelCls: 'btn btn-sm', requeueCls: 'btn btn-sm',
+      pauseOff: 'false', resumeOff: 'false', cancelOff: 'false', requeueOff: 'false',
       pause: () => this.doPause(), resume: () => this.doResume(), requeue: () => this.doRequeue(),
       askCancel: (e) => { this.cancelOpened('goal', e); set({ confirm: true, tip: null, densMenu: false }); },
+      /* the sample draws no review act; the data path reads D.line.review */
+      canHandle: false, canResumeReview: false,
+      handleCls: 'btn btn-sm', resumeReviewCls: 'btn btn-sm',
+      handleTip: '先暂停这项任务，你自己看过再点继续',
+      resumeReviewTip: '放开这条核对记录，按原来的任务和那次执行接着做',
+      handleOff: 'false', resumeReviewOff: 'false', handle: () => {}, resumeReview: () => {},
       tipPause: tipTo('pause'), tipResume: tipTo('resume'), tipCancel: tipTo('cancel'), tipRequeue: tipTo('requeue')
     };
     const confirmOpen = !!s.confirm && c.canCancel;
@@ -3578,7 +3682,14 @@ class Component extends DCLogic {
         : { has: false, name: '', sq: '', hasSq: false, isBtn: false, isLink: false, isPlain: false, tip: '', go: noop },
       duty: { has: !isExec && !!L.duty, text: L.duty || '' }, facts: facts, why: why,
       acts: { canPause: st === 'working', canResume: st === 'paused', canCancel: isExec && (st === 'working' || st === 'pausing' || st === 'paused'), canRequeue: isExec && st === 'cancelled',
-        pause: pause, resume: resume, askCancel: askCancel, requeue: requeue, tipPause: tipTo('pause'), tipResume: tipTo('resume'), tipCancel: tipTo('cancel'), tipRequeue: tipTo('requeue') },
+        ctlCls: '', ctlOff: 'false',
+        pause: pause, resume: resume, askCancel: askCancel, requeue: requeue, tipPause: tipTo('pause'), tipResume: tipTo('resume'), tipCancel: tipTo('cancel'), tipRequeue: tipTo('requeue'),
+        /* the sample draws no review act; the data path reads D.line.review */
+        canHandle: false, canResumeReview: false,
+        handleCls: 'btn btn-sm', resumeReviewCls: 'btn btn-sm',
+        handleTip: '先暂停这项任务，你自己看过再点继续',
+        resumeReviewTip: '放开这条核对记录，按原来的任务和那次执行接着做',
+        handleOff: 'false', resumeReviewOff: 'false', handle: noop, resumeReview: noop },
       tipAt: { acts: ['pause', 'resume', 'cancel', 'requeue'].indexOf(tip) >= 0, state: tip === 'arrive', mode: tip === 'ask' || tip === 'act' }, tc: tc, untip: untip,
       banner: { has: !!banner, text: banner }, items: items,
       confirm: { show: confirmOpen, line: (st === 'paused' ? '它已停在安全点，取消立即生效' : '它会在下一个安全点停下（' + sp.when + '），然后取消生效') + '：任务记为“已取消”，之后只有你能重新入队；改动和工作记录保留。', keep: keepConfirm, keepRef: (el) => this.cancelRef('line', el), key: (e) => this.cancelKey('line', e, keepConfirm), go: confirmCancel },

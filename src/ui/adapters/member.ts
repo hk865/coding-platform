@@ -7,22 +7,26 @@
  * `controls`, `pins`, `goalRef`, ...) enter the page; `MemberData` carries the
  * board's own words and rows.
  */
-import type { GraphHoverReadV1, LineControlV1, LineExecutionItemV1, LineMessageStateV1, LineRowV1, WorkLineDetailV1 } from '../../contracts/work-line.js';
+import type { GraphHoverReadV1, LineArchivedTagV1, LineControlV1, LineExecutionItemV1, LineMessageStateV1, LineRowV1, WorkLineDetailV1 } from '../../contracts/work-line.js';
 import type { CoreScope } from '../host-client.js';
 import type { SessionHistoryEntry } from '../../contracts/session-activity.js';
 import type { TaskExecutionRecord } from '../../contracts/execution-read.js';
 import type { TaskGraph, TaskRow } from '../../contracts/task-graph.js';
 import type { ControlIntentSnapshotV1 } from '../../contracts/control-intent.js';
-import type { ContinuationBriefV1 } from '../../contracts/continuation-brief.js';
+import type { ContinuationBriefV1, ContinuationSessionContinuity } from '../../contracts/continuation-brief.js';
+import type { SessionRef } from '../../contracts/core/identity.js';
 import type { QueryExecutionRecord, QueryJobAnswerSnapshot, QueryRunRef } from '../../contracts/query-job.js';
 import type { SessionMessageReadV1, MessageBody } from '../../contracts/mailbox.js';
 import type { SessionMessageRef } from '../../contracts/core/session-message.js';
 import type { RunOutcome, RunRef, TaskTriple } from '../../contracts/dispatch.js';
 import type { GoalRef } from '../../contracts/ledger.js';
 import type { UncommittedFilesV1 } from '../../contracts/workspace-files.js';
+import type { CreatorContactV1 } from '../../contracts/role-lines.js';
 import { asRecord, asText } from '../values.js';
-import { localShortAt, taskState, taskWhyOf, PHASE_WORD } from './task-map.js';
-import { lineStatusView, dutyWordOf, lineHref, type LineKey, type NavData, type NavGoal, type NavInbox, type NavLine } from './nav.js';
+import { lineNameOf, localShortAt, planVersionText, taskState, taskWhyOf, PHASE_WORD } from './task-map.js';
+import { lineStatusView, dutyWordOf, lineHref, lineNameOfSession, railCardOf,
+  type LineKey, type NavData, type NavGoal, type NavInbox, type NavLine } from './nav.js';
+import { archivedBannerOf, runHostsTextOf } from './chain.js';
 import { requeueVisible, reviewOfTaskRow, type LineReview } from './line-shared.js';
 import type { MainRunStep, MainRunSteps } from './main.js';
 import { auxChangedRowsOf } from './aux-panel.js';
@@ -89,13 +93,24 @@ export type MemberSource = {
   startup: MemberStartupReport | null;
   /** A failed `host/reconcile-report`: the message 启动核对 shows; never the page's error. */
   startupError: string | null;
+  /** B2: every workspace line's creator contact, keyed `projectId/sessionId`;
+   * `null` when the page's one `role-lines/read` failed (no card says 建它的). */
+  creators: ReadonlyMap<string, CreatorContactV1> | null;
   /** A5 (121-147): every Run the record draws, keyed by its own run id, from
    * that Run's `executions/steps` projection. A Run whose snapshot could not be
    * read is absent, never given a guessed scope. */
   runStepsByRun: ReadonlyMap<string, MainRunSteps>;
+  /** B6: the selected Run detail's network record, read only while
+   * `demand.memberRunHosts` names it; `null` when no Run detail is open. */
+  runHosts: { runRef: RunRef; text: string } | null;
 };
 
-export type MemberRailRow = NavLine & { current: boolean };
+export type MemberRailRow = NavLine & {
+  current: boolean;
+  /** The rail card's rows for a live line; `null` for the main-conversation link
+   * and archived rows, whose templates draw no card. */
+  card: { rows: Array<{ k: string; v: string }> } | null;
+};
 
 export type MemberLine = {
   key: LineKey;
@@ -117,6 +132,13 @@ export type MemberLine = {
   readOnly: boolean;
   /** K3 L7: the line Task's review and its two buttons, or `null` without a record. */
   review: LineReview | null;
+  /** B3: the plan the current Run was claimed under, plus a newer current
+   * plan when there is one; empty without a Run. */
+  claimedPlan: Array<{ k: string; v: string }>;
+  /** B5: the line's archive tag and head-Session instant, as Chain reads them. */
+  archived: { tag: LineArchivedTagV1; at: string | null } | null;
+  /** B5: the line-view banner sentence; empty unless the line is archived. */
+  archivedText: string;
   /** The TaskTriple the line is responsible for; the one `writeBasisOf` reads. */
   taskRef: TaskTriple | null;
   /** The Goal the page's subtitle shows (the line's own Goal, else the selected one); the person's words on this
@@ -143,7 +165,7 @@ export type MemberItem =
 
 export type MemberCheck = { at: string; status: string; label: string };
 export type MemberTrack = { delivery: string; appliedAt: string | null; rejectedAt: string | null };
-export type MemberRecordGroup = { key: string; goalRef: GoalRef | null; task: string; name: string; st: string; word: string; rows: MemberItem[] };
+export type MemberRecordGroup = { key: string; goalRef: GoalRef | null; task: string; name: string; st: string; word: string; tip: string; rows: MemberItem[] };
 export type MemberTraceRow = { recordId: string; at: string; kind: string; body: string; raw: string | null };
 export type MemberChanges = {
   repository: 'git' | 'not_git';
@@ -168,6 +190,8 @@ export type MemberData = {
   changes: MemberChanges;
   write: MemberWriteBasis | null;
   startup: MemberStartup;
+  /** B6: the open Run detail's hosts, or `null` when no Run detail is open. */
+  runHosts: MemberSource['runHosts'];
 };
 
 /** The one key both reads use for a message body: workspace + message + part. */
@@ -295,16 +319,50 @@ function messageTaskOf(state: LineMessageStateV1, views: Map<string, SessionMess
   return view?.message.taskRef ?? lineTask;
 }
 
-export function briefRowsOf(brief: ContinuationBriefV1): Array<{ k: string; v: string }> {
-  const previous = brief.previous;
-  const last = previous.error !== null ? previous.error.text
-    : previous.interruption !== null ? '中断（' + previous.interruption.kind + '）'
-      : previous.cancelledBy !== null ? '已取消（' + previous.cancelledBy + '）'
-        : OUTCOME_WORD[previous.outcome];
+/** B4 (lead's 甲): one stop word, never a code. An interrupted Run also carries
+ * an error code (`continuation-brief-assembly`), so the interruption is read
+ * first; only then who cancelled, the error, and finally the outcome. */
+function lastStopOf(previous: ContinuationBriefV1['previous']): string {
+  if (previous.interruption !== null) {
+    return previous.interruption.kind === 'paused' ? '暂停时被打断' : '执行中被打断';
+  }
+  if (previous.cancelledBy !== null) {
+    const who = previous.cancelledBy === 'human' ? '你'
+      : previous.cancelledBy === 'goal_fan_out' ? '目标暂停或取消时一起' : '平台';
+    return who + '取消了这次执行';
+  }
+  if (previous.error !== null) return '出错停下（原文在思维链页的轨迹里）';
+  return OUTCOME_WORD[previous.outcome];
+}
+
+/** B4: the continuity sentence; `seededName` empty says 上一段工作记录. */
+function continuityTextOf(continuity: ContinuationSessionContinuity, seededName: string): string {
+  if (continuity === 'same_session_history') return '接着原来的工作记录做，带着原来的历史';
+  if (continuity === 'same_session_without_previous_turn') return '接着原来的工作记录做，上一轮没有接上';
+  if (continuity === 'other_session_seeded') {
+    return '另开一段工作记录，接续自' + (seededName === '' ? '上一段工作记录' : seededName) + '，带入了它的记录';
+  }
+  return '另开一段工作记录，没有带入原来的历史';
+}
+
+/** B4: a seed from this line's own earlier Session says 这条线上一段工作记录;
+ * another Session uses its line's name; an unnamed one stays empty. */
+export function seededNameOf(brief: ContinuationBriefV1, chainSessions: readonly SessionRef[],
+  lines: readonly NavLine[]): string {
+  const seeded = brief.session.seededFrom?.sessionRef ?? null;
+  if (seeded === null) return '';
+  if (chainSessions.some((ref) => ref.projectId === seeded.projectId && ref.sessionId === seeded.sessionId)) {
+    return '这条线上一段工作记录';
+  }
+  return lineNameOfSession(lines, seeded);
+}
+
+export function briefRowsOf(brief: ContinuationBriefV1, seededName = ''): Array<{ k: string; v: string }> {
   return [
     { k: '接续方式', v: BRIEF_MODE_WORD[brief.mode] ?? brief.mode },
     { k: '停下原因', v: FAILURE_CLASS_WORD[brief.failureClass] ?? brief.failureClass },
-    { k: '上次停在', v: last },
+    { k: '上次停在', v: lastStopOf(brief.previous) },
+    { k: '工作记录', v: continuityTextOf(brief.session.continuity, seededName) },
   ];
 }
 
@@ -378,14 +436,35 @@ function startupOf(report: MemberStartupReport | null, error: string | null): Me
   return { show: count > 0, count, groups, error: null };
 }
 
+/** B2: the card's fifth row, the line that created this one (E3 D60-6). A
+ * contact the read does not know, or a line missing from it, writes no row. */
+function creatorRowsOf(creator: CreatorContactV1 | undefined,
+  lines: readonly NavLine[], archived: readonly NavLine[]): Array<{ k: string; v: string }> {
+  if (creator === undefined || creator.kind === 'unknown') return [];
+  if (creator.kind === 'session') {
+    return [{ k: '建它的', v: lineNameOfSession([...lines, ...archived], creator.session) || '另一条工作线' }];
+  }
+  if (creator.kind === 'human') return [{ k: '建它的', v: '你' }];
+  if (creator.kind === 'platform') return [{ k: '建它的', v: '平台' }];
+  /* lapsed: the line that created this one is archived and has no successor. */
+  return [{ k: '建它的', v: '建它的线已归档' }];
+}
+
 /** The member data of one read. `selected` is the line in the centre; `null`
  * is the empty state. */
 export function adaptMember(source: MemberSource, selected: LineKey | null): MemberData {
   const nav = source.nav;
   const ownKey = source.ownKey;
-  const current = (row: NavLine): MemberRailRow => ({ ...row, current: ownKey !== null && sameKey(ownKey, row.key) });
-  const lines = nav.lines.map(current);
-  const archived = nav.archived.map(current);
+  const currentRailRow = (row: NavLine): MemberRailRow => ({
+    ...row,
+    current: ownKey !== null && sameKey(ownKey, row.key),
+    /* B1: a live line gets Chain's card; the main-conversation link has no line
+       facts and the archived template binds no hover, so both stay cardless. */
+    card: row.synth || row.archived ? null
+      : { rows: railCardOf(row, creatorRowsOf(source.creators?.get(row.id), nav.lines, nav.archived)).rows },
+  });
+  const lines = nav.lines.map(currentRailRow);
+  const archived = nav.archived.map(currentRailRow);
   const selectedGoal = nav.selectedGoalId === null ? null
     : nav.goals.find((goal) => goal.goalId === nav.selectedGoalId) ?? null;
   const line = source.line !== null && source.line.kind === 'line'
@@ -413,6 +492,7 @@ export function adaptMember(source: MemberSource, selected: LineKey | null): Mem
     changes,
     write: source.write,
     startup: startupOf(source.startup, source.startupError),
+    runHosts: source.runHosts,
   };
 }
 
@@ -452,7 +532,19 @@ export function adaptMemberLine(source: MemberSource, detail: WorkLineDetailV1):
   const scopeParts = [row.groups.module?.moduleId ?? '',
     row.responsibleNow[0]?.title ?? row.groups.task?.taskId ?? ''].filter((part) => part !== '');
   const { items, groups } = recordsOf(source, detail);
-  const title = navLine?.name ?? (row.name.source === 'duty_only' ? dutyWordOf(row.duty) : row.name.primary);
+  /* 16a T3: the one line-name rule, shared with Chain and the rail. */
+  const title = navLine?.name ?? lineNameOf(row.name);
+  /* B3: the claimed version; a newer current plan is a fact, not an expiry. */
+  const claimed = source.execution?.plan.planRevision ?? null;
+  const currentPlan = source.nav.tasks?.plan.planRevision ?? null;
+  const claimedPlan: Array<{ k: string; v: string }> = claimed === null ? [] : [
+    { k: '领取时用的计划', v: planVersionText(claimed) },
+    ...(currentPlan !== null && currentPlan > claimed
+      ? [{ k: '当前计划', v: '计划第 ' + String(currentPlan) + ' 版，这个任务原样保留' }] : []),
+  ];
+  /* B5: the same archive facts Chain's banner reads. */
+  const archivedTag = row.status.archivedTag;
+  const archived = archivedTag === null ? null : { tag: archivedTag, at: detail.chain[0]?.archivedAt ?? null };
   return {
     key,
     title,
@@ -483,7 +575,10 @@ export function adaptMemberLine(source: MemberSource, detail: WorkLineDetailV1):
     canIntervene: row.status.readOnly !== true && intervene?.availability === 'available',
     interveneReason: intervene !== null && intervene.availability !== 'available' ? intervene.reason : null,
     readOnly: row.status.readOnly === true,
-    review: reviewOfTaskRow(taskRow),
+    review: row.status.readOnly === true ? null : reviewOfTaskRow(taskRow),
+    claimedPlan,
+    archived,
+    archivedText: archivedBannerOf(archived),
     taskRef: taskOfLine(row),
     goalId: subGoalId,
     items,
@@ -520,6 +615,7 @@ function recordsOf(source: MemberSource, detail: WorkLineDetailV1): { items: Mem
       name: brief?.title ?? (task === null ? '这条工作线' : task.taskId),
       st,
       word: st === '' ? '' : PHASE_WORD[st] ?? st,
+      tip: row === null ? '' : taskWhyOf(row as unknown as Record<string, unknown>, st),
       rows: [],
     };
     groups.set(id, group);
@@ -585,7 +681,9 @@ function recordsOf(source: MemberSource, detail: WorkLineDetailV1): { items: Mem
     groupFor(task).rows.push(item);
   }
   if (source.brief !== null) {
-    const item: MemberItem = { kind: 'brief', rows: briefRowsOf(source.brief.brief) };
+    const seededName = seededNameOf(source.brief.brief, detail.row.chainSessions,
+      [...source.nav.lines, ...source.nav.archived]);
+    const item: MemberItem = { kind: 'brief', rows: briefRowsOf(source.brief.brief, seededName) };
     timed.push({ at: '', item, task: lineTask });
     groupFor(lineTask).rows.push(item);
   }

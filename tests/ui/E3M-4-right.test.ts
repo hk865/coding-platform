@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import { findAllClass, findClass, findElement } from './helpers/boot-page.js';
 import type { FakeElement } from './helpers/dom.js';
-import { countRoute, descendants, hasClass, textOf } from './helpers/E3N-page.js';
+import { countRoute, descendants, hasClass, quietPage, textOf } from './helpers/E3N-page.js';
 import { hover, leave } from './helpers/E3N-interact.js';
 import {
   bootMemberAt, bootMemberOnHost, buttonText, detailValue, elementsOf, headFact, memberSearch, openMemberS7C, openMemberW3, openMemberW4,
@@ -83,6 +83,10 @@ describe('E3M-4 the Member right panel', () => {
       hover(headLink(groupHeads(page.root)[index]!)!);
       await settle(() => tooltip() !== undefined);
       expect(tooltip()).toBeDefined();
+      /* The head is a Task, so its card is that Task's own card, never the
+         pause control's. 具名改坏: `memberTip` 认不出 `grp:`，落回暂停卡；本行红。 */
+      expect(textOf(tooltip())).not.toContain('暂停');
+      expect(textOf(tooltip())).toContain(groupName(groupHeads(page.root)[index]!));
       leave(headLink(groupHeads(page.root)[index]!)!);
       await settle(() => tooltip() === undefined);
       expect(tooltip()).toBeUndefined();
@@ -113,6 +117,9 @@ describe('E3M-4 the Member right panel', () => {
       expect(countRoute(log, 'lines/read')).toBe(1);
       press(recordRows(page.root)[0], 'the first record row');
       await settle(() => findClass(page.root, 'detail') !== undefined);
+      /* B6: opening a Run detail reads its network record; let that read land
+         before counting, so this row still proves the close alone reads nothing. */
+      await quietPage(log);
       const before = log.calls.length;
       press(findElement(page.root, (element) => element.tagName.toLowerCase() === 'button'
         && element.getAttribute('aria-label') === '关闭详情'), '关闭详情');

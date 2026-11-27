@@ -13,8 +13,9 @@
 
 import type { TaskGraph } from '../../contracts/task-graph.js';
 import type { SessionRef } from '../../contracts/core/identity.js';
+import type { LineWokenByV1 } from '../../contracts/work-line.js';
 import { asRecord, asText } from '../values.js';
-import { decisionCardCountPartial, goalDisplayState, isFinishedGoalDisplayPhase, lineNameOf,
+import { decisionCardCountPartial, goalDisplayState, isFinishedGoalDisplayPhase, lineNameOf, localShortAt,
   type GoalDisplayPhaseCode, type TaskMapQueueRead } from './task-map.js';
 import type { LineReadValue } from './line-shared.js';
 
@@ -269,6 +270,52 @@ export function lineNameOfSession(lines: readonly NavLine[], ref: SessionRef | n
   if (ref === null) return '';
   return lines.find((line) => line.key.projectId === ref.projectId
     && line.key.sessionId === ref.sessionId)?.name ?? '';
+}
+
+/** The line-card fields both pages draw: the name, its state word, who is
+ * responsible now, the last activity instant and the message that woke it. */
+export type RailCardLine = Pick<NavLine, 'name' | 'word' | 'responsibleNow' | 'lastActivityAt' | 'wokenBy'>;
+
+/** One line card: the head words and its rows; Member adds `建它的` through
+ * `extra`, after the four shared rows. */
+export type RailCard = { name: string; word: string; rows: Array<{ k: string; v: string }> };
+
+/** §2.8: who last woke the line, named from the same page's lines; a sender
+ * Session this page cannot name stays a Session reference, and a Host message
+ * has no Session. The message's removed `intent` is never read. */
+export function wakeByOf(wake: LineWokenByV1 | null, lines: readonly NavLine[]): NavWakeBy | null {
+  if (wake === null || wake.at === '') return null;
+  return {
+    at: wake.at,
+    senderName: lineNameOfSession(lines, wake.senderSessionRef),
+    senderSessionRef: wake.senderSessionRef,
+  };
+}
+
+/** The card's one row: the sender and the instant, never a message kind and
+ * never an internal id (G3b R2); an unnamed sender still says what it is. */
+export function wakeByTextOf(wake: NavWakeBy | null): string {
+  if (wake === null || wake.at === '') return '没有记录';
+  const sender = wake.senderSessionRef !== null
+    ? wake.senderName !== '' ? '“' + wake.senderName + '”' : '一条不在列表里的工作线'
+    : '你或平台';
+  return '最近由' + sender + '的消息叫醒（' + localShortAt(wake.at) + '）';
+}
+
+/** Both rails' card (§2.8): 负责 · 正在做 · 最近一步 · 叫醒; a time is written
+ * as the browser-local MM-DD HH:mm, never an ISO string (design §4). */
+export function railCardOf(line: RailCardLine, extra: Array<{ k: string; v: string }> = []): RailCard {
+  return {
+    name: line.name,
+    word: line.word,
+    rows: [
+      { k: '负责', v: line.responsibleNow.length === 0 ? '未分配' : line.responsibleNow.join('、') },
+      { k: '正在做', v: line.word },
+      { k: '最近一步', v: line.lastActivityAt === '' ? '没有记录' : localShortAt(line.lastActivityAt) },
+      { k: '叫醒', v: wakeByTextOf(line.wokenBy) },
+      ...extra,
+    ],
+  };
 }
 
 /** §2.8: fill each row's sender name from the same page; a sender this page

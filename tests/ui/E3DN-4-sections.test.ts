@@ -13,9 +13,9 @@ import { descendants, hasClass, textOf } from './helpers/E3N-page.js';
  * shows as deferred and future), 返工与接续 (`TaskRow.rework.entries` and the
  * continuation brief of a Run with a `requeueRef`), 用量 (`readings.usage`
  * of the counted Runs, one row per role template). The continuation's rows
- * are `briefRowsOf`'s three (Member's adapter): its `上次停在` is the brief's
- * `previous.error.text` when there is one, which the paused-then-crashed Run
- * has (`host_interrupted_while_paused`).
+ * are `briefRowsOf`'s four (Member's adapter): its `上次停在` reads the
+ * interruption first, so the paused-then-crashed Run says 暂停时被打断, never
+ * its internal error code.
  */
 
 const slot = worldSlot();
@@ -83,7 +83,8 @@ describe('E3DN-4 没有做的、返工与接续、用量', () => {
       expect(rowEv(continued[0])).toContain('接续 1 次');
       const text = textOf(await openRow(page.root, continued[0], 'dv-more', TASK_A));
       /* 具名改坏: 读上一个 Run（`requeueRef.afterRunId`）的 brief；本行在 :86 的“只有 done-a 一行”处红。 */
-      for (const part of ['接续方式', '中断后接着做', '停下原因', '平台中断', '上次停在', 'host_interrupted_while_paused']) {
+      /* 具名改坏: 上次停在不先认 interruption，落回 error 原文；本行红。 */
+      for (const part of ['接续方式', '中断后接着做', '停下原因', '平台中断', '上次停在', '暂停时被打断']) {
         expect(text).toContain(part);
       }
     } finally {

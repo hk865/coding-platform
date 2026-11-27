@@ -16,14 +16,14 @@ import {
   adaptMember, adaptMemberLine, messageBodyKey, startupReportOf, taskOfLine, traceOf,
   type MemberData, type MemberLine, type MemberSource, type MemberWriteBasis,
 } from './adapters/member.js';
-import { adaptChain, type ChainData, type ChainSource } from './adapters/chain.js';
+import { adaptChain, runHostsTextOf, type ChainData, type ChainSource } from './adapters/chain.js';
 import {
   ACCESS_FIXED_TEXT, adaptSettings, readSettings, ruleExpiresAtOf, saveSettings, settingsRoleLimitsOf,
   settingsRulesOf, settingsScopeKeyOf, SettingsNotEffectiveError,
   type SettingsData, type SettingsGoalName, type SettingsRoleLimits, type SettingsRuleAnswer,
   type SettingsRules, type SettingsRuleView, type SettingsSnapshot, type SettingsSnapshotData,
 } from './adapters/settings.js';
-import type { RoleLineDutyV1 } from '../contracts/role-lines.js';
+import type { CreatorContactV1, RoleLineDutyV1 } from '../contracts/role-lines.js';
 import {
   adaptDone, type DoneData, type DoneDeliveryRead, type DonePolicyRead, type DoneRoundRead, type DoneRunActivity, type DoneSource,
 } from './adapters/done.js';
@@ -218,6 +218,9 @@ export type BoardReadDemand = TaskMapReadDemand & {
   /** Chain A5: the trace record whose `materials/open` body is read once;
    * `null` withdraws it (closing the panel or picking another row). */
   chainRecord?: string | null;
+  /** Member B6: the Run whose open detail reads its `network/read` once;
+   * `null` withdraws it (closing the detail or picking another row). */
+  memberRunHosts?: RunRef | null;
   /** 只给 Main：本页自己的命令句柄，键是 `projectId/workspaceId|<行键>`。 */
   commandRuns?: Map<string, { scope: CoreScope; commandId: string } | 'gone'>;
 };
@@ -1012,7 +1015,9 @@ export async function bootBoardPage(): Promise<void> {
        * a detail only withdraws its note anchor; the closed detail shows no
        * note, so that withdrawal reads nothing (E3A-15). */
       Object.assign(demand, next);
-      if (Object.keys(next).length === 1 && next.noteAnchor === null) return;
+      /* Closing a detail only withdraws its one-shot read; the closed detail
+         shows no note or Run hosts, so the withdrawal reads nothing. */
+      if (Object.keys(next).length === 1 && (next.noteAnchor === null || next.memberRunHosts === null)) return;
       void refresh.reread();
     },
     async readRunSteps(key: string): Promise<void> {
@@ -1061,6 +1066,10 @@ export async function bootBoardPage(): Promise<void> {
       void refresh.reread();
     },
     openLine(key: TaskMapSessionRef | null): void {
+      /* B6: an open Run detail belongs to the old line. Switching the rail line
+         withdraws its host read, so the next page read does not re-ask the old
+         Run's network record. */
+      demand.memberRunHosts = null;
       demand.lineKey = key;
       void refresh.reread();
     },
@@ -2281,7 +2290,7 @@ export async function bootBoardPage(): Promise<void> {
         if (boardName === 'Member') {
           const member = snapshot.data as MemberData | null;
           latestLine = member?.line
-            ? { scope: member.scope, line: member.line, write: member.write, review: null } : null;
+            ? { scope: member.scope, line: member.line, write: member.write, review: member.line.review } : null;
         }
         if (boardName === 'Main' || boardName === 'Plan') {
           latestLine = main?.line && main.scope
@@ -3505,7 +3514,7 @@ export async function readLineFacts(
     scope, nav: { ...nav, tasks: taskGraph }, line: detail, ownKey: key,
     executions, messages, messageViews, messageBodies, copies, controls, brief,
     history: null, files: null, hover: null, execution, taskGraph, write: null, startup: null, startupError: null,
-    runStepsByRun,
+    creators: null, runStepsByRun, runHosts: null,
   };
 }
 
@@ -3559,6 +3568,32 @@ export async function readMember(
   }
   if (nav === null || nav.scope === null) return { data: null, cursor };
   const scope = nav.scope;
+  /* B2: one whole-workspace role-line read per page read fills every rail card's
+     建它的; a failed read leaves the cards without that row, never a guess. */
+  let creators: ReadonlyMap<string, CreatorContactV1> | null = null;
+  try {
+    const roleLines = readyRouteValue<{ rows: Array<{ row: { key: LineKey }; creator: CreatorContactV1 }> }>(
+      await client.post('role-lines/read', scope, { workspace: scope }), 'role-lines/read');
+    creators = new Map(roleLines.rows.map((line) => [
+      line.row.key.projectId + '/' + line.row.key.sessionId, line.creator,
+    ]));
+  } catch (error) {
+    logReadError(error);
+  }
+  /* B6: the open Run detail's network record, read once while that detail is
+     open; a failed read says so in that row, never as the page's error. */
+  let runHosts: MemberSource['runHosts'] = null;
+  if (demand.memberRunHosts !== undefined && demand.memberRunHosts !== null) {
+    const ref = demand.memberRunHosts;
+    try {
+      const snapshot = readyRouteValue<RunNetworkSnapshotV1 | null>(
+        await client.post('network/read', scope, { subject: ref }), 'network/read');
+      runHosts = { runRef: ref, text: snapshot === null ? '这次执行没有连过外网' : runHostsTextOf(snapshot) };
+    } catch (error) {
+      logReadError(error);
+      runHosts = { runRef: ref, text: '暂时读不到' };
+    }
+  }
   /* §2.4: the Host's start-up report is read once per page read; the Member
      page's 启动核对 section lists its reconcile lines. A failed read is that
      section's own 错误和重试: the line, the conversation and the controls stay. */
@@ -3603,9 +3638,12 @@ export async function readMember(
       scope, nav, line, ownKey: demand.ownKey ?? key,
       executions: [], messages: [], messageViews: [], messageBodies: {}, copies: [],
       controls: null, brief: null, history: null, files: null, hover: null,
-      execution: null, taskGraph: nav.tasks, write: null, startup, startupError, runStepsByRun: new Map(),
+      execution: null, taskGraph: nav.tasks, write: null, startup, startupError, creators,
+      runStepsByRun: new Map(), runHosts: null,
     };
   }
+  source.creators = creators;
+  source.runHosts = runHosts;
   if (demand.traceOpen === true && key !== null) {
     source.history = await readSessionTrace(client, scope, key);
   }

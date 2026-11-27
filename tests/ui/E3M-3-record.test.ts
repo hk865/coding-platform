@@ -2,7 +2,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { afterAll, describe, expect, it } from 'vitest';
 import { bootPage, findAllClass, findClass } from './helpers/boot-page.js';
 import type { FakeElement } from './helpers/dom.js';
-import { countRoute, forwardPage, gateChanges, hasClass, mainHeadTitle, newPageLog, routeOf, textOf, type PageLog } from './helpers/E3N-page.js';
+import { countRoute, forwardPage, gateChanges, hasClass, mainHeadTitle, newPageLog, quietPage, routeOf, textOf, type PageLog } from './helpers/E3N-page.js';
 import { click } from './helpers/E3N-interact.js';
 import {
   UUID_V4, bootMemberAt, buttonText, callsOf, elementsOf, memberInput, memberSearch, metaOf, openMemberS7C, openMemberW3,
@@ -275,6 +275,9 @@ describe('E3M-3 the Member centre', () => {
     try {
       expect(countRoute(log, 'lines/read')).toBe(1);
       const view = await detailOffering(page.root, '在中间查看');
+      /* B6: selecting a Run detail reads its network record; let that read land
+         before counting, so this row still proves the view action reads nothing. */
+      await quietPage(log);
       const before = log.calls.length;
       press(view, '在中间查看');
       await settle(() => sysLines(page.root).some((line) => line.includes('回到这条工作线')));
@@ -294,6 +297,8 @@ describe('E3M-3 the Member centre', () => {
       expect(countRoute(log, 'lines/read')).toBe(1);
       press(await detailOffering(page.root, '在中间查看'), '在中间查看');
       await settle(() => buttonText(findClass(page.root, 'detail'), '回到这条工作线') !== undefined);
+      /* B6: the Run detail's own network read lands before the count. */
+      await quietPage(log);
       const before = log.calls.length;
       press(buttonText(findClass(page.root, 'detail'), '回到这条工作线'), '回到这条工作线');
       await settle(() => !sysLines(page.root).some((line) => line.includes('回到这条工作线')));
