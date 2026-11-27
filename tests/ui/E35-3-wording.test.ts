@@ -69,14 +69,14 @@ describe('E35-3 reason words', () => {
       .toEqual(['中断，待核对 · 等你点“继续”', '中断，待核对 · 不能自动返工', '中断，待核对 · 目标已暂停', '中断，待核对 · 等待推进', '中断，待核对']);
   });
 
-  it('E35-3 3.9 a line reads the member words; an owner takes the track’s attention word', () => {
+  it('E35-3 3.9 a line reads the member words; an owner shows its own word, then the attention', () => {
     /* Named mutation: print the line's own code (working) instead of the member word. */
     const owner = (attention: string | null) => ({ name: { primary: '线' }, status: { own: 'standby', attention: attention && { code: attention } } });
     const ownersOf = (attention: string | null): string => adaptTaskMap(GOAL, { plan: { stages: [], executionDag: { dependsOn: [] } },
       tasks: [{ definition: { taskId: 't', title: 'T' }, effectivePhase: 'failed' }] } as TaskMapGraphRead, RUNNING,
     { hover: { tasks: [{ task: { taskId: 't' }, owners: [owner(attention)] }] } }).dag.owners.t!;
     expect(['decide', 'failed', 'blocked', 'unknown', null].map(ownersOf))
-      .toEqual(['线 · 等你决定', '线 · 停下（失败）', '线 · 停下（受阻）', '线 · 待核对', '线 · 待命']);
+      .toEqual(['线 · 待命 · 等你决定', '线 · 待命 · 停下（失败）', '线 · 待命 · 停下（受阻）', '线 · 待命 · 待核对', '线 · 待命']);
     const lines = ['working', 'checking', 'waiting_reply', 'done', 'retired', 'unknown']
       .map((own) => ({ key: { projectId: 'p', sessionId: own }, name: { primary: own }, status: { own } }));
     expect(adaptTaskMapTime([], null, null, lines, '2026-10-04T06:00:00.000Z').rows.map((row) => row.word))

@@ -118,7 +118,7 @@ body { margin: 0; background: #1F1F1F; }
           <div class="lv-rw">
             <a class="{{m.cls}}" href="{{mainHref}}" onMouseEnter="{{m.hover}}" onMouseLeave="{{m.unhover}}" onFocus="{{m.hover}}" onBlur="{{m.unhover}}">
               <span class="row-lead"><span class="{{m.dot}}" aria-hidden="true"></span></span>
-              <span class="row-main"><span class="row-name">{{m.name}}</span><span class="row-sub">{{m.word}}</span></span>
+              <span class="row-main"><span class="row-name">{{m.name}}</span><span class="row-sub">{{m.railWord}}</span></span>
             </a>
             <sc-if value="{{m.card}}" hint-placeholder-val="{{ false }}">
               <div class="{{m.cardCls}}" role="tooltip">
@@ -136,7 +136,7 @@ body { margin: 0; background: #1F1F1F; }
           <div class="lv-rw">
             <button class="{{m.cls}}" type="button" onClick="{{m.pick}}" onMouseEnter="{{m.hover}}" onMouseLeave="{{m.unhover}}" onFocus="{{m.hover}}" onBlur="{{m.unhover}}" aria-current="{{m.current}}">
               <span class="row-lead"><span class="{{m.dot}}" aria-hidden="true"></span></span>
-              <span class="row-main"><span class="row-name">{{m.name}}</span><span class="row-sub">{{m.word}}</span></span>
+              <span class="row-main"><span class="row-name">{{m.name}}</span><span class="row-sub">{{m.railWord}}</span></span>
             </button>
             <sc-if value="{{m.card}}" hint-placeholder-val="{{ false }}">
               <div class="{{m.cardCls}}" role="tooltip">
@@ -2258,14 +2258,14 @@ class Component extends DCLogic {
       const id = m.key.projectId + '/' + m.key.sessionId;
       return {
         id: id, isLink: m.duty === '秘书', isLine: m.duty !== '秘书', isArch: false,
-        name: m.name, word: m.word, sub: m.word, dot: m.dot,
+        name: m.name, word: m.word, railWord: m.railWord, sub: m.railWord, dot: m.dot,
         current: m.current ? 'page' : null,
         cls: 'row wl-line lv-line' + (arch ? ' is-arch' : '') + (m.current ? ' is-current' : ''),
         open: false, chev: 'ico xs chev',
         pick: () => { if (m.duty !== '秘书') openLine(m.key); },
         hover: tipTo('row:' + id), unhover: untip,
         card: tip === 'row:' + id, cardCls: 'hcard lv-card',
-        c: { dot: m.dot, tx: 'tx-plain', word: m.word, live: '', rows: m.card.rows, hint: '点一下把中间换成这条工作线的执行链' }
+        c: { dot: m.dot, tx: this.lvTx({ state: m.st, word: m.word }), word: m.word, live: '', rows: m.card.rows, hint: '点一下把中间换成这条工作线的执行链' }
       };
     };
     const wl = {
@@ -2731,7 +2731,7 @@ class Component extends DCLogic {
     /* every line opens on 问一问（只读）; an archived line's card keeps the 正在做 row of its version-14 expansion (lvRail) */
     const lvr = this.lvRail(RL.rows, RL.archived, Object.assign({}, s, { line: s.line || OWN }), { set: set });
     const rowV = (m, r, arch) => ({ id: m.id, isLink: m.role === 'secretary', isLine: m.role !== 'secretary', isArch: false,
-      name: m.name, word: arch ? m.sub : r.word, dot: r.dot, current: r.current,
+      name: m.name, word: arch ? m.sub : r.word, railWord: arch ? m.sub : r.word, dot: r.dot, current: r.current,
       cls: 'row wl-line lv-line' + (arch ? ' is-arch' : '') + (r.current ? ' is-current' : ''),
       pick: m.id === OWN ? home : r.pick, hover: r.hover, unhover: r.unhover, card: r.card, cardCls: r.cardCls, c: r.c });
     const archOpen = !!s.arch;
@@ -2945,7 +2945,7 @@ class Component extends DCLogic {
       const live = d.live ? '，' + d.live : '';
       const hint = main ? (on ? '你正在主对话里' : '点一下回到主对话') : on ? '它的对话在中间' : '点一下在中间打开它的对话';
       const def = arch || i >= upFrom; const up = hvUp && hvUp.id === r.id ? !!hvUp.up : def;
-      return { id: r.id, name: r.name, word: r.word, dot: r.dot, current: on ? 'true' : null,
+      return { id: r.id, name: r.name, word: r.word, railWord: r.word, dot: r.dot, current: on ? 'true' : null,
         cls: (arch ? 'rail-arch-ln lv-line' : 'row wl-row lv-line') + (on ? ' is-current' : ''),
         pick: () => set(main ? this.lvLeave() : cur === r.id ? { lvHover: null, lvTip: null, lvConfirm: null }
           : Object.assign({ line: r.id, lvHover: null, lvHoverUp: null, lvTip: null, lvConfirm: null, lvMode: 'ask' }, this.lvSwapTo(r.id))),

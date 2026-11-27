@@ -108,8 +108,11 @@ export interface CollaborationDriverPort {
   start(ctx: CoreCallContext, input: CollaborationStartInput): Promise<ReadResult<CollaborationSnapshot>>;
   read(ctx: CoreCallContext, input: CollaborationReadInput): Promise<ReadResult<CollaborationSnapshot>>;
   stop(ctx: CoreCallContext, input: CollaborationStopInput): Promise<ReadResult<CollaborationSnapshot>>;
-  /** BW: resume the Goal's parked handle, or start one; one Workflow advance, no model call. */
-  wake(ctx: CoreCallContext, goalRef: GoalRef): Promise<void>;
+  /**
+   * BW: resume the Goal's parked handle, or start one; one Workflow advance, no model call. `startGoal` (RSR-1): a
+   * driver holding only Task watches also takes the Goal-scope start (slice-DRV-SPEC §4.1).
+   */
+  wake(ctx: CoreCallContext, goalRef: GoalRef, options?: { startGoal?: boolean }): Promise<void>;
 }
 
 /** The Host owns the handle lifetime; `close` stops and drains every handle. */
@@ -1558,17 +1561,23 @@ function yieldedContinuationOf(value: WorkflowAdvanceResult): RunContinuationV1 
   /**
    * BW (spec §3.4): a wake marks `recheck` and returns at once; the decision
    * loop does the advancement. A driver that holds only Task watches re-opens
-   * exactly the watches that handed a basis back, on their own seed/flow/task.
+   * exactly the watches that handed a basis back, on their own seed/flow/task;
+   * with `startGoal` (RSR-1: the person resumed a Goal paused across the
+   * restart) it also takes the Goal-scope start, the §4.1 upgrade of a
+   * Task-only container. A driver the person stopped is left alone.
    */
-  async function wake(ctx: CoreCallContext, goalRef: GoalRef): Promise<void> {
+  async function wake(ctx: CoreCallContext, goalRef: GoalRef, options?: { startGoal?: boolean }): Promise<void> {
     const workspaceId = ctx.workspaceId ?? '';
     const driver = driverOf(ctx.projectId, workspaceId, goalRef.goalId);
-    if (driver === undefined) {
+    const startGoal = async (): Promise<void> => {
       const queryProfileIds = trustedProfiles
         .filter(profile => profile.scope.projectId === ctx.projectId && profile.scope.workspaceId === workspaceId)
         .map(profile => profile.id);
       await startHandle(ctx, { advance: { schemaVersion: 1, goalRef, flowId: `goal-wait:${goalRef.goalId}`,
         sessionHint: null, kind: 'select_work' }, queryProfileIds });
+    };
+    if (driver === undefined) {
+      await startGoal();
       return;
     }
     if (driver.stopRequested) return;
@@ -1579,6 +1588,7 @@ function yieldedContinuationOf(value: WorkflowAdvanceResult): RunContinuationV1 
     }
     leaveGoalWait(driver);
     reopenHandedBack(driver);
+    if (options?.startGoal === true) await startGoal();
   }
 
   return {
@@ -1634,7 +1644,7 @@ function yieldedContinuationOf(value: WorkflowAdvanceResult): RunContinuationV1 
       // decision/watch drains settle in the background and become `stopped`.
       return { status: 'ready', value: snapshot(first) };
     },
-    wake: (ctx, goalRef) => wake(ctx, goalRef),
+    wake: (ctx, goalRef, options) => wake(ctx, goalRef, options),
     async close() {
       closed = true;
       const all = [...handles.values()];

@@ -10,7 +10,7 @@
  * literal §3.2 T0, §3.9 and §3.10 values; no database is read.
  */
 import { afterEach, expect, it } from 'vitest';
-import { cleanupScenarios, openHostScenario, type HostScenario } from './harness.js';
+import { cleanupScenarios, openHostScenario, waitFor, type HostScenario } from './harness.js';
 import { AG2B_SCOPE, graphWrite, plain } from '../helpers/AG2b-collaboration-fixture.js';
 import { readExecution, submitControl } from '../helpers/A2-restart-fixture.js';
 import { goalControlled } from './support/control.js';
@@ -122,10 +122,11 @@ it('2C-23 (2) a Goal-fan-out-paused Run interrupted by the restart reads paused_
   expect(cont.availability).toBe('unavailable');
   expect(cont.reasonCode).toBe('busy');
 
-  // The Goal resumes: GOAL-29 continues it in the original Session.
+  // The Goal resumes: GOAL-29 continues it in the original Session, claimed by the goal loop the resume rebuilt
+  // (RSR-1: the Goal was paused across the restart).
   await goalControlled(h.host, 'resume', 's2c23-goal-resume');
-  await h.advance(h.select('s2c23-goal-continue', 'ag2b-work'), { stopBefore: (input) => input.kind === 'perform' && input.operation.kind === 'start' });
-  const nextRun = (await h.taskRow()).execution;
+  const nextRun = (await waitFor(() => h!.taskRow(), next => next.execution !== null && next.execution.runId !== runRef.runId,
+    'the goal loop to claim the continuation')).execution;
   expect(nextRun).not.toBeNull();
   expect((await readExecution(h.host, nextRun!)).session.ref.sessionId).toBe(head);
 }, 240_000);

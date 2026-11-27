@@ -23,11 +23,11 @@ import type { GoalRef } from '../../contracts/ledger.js';
 import type { UncommittedFilesV1 } from '../../contracts/workspace-files.js';
 import type { CreatorContactV1 } from '../../contracts/role-lines.js';
 import { asRecord, asText } from '../values.js';
-import { lineNameOf, localShortAt, planVersionText, taskState, taskWhyOf, PHASE_WORD } from './task-map.js';
-import { lineStatusView, dutyWordOf, lineHref, lineNameOfSession, railCardOf,
+import { lineNameOf, lineStatusView, localShortAt, planVersionText, taskState, taskWhyOf, PHASE_WORD } from './task-map.js';
+import { dutyWordOf, lineHref, lineNameOfSession, railCardOf,
   type LineKey, type NavData, type NavGoal, type NavInbox, type NavLine } from './nav.js';
 import { archivedBannerOf, runHostsTextOf } from './chain.js';
-import { requeueVisible, reviewOfTaskRow, type LineReview } from './line-shared.js';
+import { continuationControlOf, requeueVisible, reviewOfTaskRow, type LineReview } from './line-shared.js';
 import type { MainRunStep, MainRunSteps } from './main.js';
 import { auxChangedRowsOf } from './aux-panel.js';
 
@@ -65,6 +65,11 @@ export type MemberStartupReport = {
   redriveGoals: Array<{ goalId: string; taskIds: string[] }>;
   interruptedGoals: Array<{ goalId: string; taskIds: string[]; runRefs: number; close: string; status: string }>;
   problems: string[];
+  /** §5.6-1: the Host instance lease behind the report. */
+  lease: 'owned' | 'held_by_other';
+  leaseRow: string;
+  /** §5.8b-4: the resume mode in force when the report was produced. */
+  resumeOnStartup: 'auto' | 'ask' | 'off';
 };
 
 export type MemberSource = {
@@ -103,6 +108,11 @@ export type MemberSource = {
   /** B6: the selected Run detail's network record, read only while
    * `demand.memberRunHosts` names it; `null` when no Run detail is open. */
   runHosts: { runRef: RunRef; text: string } | null;
+  /** S7: the selected line's open waits from `sessions/facts`, already named;
+   * `[]` when the read failed or nothing is open. */
+  waits: MemberWait[];
+  /** S6: the QueryRun's unknown cause from `queries/read`; null for a Run or none. */
+  attestWhy: string | null;
 };
 
 export type MemberRailRow = NavLine & {
@@ -111,6 +121,10 @@ export type MemberRailRow = NavLine & {
    * and archived rows, whose templates draw no card. */
   card: { rows: Array<{ k: string; v: string }> } | null;
 };
+
+/** S7: one open wait; `name` is the recipient line's name, `deadline` the browser-local
+ * `MM-DD HH:mm` (`localShortAt`), never an ISO string. */
+export type MemberWait = { name: string; deadline: string | null };
 
 export type MemberLine = {
   key: LineKey;
@@ -124,6 +138,8 @@ export type MemberLine = {
   controls: LineControlV1[];
   canPause: boolean;
   canResume: boolean;
+  /** S3: 继续 goes through the paused Task's `continue` control (a new Run). */
+  resumeStartsNewRun: boolean;
   canCancel: boolean;
   canRequeue: boolean;
   canAsk: boolean;
@@ -139,6 +155,12 @@ export type MemberLine = {
   archived: { tag: LineArchivedTagV1; at: string | null } | null;
   /** B5: the line-view banner sentence; empty unless the line is archived. */
   archivedText: string;
+  /** S6: the line's available `attest_unknown` control, or null. */
+  attest: { route: string; target: LineControlV1['target']; pins: LineControlV1['pins'] } | null;
+  /** S6: why a QueryRun's result is unknown, from its own record; empty for a Run. */
+  attestWhy: string;
+  /** S7: the line's open waits, for the head's 状态 card. */
+  waits: MemberWait[];
   /** The TaskTriple the line is responsible for; the one `writeBasisOf` reads. */
   taskRef: TaskTriple | null;
   /** The Goal the page's subtitle shows (the line's own Goal, else the selected one); the person's words on this
@@ -268,6 +290,69 @@ function canSubmit(controls: LineControlV1[], kind: LineControlV1['kind']): bool
   return controlOf(controls, kind)?.availability === 'available';
 }
 
+/** S6: why the QueryRun is unknown, from its own `executionState.unknown`
+ * (QRR-05). A cause no page word exists for writes nothing. */
+export function queryUnknownTextOf(cause: unknown): string {
+  const row = asRecord(cause);
+  if (asText(row.kind) === 'unresolved_tools') {
+    const calls = Array.isArray(row.toolCallIds) ? row.toolCallIds.length : 0;
+    return calls === 0 ? '还有工具调用没有结果' : '还有 ' + String(calls) + ' 个工具调用没有结果';
+  }
+  if (asText(row.kind) === 'kernel_unreadable') {
+    return asText(row.verdict) === 'damaged' ? '执行记录损坏' : '执行记录缺失';
+  }
+  return '';
+}
+
+/** S7: the line's open waits, each named by the recipient line. A recipient
+ * this page has no line for stays 一条不在列表里的工作线, never an id. */
+export function waitRowsOf(waits: unknown, nav: NavData): MemberWait[] {
+  const rows: MemberWait[] = [];
+  for (const entry of Array.isArray(waits) ? waits : []) {
+    const row = asRecord(entry);
+    if (asText(asRecord(row.state).state) !== 'open') continue;
+    const recipient = asRecord(row.recipient);
+    const name = asText(recipient.kind) === 'user' ? '你'
+      : lineNameOfSession([...nav.lines, ...nav.archived], {
+        projectId: asText(recipient.projectId), sessionId: asText(recipient.sessionId),
+      }) || '一条不在列表里的工作线';
+    const deadline = asText(row.deadline);
+    rows.push({ name, deadline: deadline === '' ? null : localShortAt(deadline) });
+  }
+  return rows;
+}
+
+/** S1 (lead 11-26): the word a control intent puts on the line. `settled`
+ * means the intent has an outcome and owns the status word; a queued intent
+ * keeps the line's own word and travels in the advancing sentence. Null means
+ * the line's own state word is right (a landed pause/cancel/resume/steer). */
+export function controlIntentWordOf(intent: ControlIntentSnapshotV1 | null): { word: string; settled: boolean } | null {
+  if (intent === null) return null;
+  if (intent.status === 'queued') {
+    if (intent.kind === 'pause') return { word: '已请求暂停，等安全点', settled: false };
+    if (intent.kind === 'cancel') return { word: '已请求取消，等安全点', settled: false };
+    return null;
+  }
+  if (intent.status === 'outcome_unknown') return { word: '待核对', settled: true };
+  const observation = intent.observation;
+  if (intent.status === 'superseded') {
+    return observation.kind === 'terminal_without_cancel'
+      ? { word: '未生效（执行先结束）', settled: true }
+      : { word: '已被较新的控制取代', settled: true };
+  }
+  /* applied: only a Run the platform never entered has its own word; every
+     other applied intent keeps the line state (已暂停 and so on). */
+  if (observation.kind === 'cancelled' && 'origin' in observation
+    && observation.origin === 'platform_not_entered') {
+    return { word: '已取消（未进入执行）', settled: true };
+  }
+  if (observation.kind === 'paused' && 'origin' in observation
+    && observation.origin === 'platform_not_entered') {
+    return { word: '已暂停（还没进入执行）', settled: true };
+  }
+  return null;
+}
+
 /** One line's attempt words (M16): a real ordinal is shown as 第 n 次; an
  * execution without an ordinal is `—`, never a made-up first attempt. */
 function attemptOf(task: TaskRow | null): { ordinal: number | null; text: string } {
@@ -376,10 +461,16 @@ const startupTexts = (value: unknown): string[] =>
   (Array.isArray(value) ? value : []).map((entry) => asText(entry)).filter((text) => text !== '');
 const startupNumber = (value: unknown): number => typeof value === 'number' ? value : 0;
 
-/** The JSON boundary of `host/reconcile-report`: keep the fields the section shows. */
+/** The JSON boundary of `host/reconcile-report`: keep the fields the section shows.
+ * The lease and the resume mode sit on the answer's top level; `report` itself
+ * is null when this Host holds no lease, and the section still shows the lease
+ * line then (§5.6-1). */
 export function startupReportOf(value: unknown): MemberStartupReport | null {
   if (value === null || value === undefined) return null;
-  const report = asRecord(value);
+  const answer = asRecord(value);
+  const report = asRecord(answer.report);
+  const resumeOnStartup = asText(asRecord(answer.automation).resumeOnStartup);
+  const lease = asText(answer.lease) === 'held_by_other' ? 'held_by_other' : 'owned';
   const lines = (step: typeof STARTUP_STEPS[number]): MemberStartupLine[] =>
     (Array.isArray(report[step]) ? report[step] : []).map((entry) => {
       const line = asRecord(entry);
@@ -404,30 +495,80 @@ export function startupReportOf(value: unknown): MemberStartupReport | null {
         close: asText(row.close), status: asText(row.status) };
     }),
     problems: startupTexts(report.problems),
+    lease,
+    leaseRow: asText(answer.leaseRow),
+    resumeOnStartup: resumeOnStartup === 'auto' || resumeOnStartup === 'off' ? resumeOnStartup : 'ask',
   };
 }
 
-/** The 启动核对 rows, grouped by step; an empty report hides the section. */
-function startupOf(report: MemberStartupReport | null, error: string | null): MemberStartup {
+/** S5: one Goal named by its rail ordinal and objective; a Goal no longer in
+ * the list is never printed as its id. */
+function startupGoalTextOf(goalId: string, nav: NavData): string {
+  const goal = nav.goals.find((entry) => entry.goalId === goalId);
+  if (goal === undefined) return '一个已不在列表里的目标';
+  return '目标 ' + (goal.ordinal === null ? '—' : String(goal.ordinal)) + ' · ' + goal.objective;
+}
+
+/** S5: the Task names from the selected Goal's own graph; another Goal's tasks
+ * can only be counted, and a missing title falls back to the count. */
+function startupTaskTextOf(goalId: string, taskIds: readonly string[], nav: NavData): string {
+  if (taskIds.length === 0) return '—';
+  const graph = nav.tasks;
+  const planGoalId = graph === null ? '' : asText(asRecord(asRecord(graph.plan).goalRef).goalId);
+  if (graph === null || planGoalId !== goalId) return String(taskIds.length) + ' 个任务';
+  const titles = taskIds.map((taskId) => asText(asRecord(graph.tasks.find((row) =>
+    row.ref.goalId === goalId && row.ref.taskId === taskId)?.definition).title));
+  if (titles.some((title) => title === '')) return String(taskIds.length) + ' 个任务';
+  return titles.join('、');
+}
+
+/** S5: the interrupted Goal's status and close codes share one word table; a
+ * code outside it is never printed, only said to be unchecked. */
+const STARTUP_CODE_WORD: Record<string, string> = {
+  recorded: '已记下，等你继续',
+  kept: '沿用已记下的',
+  driven: '已自动继续',
+  clean: '上次正常关闭',
+  unclean: '上次没有正常关闭',
+};
+
+/** The 启动核对 rows, grouped by step; an empty report hides the section, but a
+ * lease held elsewhere always shows its one line (§5.6-1). */
+export function startupViewOf(report: MemberStartupReport | null, error: string | null, nav: NavData): MemberStartup {
   if (error !== null) return { show: true, count: 0, groups: [], error };
   if (report === null) return { show: false, count: 0, groups: [], error: null };
   const lineRows = (lines: MemberStartupLine[]): Array<{ text: string }> => lines.map((line) => ({
     text: line.ref + ' · ' + line.row + ' · ' + line.status
       + (line.reason === '' ? '' : ' · ' + line.reason),
   }));
+  /* 5.6-1: the lease line is 这台主机's first row; the code HL-04 is a
+     damaged lock file, every other row is another Host using the project. */
+  const leaseRows = report.lease === 'held_by_other' ? [{ text: report.leaseRow === 'HL-04'
+    ? '锁文件损坏：确认没有别的进程后删除项目库目录里的 host-instance.lock'
+    : '另一个工作台进程正在使用这个项目库，执行只在那里进行' }] : [];
+  /* 5.7-2 / 5.8b-4 / 5.9b-8: the resume mode is said once, then each redriven Goal. */
+  const redriveRows: Array<{ text: string }> = [];
+  if (report.resumeOnStartup === 'auto') {
+    redriveRows.push(...report.redriveGoals.map((row) => ({ text: '启动后自动继续：'
+      + startupGoalTextOf(row.goalId, nav) + '（' + startupTaskTextOf(row.goalId, row.taskIds, nav) + '）' })));
+  } else {
+    redriveRows.push({ text: report.resumeOnStartup === 'ask'
+      ? '不自动继续（问我：等你点继续）' : '不自动继续（设置已关闭）' });
+    redriveRows.push(...report.redriveGoals.map((row) => ({ text: startupGoalTextOf(row.goalId, nav) })));
+  }
   const groups = [
+    { label: '这台主机', rows: leaseRows },
     ...STARTUP_STEPS.map((step) => ({ label: STARTUP_STEP_WORD[step], rows: lineRows(report[step]) })),
     { label: '扇出', rows: report.fanOut.map((row) => ({
-      text: 'Goal ' + row.goalId + ' · 控制 ' + (row.control === '' ? '—' : row.control)
+      text: startupGoalTextOf(row.goalId, nav) + ' · 控制 ' + (row.control === '' ? '—' : row.control)
         + ' · 执行 ' + String(row.runs) + ' · 接续 ' + String(row.continuations)
         + (row.problem === '' ? '' : ' · ' + row.problem),
     })) },
-    { label: '重新驱动', rows: report.redriveGoals.map((row) => ({
-      text: 'Goal ' + row.goalId + ' · 任务 ' + (row.taskIds.join('、') || '—'),
-    })) },
+    { label: '重新驱动', rows: redriveRows },
     { label: '被中断的目标', rows: report.interruptedGoals.map((row) => ({
-      text: 'Goal ' + row.goalId + ' · ' + row.status + ' · ' + row.close
-        + ' · 任务 ' + (row.taskIds.join('、') || '—')
+      text: startupGoalTextOf(row.goalId, nav) + ' · ' + (STARTUP_CODE_WORD[row.status] ?? '待核对')
+        + ' · ' + (STARTUP_CODE_WORD[row.close] ?? '待核对')
+        + ' · 任务 ' + startupTaskTextOf(row.goalId, row.taskIds, nav)
         + (row.runRefs === 0 ? '' : ' · 执行 ' + String(row.runRefs)),
     })) },
     { label: '问题', rows: report.problems.map((text) => ({ text })) },
@@ -491,7 +632,7 @@ export function adaptMember(source: MemberSource, selected: LineKey | null): Mem
     trace: traceOf(source.history),
     changes,
     write: source.write,
-    startup: startupOf(source.startup, source.startupError),
+    startup: startupViewOf(source.startup, source.startupError, nav),
     runHosts: source.runHosts,
   };
 }
@@ -511,10 +652,14 @@ export function adaptMemberLine(source: MemberSource, detail: WorkLineDetailV1):
   const control = source.controls;
   const pendingKind = control !== null && (control.status === 'queued' || control.status === 'applied')
     ? control.kind : null;
+  /* S1: a settled intent owns the status word; a queued one keeps the line's
+     own word and travels in the advancing sentence (E3 5.1-1 … 5.1-9). */
+  const intentWord = controlIntentWordOf(control);
+  const settled = intentWord !== null && intentWord.settled;
   /* §2.6: a pause that has landed (`own:'paused'`) reads 已暂停, not 等安全点;
      a cancel still keeps travelling through the last safe point. */
-  const pausePending = pendingKind === 'pause'
-    || row.status.markers.some((marker) => marker.kind === 'stop_pending');
+  const pausePending = !settled && (pendingKind === 'pause'
+    || row.status.markers.some((marker) => marker.kind === 'stop_pending'));
   /* A cancel that landed stops the advancing text: prototype
      `docs/ui-reference/workbench-2026-10/Member.dc.html:1455-1461` (cancelling keeps the
      working word; the landed cancel reads 已取消，可重新入队). */
@@ -522,9 +667,12 @@ export function adaptMemberLine(source: MemberSource, detail: WorkLineDetailV1):
     && source.execution !== null
     && source.execution.run.status === 'ended'
     && source.execution.run.outcome === 'cancelled';
-  const advancing = !cancelLanded && (pendingKind === 'cancel'
+  const advancing = !settled && !cancelLanded && (pendingKind === 'cancel'
     || (pausePending && row.status.own !== 'paused'));
   const live = view.st === 'doing';
+  const continuation = continuationControlOf(row.controls, taskOfLine(row));
+  const attestControl = controls.find((entry) => entry.kind === 'attest_unknown'
+    && entry.availability === 'available') ?? null;
   const intervene = controlOf(controls, 'intervene');
   const lineGoalRef = row.name.goalRef;
   const subGoalId = lineGoalRef?.goalId ?? source.nav.selectedGoalId;
@@ -561,14 +709,16 @@ export function adaptMemberLine(source: MemberSource, detail: WorkLineDetailV1):
       live,
       advancing,
       still: !live && !advancing,
-      word: cancelLanded ? '已取消，可重新入队' : view.word,
+      word: settled ? intentWord!.word : cancelLanded ? '已取消，可重新入队' : view.word,
       dot: cancelLanded ? 'dot s-cancelled' : view.dot,
-      advText: pendingKind === 'cancel' ? '已请求取消，等安全点' : '已请求暂停，等安全点',
+      advText: intentWord !== null && !intentWord.settled ? intentWord.word
+        : pendingKind === 'cancel' ? '已请求取消，等安全点' : '已请求暂停，等安全点',
     },
     attempt: attemptOf(taskRow),
     controls,
     canPause: canSubmit(controls, 'pause'),
-    canResume: canSubmit(controls, 'resume'),
+    canResume: canSubmit(controls, 'resume') || continuation !== null,
+    resumeStartsNewRun: continuation !== null,
     canCancel: canSubmit(controls, 'cancel'),
     canRequeue: taskRow !== null && requeueVisible(taskRow),
     canAsk: true,
@@ -579,6 +729,10 @@ export function adaptMemberLine(source: MemberSource, detail: WorkLineDetailV1):
     claimedPlan,
     archived,
     archivedText: archivedBannerOf(archived),
+    attest: attestControl === null ? null
+      : { route: attestControl.route, target: attestControl.target, pins: attestControl.pins },
+    attestWhy: source.attestWhy ?? '',
+    waits: source.waits,
     taskRef: taskOfLine(row),
     goalId: subGoalId,
     items,

@@ -13,7 +13,8 @@ import {
   type LineKey, type NavData, type NavLineDetail,
 } from './adapters/nav.js';
 import {
-  adaptMember, adaptMemberLine, messageBodyKey, startupReportOf, taskOfLine, traceOf,
+  adaptMember, adaptMemberLine, messageBodyKey, queryUnknownTextOf, startupReportOf, taskOfLine, traceOf,
+  waitRowsOf,
   type MemberData, type MemberLine, type MemberSource, type MemberWriteBasis,
 } from './adapters/member.js';
 import { adaptChain, runHostsTextOf, type ChainData, type ChainSource } from './adapters/chain.js';
@@ -28,7 +29,7 @@ import {
   adaptDone, type DoneData, type DoneDeliveryRead, type DonePolicyRead, type DoneRoundRead, type DoneRunActivity, type DoneSource,
 } from './adapters/done.js';
 import {
-  readLine, readSessionTrace, requeueVisible, submitRunControl, type LineReadValue,
+  continuationControlOf, readLine, readSessionTrace, requeueVisible, submitRunControl, type LineReadValue,
 } from './adapters/line-shared.js';
 import {
   runningMinutesText, type RunningCommandItemV1,
@@ -66,7 +67,7 @@ import type {
 } from '../contracts/knowledge.js';
 import type { ControlIntentSnapshotV1 } from '../contracts/control-intent.js';
 import type { ContinuationBriefV1 } from '../contracts/continuation-brief.js';
-import type { GraphHoverReadV1, LineExecutionItemV1, LineMessageStateV1, WorkLineDetailV1, WorkLineSectionPageV1 } from '../contracts/work-line.js';
+import type { GraphHoverReadV1, LineControlV1, LineExecutionItemV1, LineMessageStateV1, WorkLineDetailV1, WorkLineSectionPageV1 } from '../contracts/work-line.js';
 import type { SessionMessageRef } from '../contracts/core/session-message.js';
 import type { QueryJobAnswerSnapshot } from '../contracts/query-job.js';
 import type { QueryExecutionRecord } from '../contracts/query-job.js';
@@ -567,6 +568,9 @@ export type BoardActions = {
   withdrawAndReverify: (cardKey: string) => Promise<void>;
   /** D25/D40: `executions/resolve-unknown` with the card's Run. */
   attestCard: (cardKey: string, reason: string) => Promise<void>;
+  /** S6 (5.6-11): the Member head's 认定结果; the line's own `attest_unknown`
+   * control picks the route and pins (Run or QueryRun). */
+  attestLine: (reason: string) => Promise<void>;
   /** D20/D23/D27: `plans/propose` + `plans/apply`, changing one Task's disposition. */
   changeDisposition: (cardKey: string, disposition: 'active' | 'deferred' | 'cancelled', note?: string) => Promise<void>;
   /** D21/D36/D37: `plans/propose` + `plans/apply`, adding a required repair Task. */
@@ -1738,6 +1742,23 @@ export async function bootBoardPage(): Promise<void> {
       }
       await refresh.reread();
     },
+    async attestLine(reason: string): Promise<void> {
+      const data = latestLine;
+      const attest = data?.line.attest ?? null;
+      if (data === null || attest === null) throw new Error(writeTextOf(new Error('this line has no unknown result to attest')));
+      const target = attest.target;
+      const input = target.queryRunRef !== undefined ? { queryRunRef: target.queryRunRef, reason }
+        : target.runRef !== undefined ? { runRef: target.runRef, reason } : null;
+      if (input === null) throw new Error(writeTextOf(new Error('this attestation names no Run')));
+      try {
+        committedRouteValue(await client.write(attest.route, data.scope, {
+          input, meta: { requestId: crypto.randomUUID(), expected: attest.pins },
+        }), attest.route);
+      } catch (error) {
+        throw new Error(attestWriteTextOf(error));
+      }
+      await refresh.reread();
+    },
     async changeDisposition(cardKey: string, disposition: 'active' | 'deferred' | 'cancelled', note = ''): Promise<void> {
       const card = decideCardOf(cardKey);
       const scope = latestDecideScope;
@@ -1831,15 +1852,23 @@ export async function bootBoardPage(): Promise<void> {
       const line = data?.line ?? null;
       if (data === null || line === null) throw new Error(writeTextOf(new Error('no line')));
       const control = line.controls.find((entry) => entry.kind === kind && entry.availability === 'available') ?? null;
-      if (control === null) throw new Error(writeTextOf(new Error('this control is not available')));
+      /* S3: a paused-interrupted Task has no `resume`; its 继续 is the Task's
+         own `continue` control (tasks/requeue, a new Run), for this line's Task. */
+      const continuation = kind !== 'resume' || control !== null ? null
+        : continuationControlOf(line.controls, line.taskRef);
+      if (control === null && continuation === null) throw new Error(writeTextOf(new Error('this control is not available')));
       const key = line.key.projectId + '|' + line.key.sessionId;
       await withLineWrite(key, async (): Promise<void> => {
-        try {
-          await submitRunControl(client, data.scope, control, kind);
-        } catch (error) {
-          throw new Error(writeTextOf(error));
+        if (continuation !== null) {
+          await submitContinuation(client, data.scope, continuation, refresh.reread);
+        } else {
+          try {
+            await submitRunControl(client, data.scope, control!, kind);
+          } catch (error) {
+            throw new Error(controlWriteTextOf(error));
+          }
+          await refresh.reread();
         }
-        await refresh.reread();
       });
     },
     async stopQueryRun(ref: QueryRunRef): Promise<void> {
@@ -1898,15 +1927,22 @@ export async function bootBoardPage(): Promise<void> {
         throw new Error(writeTextOf(new Error('no Chain line')));
       }
       const control = line.controls.find((entry) => entry.kind === kind && entry.availability === 'available') ?? null;
-      if (control === null) throw new Error(writeTextOf(new Error('this control is not available')));
+      /* S3: the same paused-interrupted Task branch as Member's line head. */
+      const continuation = kind !== 'resume' || control !== null || data.task === null ? null
+        : continuationControlOf(line.controls, data.task.ref);
+      if (control === null && continuation === null) throw new Error(writeTextOf(new Error('this control is not available')));
       const scope = latestChainScope;
       await withLineWrite(line.key.projectId + '|' + line.key.sessionId, async (): Promise<void> => {
-        try {
-          await submitRunControl(client, scope, control, kind);
-        } catch (error) {
-          throw new Error(writeTextOf(error));
+        if (continuation !== null) {
+          await submitContinuation(client, scope, continuation, refresh.reread);
+        } else {
+          try {
+            await submitRunControl(client, scope, control!, kind);
+          } catch (error) {
+            throw new Error(controlWriteTextOf(error));
+          }
+          await refresh.reread();
         }
-        await refresh.reread();
       });
     },
     async requeueChain(): Promise<void> {
@@ -3487,6 +3523,24 @@ export async function readLineFacts(
     controls = readyRouteValue<ControlIntentSnapshotV1>(
       await client.post('controls/read', scope, intentRef), 'controls/read');
   }
+  /* S6: a QueryRun's unknown cause is in its own record; a Run's page already
+     says why (the head's 待核对 and the task card). */
+  let attestWhy: string | null = null;
+  const attest = detail.row.controls.find((entry) => entry.kind === 'attest_unknown'
+    && entry.availability === 'available') ?? null;
+  const attestQuery = attest?.target.queryRunRef;
+  if (attestQuery !== undefined) {
+    try {
+      const query = readyRouteValue<QueryExecutionRecord>(
+        await client.post('queries/read', scope, {
+          aggregateType: 'QueryJob', projectId: attestQuery.projectId,
+          workspaceId: attestQuery.workspaceId, queryJobId: attestQuery.queryJobId,
+        }), 'queries/read');
+      attestWhy = queryUnknownTextOf(query.run.run.executionState?.unknown);
+    } catch (error) {
+      logReadError(error);
+    }
+  }
   if (record && execution !== null && execution.run.requeueRef !== undefined) {
     brief = readyRouteValue<{ brief: ContinuationBriefV1; digest: string } | null>(
       await client.post('executions/brief', scope, { runRef: execution.run.ref }), 'executions/brief');
@@ -3514,7 +3568,7 @@ export async function readLineFacts(
     scope, nav: { ...nav, tasks: taskGraph }, line: detail, ownKey: key,
     executions, messages, messageViews, messageBodies, copies, controls, brief,
     history: null, files: null, hover: null, execution, taskGraph, write: null, startup: null, startupError: null,
-    creators: null, runStepsByRun, runHosts: null,
+    creators: null, runStepsByRun, runHosts: null, waits: [], attestWhy,
   };
 }
 
@@ -3602,7 +3656,7 @@ export async function readMember(
   try {
     const startupRead = readyRouteValue<unknown>(
       await client.post('host/reconcile-report', scope, {}), 'host/reconcile-report');
-    startup = startupReportOf(asRecord(startupRead).report);
+    startup = startupReportOf(startupRead);
   } catch (error) {
     logReadError(error);
     startupError = pageTextOf(error);
@@ -3639,11 +3693,22 @@ export async function readMember(
       executions: [], messages: [], messageViews: [], messageBodies: {}, copies: [],
       controls: null, brief: null, history: null, files: null, hover: null,
       execution: null, taskGraph: nav.tasks, write: null, startup, startupError, creators,
-      runStepsByRun: new Map(), runHosts: null,
+      runStepsByRun: new Map(), runHosts: null, waits: [], attestWhy: null,
     };
   }
   source.creators = creators;
   source.runHosts = runHosts;
+  /* S7: the Member page's one line reads its open waits once; a failed read
+     leaves the card without that row and is logged, never drawn as a code. */
+  if (source.line !== null && source.line.kind === 'line' && key !== null) {
+    try {
+      const facts = readyRouteValue<{ waits?: unknown }>(
+        await client.post('sessions/facts', scope, key), 'sessions/facts');
+      source.waits = waitRowsOf(facts.waits, nav);
+    } catch (error) {
+      logReadError(error);
+    }
+  }
   if (demand.traceOpen === true && key !== null) {
     source.history = await readSessionTrace(client, scope, key);
   }
@@ -5288,6 +5353,36 @@ function writeTextOf(error: unknown): string {
   return WRITE_ERROR_TEXT[code + ':' + reason] ?? WRITE_ERROR_TEXT[code] ?? '写入失败。';
 }
 
+/** S2 (5.1-8): the control owner's English refusals in the person's words,
+ * matched by substring in this order; an unknown reason falls back to the
+ * generic table, so an owner rewording its text never says something wrong. */
+export function controlWriteTextOf(error: unknown): string {
+  if (!(error instanceof RouteReadError)) return writeTextOf(error);
+  const { code, reason } = error;
+  if (code === 'busy' && reason.includes('paused Run ended at the Host restart')) {
+    return '主机重启时已暂停，这次执行已经结束；点“继续”接着做这个任务。';
+  }
+  if (code === 'busy' && reason.includes('Run already ended')) {
+    return '这次执行已经结束，不能再暂停或取消。';
+  }
+  if (code === 'busy' && reason.includes('consumed the yielded wait continuation')) {
+    return '让出等待的接续已经被后面的执行用掉了，不能再控制它。';
+  }
+  if (code === 'busy' && reason.includes('is not resumed while its Goal is not active')) {
+    return '目标没在进行，先在主对话的目标栏点继续。';
+  }
+  if (code === 'busy' && reason.includes('already fenced by a queued cancel')) {
+    return '已经请求取消，等它停下。';
+  }
+  if (code === 'busy' && reason.includes('already fenced by a queued pause')) {
+    return '已经请求暂停，等它停下。';
+  }
+  if (code === 'busy' && (reason.includes('resume requires') || reason.includes('not fenced by a pause'))) {
+    return '它没有停在暂停上，不能继续。';
+  }
+  return writeTextOf(error);
+}
+
 /** 表一 6: the Host publishes these reasons on a settings write; the page shows one
  *  fixed Chinese sentence each, never the Host's own words. */
 /** Y6 (b): the not-written refusals of the three rework writes. The owner's
@@ -5501,6 +5596,32 @@ function stopWriteTextOf(error: unknown): string {
   return error instanceof RouteReadError && error.code === 'revision_conflict'
     ? '刚有变化，等页面刷新后再点一次。'
     : writeTextOf(error);
+}
+
+/** S3: the one `tasks/requeue` write a paused-interrupted Task's 继续 makes.
+ * The control's own pins are the expected versions; the result's outer
+ * `committed` and inner refusal are judged by `requeuedOrThrow`. */
+async function submitContinuation(
+  client: ReturnType<typeof createHostClient>, scope: CoreScope, control: LineControlV1,
+  reread: () => Promise<void>,
+): Promise<void> {
+  const task = control.target.task;
+  const afterRunRef = control.target.runRef;
+  if (task === undefined || afterRunRef === undefined) {
+    throw new Error(writeTextOf(new Error('this continuation names no Task and Run')));
+  }
+  let value: unknown;
+  try {
+    const reply = await client.write('tasks/requeue', scope, {
+      input: { taskRef: task, afterRunRef, reason: '在工作线页面点继续' },
+      meta: { requestId: crypto.randomUUID(), expected: control.pins },
+    });
+    value = committedRouteValue(reply, 'tasks/requeue');
+  } catch (error) {
+    throw new Error(reworkWriteTextOf(error));
+  }
+  requeuedOrThrow(value);
+  await reread();
 }
 
 /** A35 (§2.6, §2.7; lead ruling 4): the outer `committed` of `tasks/requeue`

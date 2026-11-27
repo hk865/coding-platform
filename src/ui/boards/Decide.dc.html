@@ -159,7 +159,7 @@ textarea.dc-input { min-height: 52px; }
         <div class="lv-rw">
           <button class="{{m.cls}}" type="button" onClick="{{m.pick}}" onMouseEnter="{{m.hover}}" onMouseLeave="{{m.unhover}}" onFocus="{{m.hover}}" onBlur="{{m.unhover}}" aria-current="{{m.current}}">
             <span class="row-lead"><span class="{{m.dot}}" aria-hidden="true"></span></span>
-            <span class="wl-nm"><span class="row-name">{{m.name}}</span><span class="row-meta">{{m.word}}</span></span>
+            <span class="wl-nm"><span class="row-name">{{m.name}}</span><span class="row-meta">{{m.railWord}}</span></span>
           </button>
           <sc-if value="{{m.card}}" hint-placeholder-val="{{ false }}">
             <div class="{{m.cardCls}}" role="tooltip">
@@ -3863,7 +3863,7 @@ class Component extends DCLogic {
       const card = s.lvHover === line.id;
       const duty = line.duty || (line.task ? '任务：' + (line.short || line.name) : '');
       return {
-        id: line.id, name: line.name, word: line.word, dot: line.dot,
+        id: line.id, name: line.name, word: line.word, railWord: line.railWord, dot: line.dot,
         current: on ? 'true' : null,
         cls: 'row wl-row lv-line' + (on ? ' is-current' : ''),
         pick: () => {
@@ -6492,7 +6492,7 @@ class Component extends DCLogic {
       const live = d.live ? '，' + d.live : '';
       const hint = main ? (on ? '你正在主对话里' : '点一下回到主对话') : on ? '它的对话在中间' : '点一下在中间打开它的对话';
       const def = arch || i >= upFrom; const up = hvUp && hvUp.id === r.id ? !!hvUp.up : def;
-      return { id: r.id, name: r.name, word: r.word, dot: r.dot, current: on ? 'true' : null,
+      return { id: r.id, name: r.name, word: r.word, railWord: r.word, dot: r.dot, current: on ? 'true' : null,
         cls: (arch ? 'rail-arch-ln lv-line' : 'row wl-row lv-line') + (on ? ' is-current' : ''),
         pick: () => set(main ? this.lvLeave() : cur === r.id ? { lvHover: null, lvTip: null, lvConfirm: null }
           : Object.assign({ line: r.id, lvHover: null, lvHoverUp: null, lvTip: null, lvConfirm: null, lvMode: 'ask' }, this.lvSwapTo(r.id))),

@@ -158,7 +158,7 @@ body { margin: 0; background: #1F1F1F; }
         <div class="lv-rw">
           <button class="{{m.cls}}" type="button" onClick="{{m.pick}}" onMouseEnter="{{m.hover}}" onMouseLeave="{{m.unhover}}" onFocus="{{m.hover}}" onBlur="{{m.unhover}}" aria-current="{{m.current}}" title="{{m.title}}" aria-disabled="{{m.aria}}">
             <span class="row-lead"><span class="{{m.dot}}" aria-hidden="true"></span></span>
-            <span class="wl-nm"><span class="row-name">{{m.name}}</span><span class="row-meta">{{m.word}}</span></span>
+            <span class="wl-nm"><span class="row-name">{{m.name}}</span><span class="row-meta">{{m.railWord}}</span></span>
           </button>
           <sc-if value="{{m.card}}" hint-placeholder-val="{{ false }}">
             <div class="{{m.cardCls}}" role="tooltip">
@@ -2752,7 +2752,7 @@ class Component extends DCLogic {
       current: g.goalId === nav.selectedGoalId ? 'true' : null,
       pick: () => { if (typeof A.pickGoal === 'function') A.pickGoal(g.goalId); },
     }));
-    const lineRow = (L) => ({ id: L.id, name: L.name, word: L.word, dot: L.dot, current: null,
+    const lineRow = (L) => ({ id: L.id, name: L.name, word: L.word, railWord: L.railWord, dot: L.dot, current: null,
       cls: 'row wl-row lv-line ' + nc.class, title: nc.title, aria: nc['aria-disabled'],
       pick: ncGo, hover: noop, unhover: noop, card: false, cardCls: 'hcard lv-card',
       c: { dot: '', tx: '', word: '', live: '', rows: [], hint: '' } });
@@ -5867,7 +5867,7 @@ class Component extends DCLogic {
       const live = d.live ? '，' + d.live : '';
       const hint = main ? (on ? '你正在主对话里' : '点一下回到主对话') : on ? '它的对话在中间' : '点一下在中间打开它的对话';
       const def = arch || i >= upFrom; const up = hvUp && hvUp.id === r.id ? !!hvUp.up : def;
-      return { id: r.id, name: r.name, word: r.word, dot: r.dot, current: on ? 'true' : null,
+      return { id: r.id, name: r.name, word: r.word, railWord: r.word, dot: r.dot, current: on ? 'true' : null,
         cls: (arch ? 'rail-arch-ln lv-line' : 'row wl-row lv-line') + (on ? ' is-current' : ''),
         pick: () => set(main ? this.lvLeave() : cur === r.id ? { lvHover: null, lvTip: null, lvConfirm: null }
           : Object.assign({ line: r.id, lvHover: null, lvHoverUp: null, lvTip: null, lvConfirm: null, lvMode: 'ask' }, this.lvSwapTo(r.id))),

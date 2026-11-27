@@ -197,7 +197,7 @@ describe('E3M-2 the Member head', () => {
     const w = await w6();
     const { page } = await bootMemberOnHost(w.h, memberSearch('ag2b-goal', w.line));
     try {
-      /* 具名改坏: `requeueVisible` 改看 `row.status.own`；本行的按钮红。 */
+      /* 具名改坏: `requeueVisible` 不看 `requeueActors`；本行的按钮红。 */
       expect(buttonText(acts(page), '重新入队')).toBeDefined();
     } finally {
       await page.restore();

@@ -340,9 +340,10 @@ export function createWakeLoop(deps: WakeLoopDependencies): WakeLoop {
       entry.failures = 0;
       entry.retryAt = 0;
     } catch {
-      // A failed rebuild leaves the queue dirty; the retry pass re-reads it.
+      // A failed rebuild leaves the queue dirty; the retry pass re-reads it. An unarmed workspace (`resumeOnStartup`
+      // off, no arming command yet) gets no pass from it (B10: off 不启动队列); its first wake after arming retries.
       recordFailure(entry);
-      schedule(entry);
+      if (workspaces.get(entry.workspaceKey)?.armed === true) schedule(entry);
     }
   }
 

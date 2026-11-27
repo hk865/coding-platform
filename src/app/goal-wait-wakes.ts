@@ -19,6 +19,7 @@ import { canonicalKey } from '../contracts/fingerprint.js';
 import type { ReadResult } from '../contracts/core/results.js';
 import { compareCursors, type AggregateRef, type GoalRef } from '../contracts/ledger.js';
 import type { QueryRunRef } from '../contracts/query-job.js';
+import type { ActionRequestPort } from '../core/work-graph/model/action-request-contracts.js';
 import type { SessionMailboxPort } from '../core/work-graph/model/communication-contracts.js';
 import type { PlanProposal, PlanTaskPort } from '../core/work-graph/model/plan-contracts.js';
 import type { SessionFactsPort } from '../core/work-graph/model/session-facts-contracts.js';
@@ -187,6 +188,11 @@ export type GoalWaitRebuildDependencies = {
    * the rebuild always reads completed Goals; a failed read fails it.
    */
   completedGoalsOf: PlanReaders['completedGoalsOf'];
+  /**
+   * RSR-2 (P2 §2.5, frozen `:186`): one Goal's dispatch requests, read only for a Goal nothing else registers; one
+   * with an `open` request is registered by the same restart rule.
+   */
+  actionRequests: Pick<ActionRequestPort, 'listOpenDispatches'>;
   /** The source-lineage reads (slice-PL-SPEC §6.3.1) the accepted-candidate arm walks the chain with. */
   messages: Pick<SessionMailboxPort, 'readMessage' | 'readMessageBody'>;
   queries: Pick<QueryJobPort, 'readQueryJob'>;
@@ -205,20 +211,31 @@ export type GoalWaitRebuildDependencies = {
  * that still have something to continue: a pending candidate, an unanswered question group, a fully
  * answered group whose `planresume:` was never created, or an accepted candidate whose source message
  * is still an open wait, or an abandoned chain tail whose M is still an open wait with no reply (A12: the goal
- * loop replies it; a message may have no deadline, so an unregistered Goal would leave M unanswered for good).
+ * loop replies it; a message may have no deadline, so an unregistered Goal would leave M unanswered for good),
+ * or, with none of these, an `open` dispatch request (RSR-2, frozen P2 `:186`): so in `ask`/`off` a Goal no
+ * interruption holds (one with only optional work) still claims its approved request once.
  * It never registers a Goal merely because it is active and writes no recovery
- * record. The candidate read returns active Goals only, so a required completed-Goal read below also
- * covers a completed Goal still owing an abandoned chain's M; cancelled Goals are not read. All halves
+ * record. The candidate read skips cancelled and completed Goals and keeps paused ones, which the same rule
+ * registers (their loop waits on the Goal until it is resumed); a required completed-Goal read below also
+ * covers a completed Goal still owing an abandoned chain's M. All halves
  * may name the same Goal; `register` merges them, so it is woken once. A Goal with a pending restart
- * interruption is held, because in `ask`/`off` only a person continues it (decision 97-9). A read that
- * is not `ready` is the failure, never an empty result, except one accepted or abandoned candidate's own reads:
- * that candidate cannot be judged this time, the others still are, and the Goal is registered so its next pass
- * (the goal loop's accepted- or abandoned-candidate recovery) retries it.
+ * interruption is held, because in `ask`/`off` only a person continues it (decision 97-9). Every mode runs this
+ * read-only rebuild at start; `off` only leaves the queue undrained until the workspace is armed. Three person
+ * commands arm it and wake `goal_waits` at once (`armWorkspace`): a Goal resume, a ready `workflow/advance`, an
+ * approved action-release card; a request command (request driver on) arms it but wakes only the request and
+ * lifecycle queues, so `goal_waits` drains at its next subscribed commit. A Goal registered here starts its loop like
+ * every restart registration, so
+ * the loop's start retries its staged repairs and answered repairs first. A read that
+ * is not `ready` is the failure, never an empty result, except one accepted or abandoned candidate's own reads
+ * and one Goal's dispatch request read: that candidate or Goal cannot be judged this time, the others still are,
+ * and the Goal is registered so its next pass (the goal loop's own recovery or selection) retries it.
  */
 export function createGoalWaitRebuild(deps: GoalWaitRebuildDependencies):
   (scope: WorkspaceScope, registry: GoalWaitWakes) => Promise<void> {
   return async (scope, registry) => {
     const ctx = deps.ctx(scope);
+    // The Goals this rebuild already registered from a Session wait: their dispatch requests are not read (Astra row 5).
+    const sessionWaitGoals = new Set<string>();
     let afterSessionKey: string | null = null;
     for (;;) {
       const page = await deps.sessions.findSessions(ctx, {
@@ -238,22 +255,26 @@ export function createGoalWaitRebuild(deps: GoalWaitRebuildDependencies):
             projectId: scope.projectId, goalId: wait.originalRun.goalId,
             recordKinds: GOAL_WAIT_WAKE_AGGREGATE_TYPES, reasons: ['restart'],
           }, facts.value.sourceCursor);
+          sessionWaitGoals.add(wait.originalRun.goalId);
         }
         afterSessionKey = plainSessionRefKey(card.record.ref);
       }
       if (page.value.nextCursor === null) break;
     }
-    await rebuildCandidateWaits(ctx, scope, registry);
+    await rebuildCandidateWaits(ctx, scope, registry, sessionWaitGoals);
   };
 
   /**
    * The candidate half (§6.1.6). A Goal is registered only when one of its own facts still waits:
    * a pending candidate, a question group with an unanswered card, a fully answered group whose
-   * continuation was never created, or an accepted candidate whose expected executor message is an
-   * open wait. `planCandidates`' own read failure propagates like every other half's.
+   * continuation was never created, an accepted candidate whose expected executor message is an
+   * open wait, an abandoned chain tail's open M (A12), or, read last and per Goal, an `open` dispatch request
+   * (RSR-2). That one Goal's request read failing registers it (`open_dispatch_undetermined`), so it never fails
+   * the rebuild of every other Goal; a Goal the wait half already registered is not read. `planCandidates`' own read
+   * failure propagates like every other half's.
    */
   async function rebuildCandidateWaits(
-    ctx: CoreCallContext, scope: WorkspaceScope, registry: GoalWaitWakes,
+    ctx: CoreCallContext, scope: WorkspaceScope, registry: GoalWaitWakes, sessionWaitGoals: ReadonlySet<string>,
   ): Promise<void> {
     const read = await deps.planCandidates(scope, ctx);
     if (read.status !== 'ready') throw notReady('the planning-candidate read', read);
@@ -282,6 +303,16 @@ export function createGoalWaitRebuild(deps: GoalWaitRebuildDependencies):
               reasons: abandoned === 'open' ? ['restart', 'abandoned_candidate_reply_open']
                 : ['restart', 'abandoned_candidate_undetermined'] };
           }
+        }
+      }
+      if (basis === null && !sessionWaitGoals.has(goalRef.goalId)) {
+        const open = await deps.actionRequests.listOpenDispatches(ctx, { goalRef });
+        if (open.status !== 'ready') {
+          basis = { projectId: scope.projectId, goalId: goalRef.goalId, recordKinds: GOAL_WAIT_WAKE_AGGREGATE_TYPES,
+            reasons: ['restart', 'open_dispatch_undetermined'] };
+        } else if (open.value.some(entry => entry.request.state === 'open')) {
+          basis = { projectId: scope.projectId, goalId: goalRef.goalId, recordKinds: GOAL_WAIT_WAKE_AGGREGATE_TYPES,
+            reasons: ['restart'] };
         }
       }
       if (basis === null) continue;
@@ -369,7 +400,10 @@ export type GoalWaitQueueDependencies = {
   startMarkerQuery(ctx: CoreCallContext, candidate: MarkerQueryCandidateV1): Promise<void>;
   /** `0` person, `1` yielded reply/expiry, `2` agent send; read with the waiting call's own facts, no new field. */
   l5PriorityOf(ctx: CoreCallContext, call: WaitingCallV1): Promise<0 | 1 | 2>;
-  /** The restart composition: registers every open/answered/expired wait and every released action. */
+  /**
+   * The restart composition: registers every open/answered/expired wait, and every Goal with a released (`open`)
+   * dispatch request that no restart interruption holds.
+   */
   rebuild(scope: WorkspaceScope, registry: GoalWaitWakes): Promise<void>;
 };
 

@@ -8,7 +8,7 @@
  * the TaskMap tables' own (`task-map.ts`), not a second copy here.
  */
 import type { ArchivedLinePageV1, LineControlV1, LineExecutionItemV1, LineRowV1, WorkLineDetailV1, WorkLineSectionPageV1 } from '../../contracts/work-line.js';
-import type { RunOutcome, RunRef } from '../../contracts/dispatch.js';
+import type { RunOutcome, RunRef, TaskTriple } from '../../contracts/dispatch.js';
 import type { TaskExecutionRecord } from '../../contracts/execution-read.js';
 import type { SessionHistoryEntry } from '../../contracts/session-activity.js';
 import type { RoundCheckIncompleteCause, VerificationRoundRef } from '../../contracts/verification.js';
@@ -20,11 +20,11 @@ import type { SessionRef } from '../../contracts/core/identity.js';
 import { asRecord, asText } from '../values.js';
 import {
   ACTOR_WORD, CHECK_RESULT_WORD, FAILURE_CLASS_WORD, PHASE_WORD, RUN_RESULT_WORD, gapTextOf,
-  lineNameOf, localShortAt, planVersionText, requirementWordOf, taskStateOfRow, taskWhyOf,
+  lineNameOf, lineStatusView, localShortAt, planVersionText, requirementWordOf, taskStateOfRow, taskWhyOf,
 } from './task-map.js';
-import { decideTextOf, dutyWordOf, lineHref, lineStatusView, railCardOf, wakeByOf,
+import { decideTextOf, dutyWordOf, lineHref, railCardOf, wakeByOf,
   type LineKey, type NavData, type NavLine, type RailCard } from './nav.js';
-import { requeueVisible, reviewOfTaskRow, type LineReview } from './line-shared.js';
+import { continuationControlOf, requeueVisible, reviewOfTaskRow, type LineReview } from './line-shared.js';
 import { briefRowsOf, seededNameOf } from './member.js';
 import { firstLine } from './run-steps.js';
 import type { MainRunSteps } from './main.js';
@@ -200,7 +200,7 @@ export type ChainRailRow = {
   key: SessionRef; name: string; duty: string;
   /** The Goal this line serves (`LineNameV1.goalRef`); empty for the main row. */
   goalId: string;
-  st: string; word: string; dot: string;
+  st: string; word: string; railWord: string; dot: string;
   task: string | null; chainSessions: SessionRef[];
   pinned: boolean; current: boolean;
   card: RailCard;
@@ -215,6 +215,8 @@ export type ChainLine = {
 };
 export type ChainTask = {
   id: string; title: string;
+  /** The Task's whole triple: the continuation control is matched by it. */
+  ref: TaskTriple;
   phase: string; phaseWord: string; phaseWhy: string;
   attemptOrdinal: number | null;
   rework: { autoCount: number; cap: number | null } | null;
@@ -283,6 +285,7 @@ function taskOf(graph: TaskGraph | null, task: TaskRow['ref'] | null): ChainTask
   const classWord = failure?.failureClass == null ? null : FAILURE_CLASS_WORD[failure.failureClass] ?? null;
   return {
     id: row.ref.taskId,
+    ref: row.ref,
     title: asText(asRecord(row.definition).title) || row.ref.taskId,
     phase: row.effectivePhase,
     phaseWord: state === null ? '' : PHASE_WORD[state] ?? state,
@@ -502,6 +505,7 @@ function railRowOf(line: NavLine, selected: SessionRef | null): ChainRailRow {
     goalId: line.goalId,
     st: line.st,
     word: line.word,
+    railWord: line.railWord,
     dot: line.dot,
     task: line.task,
     chainSessions: line.chainSessions as SessionRef[],
@@ -524,12 +528,13 @@ function archivedRowOf(row: LineRowV1, selected: SessionRef | null, nav: NavData
     goalId: asText(asRecord(asRecord(row.name).goalRef).goalId),
     st: view.st,
     word: view.word,
+    railWord: view.railWord,
     dot: view.dot,
     task: row.responsibleNow[0]?.title ?? null,
     chainSessions: row.chainSessions,
     pinned: row.pinned,
     current: sameSessionRef(selected, row.key),
-    card: railCardOf({ name, word: view.word, responsibleNow: responsible,
+    card: railCardOf({ name, st: view.st, word: view.word, why: view.why, responsibleNow: responsible,
       lastActivityAt: row.lastActivityAt, wokenBy: wakeBy }),
   };
 }
@@ -546,6 +551,10 @@ function barOf(task: ChainTask | null, line: ChainLine | null, row: TaskRow | nu
     const control = lineControlOf(controls, kind);
     return control === null || control.availability === 'available' ? '' : control.reason ?? '';
   };
+  /* S3: a paused-interrupted Task's one way on is its `continue` control; the
+     owner gives no `resume` then (slice-2C §3.10), so the same 继续 button serves
+     both. The control names the bar's own Task, never another paused Task's. */
+  const continuation = task === null ? null : continuationControlOf(controls, task.ref);
   return {
     show: task !== null,
     sq: 'sq z10 s-' + (task === null ? 'notyet' : task.phase === 'pending' ? 'notyet' : task.phase),
@@ -555,7 +564,7 @@ function barOf(task: ChainTask | null, line: ChainLine | null, row: TaskRow | nu
       ? '自动返工 —'
       : '自动返工 ' + String(task.rework.autoCount) + '/' + (task.rework.cap === null ? '—' : String(task.rework.cap)),
     canPause: controlAvailable(controls, 'pause'),
-    canResume: controlAvailable(controls, 'resume'),
+    canResume: controlAvailable(controls, 'resume') || continuation !== null,
     canCancel: controlAvailable(controls, 'cancel'),
     canRequeue: row !== null && requeueVisible(row),
     review: reviewOfTaskRow(row),

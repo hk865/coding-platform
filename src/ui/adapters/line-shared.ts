@@ -8,6 +8,7 @@ import type { SessionRef } from '../../contracts/core/identity.js';
 import type { SubmittedControl } from '../../contracts/control-intent.js';
 import type { SessionHistoryEntry } from '../../contracts/session-activity.js';
 import type { TaskRow } from '../../contracts/task-graph.js';
+import type { TaskTriple } from '../../contracts/dispatch.js';
 import type { UnknownCallReviewRef } from '../../contracts/unknown-call-review.js';
 import type { LineControlV1, WorkLineDetailV1 } from '../../contracts/work-line.js';
 import {
@@ -43,6 +44,21 @@ export async function submitRunControl(
     input: { runRef, kind, reason: null },
     meta: { requestId: crypto.randomUUID(), expected: control.pins },
   }), 'controls/submit');
+}
+
+/** S3: the paused-interrupted Task's one way on; `resume` is unavailable then
+ * (slice-2C §3.10), so 继续 starts a new Run through `tasks/requeue`. The one
+ * copy of the triple comparison; Member, Chain and boot's two call sites read it. */
+function sameTriple(a: TaskTriple | undefined, b: TaskTriple | null): boolean {
+  return a !== undefined && b !== null && a.projectId === b.projectId
+    && a.goalId === b.goalId && a.taskId === b.taskId;
+}
+
+export function continuationControlOf(
+  controls: readonly LineControlV1[], taskRef: TaskTriple | null,
+): LineControlV1 | null {
+  return controls.find((control) => control.kind === 'continue'
+    && control.availability === 'available' && sameTriple(control.target.task, taskRef)) ?? null;
 }
 
 /** The only `sessions/history` read both pages make: the line's latest records,
@@ -82,12 +98,14 @@ export function reviewOfTaskRow(row: TaskRow | null): LineReview | null {
   };
 }
 
-/** X3: 重新入队 is shown only for a failed Task whose public requeue actors
- * include the person; the owner still decides. A held review has no requeue
- * either: this page's requeue carries no `archiveOrigin`, so the owner only
- * accepts release-hold (requeue-service.ts:1206-1207). */
+/** X3/5.4-1: 重新入队 follows the owner's public `requeueActors` (it contains
+ * the person), not this page's own `failed` rule. Two cases are excluded:
+ * a held review (this page's requeue carries no `archiveOrigin`, so the owner
+ * only accepts release-hold, requeue-service.ts:1206-1207) and a paused-
+ * interrupted Task (its one way on is 继续; the owner only bars non-human
+ * requeues there, task-failure.ts:452-455). */
 export function requeueVisible(task: TaskRow): boolean {
   if (reviewOfTaskRow(task)?.held === true) return false;
-  return task.effectivePhase === 'failed'
-    && (task.failure?.requeueActors ?? []).includes('human');
+  if (task.phaseCause?.code === 'paused_interrupted') return false;
+  return (task.failure?.requeueActors ?? []).includes('human');
 }

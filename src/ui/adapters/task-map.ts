@@ -978,17 +978,154 @@ export const PHASE_WORD: Record<string, string> = {
 };
 
 /* The line's own state code -> the line state words (slice-2C-SPEC.md:1049-1059;
- * DESIGN `:608`; decision 38 retired 已结束). The track rows and the owners
- * read this one table; an unrecognized code is shown as 未知 rather than
- * leaking an English code into the page. */
+ * DESIGN `:608`; decision 38 retired 已结束). The rail, the track rows, the
+ * owners and Member's head read this one table; an unrecognized code is shown
+ * as 待命 rather than leaking an English code into the page. */
 const OWN_WORD: Record<string, string> = {
   working: '工作中', checking: '正式检查中', starting: '启动中', waiting_reply: '等回复',
   paused: '已暂停', unknown: '待核对', done: '已做完', retired: '已退役', standby: '待命',
 };
-/* The line's most urgent attention, in the track's own words (board `wlStatus`). */
+/* The line's most urgent attention, in the rail's own words (board `wlStatus`). */
 const ATTENTION_WORD: Record<string, string> = {
   decide: '等你决定', failed: '停下（失败）', blocked: '停下（受阻）', unknown: '待核对',
 };
+const ATTENTION_ST: Record<string, string> = {
+  decide: 'waiting', failed: 'idle', blocked: 'idle', unknown: 'waiting',
+};
+
+/** Names a reason word may need; absent when the caller has none, and then
+ * an id is never printed: a Task is 这个任务, a line 另一条工作线. */
+export type LineStatusContext = {
+  taskTitle: (taskId: string) => string;
+  lineName: (sessionId: string) => string;
+};
+const NO_LINE_CONTEXT: LineStatusContext = {
+  taskTitle: () => '这个任务', lineName: () => '另一条工作线',
+};
+
+/** §3.9 (slice-2C-SPEC.md:1169-1198): one reason code in the page's words.
+ * A code's params are ids at the JSON edge; they become names through `ctx`,
+ * never printed raw. An unknown code writes nothing rather than an English code. */
+function lineReasonWordOf(reason: unknown, ctx: LineStatusContext): string {
+  const row = asRecord(reason);
+  const code = asText(row.code);
+  const params = asRecord(row.params);
+  const autoSuffix = params.autoCount === undefined ? ''
+    : '，系统自动重新入队（' + String(params.autoCount) + '/' + String(params.cap ?? '—') + '），等待推进';
+  switch (code) {
+    case 'running_task': return '在做 ' + ctx.taskTitle(asText(params.task));
+    case 'query_turn': return '一轮对话进行中';
+    case 'starting': return '正在启动，还没开始干活';
+    case 'checking': return params.n === undefined ? '正式检查进行中' : '正式检查进行中（第 ' + String(params.n) + ' 轮）';
+    case 'waiting_reply': {
+      const recipient = asText(params.recipient);
+      return '等 ' + (recipient === 'user' ? '你' : ctx.lineName(recipient)) + ' 回复';
+    }
+    case 'paused_by_you': return '你暂停了它';
+    case 'paused_by_goal': return '你暂停了目标';
+    case 'paused_interrupted': {
+      const by = asText(params.by);
+      const goal = asText(params.goal);
+      if (goal === 'cancelled') return '主机重启时已暂停；目标已取消';
+      if (by === 'goal') {
+        return goal === 'paused' ? '主机重启时目标已暂停，恢复目标后接着做'
+          : '主机重启时目标已暂停；目标已恢复，等待接着做';
+      }
+      return goal === 'paused' ? '主机重启时已暂停；目标也暂停着，先恢复目标，再点继续'
+        : '主机重启时已暂停，可继续';
+    }
+    case 'paused_yielded': return '在等回复时被暂停';
+    case 'unknown_run': return '执行结果待核对';
+    case 'unknown_query': return '这一轮结果待核对';
+    case 'health_recoverable': return '健康状态待核对';
+    case 'occupancy_unexplained': return '占用来源待核对';
+    case 'done_tasks': {
+      const count = typeof params.count === 'number' ? params.count : 0;
+      return (count > 0 ? '做完了：' + String(count) + ' 个任务' : '做完了') + '；还能接新任务';
+    }
+    case 'done_unproven': return '做过的任务读不全，不能确定是不是都做完了';
+    case 'retired_turn_open': return '上一轮没有正常结束；原历史可读，可以问一问';
+    case 'retired_missing': return '找不到它的记录；原历史读不到';
+    case 'retired_damaged': return '它的记录坏了；原历史读不到';
+    case 'retired_unrecorded': return '退役原因没有记录';
+    case 'goal_cancelled': return '目标已取消，记录保留';
+    case 'awaiting_check': return '等正式检查';
+    case 'task_deferred': return '负责的任务已延后';
+    case 'waiting_dispatch': return '等待推进';
+    case 'idle': return '没有进行中的工作';
+    case 'unassigned': return '没有负责的任务';
+    case 'card': return '需要你决定';
+    case 'run_failed': return '执行失败' + autoSuffix;
+    case 'check_failed': return '验收未通过' + autoSuffix;
+    case 'continuation_cancelled': return '接续被取消' + autoSuffix;
+    case 'round_inconclusive': return '检查不完整' + autoSuffix;
+    case 'check_interrupted': return '检查被打断' + autoSuffix;
+    case 'round_ambiguous': return '检查记录有歧义' + autoSuffix;
+    case 'origin_unresolvable': return '来源计划读不到' + autoSuffix;
+    case 'run_outcome_unknown': return '执行结果待核对';
+    case 'anomaly_pending': {
+      const next = asText(params.next);
+      const where = next === 'dispatch' ? '等待派工'
+        : next === 'human_continue' ? '等你点“继续”'
+          : next === 'goal_stopped' ? (asText(params.goal) === 'paused' ? '目标已暂停' : '目标已取消')
+            : next === 'rework_blocked' ? '不能自动返工' : '等待推进';
+      return '中断，待核对 · ' + where;
+    }
+    case 'copy_unknown': return '问一问的结果待核对';
+    case 'unknown_call_review': return '结果未知的调用待核对';
+    case 'archived': return '已归档';
+    case 'handed_to': return '已交给接手的线';
+    case 'reactivate_refused_retired': return '已退役的线不能重新启用';
+    default: return '';
+  }
+}
+
+/** §2.4 (lead 11-26 22:0x: the rule and the tables live here, `nav.ts` imports
+ * them): `word` is the head's one word, `why` the reason under it, `railWord`
+ * the rail's two-segment word. The rail shows its own word then the attention
+ * (`已暂停 · 等你决定`); a paused or retired line without attention shows its
+ * own reason (`已退役 · 待核对`). Equal halves collapse to one word. */
+export function lineStatusView(status: unknown, ctx: LineStatusContext = NO_LINE_CONTEXT):
+{ st: string; word: string; why: string; dot: string; railWord: string } {
+  const row = asRecord(status);
+  const attention = asText(asRecord(row.attention).code);
+  const own = asText(row.own);
+  const attentionWord = ATTENTION_WORD[attention] ?? '';
+  const ownWord = OWN_WORD[own] ?? '待命';
+  const why = lineReasonWordOf(attention !== '' ? asRecord(row.attention).reason : row.ownReason, ctx);
+  const markers = Array.isArray(row.markers) ? row.markers.map(asRecord) : [];
+  const archiving = markers.find((marker) => asText(marker.kind) === 'archiving') ?? null;
+  if (archiving !== null) {
+    const waiting = archiving.waitingForStop === true;
+    return { st: 'waiting', word: '归档中', why, dot: 'dot s-waiting',
+      railWord: '归档中' + (waiting ? ' · 停止中' : '') };
+  }
+  let word: string;
+  let railWord: string;
+  let st: string;
+  /* A waiting line's own word is the member state word (等回复); the decide
+     attention stays in the queue instead of replacing it (`tests/ui/E3M-8-waits.test.ts` P11-3; UI-WORKBENCH §5). */
+  if (own === 'waiting_reply' && attention === 'decide') {
+    word = OWN_WORD.waiting_reply!;
+    railWord = word;
+    st = 'waiting';
+  } else if (attentionWord !== '') {
+    word = attentionWord;
+    railWord = ownWord === attentionWord ? ownWord : ownWord + ' · ' + attentionWord;
+    st = ATTENTION_ST[attention] ?? 'waiting';
+  } else {
+    word = ownWord;
+    const ownWhy = own === 'paused' || own === 'retired'
+      ? lineReasonWordOf(row.ownReason, ctx) : '';
+    railWord = ownWhy === '' || ownWhy === ownWord ? ownWord : ownWord + ' · ' + ownWhy;
+    st = own === 'working' || own === 'checking' || own === 'starting' ? 'doing'
+      : own === 'paused' || own === 'waiting_reply' || own === 'unknown' ? 'waiting' : 'idle';
+  }
+  /* 5.1-7 (lead: E3 5.1-7, MVP-BEHAVIOR:286): a stop request still travelling
+     adds 停止中 to the rail word; the head keeps its advancing sentence. */
+  if (markers.some((marker) => asText(marker.kind) === 'stop_pending')) railWord += ' · 停止中';
+  return { st, word, why, dot: 'dot s-' + (st === 'doing' ? 'running' : st === 'waiting' ? 'waiting' : 'idle'), railWord };
+}
 
 /* A line with no task is named by its duty code (`source: 'duty_only'`); the
    page shows the board's own group word for it, never the code (DESIGN `:604`). */
@@ -1008,11 +1145,12 @@ function ownerWords(owners: unknown): string {
     const row = asRecord(entry);
     const name = lineNameOf(row.name);
     if (name === '') return [];
-    /* The hover card and the track show one main state plus the most urgent attention (E3I:310). */
+    /* S4: the hover card and the track use the rail's two-segment word
+       (lineStatusView); a line with no own state stays its name alone
+       (`tests/ui/E35-1-codes.test.ts:18`). */
     const status = asRecord(row.status);
-    const own = asText(status.own);
-    const word = ATTENTION_WORD[asText(asRecord(status.attention).code)] ?? (own === '' ? '' : OWN_WORD[own] ?? '未知');
-    return [word === '' ? name : name + ' · ' + word];
+    if (asText(status.own) === '') return [name];
+    return [name + ' · ' + lineStatusView(status).railWord];
   }).join('、');
 }
 
@@ -2070,7 +2208,7 @@ export function adaptTaskMapTime(
     const row: TaskMapTimeLine = {
       id, projectId: asText(key.projectId), workspaceId: asText(key.workspaceId),
       sessionId: asText(key.sessionId), name: name === '' ? asText(key.sessionId) : name,
-      status, word: OWN_WORD[status] ?? '未知',
+      status, word: lineStatusView(line.status).railWord,
       role: asText(line.duty),
       groups: {
         task: taskGroup === '' ? null : { taskId: taskGroup },

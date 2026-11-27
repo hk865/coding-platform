@@ -20,19 +20,42 @@
  */
 import { afterEach, expect, it, vi } from 'vitest';
 import type { SessionRef } from '../../src/app/core-http-types.js';
+import type { ReadResult } from '../../src/contracts/core/results.js';
 import { createGoalFanOutDriver } from '../../src/app/goal-fan-out-driver.js';
 import type { WriteResult } from '../../src/contracts/core/results.js';
 import type { GoalSnapshot } from '../../src/contracts/ledger.js';
 import { GOAL_FAN_OUT_ACTOR } from '../../src/contracts/task-requeue.js';
-import { AG2B_GOAL_REF, AG2B_SCOPE, AG2B_WORK_TASK_ID, graphWrite } from '../helpers/AG2b-collaboration-fixture.js';
+import { AG2B_GOAL_REF, AG2B_SCOPE, AG2B_WORK_TASK_ID, graphWrite, plain } from '../helpers/AG2b-collaboration-fixture.js';
 import { controlGoal, readControl, readExecution, readGoal } from '../helpers/A2-restart-fixture.js';
 import {
-  assertInvariants, assertInvariantsAt, cleanupScenarios, hostCtx, openHostScenario, SCENARIO_OPERATOR, type HostScenario,
+  assertInvariants, assertInvariantsAt, cleanupScenarios, hostCtx, openHostScenario, SCENARIO_OPERATOR, waitFor, type HostScenario,
 } from './harness.js';
-import { NO_REDRIVE, briefOf, operatorRequeue, ownerStep, readCall, selectedRun, taskRefOf } from './support/common.js';
+import { NO_REDRIVE, WORK_TARGET, briefOf, operatorRequeue, ownerStep, readCall, selectedRun, taskRefOf } from './support/common.js';
 import { fanOutIntentRef, goalControlled } from './support/control.js';
 
 afterEach(cleanupScenarios);
+
+/**
+ * RSR-1: the Goal was paused across the restart, so the person's resume rebuilds its goal loop, which continues the
+ * Task by itself; the case waits for the Goal through the public display, then checks the invariants once.
+ */
+async function goalLoopCompletes(scenario: HostScenario, label: string): Promise<void> {
+  await waitFor(() => scenario.goalDisplay(), display => display.phase === 'COMPLETED', `${label}: the goal loop to complete the Goal`);
+  await assertInvariants(scenario, `${label}: the goal loop continued the Task`);
+}
+
+/**
+ * The Sessions that ever held a link to the work Task, archived included, through the public `sessions/find` (sorted
+ * ids). A completed Task's links are closed and a `target` read keeps open links only, so every card is read.
+ */
+async function workTaskSessionIds(scenario: HostScenario): Promise<string[]> {
+  const found = await scenario.post<ReadResult<{ items: { record: { ref: SessionRef };
+    links: { ref: { target: { kind: string; ref: { taskId?: string } } } }[] }[] }>>('sessions/find',
+    plain(AG2B_SCOPE, { workspace: AG2B_SCOPE, includeArchived: true, page: { limit: 100 } }));
+  if (found.status !== 'ready') throw new Error(`sessions/find was not ready: ${JSON.stringify(found)}`);
+  return found.value.items.filter(card => card.links.some(link => link.ref.target.kind === WORK_TARGET.kind
+    && link.ref.target.ref.taskId === WORK_TARGET.ref.taskId)).map(card => card.record.ref.sessionId).sort();
+}
 
 // K slice: the fallback copy switches the Kernel's `closeOpenTurn` off, so the Runtime's closure answers `unsupported`
 // (K L4 step 5) and the Workflow takes today's new-Session path (K L8).
@@ -76,6 +99,7 @@ it('A7-G4 with history (closing supported; KA-07, GOAL-29, LA-1, contract (e)): 
   expect((await readExecution(scenario.host, runRef)).session).toMatchObject({ health: 'unavailable', healthConclusion: 'kernel_turn_open' });
 
   // The person resumes the Goal: GOAL-29 continues the Task under the fan-out actor; the history source is S1.
+  const sessionsBefore = await workTaskSessionIds(scenario);
   const resumed = await goalControlled(scenario.host, 'resume', 'a7-g4h-resume');
   expect(resumed.fanOut).toMatchObject({ control: 'resume', continuations: [{ taskId: AG2B_WORK_TASK_ID, afterRunRef: runRef,
     outcome: 'requeued' }] });
@@ -85,16 +109,11 @@ it('A7-G4 with history (closing supported; KA-07, GOAL-29, LA-1, contract (e)): 
   expect(requeue).toMatchObject({ afterRunRef: runRef, requestedBy: GOAL_FAN_OUT_ACTOR, interruption: 'paused',
     trigger: { kind: 'goal_resume', pausedEpoch }, historySource: { sessionRef: s1, throughPosition: expect.any(Number) } });
 
-  // K (KA3, L7): the goal_resume TaskRequeue authorizes the closure (L4 item 2), so the Workflow closes S1's dangling
-  // Kernel Turn (`close_open_turn`; maintenance never closes this paused line) and then claims the Task in S1 itself in a
-  // new Run (KA-07): no new Session, no handover, no archive, so nothing is seeded.
-  const done = await scenario.advance(scenario.select('a7-g4h-continue'));
-  expect(done.state).toBe('completed');
-  const kinds = done.receipts.map(receipt => receipt.kind);
-  expect(kinds).toEqual(expect.arrayContaining(['close_open_turn', 'claim_task']));
-  expect(kinds.filter(kind => ['create_session', 'transfer_responsibility', 'archive_predecessor'].includes(kind))).toEqual([]);
-  expect(done.receipts.find(receipt => receipt.kind === 'close_open_turn'))
-    .toMatchObject({ result: { status: 'closed', health: 'available' } });
+  // K (KA3, L7): the goal_resume TaskRequeue authorizes the closure (L4 item 2), so the goal loop the resume rebuilt
+  // (RSR-1) closes S1's dangling Kernel Turn (maintenance never closes this paused line; S1 is available again) and then
+  // claims the Task in S1 itself in a new Run (KA-07): no new Session, no handover, no archive, so nothing is seeded.
+  await goalLoopCompletes(scenario, 'A7-G4 history');
+  expect(await workTaskSessionIds(scenario), 'no new Session was created for the Task').toEqual(sessionsBefore);
   const continuedRef = await selectedRun(scenario);
   expect(continuedRef.runId, 'KA-07: a new Run').not.toBe(runRef.runId);
   const continued = await readExecution(scenario.host, continuedRef);
@@ -156,6 +175,7 @@ it('A7-G4 with history under every_step (GOAL-29, C-151; STATE-MACHINES-SPEC.md:
 
   // The person resumes the Goal: the continuation is requeued under the fan-out actor even though every_step would
   // ask before an automatic requeue; the paused-interrupted Task is not left stopped.
+  const sessionsBefore = await workTaskSessionIds(scenario);
   const resumed = await goalControlled(scenario.host, 'resume', 'a7-g4h-resume');
   expect(resumed.fanOut).toMatchObject({ control: 'resume', continuations: [{ taskId: AG2B_WORK_TASK_ID, afterRunRef: runRef,
     outcome: 'requeued' }] });
@@ -165,16 +185,15 @@ it('A7-G4 with history under every_step (GOAL-29, C-151; STATE-MACHINES-SPEC.md:
   await assertInvariants(scenario, 'A7-G4 history under every_step: GOAL-29',
     ownerStep('task_requeued', GOAL_FAN_OUT_ACTOR, scenario.automationPolicy(), 'A7-G4 history under every_step: GOAL-29'));
 
-  // The Workflow closes S1's dangling Kernel Turn and continues the Task in S1 itself, in a new Run (KA-07).
-  const done = await scenario.advance(scenario.select('a7-g4h-continue'));
-  expect(done.state).toBe('completed');
-  expect(done.receipts.map(receipt => receipt.kind)).toEqual(expect.arrayContaining(['close_open_turn', 'claim_task']));
-  expect(done.receipts.map(receipt => receipt.kind).filter(kind =>
-    ['create_session', 'transfer_responsibility', 'archive_predecessor'].includes(kind))).toEqual([]);
+  // The goal loop the resume rebuilt (RSR-1) closes S1's dangling Kernel Turn and continues the Task in S1 itself, in a
+  // new Run (KA-07): S1 is available again and not archived.
+  await goalLoopCompletes(scenario, 'A7-G4 history under every_step');
+  expect(await workTaskSessionIds(scenario), 'no new Session was created for the Task').toEqual(sessionsBefore);
   const continuedRef = await selectedRun(scenario);
   expect(continuedRef.runId, 'KA-07: a new Run').not.toBe(runRef.runId);
   const continued = await readExecution(scenario.host, continuedRef);
   expect(continued.session.ref.sessionId, 'KA-07: the same Session').toBe(s1.sessionId);
+  expect(continued.session).toMatchObject({ lifecycle: 'active', health: 'available' });
   expect(scenario.lastWorld?.requeues).toHaveLength(1);
   expect(scenario.modelCalls()).toBe(4);
   await scenario.drainAbandoned();
@@ -223,12 +242,10 @@ it('A7-G4 with history (closing unsupported; GOAL-29, LA-1, contract (e)): a Run
   expect(requeue).toMatchObject({ afterRunRef: runRef, requestedBy: GOAL_FAN_OUT_ACTOR, interruption: 'paused',
     trigger: { kind: 'goal_resume', pausedEpoch }, historySource: { sessionRef: s1, throughPosition: expect.any(Number) } });
 
-  // The `close_open_turn` step answers `unsupported` (K L4 step 5, a definite failure), so the Workflow claims the Task
-  // through `create_session{requeue}` in a new Session (K L8); `prepare` seeds S1's completed history.
-  const done = await scenario.advance(scenario.select('a7-g4h-continue'));
-  expect(done.state).toBe('completed');
-  expect(done.receipts.map(receipt => receipt.kind)).toEqual(expect.arrayContaining(['close_open_turn', 'create_session', 'claim_task']));
-  expect(done.receipts.find(receipt => receipt.kind === 'close_open_turn')).toMatchObject({ result: { status: 'unsupported' } });
+  // The `close_open_turn` step answers `unsupported` (K L4 step 5, a definite failure), so the goal loop the resume
+  // rebuilt (RSR-1) claims the Task through `create_session{requeue}` in a new Session (K L8); `prepare` seeds S1's
+  // completed history (the brief's `other_session_seeded` below).
+  await goalLoopCompletes(scenario, 'A7-G4 history (closing unsupported)');
   const continuedRef = await selectedRun(scenario);
   const continued = await readExecution(scenario.host, continuedRef);
   expect(continued.session.ref.sessionId, 'LA-1: a new Session').not.toBe(s1.sessionId);

@@ -15,23 +15,10 @@ import type { TaskGraph } from '../../contracts/task-graph.js';
 import type { SessionRef } from '../../contracts/core/identity.js';
 import type { LineWokenByV1 } from '../../contracts/work-line.js';
 import { asRecord, asText } from '../values.js';
-import { decisionCardCountPartial, goalDisplayState, isFinishedGoalDisplayPhase, lineNameOf, localShortAt,
-  type GoalDisplayPhaseCode, type TaskMapQueueRead } from './task-map.js';
+import { decisionCardCountPartial, goalDisplayState, isFinishedGoalDisplayPhase, lineNameOf, lineStatusView, localShortAt,
+  type GoalDisplayPhaseCode, type LineStatusContext, type TaskMapQueueRead } from './task-map.js';
 import type { LineReadValue } from './line-shared.js';
 
-/** The eleven line own states (`LineOwnStateV1`) in the boards' words. One
- * table, the copy `task-map.ts`'s track already uses; it is private there, so
- * the chrome keeps the same words here rather than leaking a code. */
-const OWN_WORD: Record<string, string> = {
-  working: '工作中', checking: '正式检查中', starting: '启动中', waiting_reply: '等回复',
-  paused: '已暂停', unknown: '待核对', done: '已做完', retired: '已退役', standby: '待命',
-};
-const ATTENTION_WORD: Record<string, string> = {
-  decide: '等你决定', failed: '停下（失败）', blocked: '停下（受阻）', unknown: '待核对',
-};
-const ATTENTION_ST: Record<string, string> = {
-  decide: 'waiting', failed: 'idle', blocked: 'idle', unknown: 'waiting',
-};
 const DUTY_WORD: Record<string, string> = {
   secretary: '秘书', adviser: '参谋', scribe: '书记', reviewer: '审阅者', executor: '执行者',
 };
@@ -81,7 +68,10 @@ export type NavLine = {
   duty: string;
   status: string;
   st: string;
+  /** The head's one word; comparisons read this field. */
   word: string;
+  /** The rail's two-segment word (§2.4); the rail's row-sub reads this field. */
+  railWord: string;
   dot: string;
   why: string;
   recent: string;
@@ -214,27 +204,6 @@ function countValue(count: unknown): number {
   return 0;
 }
 
-/** §2.4: the word is the line's own state, or the most urgent attention when
- * there is one; `unavailable` controls stay with their guard reason and are
- * not drawn as `not_yet`. */
-export function lineStatusView(status: unknown): { st: string; word: string; dot: string } {
-  const row = asRecord(status);
-  const attention = asText(asRecord(row.attention).code);
-  const own = asText(row.own);
-  /* A waiting line's own word is the member state word (等回复); the decide
-     attention stays in the queue instead of replacing it (`tests/ui/E3M-8-waits.test.ts` P11-3; UI-WORKBENCH §5). */
-  if (own === 'waiting_reply' && attention === 'decide') {
-    return { st: 'waiting', word: OWN_WORD.waiting_reply!, dot: 'dot s-waiting' };
-  }
-  if (attention !== '' && ATTENTION_WORD[attention] !== undefined) {
-    const st = ATTENTION_ST[attention] ?? 'waiting';
-    return { st, word: ATTENTION_WORD[attention]!, dot: 'dot s-' + (st === 'waiting' ? 'waiting' : 'idle') };
-  }
-  const st = own === 'working' || own === 'checking' || own === 'starting' ? 'doing'
-    : own === 'paused' || own === 'waiting_reply' || own === 'unknown' ? 'waiting' : 'idle';
-  return { st, word: OWN_WORD[own] ?? '待命', dot: 'dot s-' + (st === 'doing' ? 'running' : st === 'waiting' ? 'waiting' : 'idle') };
-}
-
 /** The five duties' Chinese words (`PlatformDutyV1`); `unknown`/unknown is the
  * board's 未分组, never the raw code. */
 export function dutyWordOf(duty: unknown): string {
@@ -272,9 +241,10 @@ export function lineNameOfSession(lines: readonly NavLine[], ref: SessionRef | n
     && line.key.sessionId === ref.sessionId)?.name ?? '';
 }
 
-/** The line-card fields both pages draw: the name, its state word, who is
- * responsible now, the last activity instant and the message that woke it. */
-export type RailCardLine = Pick<NavLine, 'name' | 'word' | 'responsibleNow' | 'lastActivityAt' | 'wokenBy'>;
+/** The line-card fields both pages draw: the name, its state word, the reason
+ * under it, who is responsible now, the last activity instant and the message
+ * that woke it. */
+export type RailCardLine = Pick<NavLine, 'name' | 'st' | 'word' | 'why' | 'responsibleNow' | 'lastActivityAt' | 'wokenBy'>;
 
 /** One line card: the head words and its rows; Member adds `建它的` through
  * `extra`, after the four shared rows. */
@@ -310,7 +280,9 @@ export function railCardOf(line: RailCardLine, extra: Array<{ k: string; v: stri
     word: line.word,
     rows: [
       { k: '负责', v: line.responsibleNow.length === 0 ? '未分配' : line.responsibleNow.join('、') },
-      { k: '正在做', v: line.word },
+      /* S4: 冻结原型的卡 (Member.dc.html:153-156) 是“负责 · 正在做 / 原因 · 最近一步”；
+         a line that is not doing says why instead of repeating its word. */
+      { k: line.st === 'doing' ? '正在做' : '原因', v: line.st === 'doing' ? line.word : line.why },
       { k: '最近一步', v: line.lastActivityAt === '' ? '没有记录' : localShortAt(line.lastActivityAt) },
       { k: '叫醒', v: wakeByTextOf(line.wokenBy) },
       ...extra,
@@ -327,13 +299,13 @@ function withWakeNames(rows: NavLine[], known: readonly NavLine[]): NavLine[] {
   });
 }
 
-function navLineOf(entry: unknown, archived: boolean): NavLine {
+function navLineOf(entry: unknown, archived: boolean, ctx: LineStatusContext): NavLine {
   const row = asRecord(entry);
   const key = asRecord(row.key);
   const projectId = asText(key.projectId);
   const sessionId = asText(key.sessionId);
   const status = asRecord(row.status);
-  const view = lineStatusView(status);
+  const view = lineStatusView(status, ctx);
   const task = asText(asRecord((Array.isArray(row.responsibleNow) ? row.responsibleNow : [])[0]).title);
   const nameRow = asRecord(row.name);
   const name = lineNameOf(row.name);
@@ -345,8 +317,9 @@ function navLineOf(entry: unknown, archived: boolean): NavLine {
     status: asText(status.own),
     st: view.st,
     word: view.word,
+    railWord: view.railWord,
     dot: view.dot,
-    why: '',
+    why: view.why,
     recent: '',
     short: task,
     task: task === '' ? null : task,
@@ -378,7 +351,7 @@ export function completionRevisionOf(graph: unknown): number {
 function synthLine(): NavLine {
   return {
     id: 'main', key: { projectId: '', sessionId: '' }, name: '秘书（主对话）', duty: 'secretary',
-    status: '', st: 'idle', word: '', dot: 'dot s-idle', why: '', recent: '', short: '', task: null,
+    status: '', st: 'idle', word: '', railWord: '', dot: 'dot s-idle', why: '', recent: '', short: '', task: null,
     goalId: '', scope: '', archivedTag: '',
     chainSessions: [], pinned: false, archived: false, synth: true, responsibleNow: [], lastActivityAt: '',
     wokenBy: null,
@@ -525,10 +498,31 @@ export function adaptNav(
     };
   });
   const lineList = asRecord(reads.lines);
-  const rawLines = [synthLine(), ...(Array.isArray(lineList.rows) ? lineList.rows : []).map((entry) => navLineOf(entry, false))];
-  const lines = withWakeNames(rawLines, rawLines);
   const archivedRead = asRecord(reads.archived);
-  const rawArchived = (Array.isArray(archivedRead.rows) ? archivedRead.rows : []).map((entry) => navLineOf(entry, true));
+  const lineRows = Array.isArray(lineList.rows) ? lineList.rows : [];
+  const archivedRows = Array.isArray(archivedRead.rows) ? archivedRead.rows : [];
+  /* S4: the reason words get names from this page's reads only: the selected
+     Goal's already-read task titles and the line names of these same rows. A
+     name the read does not hold stays the generic word, never an id. */
+  const taskTitles = new Map<string, string>();
+  for (const task of (reads.tasks === undefined || reads.tasks === null ? [] : (reads.tasks as TaskGraph).tasks)) {
+    const title = asText(asRecord(task.definition).title);
+    if (title !== '') taskTitles.set(task.ref.taskId, title);
+  }
+  const lineNames = new Map<string, string>();
+  for (const entry of [...lineRows, ...archivedRows]) {
+    const row = asRecord(entry);
+    const sessionId = asText(asRecord(row.key).sessionId);
+    const name = lineNameOf(row.name);
+    if (sessionId !== '' && name !== '') lineNames.set(sessionId, name);
+  }
+  const lineCtx: LineStatusContext = {
+    taskTitle: (taskId) => taskTitles.get(taskId) ?? '这个任务',
+    lineName: (sessionId) => lineNames.get(sessionId) ?? '另一条工作线',
+  };
+  const rawLines = [synthLine(), ...lineRows.map((entry) => navLineOf(entry, false, lineCtx))];
+  const lines = withWakeNames(rawLines, rawLines);
+  const rawArchived = archivedRows.map((entry) => navLineOf(entry, true, lineCtx));
   const archived = withWakeNames(rawArchived, [...lines, ...rawArchived]);
   const counts = asRecord(lineList.counts);
   const working = countValue(counts.working);

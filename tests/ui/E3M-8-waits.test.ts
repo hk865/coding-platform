@@ -65,9 +65,11 @@ describe('E3M-8 the Member page on a waiting line', () => {
       expect(receiptBody(booted, 'messages/send')?.['status']).toBe('committed');
       expect(receiptBody(booted, 'messages/send')?.['sendStatus']).toBe('sent');
       expect(userTexts(page.root)).toContain('E3M wait intervention');
-      /* The page itself never posts `sessions/facts` (`readMember` has no such read); count before the world's own
-         read, which the booted page's forwarder would log as a page call (E3M-3 R23's lead 11-10 note). */
-      expect(callsOf(log, 'sessions/facts')).toHaveLength(0);
+      /* S7: every page read asks the middle line's `sessions/facts` once, and every such call names that line;
+         the wait stays open (the original point of the sentence below). The world's own read below is separate. */
+      const facts = callsOf(log, 'sessions/facts');
+      expect(facts.length).toBeGreaterThan(0);
+      for (const call of facts) expect(call.input).toEqual(wait.sender.ref);
       const kept = await readS7BWaits(world, { session: wait.sender, messageRef: wait.message });
       expect(kept.waitByRef).toMatchObject({
         messageRef: wait.message, originalRun: wait.run, waitingSession: wait.sender.ref,

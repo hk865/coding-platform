@@ -96,6 +96,7 @@ function rebuildFor(world: S6AHostWorld) {
     messages: world.platform.messages,
     queries: world.platform.queries,
     plans: world.platform.plans,
+    actionRequests: world.platform.actionRequests,
   });
 }
 

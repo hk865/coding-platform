@@ -79,9 +79,8 @@ describe('E3M-11 the line head, restart and attestation', () => {
     const first = w.page;
     try {
       /* The queued cancel keeps the line's working word and shows its advText.
-         The click table's 停止中 is the prototype's 工作中
-         (`docs/ui-reference/workbench-2026-10/Member.dc.html:1461`); 停止中
-         exists only for `归档中 · 停止中` (`docs/UI-WORKBENCH.md:129`). */
+         S4 (lead 11-26, E3 5.1-7 / MVP-BEHAVIOR:286): the rail adds ` · 停止中`
+         while `stop_pending`; the head keeps 已请求取消，等安全点, never 停止中. */
       expect(textOf(headStatus(first.root))).toBe('已请求取消，等安全点');
       expect.soft(headFact(first.root, '状态')).toContain('工作中');
       await w.done;

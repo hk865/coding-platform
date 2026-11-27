@@ -1224,12 +1224,32 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     return read.value.display.causes.some(cause => 'interruption' in cause);
   };
   /**
+   * RSR-1: the Goal was paused when this Host started, by this Host's own start-up report (its GOAL-16 line,
+   * `startup-reconcile.ts:645-652`). Its resume commit wakes only a wait this process already holds for it (one the
+   * restart rebuild registered, or a Task watch started since); with none, nothing would go on at Goal scope.
+   * `control: null` means that start could not read the Goal, so its state then is unknown and counts as paused: one
+   * extra wake only leaves the loop waiting. A Goal with no line (active and never controlled at start, or no report
+   * without the lease) does not count.
+   */
+  const pausedAtStart = (project: HostProject, goalRef: GoalRef): boolean => {
+    const line = project.report.report?.fanOut.find(entry => entry.goalId === goalRef.goalId);
+    return line !== undefined && (line.control === 'pause' || line.control === null);
+  };
+  /**
    * P2 §2.5 (MP-7; cp2fn FN-5, FN-6): a dispatch request approved while its Goal was paused stays `open`; the start-up
    * reconcile does not drive a paused Goal. A committed resume only marks its Goal here, at the resume commit's cursor,
    * and wakes `goal_waits`, so the route always returns the committed receipt. The loop's goal-waits pass reviews the
-   * marks first (`reviewResumes`). Memory only: after a restart the start-up reconcile reads the `open` requests again.
+   * marks first (`reviewResumes`). Memory only: after a restart `auto` starts the active Goals' loops (`startRedrive`),
+   * the goal-wait rebuild registers a Goal with an `open` request in every mode (RSR-2), a held Goal waits for the
+   * person, and a Goal paused at that start is woken by its resume (RSR-1).
    */
   const resumeReviews = new Map<string, Map<string, { goalRef: GoalRef; cursorAtRead: CommitCursor }>>();
+  /**
+   * RSR-1 (Astra row 1): the Goals whose resume review asked for a Goal-scope start, by scope and Goal; the Goal's next
+   * wake takes the mark, so a driver holding only Task watches (a Task start after the restart) takes the Goal start too.
+   */
+  const goalStartsOnWake = new Set<string>();
+  const goalStartKey = (scope: WorkspaceScope, goalRef: GoalRef): string => `${scopeKey(scope)}\u0000${canonicalKey(goalRef)}`;
   const resumeGoalWaitForOpenDispatches = (scope: WorkspaceScope, goalRef: GoalRef, cursorAtRead: CommitCursor): void => {
     const marks = resumeReviews.get(scopeKey(scope)) ?? new Map<string, { goalRef: GoalRef; cursorAtRead: CommitCursor }>();
     marks.set(canonicalKey(goalRef), { goalRef, cursorAtRead });
@@ -1237,12 +1257,14 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     wakeLoop.wake(scope, GOAL_WAITS_QUEUE, 'commit');
   };
   /**
-   * The goal-waits pass's review of the resume marks. A Goal that still has an `open` dispatch request and no restart
-   * interruption (`goalHeldByRestart`, shared with the start-up rebuild) gets its wait registered at the resume cursor and
-   * queued, so this same pass wakes the existing goal loop, whose claim turns the request `open -> applied`. An
-   * interrupted Goal keeps its `open` request until the person starts the Goal (frozen `:186`, design `:513`); a Goal
-   * with no `open` request is not woken. Either way the mark goes. A read that is not ready throws with the mark kept,
-   * and the loop's back-off retries the pass.
+   * The goal-waits pass's review of the resume marks. A Goal that still has an `open` dispatch request, or was paused
+   * when this Host started (`pausedAtStart`), and has no restart interruption (`goalHeldByRestart`, shared with the
+   * start-up rebuild) gets its wait registered at the resume cursor and queued, so this same pass wakes its goal loop,
+   * or starts one when this process has none (RSR-1). The trigger is the person's resume, not an approval: a Goal paused
+   * across a restart and resumed goes on along its line (C-151 acceptance; STATUS:89), in every `resumeOnStartup` mode.
+   * The `open` read stays first, so its failure is retried here (FN-6). An interrupted Goal keeps its `open` request
+   * until the person starts the Goal (frozen `:186`, design `:513`; decision 97-9); any other Goal is not woken. Either
+   * way the mark goes. A read that is not ready throws with the mark kept, and the loop's back-off retries the pass.
    */
   const reviewResumes = async (scope: WorkspaceScope, signal: AbortSignal): Promise<void> => {
     const marks = resumeReviews.get(scopeKey(scope));
@@ -1252,10 +1274,15 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     for (const [key, mark] of [...marks]) {
       const open = await project.runtime.platform.actionRequests.listOpenDispatches(ctx, { goalRef: mark.goalRef });
       if (open.status !== 'ready') throw notReady(`the open dispatch requests of ${mark.goalRef.goalId}`, open);
-      if (open.value.some(entry => entry.request.state === 'open') && !await goalHeldByRestart(project, ctx, mark.goalRef)) {
+      const hasOpen = open.value.some(entry => entry.request.state === 'open');
+      const crossed = pausedAtStart(project, mark.goalRef);
+      if ((hasOpen || crossed) && !await goalHeldByRestart(project, ctx, mark.goalRef)) {
         const waits = goalWaitWakesOf(scope);
         waits.register({ projectId: scope.projectId, goalId: mark.goalRef.goalId,
-          recordKinds: GOAL_WAIT_WAKE_AGGREGATE_TYPES, reasons: ['resume_open_dispatch'] }, mark.cursorAtRead);
+          recordKinds: GOAL_WAIT_WAKE_AGGREGATE_TYPES,
+          reasons: [...(hasOpen ? ['resume_open_dispatch'] : []), ...(crossed ? ['resume_after_restart'] : [])] },
+        mark.cursorAtRead);
+        if (crossed) goalStartsOnWake.add(goalStartKey(scope, mark.goalRef));
         waits.enqueue(mark.goalRef);
       }
       // A newer resume of the same Goal during these reads replaced the mark; that one waits for the next pass.
@@ -1464,8 +1491,12 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
   const goalWaitRegistriesV1: GoalWaitRegistries = { all: () => goalWaitRegistries };
   const goalWaitQueue = createGoalWaitQueue({
     registries: goalWaitRegistriesV1,
-    // BW's one Workflow advance for the goal; the same host context every consume pass uses.
-    wake: async (scope, goalRef) => { await projects.get(scope.projectId)?.collaborationDriver.wake(hostContext(scope), goalRef); },
+    // BW's one Workflow advance for the goal; the same host context every consume pass uses. A Goal its resume review
+    // marked (RSR-1) is woken with a Goal-scope start, once.
+    wake: async (scope, goalRef) => {
+      const startGoal = goalStartsOnWake.delete(goalStartKey(scope, goalRef));
+      await projects.get(scope.projectId)?.collaborationDriver.wake(hostContext(scope), goalRef, { startGoal });
+    },
     ctx: scope => hostScopeContext(scope, actor),
     readMarkerQueries,
     startMarkerQuery,
@@ -1484,6 +1515,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
         completedGoalsOf: platform.planReaders.completedGoalsOf.bind(platform.planReaders),
         messages: platform.messages, queries: platform.queries, plans: platform.plans,
         readReview: (ctx, input) => platform.unknownCallReviews.readReview(ctx, input),
+        actionRequests: platform.actionRequests,
         held: (ctx, goalRef) => goalHeldByRestart(project, ctx, goalRef) })(scope, registry);
     },
   });

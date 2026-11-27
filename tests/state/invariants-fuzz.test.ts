@@ -58,12 +58,14 @@ const GOAL_COMPLETION_CONFLICTS: string[] = [];
 /**
  * The Host world seeds (chosen from seeds 1–30 so that together they cover every kind below): seed 4 reaches the gate
  * chain and reverifies it, seed 25 the GOAL-29 continuation through the route, seed 15 an `outcome_unknown` end
- * (W-14), seed 11 the brief sequence and the forged continuation with the right epochs, seed 20 a yielded wait, its
- * reply and the forged continuation on a Run no fan-out pause stopped, seed 1 a re-completion after a new Plan (GOAL-08).
- * The last runs with a `kind:'system'` Host actor.
+ * (W-14), seed 11 the brief sequence and the forged continuation (with the right epochs, and on a Run no fan-out pause
+ * stopped), seed 10 a yielded wait, its message and its reply, seed 1 a re-completion after a new Plan (GOAL-08). Seed
+ * 20 covered the yielded wait, its reply and the forged continuation on a Run no fan-out pause stopped until RSR-1: its
+ * Goal is paused across a restart, and the resume now rebuilds the goal loop, which runs that Run to its end. The last
+ * (seed 20) runs with a `kind:'system'` Host actor.
  */
-const HOST_SEEDS = [{ seed: 1, system: false }, { seed: 4, system: false }, { seed: 11, system: false }, { seed: 15, system: false },
-  { seed: 25, system: false }, { seed: 20, system: true }];
+const HOST_SEEDS = [{ seed: 1, system: false }, { seed: 4, system: false }, { seed: 10, system: false }, { seed: 11, system: false },
+  { seed: 15, system: false }, { seed: 25, system: false }, { seed: 20, system: true }];
 const HOST_OPERATIONS = 40;
 /**
  * The agent-grant world seeds (chosen from seeds 1–64 so that together with the Host seeds they cover every kind

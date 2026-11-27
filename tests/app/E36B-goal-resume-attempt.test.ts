@@ -9,7 +9,7 @@ import type { ReadResult } from '../../src/contracts/core/results.js';
 import type { TrackBarsPageV1 } from '../../src/core/work-graph/views/track-read-model.js';
 import { AG2B_GOAL_REF, AG2B_SCOPE, AG2B_WORK_TASK_ID, plain } from '../helpers/AG2b-collaboration-fixture.js';
 import { readExecution } from '../helpers/A2-restart-fixture.js';
-import { cleanupScenarios, openHostScenario, type HostScenario } from '../scenarios/harness.js';
+import { cleanupScenarios, openHostScenario, waitFor, type HostScenario } from '../scenarios/harness.js';
 import { NO_REDRIVE, readCall, selectedRun } from '../scenarios/support/common.js';
 import { goalControlled } from '../scenarios/support/control.js';
 
@@ -37,7 +37,8 @@ it('E36B B1-4: a Goal-resume continuation is the next attempt and reports a paus
   const resumed = await goalControlled(scenario.host, 'resume', 'e36b-resume-resume');
   expect(resumed.fanOut).toMatchObject({ control: 'resume', continuations: [
     { taskId: AG2B_WORK_TASK_ID, afterRunRef: pausedRef, outcome: 'requeued' }] });
-  expect((await scenario.advance(scenario.select('e36b-resume-continue'))).state).toBe('completed');
+  // RSR-1: the Goal was paused across the restart, so the resume rebuilds its goal loop, which runs the continuation.
+  await waitFor(() => scenario.goalDisplay(), display => display.phase === 'COMPLETED', 'the goal loop to complete the Goal');
   const continuedRef = await selectedRun(scenario);
 
   const track = await scenario.post<ReadResult<TrackBarsPageV1>>('activity/track', plain(AG2B_SCOPE, {

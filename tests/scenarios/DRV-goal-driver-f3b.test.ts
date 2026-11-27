@@ -171,6 +171,7 @@ describe('DRV goal driver queue: D-F3b', () => {
         messages: platform.messages,
         queries: platform.queries,
         plans: platform.plans,
+        actionRequests: platform.actionRequests,
         held: async (ctx, goalRef) => {
           const read = await platform.plans.queryGoalDisplay!(ctx, { goalRef });
           if (read.status !== 'ready') {

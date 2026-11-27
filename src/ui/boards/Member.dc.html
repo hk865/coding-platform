@@ -26,6 +26,12 @@ body { margin: 0; background: #1F1F1F; }
 .mh-adv { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text); }
 .mh-adv:hover { color: var(--text-strong); }
 .mh-acts { position: relative; margin-left: auto; display: flex; gap: 2px; }
+/* the attest card's reason box: Decide's field, so both cards draw it alike */
+.dc-field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; line-height: 18px; color: var(--text-3); }
+.dc-input { all: unset; box-sizing: border-box; display: block; width: 100%; padding: 6px 10px; border-radius: 6px; background: var(--ground); box-shadow: inset 0 0 0 1px var(--line-2); font-size: 13px; line-height: 20px; color: var(--text-strong); white-space: pre-wrap; }
+textarea.dc-input { min-height: 52px; }
+.dc-input::placeholder { color: var(--text-3); }
+.dc-input:focus-visible { box-shadow: inset 0 0 0 1px var(--text-3); }
 .mh .hcard { max-width: none; }
 .mh-acts .hcard { right: 0; top: calc(100% + 6px); }
 .mh-f .hcard { left: -4px; top: calc(100% + 6px); }
@@ -147,7 +153,7 @@ button.deliv:hover .on { color: var(--text); }
           <div class="lv-rw">
             <a class="{{m.cls}}" href="{{mainHref}}" onMouseEnter="{{m.hover}}" onMouseLeave="{{m.unhover}}" onFocus="{{m.hover}}" onBlur="{{m.unhover}}">
               <span class="row-lead"><span class="{{m.dot}}" aria-hidden="true"></span></span>
-              <span class="row-main"><span class="row-name">{{m.name}}</span><span class="row-sub">{{m.word}}</span></span>
+              <span class="row-main"><span class="row-name">{{m.name}}</span><span class="row-sub">{{m.railWord}}</span></span>
             </a>
             <sc-if value="{{m.card}}" hint-placeholder-val="{{ false }}">
               <div class="{{m.cardCls}}" role="tooltip">
@@ -165,7 +171,7 @@ button.deliv:hover .on { color: var(--text); }
           <div class="lv-rw">
             <button class="{{m.cls}}" type="button" onClick="{{m.pick}}" onMouseEnter="{{m.hover}}" onMouseLeave="{{m.unhover}}" onFocus="{{m.hover}}" onBlur="{{m.unhover}}" aria-current="{{m.current}}">
               <span class="row-lead"><span class="{{m.dot}}" aria-hidden="true"></span></span>
-              <span class="row-main"><span class="row-name">{{m.name}}</span><span class="row-sub">{{m.word}}</span></span>
+              <span class="row-main"><span class="row-name">{{m.name}}</span><span class="row-sub">{{m.railWord}}</span></span>
             </button>
             <sc-if value="{{m.card}}" hint-placeholder-val="{{ false }}">
               <div class="{{m.cardCls}}" role="tooltip">
@@ -253,7 +259,12 @@ button.deliv:hover .on { color: var(--text); }
                 <svg class="ico xs" viewBox="0 0 16 16" aria-hidden="true"><path d="m6 4 4 4-4 4"></path></svg>
               </button>
             </sc-if>
-            <sc-if value="{{hs.isStill}}" hint-placeholder-val="{{ false }}">
+            <sc-if value="{{hs.waitTip}}" hint-placeholder-val="{{ false }}">
+              <button class="btn-text mh-adv" type="button" onMouseEnter="{{hs.tip}}" onMouseLeave="{{untip}}" onFocus="{{hs.tip}}" onBlur="{{untip}}">
+                <span class="{{hs.dot}}" aria-hidden="true"></span>{{hs.word}}
+              </button>
+            </sc-if>
+            <sc-if value="{{hs.isStillPlain}}" hint-placeholder-val="{{ false }}">
               <span class="{{hs.dot}}" aria-hidden="true"></span><span>{{hs.word}}</span>
             </sc-if>
           </span>
@@ -333,6 +344,7 @@ button.deliv:hover .on { color: var(--text); }
         </sc-if>
         <sc-if value="{{c.canHandle}}"><button class="{{c.handleCls}}" type="button" onClick="{{c.handle}}" title="{{c.handleTip}}" aria-disabled="{{c.handleOff}}">我来处理</button></sc-if>
         <sc-if value="{{c.canResumeReview}}"><button class="{{c.resumeReviewCls}}" type="button" onClick="{{c.resumeReview}}" title="{{c.resumeReviewTip}}" aria-disabled="{{c.resumeReviewOff}}">继续</button></sc-if>
+        <sc-if value="{{c.canAttest}}"><button class="btn btn-sm" type="button" onClick="{{c.attest}}">认定结果</button></sc-if>
         <sc-if value="{{tipAt.acts}}" hint-placeholder-val="{{ false }}">
           <div class="hcard" role="tooltip">
             <div class="hc-head">
@@ -571,16 +583,22 @@ button.deliv:hover .on { color: var(--text); }
     <div class="dock">
       <div class="dock-col">
         <sc-if value="{{confirmOpen}}" hint-placeholder-val="{{ false }}">
-          <div class="decision" role="alertdialog" aria-label="确认取消这次执行" onKeyDown="{{cancelKey}}">
-            <p class="dc-title">取消这次执行？</p>
+          <div class="decision" role="alertdialog" aria-label="{{confirmLabel}}" onKeyDown="{{confirmKey}}">
+            <p class="dc-title">{{confirmTitle}}</p>
             <p class="dc-line">{{confirmLine}}</p>
+            <sc-if value="{{confirmAttest}}" hint-placeholder-val="{{ false }}">
+              <div class="dc-field">
+                <label for="member-attest">你的判断（必填）</label>
+                <textarea id="member-attest" class="dc-input" rows="2" maxlength="2000" placeholder="写清你依据什么认定这个结果" value="{{c.attestDraft}}" onChange="{{c.attestDraftChange}}"></textarea>
+              </div>
+            </sc-if>
+            <sc-if value="{{confirmErr}}" hint-placeholder-val="{{ false }}"><p class="dc-line"><span class="tx-failed">{{confirmErr}}</span></p></sc-if>
             <div class="dc-foot">
-              <button class="btn btn-sm first" type="button" onClick="{{keepGoing}}" onKeyDown="{{cancelKey}}" ref="{{keepRef}}">不取消</button>
-              <button class="btn btn-sm btn-primary" type="button" onClick="{{confirmCancel}}" onKeyDown="{{cancelKey}}">取消执行</button>
+              <button class="btn btn-sm first" type="button" onClick="{{keepGoing}}" onKeyDown="{{confirmKey}}" ref="{{keepRef}}">{{confirmKeep}}</button>
+              <button class="btn btn-sm btn-primary{{confirmGoCls}}" type="button" aria-disabled="{{confirmOff}}" onClick="{{confirmGo}}" onKeyDown="{{confirmKey}}">{{confirmGoLabel}}</button>
             </div>
           </div>
         </sc-if>
-
         <sc-if value="{{composerOpen}}" hint-placeholder-val="{{ true }}">
           <div class="composer">
             <div class="mode-row">
@@ -2214,7 +2232,7 @@ class Component extends DCLogic {
   /* ---- E3 Member §2.1: with `props.data` the page's nine data groups come
      from the adapter; only the local state (theme, panel, density, tab, drafts,
      tips, the open run, the selected record and its trace row) is the page's. */
-  memberTip(kind, line, groups) {
+  memberTip(kind, line, groups, waits) {
     const att = line === null ? 1 : (line.attempt.ordinal || 1);
     const when = line !== null && line.status.advancing ? line.status.advText : '当前这一步结束后';
     /* The group head is a Task, so its card is that Task's own card —
@@ -2227,6 +2245,13 @@ class Component extends DCLogic {
           why: '', rows: [], hint: '点一下回到主画面看这个任务' };
       }
     }
+    /* S7: a waiting head's 状态 card is what the line waits for, one row per
+       open wait, with its deadline; the read's name already says MM-DD HH:mm. */
+    if (kind === 'arrive' && line !== null && line.status.word === '等回复') {
+      return { hasSq: false, sq: 'sq z10', name: '在等什么', tx: 'tx-plain', word: '等回复', why: '',
+        rows: (waits || []).map((w) => ({ k: '在等', v: w.name + ' 的回复'
+          + (w.deadline === null ? '' : '，期限 ' + w.deadline), cls: '' })), hint: '' };
+    }
     /* The task card is the task's own reason word (`line.task.tip`); a line
        without a task keeps the pause fallback. */
     if (kind === 'task' && line !== null && line.task !== null) {
@@ -2237,7 +2262,11 @@ class Component extends DCLogic {
     }
     const C = {
       pause: ['暂停', '到下一个安全点停下', [['何时', when + '生效；在那之前它还在做'], ['保留', '改动和工作记录都保留'], ['之后', '只有你能继续，系统不会自动继续']], '点一下请求暂停'],
-      resume: ['继续', '从停下的安全点接着做', [['尝试', '仍是第 ' + att + ' 次尝试，接着用这份工作记录'], ['消息', '排队中的直接干预在第一个安全点送达']], '点一下继续'],
+      resume: ['继续', line !== null && line.resumeStartsNewRun ? '开一次新的执行' : '从停下的安全点接着做',
+        line !== null && line.resumeStartsNewRun
+          ? [['重启', '主机重启过：开一次新的执行，带上接续说明'], ['消息', '排队中的直接干预在第一个安全点送达']]
+          : [['尝试', '仍是第 ' + att + ' 次尝试，接着用这份工作记录'], ['消息', '排队中的直接干预在第一个安全点送达']],
+        '点一下继续'],
       cancel: ['取消', '停下这次执行', [['何时', when + '生效'], ['任务', '记为“已取消”，失败类别：已取消'], ['之后', '只有你能重新入队；改动和工作记录保留']], '点一下会先问你确认'],
       requeue: ['重新入队', '开第 ' + (att + 1) + ' 次尝试 · 接续', [['带上', '接续说明：上次停在哪里、为什么停，只用已保存的事实组装'], ['记录', '还在这条工作线上，接着用这份工作记录，原来的历史保留']], '点一下重新入队'],
       arrive: [line !== null && line.status.advancing ? '已请求停下' : '等安全点', '等安全点', [['何时', when + '生效'], ['现在', '它还在做；你可以接着发消息，会排队']], '点一下，看到达安全点后的样子'],
@@ -2262,6 +2291,8 @@ class Component extends DCLogic {
     const blank = { show: err !== '', text: err, canRetry: canRetry, retry: canRetry ? read.retry : () => {} };
     const showLv = line !== null && D.ownKey !== null
       && (line.key.projectId !== D.ownKey.projectId || line.key.sessionId !== D.ownKey.sessionId);
+    const attest = line === null ? null : line.attest;
+    const attestDraft = String(s.mAttestDraft || '');
     const theme = s.theme || this.props.theme || 'dark';
     const dens = s.dens || '标准';
     const showThink = dens !== '简洁';
@@ -2272,7 +2303,7 @@ class Component extends DCLogic {
     const tipTo = (k) => () => { if ((this.state || {}).tip !== k) set({ tip: k }); };
     const untip = () => { if ((this.state || {}).tip) set({ tip: null }); };
     const tipAt = { acts: ['pause', 'resume', 'cancel', 'requeue'].indexOf(tip) >= 0, state: tip === 'arrive', task: tip === 'task', mode: tip === 'mbranch' || tip === 'mint' };
-    const tc = this.memberTip(tip || 'pause', line, line === null ? [] : line.groups);
+    const tc = this.memberTip(tip || 'pause', line, line === null ? [] : line.groups, line === null ? [] : line.waits);
     const draftMode = s.mode || 'branch';
     const isBranch = draftMode === 'branch';
     const draft = this.draftOf(s, draftMode);
@@ -2298,7 +2329,7 @@ class Component extends DCLogic {
     const stopStep = (stop, failKey) => {
       if (!stop) return;
       if (stop.kind === 'query') { this.stopQueryRunOf(stop, failKey, set); return; }
-      set({ confirm: true, tip: null, densMenu: false });
+      set({ confirm: true, mAttestOpen: false, tip: null, densMenu: false });
     };
     /* Another line's view has its own cancel confirmation (`lvConfirm`); it
        never sets the page's card, so returning to the page's own line leaves
@@ -2314,6 +2345,9 @@ class Component extends DCLogic {
       title: line === null ? '工作线' : line.duty.word,
       sub: line === null ? '' : line.sub,
       isLive: status.live, isAdv: status.advancing, isStill: status.still, advText: status.advText,
+      /* S7: a waiting head also opens its 状态 card; every other still state stays plain. */
+      waitTip: status.still && status.word === '等回复' && line !== null,
+      isStillPlain: status.still && !(status.word === '等回复' && line !== null),
       arrive: () => {},
       tip: tipTo('arrive'), dot: status.dot, word: status.word,
       taskSq: line !== null && line.task !== null ? 'sq z8 ' + this.sqAt(line.task.st) : 'sq z8 s-pending',
@@ -2345,7 +2379,7 @@ class Component extends DCLogic {
       cancelOff: busy ? 'true' : 'false', requeueOff: busy ? 'true' : 'false',
       pause: () => control('pause'), resume: () => control('resume'),
       requeue: lineAct(() => this.props.actions.requeueLine()),
-      askCancel: (e) => { this.cancelOpened('goal', e); set({ confirm: true, tip: null, densMenu: false }); },
+      askCancel: (e) => { this.cancelOpened('goal', e); set({ confirm: true, mAttestOpen: false, tip: null, densMenu: false }); },
       canHandle: canHandle, canResumeReview: canResumeReview,
       handleCls: handleCls, resumeReviewCls: handleCls,
       handleTip: '先暂停这项任务，你自己看过再点继续',
@@ -2354,8 +2388,23 @@ class Component extends DCLogic {
       handle: lineAct(() => this.props.actions.holdReview()),
       resumeReview: lineAct(() => this.props.actions.releaseReviewHold()),
       tipPause: tipTo('pause'), tipResume: tipTo('resume'), tipCancel: tipTo('cancel'), tipRequeue: tipTo('requeue'),
+      /* S6 (5.6-11): the head's one attestation entry; the line's own control
+         supplies the route and pins, and the reason is required. It shares the
+         one confirm card with 取消 (a switch by kind; S6's frozen shape). */
+      canAttest: attest !== null,
+      attestWhyText: line === null || line.attestWhy === '' ? '这次执行的结果未知。' : line.attestWhy,
+      attestDraft: attestDraft,
+      attestDraftChange: (ev) => set({ mAttestDraft: ev && ev.target ? ev.target.value : '' }),
+      attest: () => set({ mAttestOpen: true, mAttestDraft: '', confirm: false, tip: null }),
     };
-    const confirmOpen = !!s.confirm && c.canCancel;
+    /* S6: one card, two kinds. 取消 keeps today's words and write; 认定 shows
+       the unknown reason and a required explanation, then writes the control's
+       own route. */
+    const attestConfirm = !!s.mAttestOpen && attest !== null;
+    const isQueryAttest = attest !== null && attest.route === 'queries/resolve-unknown';
+    const attestWhy = c.attestWhyText.replace(/。$/, '') + '。';
+    const attestOff = attestConfirm && (busy || attestDraft.trim() === '');
+    const confirmOpen = (!!s.confirm && c.canCancel) || attestConfirm;
     const ropen = s.ropen || {};
 
     const runOpen = (id, live) => { const value = ropen[id]; return value === undefined || value === null ? live || autoOpen : !!value; };
@@ -2687,7 +2736,8 @@ class Component extends DCLogic {
       if (!arch && m.scope !== '') name = name + ' · ' + m.scope;
       return {
         id: m.id, isLink: m.synth, isLine: !m.synth && !arch, isArch: arch,
-        name: name, word: arch ? '' : m.word, sub: sub, dot: m.dot, current: m.current ? 'page' : null,
+        name: name, word: arch ? '' : m.word, railWord: m.railWord,
+        sub: sub, dot: m.dot, current: m.current ? 'page' : null,
         cls: 'row wl-line lv-line' + (arch ? ' is-arch' : '') + (m.current ? ' is-current' : ''),
         open: !!s.arch, chev: 'ico xs chev' + (s.arch ? ' is-open' : ''),
         pick: m.synth ? () => { if (D.ownKey !== null) openLineFromRail(D.ownKey); }
@@ -2696,7 +2746,7 @@ class Component extends DCLogic {
            conversation and the archived rows keep no card and send no hover. */
         hover: m.card === null ? () => {} : tipTo('row:' + m.id), unhover: untip,
         card: m.card !== null && tip === 'row:' + m.id, cardCls: 'hcard lv-card',
-        c: { dot: m.dot, tx: 'tx-plain', word: m.word, live: '', rows: m.card === null ? [] : m.card.rows,
+        c: { dot: m.dot, tx: this.lvTx({ state: m.st, word: m.word }), word: m.word, live: '', rows: m.card === null ? [] : m.card.rows,
           hint: m.card === null ? '' : '点一下在中间打开这条工作线' }
       };
     };
@@ -2718,6 +2768,7 @@ class Component extends DCLogic {
       }]).concat(s.arch ? D.archived.map((m) => railRow(m, true)) : []),
     };
 
+    const composerOpen = !confirmOpen;
     const cancelWhen = line !== null && line.status.still ? '它已停在安全点，取消立即生效' : '它会在下一个安全点停下，然后取消生效';
     const footNote = isBranch ? '复制一份上下文来回答，不改文件，也不打扰它'
       : line === null || !line.canIntervene ? (line === null ? '这条工作线不在了' : (line.interveneReason || '这条工作线已结束，只能问一问（只读）'))
@@ -2747,11 +2798,40 @@ class Component extends DCLogic {
       items: items, blank: blank,
       trace: trace, hasRaw: !!rawRow, raw: rawRow === null ? '' : (rawRow.raw || ''),
       mainHref: this.props.mainHref || 'Main.dc.html',
-      confirmOpen: confirmOpen, composerOpen: !confirmOpen,
-      confirmLine: cancelWhen + '：任务记为“已取消”，之后只有你能重新入队；改动和工作记录保留。',
-      keepGoing: () => { this.cancelClosed('goal'); set({ confirm: false }); }, confirmCancel: () => { set({ confirm: false }); control('cancel'); },
+      confirmOpen: confirmOpen, composerOpen: composerOpen,
+      confirmAttest: attestConfirm,
+      confirmLabel: attestConfirm ? '核对未知结果' : '确认取消这次执行',
+      confirmTitle: attestConfirm ? '核对未知结果' : '取消这次执行？',
+      confirmLine: attestConfirm
+        ? attestWhy + (isQueryAttest
+          ? '认定后这一轮问一问记为失败并关闭，不会重试。'
+          : '认定后这次执行算失败（计一次返工）；按自动返工的规则，系统可能接着重新入队。')
+        : cancelWhen + '：任务记为“已取消”，之后只有你能重新入队；改动和工作记录保留。',
+      confirmKeep: attestConfirm ? '先不认定' : '不取消',
+      confirmGoLabel: attestConfirm
+        ? (isQueryAttest ? '认定这一轮已中断' : '认定执行已中断') : '取消执行',
+      confirmOff: attestConfirm ? (attestOff ? 'true' : 'false') : 'false',
+      confirmGoCls: attestOff ? ' is-off' : '',
+      confirmErr: attestConfirm ? errText : '',
+      keepGoing: () => {
+        if (attestConfirm) { set({ mAttestOpen: false, mAttestDraft: '' }); return; }
+        this.cancelClosed('goal'); set({ confirm: false });
+      },
+      confirmGo: () => {
+        if (attestConfirm) {
+          const reason = attestDraft.trim();
+          if (reason === '' || (this.state || {}).mBusy === lineKey) return;
+          lineAct(() => this.props.actions.attestLine(reason)
+            .then(() => set({ mAttestOpen: false, mAttestDraft: '' })))();
+          return;
+        }
+        set({ confirm: false }); control('cancel');
+      },
       keepRef: (el) => this.cancelRef('goal', el),
-      cancelKey: (e) => this.cancelKey('goal', e, () => { this.cancelClosed('goal'); set({ confirm: false }); }),
+      confirmKey: (e) => this.cancelKey('goal', e, () => {
+        if (!attestConfirm) this.cancelClosed('goal');
+        set({ confirm: false, mAttestOpen: false, mAttestDraft: '' });
+      }),
       isBranch: isBranch, isIntervene: !isBranch,
       modeBranchCls: 'mode-btn' + (isBranch ? ' is-on' : ''), modeIntCls: 'mode-btn' + (!isBranch ? ' is-on' : '') + (line === null || !line.canIntervene ? ' is-off' : ''),
       modeIntOff: line === null || !line.canIntervene,
@@ -2863,7 +2943,7 @@ class Component extends DCLogic {
     /* every line opens on 问一问（只读）; an archived line's card keeps the 正在做 row of its version-14 expansion (lvRail) */
     const lvr = this.lvRail(lineRows, lineArch, Object.assign({}, s, { line: s.line || SELF }), { set: lvSet });
     const rowV = (m, r, arch) => ({ id: m.id, isLink: m.role === 'secretary', isLine: m.role !== 'secretary', isArch: false,
-      name: m.name, word: arch ? m.sub : r.word, dot: r.dot, current: r.current,
+      name: m.name, word: arch ? m.sub : r.word, railWord: arch ? m.sub : r.word, dot: r.dot, current: r.current,
       cls: 'row wl-line lv-line' + (arch ? ' is-arch' : '') + (r.current ? ' is-current' : ''),
       pick: m.id === SELF ? home : r.pick, hover: r.hover, unhover: r.unhover, card: r.card, cardCls: r.cardCls, c: r.c });
     const archOpen = !!s.arch; const archParts = String(RW.archivedText).split('（');
@@ -2927,6 +3007,7 @@ class Component extends DCLogic {
       tipPause: tipTo('pause'), tipResume: tipTo('resume'), tipCancel: tipTo('cancel'), tipRequeue: tipTo('requeue')
     };
     const confirmOpen = !!s.confirm && c.canCancel;
+    const composerOpen = !confirmOpen;
 
     /* density */
     const densities = ['简洁', '标准', '详细', '完全展开'].map((d) => ({
@@ -3097,11 +3178,14 @@ class Component extends DCLogic {
       trace: trace, hasRaw: !!rawRow, raw: rawRow ? rawRow.json : '',
 
       mainHref: this.props.mainHref || 'Main.dc.html',
-      confirmOpen: confirmOpen, composerOpen: !confirmOpen,
+      confirmOpen: confirmOpen, composerOpen: composerOpen,
+      confirmAttest: false, confirmErr: '', confirmLabel: '确认取消这次执行', confirmTitle: '取消这次执行？',
       confirmLine: cancelWhen + '：任务记为“已取消”，之后只有你能重新入队；改动和工作记录保留。',
-      keepGoing: () => { this.cancelClosed('goal'); set({ confirm: false }); }, confirmCancel: () => this.doConfirmCancel(),
+      confirmKeep: '不取消', confirmGoLabel: '取消执行', confirmGoCls: '', confirmOff: 'false',
+      keepGoing: () => { this.cancelClosed('goal'); set({ confirm: false }); },
+      confirmGo: () => this.doConfirmCancel(),
       keepRef: (el) => this.cancelRef('goal', el),
-      cancelKey: (e) => this.cancelKey('goal', e, () => { this.cancelClosed('goal'); set({ confirm: false }); }),
+      confirmKey: (e) => this.cancelKey('goal', e, () => { this.cancelClosed('goal'); set({ confirm: false }); }),
       isBranch: isBranch, isIntervene: !isBranch,
       modeBranchCls: 'mode-btn' + (isBranch ? ' is-on' : ''), modeIntCls: 'mode-btn' + (!isBranch ? ' is-on' : ''),
       modeIntOff: false, interveneTip: '',
@@ -3270,7 +3354,7 @@ class Component extends DCLogic {
       const live = d.live ? '，' + d.live : '';
       const hint = main ? (on ? '你正在主对话里' : '点一下回到主对话') : on ? '它的对话在中间' : '点一下在中间打开它的对话';
       const def = arch || i >= upFrom; const up = hvUp && hvUp.id === r.id ? !!hvUp.up : def;
-      return { id: r.id, name: r.name, word: r.word, dot: r.dot, current: on ? 'true' : null,
+      return { id: r.id, name: r.name, word: r.word, railWord: r.word, dot: r.dot, current: on ? 'true' : null,
         cls: (arch ? 'rail-arch-ln lv-line' : 'row wl-row lv-line') + (on ? ' is-current' : ''),
         pick: () => set(main ? this.lvLeave() : cur === r.id ? { lvHover: null, lvTip: null, lvConfirm: null }
           : Object.assign({ line: r.id, lvHover: null, lvHoverUp: null, lvTip: null, lvConfirm: null, lvMode: 'ask' }, this.lvSwapTo(r.id))),
