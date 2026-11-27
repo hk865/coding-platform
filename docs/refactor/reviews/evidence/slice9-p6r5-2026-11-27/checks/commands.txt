@@ -1,0 +1,155 @@
+2026-11-27T01:56:38.133Z node scripts/acceptance/run.mjs scripts/acceptance/acceptance.config.json (run g6-2026-11-27-a48b8779)
+2026-11-27T01:56:39.223Z wa#0: bash start-host.sh (pid 317234) -> http://127.0.0.1:34415/workbench/
+2026-11-27T01:56:39.263Z git init -q -b main (in /home/han001/g6-run-1127b/wa/projects/a1) -> 0
+2026-11-27T01:56:39.265Z git config user.email g6@example.invalid (in /home/han001/g6-run-1127b/wa/projects/a1) -> 0
+2026-11-27T01:56:39.267Z git config user.name g6 (in /home/han001/g6-run-1127b/wa/projects/a1) -> 0
+2026-11-27T01:56:39.269Z git add -A (in /home/han001/g6-run-1127b/wa/projects/a1) -> 0
+2026-11-27T01:56:39.273Z git commit -q -m a1: initial files (in /home/han001/g6-run-1127b/wa/projects/a1) -> 0
+2026-11-27T01:56:39.275Z git rev-parse HEAD (in /home/han001/g6-run-1127b/wa/projects/a1) -> 0
+2026-11-27T01:56:39.277Z git status --porcelain (in /home/han001/g6-run-1127b/wa/projects/a1) -> 0
+2026-11-27T01:56:39.278Z git ls-files -s (in /home/han001/g6-run-1127b/wa/projects/a1) -> 0
+2026-11-27T01:57:45.371Z wa#0: SIGINT, exit 0 after 46 ms
+2026-11-27T01:57:45.375Z git init -q -b main (in /home/han001/g6-run-1127b/wb/projects/b1) -> 0
+2026-11-27T01:57:45.377Z git config user.email g6@example.invalid (in /home/han001/g6-run-1127b/wb/projects/b1) -> 0
+2026-11-27T01:57:45.379Z git config user.name g6 (in /home/han001/g6-run-1127b/wb/projects/b1) -> 0
+2026-11-27T01:57:45.381Z git add -A (in /home/han001/g6-run-1127b/wb/projects/b1) -> 0
+2026-11-27T01:57:45.384Z git commit -q -m b1: initial files (in /home/han001/g6-run-1127b/wb/projects/b1) -> 0
+2026-11-27T01:57:46.396Z wb#0: bash start-host.sh (pid 319542) -> http://127.0.0.1:45025/workbench/
+2026-11-27T01:57:46.947Z git rev-parse HEAD (in /home/han001/g6-run-1127b/wb/projects/b1) -> 0
+2026-11-27T01:57:46.949Z git status --porcelain (in /home/han001/g6-run-1127b/wb/projects/b1) -> 0
+2026-11-27T01:57:46.951Z git ls-files -s (in /home/han001/g6-run-1127b/wb/projects/b1) -> 0
+2026-11-27T01:59:04.075Z wb#0: SIGINT, exit 0 after 25 ms
+2026-11-27T01:59:05.051Z w-accept#0: bash start-host.sh (pid 320494) -> http://127.0.0.1:44911/workbench/
+2026-11-27T01:59:05.072Z git init -q -b main (in /home/han001/g6-run-1127b/w-accept/projects/e05) -> 0
+2026-11-27T01:59:05.074Z git config user.email g6@example.invalid (in /home/han001/g6-run-1127b/w-accept/projects/e05) -> 0
+2026-11-27T01:59:05.076Z git config user.name g6 (in /home/han001/g6-run-1127b/w-accept/projects/e05) -> 0
+2026-11-27T01:59:05.078Z git add -A (in /home/han001/g6-run-1127b/w-accept/projects/e05) -> 0
+2026-11-27T01:59:05.082Z git commit -q -m e05: initial files (in /home/han001/g6-run-1127b/w-accept/projects/e05) -> 0
+2026-11-27T01:59:05.084Z git rev-parse HEAD (in /home/han001/g6-run-1127b/w-accept/projects/e05) -> 0
+2026-11-27T01:59:05.086Z git status --porcelain (in /home/han001/g6-run-1127b/w-accept/projects/e05) -> 0
+2026-11-27T01:59:05.087Z git ls-files -s (in /home/han001/g6-run-1127b/w-accept/projects/e05) -> 0
+2026-11-27T01:59:07.468Z bash /mnt/d/cc-lead-notes/impl/smoke/srr/smoke-route.sh -> 0 (smoke-flash)
+2026-11-27T02:00:33.305Z git add -A (in /home/han001/g6-run-1127b/w-accept/projects/e05) -> 0
+2026-11-27T02:00:33.307Z git status --porcelain (in /home/han001/g6-run-1127b/w-accept/projects/e05) -> 0
+2026-11-27T02:00:33.311Z git commit -q -m g6 e05: the seed Goal is done (in /home/han001/g6-run-1127b/w-accept/projects/e05) -> 0
+2026-11-27T02:00:33.312Z git rev-parse HEAD (in /home/han001/g6-run-1127b/w-accept/projects/e05) -> 0
+2026-11-27T02:07:03.943Z bash /mnt/d/cc-lead-notes/impl/smoke/srr/smoke-route.sh -> 0 (smoke-flash)
+2026-11-27T02:08:33.700Z w-accept#0: SIGINT, exit 0 after 4642 ms
+2026-11-27T02:08:34.931Z w-accept#1: bash start-host.sh (pid 330938) -> http://127.0.0.1:39691/workbench/
+2026-11-27T02:09:32.117Z w-accept#1: SIGINT, exit 0 after 37 ms
+2026-11-27T02:09:33.079Z w-accept#2: bash start-host.sh (pid 332338) -> http://127.0.0.1:36977/workbench/
+2026-11-27T02:41:40.029Z git init -q -b main (in /home/han001/g6-run-1127b/w-accept/projects/e08) -> 0
+2026-11-27T02:41:40.032Z git config user.email g6@example.invalid (in /home/han001/g6-run-1127b/w-accept/projects/e08) -> 0
+2026-11-27T02:41:40.034Z git config user.name g6 (in /home/han001/g6-run-1127b/w-accept/projects/e08) -> 0
+2026-11-27T02:41:40.036Z git add -A (in /home/han001/g6-run-1127b/w-accept/projects/e08) -> 0
+2026-11-27T02:41:40.039Z git commit -q -m e08: initial files (in /home/han001/g6-run-1127b/w-accept/projects/e08) -> 0
+2026-11-27T02:41:40.041Z git rev-parse HEAD (in /home/han001/g6-run-1127b/w-accept/projects/e08) -> 0
+2026-11-27T02:41:40.043Z git status --porcelain (in /home/han001/g6-run-1127b/w-accept/projects/e08) -> 0
+2026-11-27T02:41:40.044Z git ls-files -s (in /home/han001/g6-run-1127b/w-accept/projects/e08) -> 0
+2026-11-27T02:41:42.584Z bash /mnt/d/cc-lead-notes/impl/smoke/srr/smoke-route.sh -> 0 (smoke-flash)
+2026-11-27T03:22:31.052Z git init -q -b main (in /home/han001/g6-run-1127b/w-accept/projects/e09) -> 0
+2026-11-27T03:22:31.059Z git config user.email g6@example.invalid (in /home/han001/g6-run-1127b/w-accept/projects/e09) -> 0
+2026-11-27T03:22:31.061Z git config user.name g6 (in /home/han001/g6-run-1127b/w-accept/projects/e09) -> 0
+2026-11-27T03:22:31.065Z git add -A (in /home/han001/g6-run-1127b/w-accept/projects/e09) -> 0
+2026-11-27T03:22:31.071Z git commit -q -m e09: initial files (in /home/han001/g6-run-1127b/w-accept/projects/e09) -> 0
+2026-11-27T03:22:31.073Z git rev-parse HEAD (in /home/han001/g6-run-1127b/w-accept/projects/e09) -> 0
+2026-11-27T03:22:31.126Z git status --porcelain (in /home/han001/g6-run-1127b/w-accept/projects/e09) -> 0
+2026-11-27T03:22:31.128Z git ls-files -s (in /home/han001/g6-run-1127b/w-accept/projects/e09) -> 0
+2026-11-27T03:22:34.270Z bash /mnt/d/cc-lead-notes/impl/smoke/srr/smoke-route.sh -> 0 (smoke-flash)
+2026-11-27T03:27:05.234Z git init -q -b main (in /home/han001/g6-run-1127b/w-accept/projects/e12) -> 0
+2026-11-27T03:27:05.237Z git config user.email g6@example.invalid (in /home/han001/g6-run-1127b/w-accept/projects/e12) -> 0
+2026-11-27T03:27:05.240Z git config user.name g6 (in /home/han001/g6-run-1127b/w-accept/projects/e12) -> 0
+2026-11-27T03:27:05.244Z git add -A (in /home/han001/g6-run-1127b/w-accept/projects/e12) -> 0
+2026-11-27T03:27:05.249Z git commit -q -m e12: initial files (in /home/han001/g6-run-1127b/w-accept/projects/e12) -> 0
+2026-11-27T03:27:05.252Z git rev-parse HEAD (in /home/han001/g6-run-1127b/w-accept/projects/e12) -> 0
+2026-11-27T03:27:05.255Z git status --porcelain (in /home/han001/g6-run-1127b/w-accept/projects/e12) -> 0
+2026-11-27T03:27:05.258Z git ls-files -s (in /home/han001/g6-run-1127b/w-accept/projects/e12) -> 0
+2026-11-27T03:27:08.288Z bash /mnt/d/cc-lead-notes/impl/smoke/srr/smoke-route.sh -> 0 (smoke-flash)
+2026-11-27T03:29:31.079Z w-accept#2: SIGINT, exit 0 after 261 ms
+2026-11-27T03:29:34.064Z w-accept#3: bash start-host.sh (pid 587728) -> http://127.0.0.1:40411/workbench/
+2026-11-27T03:33:21.375Z git init -q -b main (in /home/han001/g6-run-1127b/w-accept/projects/iter) -> 0
+2026-11-27T03:33:21.378Z git config user.email g6@example.invalid (in /home/han001/g6-run-1127b/w-accept/projects/iter) -> 0
+2026-11-27T03:33:21.381Z git config user.name g6 (in /home/han001/g6-run-1127b/w-accept/projects/iter) -> 0
+2026-11-27T03:33:21.385Z git add -A (in /home/han001/g6-run-1127b/w-accept/projects/iter) -> 0
+2026-11-27T03:33:21.391Z git commit -q -m iter: initial files (in /home/han001/g6-run-1127b/w-accept/projects/iter) -> 0
+2026-11-27T03:33:21.394Z git rev-parse HEAD (in /home/han001/g6-run-1127b/w-accept/projects/iter) -> 0
+2026-11-27T03:33:21.398Z git status --porcelain (in /home/han001/g6-run-1127b/w-accept/projects/iter) -> 0
+2026-11-27T03:33:21.400Z git ls-files -s (in /home/han001/g6-run-1127b/w-accept/projects/iter) -> 0
+2026-11-27T03:33:23.809Z bash /mnt/d/cc-lead-notes/impl/smoke/srr/smoke-route.sh -> 0 (smoke-flash)
+2026-11-27T03:36:53.870Z git init -q -b main (in /home/han001/g6-run-1127b/w-accept/projects/int) -> 0
+2026-11-27T03:36:53.873Z git config user.email g6@example.invalid (in /home/han001/g6-run-1127b/w-accept/projects/int) -> 0
+2026-11-27T03:36:53.875Z git config user.name g6 (in /home/han001/g6-run-1127b/w-accept/projects/int) -> 0
+2026-11-27T03:36:53.879Z git add -A (in /home/han001/g6-run-1127b/w-accept/projects/int) -> 0
+2026-11-27T03:36:53.884Z git commit -q -m int: initial files (in /home/han001/g6-run-1127b/w-accept/projects/int) -> 0
+2026-11-27T03:36:53.886Z git rev-parse HEAD (in /home/han001/g6-run-1127b/w-accept/projects/int) -> 0
+2026-11-27T03:36:53.889Z git status --porcelain (in /home/han001/g6-run-1127b/w-accept/projects/int) -> 0
+2026-11-27T03:36:53.892Z git ls-files -s (in /home/han001/g6-run-1127b/w-accept/projects/int) -> 0
+2026-11-27T03:36:57.131Z bash /mnt/d/cc-lead-notes/impl/smoke/srr/smoke-route.sh -> 0 (smoke-flash)
+2026-11-27T04:03:27.378Z git init -q -b main (in /home/han001/g6-run-1127b/w-accept/projects/wait) -> 0
+2026-11-27T04:03:27.380Z git config user.email g6@example.invalid (in /home/han001/g6-run-1127b/w-accept/projects/wait) -> 0
+2026-11-27T04:03:27.382Z git config user.name g6 (in /home/han001/g6-run-1127b/w-accept/projects/wait) -> 0
+2026-11-27T04:03:27.384Z git add -A (in /home/han001/g6-run-1127b/w-accept/projects/wait) -> 0
+2026-11-27T04:03:27.388Z git commit -q -m wait: initial files (in /home/han001/g6-run-1127b/w-accept/projects/wait) -> 0
+2026-11-27T04:03:27.389Z git rev-parse HEAD (in /home/han001/g6-run-1127b/w-accept/projects/wait) -> 0
+2026-11-27T04:03:27.391Z git status --porcelain (in /home/han001/g6-run-1127b/w-accept/projects/wait) -> 0
+2026-11-27T04:03:27.393Z git ls-files -s (in /home/han001/g6-run-1127b/w-accept/projects/wait) -> 0
+2026-11-27T04:03:29.842Z bash /mnt/d/cc-lead-notes/impl/smoke/srr/smoke-route.sh -> 0 (smoke-flash)
+2026-11-27T04:06:13.156Z w-accept#3: SIGINT, exit 0 after 269 ms
+2026-11-27T04:08:54.046Z w-accept#4: bash start-host.sh (pid 787851) -> http://127.0.0.1:37933/workbench/
+2026-11-27T05:09:17.222Z git init -q -b main (in /home/han001/g6-run-1127b/w-accept/projects/c216) -> 0
+2026-11-27T05:09:17.226Z git config user.email g6@example.invalid (in /home/han001/g6-run-1127b/w-accept/projects/c216) -> 0
+2026-11-27T05:09:17.228Z git config user.name g6 (in /home/han001/g6-run-1127b/w-accept/projects/c216) -> 0
+2026-11-27T05:09:17.231Z git add -A (in /home/han001/g6-run-1127b/w-accept/projects/c216) -> 0
+2026-11-27T05:09:17.236Z git commit -q -m c216: initial files (in /home/han001/g6-run-1127b/w-accept/projects/c216) -> 0
+2026-11-27T05:09:17.239Z git rev-parse HEAD (in /home/han001/g6-run-1127b/w-accept/projects/c216) -> 0
+2026-11-27T05:09:17.242Z git status --porcelain (in /home/han001/g6-run-1127b/w-accept/projects/c216) -> 0
+2026-11-27T05:09:17.244Z git ls-files -s (in /home/han001/g6-run-1127b/w-accept/projects/c216) -> 0
+2026-11-27T05:09:19.609Z bash /mnt/d/cc-lead-notes/impl/smoke/srr/smoke-route.sh -> 0 (smoke-flash)
+2026-11-27T05:13:05.975Z git init -q -b main (in /home/han001/g6-run-1127b/w-accept/projects/c221) -> 0
+2026-11-27T05:13:05.978Z git config user.email g6@example.invalid (in /home/han001/g6-run-1127b/w-accept/projects/c221) -> 0
+2026-11-27T05:13:05.980Z git config user.name g6 (in /home/han001/g6-run-1127b/w-accept/projects/c221) -> 0
+2026-11-27T05:13:05.983Z git add -A (in /home/han001/g6-run-1127b/w-accept/projects/c221) -> 0
+2026-11-27T05:13:05.988Z git commit -q -m c221: initial files (in /home/han001/g6-run-1127b/w-accept/projects/c221) -> 0
+2026-11-27T05:13:05.991Z git rev-parse HEAD (in /home/han001/g6-run-1127b/w-accept/projects/c221) -> 0
+2026-11-27T05:13:05.994Z git status --porcelain (in /home/han001/g6-run-1127b/w-accept/projects/c221) -> 0
+2026-11-27T05:13:05.997Z git ls-files -s (in /home/han001/g6-run-1127b/w-accept/projects/c221) -> 0
+2026-11-27T05:13:08.952Z bash /mnt/d/cc-lead-notes/impl/smoke/srr/smoke-route.sh -> 0 (smoke-flash)
+2026-11-27T05:15:03.558Z git init -q -b main (in /home/han001/g6-run-1127b/w-accept/projects/c222) -> 0
+2026-11-27T05:15:03.561Z git config user.email g6@example.invalid (in /home/han001/g6-run-1127b/w-accept/projects/c222) -> 0
+2026-11-27T05:15:03.563Z git config user.name g6 (in /home/han001/g6-run-1127b/w-accept/projects/c222) -> 0
+2026-11-27T05:15:03.565Z git add -A (in /home/han001/g6-run-1127b/w-accept/projects/c222) -> 0
+2026-11-27T05:15:03.569Z git commit -q -m c222: initial files (in /home/han001/g6-run-1127b/w-accept/projects/c222) -> 0
+2026-11-27T05:15:03.571Z git rev-parse HEAD (in /home/han001/g6-run-1127b/w-accept/projects/c222) -> 0
+2026-11-27T05:15:03.573Z git status --porcelain (in /home/han001/g6-run-1127b/w-accept/projects/c222) -> 0
+2026-11-27T05:15:03.574Z git ls-files -s (in /home/han001/g6-run-1127b/w-accept/projects/c222) -> 0
+2026-11-27T05:15:06.816Z bash /mnt/d/cc-lead-notes/impl/smoke/srr/smoke-route.sh -> 0 (smoke-flash)
+2026-11-27T05:17:50.438Z git init -q -b main (in /home/han001/g6-run-1127b/w-accept/projects/b06) -> 0
+2026-11-27T05:17:50.440Z git config user.email g6@example.invalid (in /home/han001/g6-run-1127b/w-accept/projects/b06) -> 0
+2026-11-27T05:17:50.443Z git config user.name g6 (in /home/han001/g6-run-1127b/w-accept/projects/b06) -> 0
+2026-11-27T05:17:50.445Z git add -A (in /home/han001/g6-run-1127b/w-accept/projects/b06) -> 0
+2026-11-27T05:17:50.449Z git commit -q -m b06: initial files (in /home/han001/g6-run-1127b/w-accept/projects/b06) -> 0
+2026-11-27T05:17:50.451Z git rev-parse HEAD (in /home/han001/g6-run-1127b/w-accept/projects/b06) -> 0
+2026-11-27T05:17:50.453Z git status --porcelain (in /home/han001/g6-run-1127b/w-accept/projects/b06) -> 0
+2026-11-27T05:17:50.455Z git ls-files -s (in /home/han001/g6-run-1127b/w-accept/projects/b06) -> 0
+2026-11-27T05:17:50.605Z bash /mnt/d/cc-lead-notes/impl/smoke/srr/smoke-route.sh -> 0 (smoke-flash)
+2026-11-27T05:23:39.093Z git init -q -b main (in /home/han001/g6-run-1127b/w-accept/projects/e08b) -> 0
+2026-11-27T05:23:39.096Z git config user.email g6@example.invalid (in /home/han001/g6-run-1127b/w-accept/projects/e08b) -> 0
+2026-11-27T05:23:39.098Z git config user.name g6 (in /home/han001/g6-run-1127b/w-accept/projects/e08b) -> 0
+2026-11-27T05:23:39.100Z git add -A (in /home/han001/g6-run-1127b/w-accept/projects/e08b) -> 0
+2026-11-27T05:23:39.105Z git commit -q -m e08b: initial files (in /home/han001/g6-run-1127b/w-accept/projects/e08b) -> 0
+2026-11-27T05:23:39.107Z git rev-parse HEAD (in /home/han001/g6-run-1127b/w-accept/projects/e08b) -> 0
+2026-11-27T05:23:39.109Z git status --porcelain (in /home/han001/g6-run-1127b/w-accept/projects/e08b) -> 0
+2026-11-27T05:23:39.111Z git ls-files -s (in /home/han001/g6-run-1127b/w-accept/projects/e08b) -> 0
+2026-11-27T05:23:41.397Z bash /mnt/d/cc-lead-notes/impl/smoke/srr/smoke-route.sh -> 0 (smoke-flash)
+2026-11-27T05:56:21.970Z w-accept#4: SIGINT, exit 0 after 270 ms
+2026-11-27T05:56:23.705Z compaction#0: bash start-host.sh (pid 903044) -> http://127.0.0.1:46737/workbench/
+2026-11-27T05:56:23.739Z git init -q -b main (in /home/han001/g6-run-1127b/compaction/projects/compaction) -> 0
+2026-11-27T05:56:23.743Z git config user.email g6@example.invalid (in /home/han001/g6-run-1127b/compaction/projects/compaction) -> 0
+2026-11-27T05:56:23.747Z git config user.name g6 (in /home/han001/g6-run-1127b/compaction/projects/compaction) -> 0
+2026-11-27T05:56:23.753Z git add -A (in /home/han001/g6-run-1127b/compaction/projects/compaction) -> 0
+2026-11-27T05:56:23.760Z git commit -q -m compaction: initial files (in /home/han001/g6-run-1127b/compaction/projects/compaction) -> 0
+2026-11-27T05:56:23.765Z git rev-parse HEAD (in /home/han001/g6-run-1127b/compaction/projects/compaction) -> 0
+2026-11-27T05:56:23.770Z git status --porcelain (in /home/han001/g6-run-1127b/compaction/projects/compaction) -> 0
+2026-11-27T05:56:23.774Z git ls-files -s (in /home/han001/g6-run-1127b/compaction/projects/compaction) -> 0
+2026-11-27T05:56:26.377Z bash /mnt/d/cc-lead-notes/impl/smoke/srr/smoke-route.sh -> 0 (smoke-flash)
+2026-11-27T05:59:31.483Z compaction#0: SIGINT, exit 0 after 58 ms
