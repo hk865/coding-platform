@@ -33,6 +33,7 @@ import { claimWithSecretaryProfile } from '../helpers/request-claim-steps.js';
 import {
   createRequestRoundService, type RequestFactsReader, type RequestRoundPort,
 } from '../../src/core/work-graph/tasks/request-service.js';
+import { readGoalTerminalState } from '../../src/core/work-graph/views/goal-conflicts.js';
 import type { WorkflowHostConfiguration } from '../../src/business/workflow/ports.js';
 import {
   openS6ARequestWorld, S6A_GOAL_1, S6A_SCOPE, S6A_SECRETARY_PROFILE_ID, S6A_WORK_ROLE,
@@ -111,6 +112,7 @@ for (const backend of BACKENDS) {
         duty: createSessionDutyResolver({
           readRoleSpec: world.platform.roles.readRoleSpec, configuration: WORKFLOW,
         }),
+        goals: { readGoalTerminalState: goal => readGoalTerminalState(captured.records as RealRecords, goal) },
         now: () => world.clock.now(),
         operationId: () => `s6a-queue-${backend}-${++sequence}`,
       });

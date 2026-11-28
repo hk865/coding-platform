@@ -2749,6 +2749,8 @@ export function createWorkflow(deps: WorkflowDependencies & {
     if (origin.status !== 'ready') return readRejection(origin);
     if (origin.value === null) return null;
     const { messageRef } = origin.value;
+    // A main-conversation source has no line to prefer: the plan's first tasks pick normally.
+    if (messageRef === null) return null;
     const message = await deps.messages.readMessage(ownedInWorkspace(owned, messageRef.workspaceId).ctx, messageRef);
     if (message.status !== 'ready') return readRejection(message);
     const recipient = message.value.recipient;

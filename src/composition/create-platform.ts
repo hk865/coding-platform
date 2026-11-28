@@ -464,6 +464,7 @@ import type { TaskExecutionRecord } from '../core/work-graph/model/execution-rea
 import type { QueryExecutionRecord } from '../core/work-graph/queries/contracts.js';
 import type { RunRef, RunSnapshot, RunWorkspacePinV1, SourceRefV1 } from '../contracts/dispatch.js';
 import type { QueryRunRef } from '../contracts/query-job.js';
+import type { InitializationBindingRef } from '../contracts/initialization-binding.js';
 import { isRequestRound, queryExecutionBindingOf } from '../contracts/query-job.js';
 import type { WriteResult } from '../contracts/core/results.js';
 import {
@@ -753,6 +754,12 @@ const ROLE_SPLIT_ACTOR = Object.freeze({ kind: 'system' as const, id: 'role-spli
  *  a Host call is its actor's kind (the platform is `system`, never `platform`; O3-01). */
 function actorClassOf(ctx: CoreCallContext): ReworkActorClass {
   return ctx.principal.kind === 'host' ? ctx.principal.actor.kind : 'agent';
+}
+
+/** The R2 card's planning round derives its command from the confirmed binding: replaying the confirm queues the
+ *  same round once, and a queue that failed can be retried by replaying that one command. */
+function stableId(bindingRef: InitializationBindingRef): string {
+  return `r2-plan-round:${canonicalKey(bindingRef)}`;
 }
 
 /** Slice 4C-2 U6: the four note-card options the notes owner accepts. */
@@ -3009,7 +3016,31 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       confirmDraft: (ctx, input) => trackedCall(async () => {
         const confirmed = await goalConfirm.confirmDraft(ctx, input);
         if (confirmed.status !== 'committed') return confirmed;
-        const { goal } = confirmed.value;
+        // C4.2: R2 moved the idea selection before the Goal card, so the confirm itself queues the planning round on
+        // the same root. The round's command comes from the binding, so a confirm replay queues it once and a queue
+        // that failed can be retried by replaying the same confirm. The card's round carries the selection; the root
+        // carries the main-conversation source (`messageRef: null`). The first plan is still the person's.
+        const { goal, binding, round } = confirmed.value;
+        const requestFacts = await rawRequestFacts.readFacts(ctx, { requestRoot: binding.requestRef });
+        if (requestFacts.status === 'not_found') {
+          return rejected('unavailable', "the confirmed card's request is not readable");
+        }
+        if (requestFacts.status !== 'ready') {
+          return requestFacts.status === 'rejected'
+            ? requestFacts : rejected('unavailable', "the confirmed card's request facts are not readable");
+        }
+        const cardIndex = requestFacts.value.rounds.findIndex((entry) => sameJson(entry.ref, round));
+        const selectedBeforeCard = cardIndex >= 0
+          && requestFacts.value.rounds.slice(0, cardIndex + 1).some((entry) => entry.job.selectedIdea !== null);
+        const rootRound = requestFacts.value.rounds.find((entry) => sameJson(entry.ref, binding.requestRef));
+        const source = rootRound?.job.interventionSource;
+        if (selectedBeforeCard && source !== undefined && source.messageRef === null) {
+          const queued = await rawRequestIntake.submitRequest(ctx, {
+            commandId: stableId(binding.ref), goalId: null, text: '按已选思路出首案',
+            continues: binding.requestRef, recipient: null, references: [],
+          });
+          if (queued.status === 'rejected') return queued;
+        }
         const allocated = await goalAdviserQueue.allocate(
           queueAutomationContext(goal.workspaceRef.projectId, goal.workspaceRef.workspaceId, ctx.signal),
           { commandId: `goal-queue:${goal.ref.goalId}`, goalRef: goal.ref });
@@ -3502,6 +3533,7 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
     const rawSecretaryProfiles: SecretaryProfilePort = options.secretaryProfiles ?? defaultSecretaryProfiles;
     const rawRequestRounds = createRequestRoundService({
       records: backend.records, facts: rawRequestFacts, sessionFacts, duty: sessionDutyResolver,
+      goals: { readGoalTerminalState: goal => readGoalTerminalState(backend.records, goal) },
       profiles: rawSecretaryProfiles, now, operationId: randomUUID,
     });
     // The handoff facts: coverage, the routing set, the brief state and the handoff condition.

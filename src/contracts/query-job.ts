@@ -620,8 +620,9 @@ export type QueryJobV1 = {
      */
     interventionSource?: RequestInterventionSourceV1;
 };
-/** Where an `intervention_new_goal` request came from: the completed Goal and the person's message on its line. */
-export type RequestInterventionSourceV1 = { goalRef: GoalRef; messageRef: SessionMessageRef };
+/** Where an `intervention_new_goal` request came from: the completed Goal and the person's message on its line.
+ *  The message is null when the person spoke in the main conversation while an ended goal was selected. */
+export type RequestInterventionSourceV1 = { goalRef: GoalRef; messageRef: SessionMessageRef | null };
 // ------------------------------------------------------------------------ //
 // Events (query v1)                                                         //
 // ------------------------------------------------------------------------ //

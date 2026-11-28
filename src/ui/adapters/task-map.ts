@@ -48,7 +48,9 @@ export type TaskMapGraphRead = {
 export type TaskMapHoverRead = { groups?: unknown[]; tasks?: unknown[]; modules?: unknown[] };
 export type TaskMapLineRead = { counts?: { working?: unknown }; rows?: unknown[] };
 export type TaskMapExtraReads = { hover?: TaskMapHoverRead | null; lines?: TaskMapLineRead | null;
-  /** D101-3: this Goal's blocked Tasks, read when it has a waiting card. */ waits?: unknown };
+  /** D101-3: this Goal's blocked Tasks, read when it has a waiting card. */ waits?: unknown;
+  /** `main/read.pendingSourceRequests`: requests that name this Goal as their source and still wait for it; null unread. */
+  pendingSourceRequests?: number | null };
 
 export type TaskMapTask = {
   id: string; stageId: string | null; name: string; st: string; why: string;
@@ -125,6 +127,8 @@ export type TaskMapData = {
   moduleNames?: Record<string, string>;
   /** D42-2: the unclaimed anchor total for 需要关注; null when there is none. */
   anchorCount?: { n: number; atLeast: boolean } | null;
+  /** `main/read`'s complete count of this Goal's unassigned source requests; null when that read failed. */
+  pendingSourceRequests?: number | null;
   /** D101-3: “the claimable Tasks are all waiting for you”, '' when not all blocked. */
   allBlocked?: string;
   /** T6: the plan and Goal revision this page last read, for a disposition write. */
@@ -687,8 +691,11 @@ export function adaptTaskMap(
   const anchors = anchorWhyOf(extra);
   const l46 = l46WhyOf(extra);
   const anchorCounts = anchorCountsOf(extra);
+  const pendingSourceRequests = extra?.pendingSourceRequests ?? null;
   const emptyDag: TaskMapDag = { edges: [], nodes: [], band: [], dropped: [], gateIds: [], crit: [], owners: {}, goalOwner: '' };
-  if (graph === null) return { goal: goalData, stages: [], tasks: [], running: {}, dag: emptyDag, planMissing: true };
+  if (graph === null) {
+    return { goal: goalData, stages: [], tasks: [], running: {}, dag: emptyDag, planMissing: true, pendingSourceRequests };
+  }
 
   const plan = graph.plan;
   const stages = plan.stages.map((entry) => {
@@ -804,7 +811,7 @@ export function adaptTaskMap(
   };
   return { goal: goalData, stages, tasks: kept, running: {}, dag, moduleNames: moduleNamesOf(extra?.hover),
     anchorCount: anchorCounts.total > 0 ? { n: anchorCounts.total, atLeast: anchorCounts.atLeast } : null,
-    allBlocked };
+    pendingSourceRequests, allBlocked };
 }
 
 /** Module id → name from one `graph/hover` read; TaskMap and Main's right panel name a Task's module by it. */

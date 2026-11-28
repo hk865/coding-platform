@@ -788,6 +788,7 @@ export const PLATFORM_PROMPT_PACK_V1 = {
     "secretary.noGoal": "This request has no goal yet.",
     "secretary.roundHeading": "## This round",
     "secretary.interventionSource": "This request came from a message on the line of an ended goal; an ended goal takes no new work, so this work is a new goal: answer with a Goal card (goalCardDrafts) first. Source goal:",
+    "secretary.endedGoalRequest": "This request was made in the main conversation while an ended goal was selected. An ended goal takes no new work. If this round can answer with ideas, give 2 to 3 ideas and no goalCardDrafts first, and answer with the Goal card (goalCardDrafts) only after the person picks one; the person confirms that Goal card before any plan is adopted; if it only asks about that goal, answer directly. Source goal:",
     "secretary.referencesHeading": "## References",
     "secretary.selectedIdea": "Selected idea:",
     "secretary.cardsHeading": "## Cards",

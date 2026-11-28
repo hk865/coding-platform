@@ -463,9 +463,14 @@ export function createQueryPreparation(deps: QueryPreparationDependencies, conte
       // its source message to recognise the trusted Host system round.
       // A request followup is a plan round once any round of THIS request selected an idea. The read is the
       // request's full round list; a failed read is returned, never folded into "no idea selected".
+      // C4.1: an R2 followup on a Goal-less root (the main conversation's ended-Goal request) is still the
+      // round that hands out the Goal card after the person picks an idea; only after that confirmation does
+      // the same selection make the next followup a plan round.
+      const awaitingCard = secretaryFacts !== null && secretaryFacts.request.effectiveGoalId === null
+        && secretaryFacts.request.interventionSource?.messageRef === null;
       let planTurn = false;
       if (secretaryFacts !== null && secretaryFacts.executionKind === 'semantic_query'
-        && record.job.job.roundKind === 'followup') {
+        && record.job.job.roundKind === 'followup' && !awaitingCard) {
         if (deps.requests === undefined) {
           return rejected('unavailable', 'the request facts read is not bound');
         }

@@ -59,11 +59,11 @@ describe('G-01: a request\'s goal cards become Goals (memory)', () => {
       expect(view.rounds.filter(round => round.kind === 'routing').map(round => round.ref))
         .toEqual([later.attributionRound, first.attributionRound]);
       expect(view.effectiveGoalId).toBe(first.goal.ref.goalId);
-      // The pre-goal history shows under the Goal created first (card 1's), not under card 0's.
+      // Both Goals bind this request; the first Goal's page dedupes its pre row against the bound row.
       const under = async (goalId: string) => (await postValue<{ requests: { requestRoot: QueryJobRef }[] }>(world,
         'main/read', plain(world.mainScope, { goalId, cursor: null }), 'ready', 'main/read')).requests.some(entry =>
         entry.requestRoot.queryJobId === held.request.requestRoot.queryJobId);
-      expect([await under(later.goal.ref.goalId), await under(first.goal.ref.goalId)]).toEqual([true, false]);
+      expect([await under(later.goal.ref.goalId), await under(first.goal.ref.goalId)]).toEqual([true, true]);
 
       // With the governance installed, a no-goal request runs semantic_query; its screened card keeps the screening.
       const workspace = s6aCardsWorkspace(world.host, scope);

@@ -52,7 +52,7 @@ import type { PlanProposal } from '../model/plan-contracts.js';
 import type { NodeReviewReceiptV1, TaskNodeCommitPort } from '../model/task-node-commit-contracts.js';
 import { storedDispatchBasis } from '../model/action-request-contracts.js';
 import {
-  REQUEST_ROOT_MARK, REQUEST_ROOTS_BY_GOAL_INDEX, requestGoalSlot, type RequestCoreViewV1,
+  REQUEST_PAGE_SIZE, REQUEST_ROOT_MARK, REQUEST_ROOTS_BY_GOAL_INDEX, requestGoalSlot, type RequestCoreViewV1,
 } from '../model/request-contracts.js';
 import { storeFailureToRejection } from '../persistence/read-result-failures.js';
 import { decodeQueryJobSnapshot } from '../queries/query-record-codecs.js';
@@ -64,6 +64,8 @@ import {
 } from '../tasks/plan-readers.js';
 import { deriveFuturePlanDelta } from '../tasks/plan-validation.js';
 import { readTaskClaimHoldsInProject, storedMessageRequestRoot } from '../tasks/claim-holds.js';
+import { readOwnerRecord } from '../tasks/owner-record-read.js';
+import { readGoalCreationRequest } from '../tasks/goal-origin.js';
 import type { PlanSourceRootPort } from '../model/claim-contracts.js';
 import { readActionRequestsByRequestRoot } from '../tasks/action-request-codecs.js';
 import type { ActionRequestV1 } from '../state/action-request.js';
@@ -75,13 +77,15 @@ import { cardInScope, type DecisionWholePageReader } from './decision-read-model
 // ------------------------------------------------------------------------ //
 
 /** The continuation of a main page: the last shown row's phase, `since` and root key. */
-export type MainPageCursorV1 = { phase: 'goal' | 'pre'; since: CommitCursor; rootKey: string };
+export type MainPageCursorV1 = { phase: 'goal' | 'pre' | 'bound' | 'source'; since: CommitCursor; rootKey: string };
 
 export type MainPageV1 = { goalId: string | null;
   requests: (RequestCoreViewV1 & { cardKeys: string[] })[];
   cards: DecisionCardV1[];
   notices: (NoticeItemV1 & { memberViews?: NoticeItemV1[] })[];
   seenThrough: Partial<Record<NoticeCategoryV1, NoticePositionV1>>; displayToken: string | null;
+  /** This Goal's source requests still without an effective Goal: the complete count, not the page's. */
+  pendingSourceRequests: number;
   next: MainPageCursorV1 | null;
   /** The Goal's node review receipts, oldest first; `[]` in the no-goal view; absent when the platform has no node
    *  review owner (the page then says they cannot be read, not that there are none). */
@@ -151,6 +155,9 @@ export type MainSurfaceReadDependencies = {
 /** slice-6-SPEC L6: one page holds 20 requests. */
 const MAIN_PAGE_SIZE = 20;
 
+/** The most no-goal roots one source scan may read from the Goal's creation on. */
+const MAIN_SOURCE_SCAN_MAX = 400;
+
 // ------------------------------------------------------------------------ //
 // Pure rules                                                                //
 // ------------------------------------------------------------------------ //
@@ -164,7 +171,7 @@ export type MainReadPhaseV1 = {
 };
 
 /** One request root read for a page, in page order. */
-export type MainReadRowV1 = { phase: 'goal' | 'pre'; since: CommitCursor; rootKey: string };
+export type MainReadRowV1 = { phase: 'goal' | 'pre' | 'bound' | 'source'; since: CommitCursor; rootKey: string };
 
 /**
  * A view's phases in page order (newest first): a Goal's own roots; for the
@@ -186,6 +193,11 @@ export function mainReadPhases(view: {
 /** The phase a page starts in: the one its cursor names, the first without one; null when the view has no such phase. */
 export function mainReadStart(phases: readonly MainReadPhaseV1[], cursor: MainPageCursorV1 | null): number | null {
   if (cursor === null) return 0;
+  if (cursor.phase === 'bound' || cursor.phase === 'source') {
+    /* The two added routes only exist on a Goal's view; the no-goal view has one `no-goal` slot. */
+    const goalView = phases.some((entry) => entry.phase === 'goal' && entry.goalSlot !== requestGoalSlot(null));
+    return goalView ? 0 : null;
+  }
   const index = phases.findIndex((entry) => entry.phase === cursor.phase);
   return index < 0 ? null : index;
 }
@@ -223,15 +235,22 @@ function projectSourceCard(card: DecisionCardV1): boolean {
  * A request's cards (slice-6-SPEC L6): the cards whose `requestRef` names one of
  * its rounds and, when it has an effective Goal, that Goal's own cards. A
  * no-goal request matches by `requestRef` only. The order is the assembly's.
+ *
+ * `pageGoalId` narrows the Goal-owned half to a page's selected Goal: a request
+ * the page carries only as the request that CREATED another Goal must not bring
+ * that other Goal's own cards onto this page. Left out, the older rule stands
+ * (the request's own effective Goal), which `requests/read` keeps using.
  */
 export function requestCards(
   cards: readonly DecisionCardV1[],
   request: { rounds: readonly { ref: QueryJobRef }[]; effectiveGoalId: string | null },
   projectId: string,
+  pageGoalId?: string | null,
 ): DecisionCardV1[] {
   const rounds = new Set(request.rounds.map((round) => keyOf(round.ref)));
-  const goal: GoalRef | null = request.effectiveGoalId === null ? null
-    : { aggregateType: 'Goal', projectId, goalId: request.effectiveGoalId };
+  const goalId = pageGoalId === undefined ? request.effectiveGoalId
+    : request.effectiveGoalId !== null && request.effectiveGoalId === pageGoalId ? request.effectiveGoalId : null;
+  const goal: GoalRef | null = goalId === null ? null : { aggregateType: 'Goal', projectId, goalId };
   return cards.filter((card) => (card.requestRef !== null && rounds.has(keyOf(card.requestRef)))
     || (goal !== null && goalSourceCard(card, goal)));
 }
@@ -248,7 +267,7 @@ export function pageCards(
   goal: GoalRef | null,
   projectId: string,
 ): { cards: DecisionCardV1[]; cardKeys: string[][] } {
-  const perRequest = requests.map((request) => requestCards(cards, request, projectId));
+  const perRequest = requests.map((request) => requestCards(cards, request, projectId, goal?.goalId ?? null));
   const listed: DecisionCardV1[] = [];
   const keys = new Set<string>();
   const listOnce = (card: DecisionCardV1): void => {
@@ -289,7 +308,8 @@ export function parseMainReadInput(input: unknown): MainReadInputV1 | string {
   if (goalId !== null && !nonEmpty(goalId)) return 'main/read requires goalId: a goal id, or null for the no-goal view';
   const cursor = input['cursor'];
   if (cursor === null) return { goalId, cursor: null };
-  if (!isRecord(cursor) || (cursor['phase'] !== 'goal' && cursor['phase'] !== 'pre')
+  if (!isRecord(cursor) || (cursor['phase'] !== 'goal' && cursor['phase'] !== 'pre'
+    && cursor['phase'] !== 'bound' && cursor['phase'] !== 'source')
     || !nonEmpty(cursor['since']) || !nonEmpty(cursor['rootKey'])) {
     return 'main/read requires cursor: null or the next cursor a page returned';
   }
@@ -306,40 +326,146 @@ Promise<{ status: 'ready'; value: RecordOrderedLookupPage } | CoreRejection> {
   }
 }
 
-type MainRootRowV1 = MainReadRowV1 & { requestRoot: QueryJobRef };
+/** `view` is the one read the source route already made for this row; it is the row's page projection too. */
+type MainRootRowV1 = MainReadRowV1 & { requestRoot: QueryJobRef; view?: RequestCoreViewV1 };
+type MainPhaseRowsV1 = { phase: MainReadRowV1['phase']; rows: readonly MainRootRowV1[] };
+
+/** Same `rootKey` from several routes: the earlier phase keeps its row (`goal`, then `pre`, `bound`, `source`). */
+const MAIN_PHASE_RANK: Record<MainReadRowV1['phase'], number> = { goal: 0, pre: 1, bound: 2, source: 3 };
+
+/** One route's order: `since` descending, then `rootKey` descending. */
+function compareMainRows(left: MainReadRowV1, right: MainReadRowV1): number {
+  const bySince = compareCursors(left.since, right.since);
+  if (bySince !== 0) return -bySince;
+  if (left.rootKey !== right.rootKey) return left.rootKey > right.rootKey ? -1 : 1;
+  return MAIN_PHASE_RANK[left.phase] - MAIN_PHASE_RANK[right.phase];
+}
 
 /**
- * Up to `wanted` roots from the start phase on, newest first: one descending
- * read per phase, its creation bounds both exclusive (the upper one as the
- * read's `bound`, the lower one as its `lowerBound`), the cursor's keyset only
- * in the phase it names.
+ * The four routes of a Goal's page merged into the one page order: `(since desc, rootKey desc)`, each `rootKey` once
+ * (the earlier phase wins: `goal`, `pre`, `bound`, `source`). Rows are already read with the same cursor, or filtered
+ * by it; this only orders and deduplicates.
  */
-async function readRows(
+export function mergeMainRows(routes: readonly MainPhaseRowsV1[]): MainRootRowV1[] {
+  const all = routes.flatMap((route) => route.rows);
+  const ordered = [...all].sort(compareMainRows);
+  const seen = new Set<string>();
+  return ordered.filter((row) => {
+    if (seen.has(row.rootKey)) return false;
+    seen.add(row.rootKey);
+    return true;
+  });
+}
+
+/** True when the row sorts strictly after `cursor` in page order (older, or the same `since` and a smaller key). */
+function belowCursor(row: { since: CommitCursor; rootKey: string }, cursor: MainPageCursorV1): boolean {
+  const bySince = compareCursors(row.since, cursor.since);
+  return bySince !== 0 ? bySince < 0 : row.rootKey < cursor.rootKey;
+}
+
+/**
+ * Up to `wanted` roots of one phase, newest first: its creation bounds both
+ * exclusive (the upper one as the read's `bound`, the lower one as its
+ * `lowerBound`). The page cursor is the same keyset for every route, so a page
+ * continues in ONE order instead of skipping a route.
+ */
+async function readPhaseRows(
   records: RecordOrderedLookupPort,
   workspace: WorkspaceScope,
-  phases: readonly MainReadPhaseV1[],
-  start: number,
+  phase: MainReadPhaseV1,
   cursor: MainPageCursorV1 | null,
   wanted: number,
 ): Promise<ReadResult<MainRootRowV1[]>> {
+  const page = await readRootPage(records, {
+    index: REQUEST_ROOTS_BY_GOAL_INDEX, direction: 'desc', limit: wanted,
+    values: [workspace.projectId, workspace.workspaceId, REQUEST_ROOT_MARK, phase.goalSlot],
+    ...(phase.createdBefore === null ? {} : { bound: { value: phase.createdBefore, inclusive: false } }),
+    ...(phase.createdAfter === null ? {} : { lowerBound: { value: phase.createdAfter, inclusive: false } }),
+    ...(cursor === null ? {} : { after: { order: cursor.since, refKey: cursor.rootKey } }),
+  });
+  if (page.status !== 'ready') return page;
   const rows: MainRootRowV1[] = [];
-  for (let index = start; index < phases.length && rows.length < wanted; index += 1) {
-    const phase = phases[index]!;
-    const page = await readRootPage(records, {
-      index: REQUEST_ROOTS_BY_GOAL_INDEX, direction: 'desc', limit: wanted - rows.length,
-      values: [workspace.projectId, workspace.workspaceId, REQUEST_ROOT_MARK, phase.goalSlot],
-      ...(phase.createdBefore === null ? {} : { bound: { value: phase.createdBefore, inclusive: false } }),
-      ...(phase.createdAfter === null ? {} : { lowerBound: { value: phase.createdAfter, inclusive: false } }),
-      ...(index === start && cursor !== null ? { after: { order: cursor.since, refKey: cursor.rootKey } } : {}),
-    });
-    if (page.status !== 'ready') return page;
-    for (const record of page.value.records) {
-      const decoded = decodeQueryJobSnapshot(record);
-      if (decoded.status !== 'decoded') return rejected('unavailable', `a request root is damaged: ${decoded.reason}`);
-      rows.push({ phase: phase.phase, since: decoded.value.since, rootKey: record.refKey, requestRoot: decoded.value.ref });
-    }
+  for (const record of page.value.records) {
+    const decoded = decodeQueryJobSnapshot(record);
+    if (decoded.status !== 'decoded') return rejected('unavailable', `a request root is damaged: ${decoded.reason}`);
+    rows.push({ phase: phase.phase, since: decoded.value.since, rootKey: record.refKey, requestRoot: decoded.value.ref });
   }
   return { status: 'ready', value: rows };
+}
+
+/**
+ * The `bound` route: the request this Goal's one initialization binding names. A `goals/create` Goal has no binding;
+ * a binding whose request root cannot be read, or cannot be decoded, is the read's failure. At most one row, and only
+ * when it sorts after the page cursor.
+ */
+async function readBoundRows(
+  deps: MainSurfaceReadDependencies, ctx: CoreCallContext, goalRef: GoalRef, cursor: MainPageCursorV1 | null,
+): Promise<ReadResult<MainRootRowV1[]>> {
+  const creation = await readGoalCreationRequest(deps.records, ctx, goalRef);
+  if (creation.status !== 'ready') return creation;
+  if (creation.value === null) return { status: 'ready', value: [] };
+  const requestRef = creation.value.requestRef;
+  const root = await readOwnerRecord({ store: deps.records, refKey: keyOf(requestRef),
+    decode: decodeQueryJobSnapshot,
+    readError: message => rejected('unavailable', `the Goal's request could not be read: ${message}`) });
+  if (!root.ok) {
+    return 'rejection' in root ? root.rejection
+      : rejected('unavailable', `the Goal's request ${requestRef.queryJobId} is missing`);
+  }
+  const row: MainRootRowV1 = { phase: 'bound', since: root.value.since,
+    rootKey: keyOf(requestRef), requestRoot: root.value.ref };
+  return { status: 'ready', value: cursor === null || belowCursor(row, cursor) ? [row] : [] };
+}
+
+/**
+ * The `source` route: no-goal roots created after this Goal that name it in `interventionSource` and still have no
+ * effective Goal. The scan counts EVERY no-goal root from the Goal's creation on, matched or not; more than
+ * `MAIN_SOURCE_SCAN_MAX` fails the read instead of truncating. `pending` is the complete matched count.
+ */
+async function readSourceRows(
+  deps: MainSurfaceReadDependencies, ctx: CoreCallContext, workspace: WorkspaceScope,
+  goal: GoalSnapshot, cursor: MainPageCursorV1 | null,
+): Promise<ReadResult<{ rows: MainRootRowV1[]; pending: number }>> {
+  /* The store pages an ordered read at 200 records; keep reading keysets until the scan bound or the end. */
+  const roots: RecordOrderedLookupPage['records'] = [];
+  let scanAfter: { order: string | number; refKey: string } | undefined;
+  for (;;) {
+    const page = await readRootPage(deps.records, {
+      index: REQUEST_ROOTS_BY_GOAL_INDEX, direction: 'desc',
+      limit: Math.min(REQUEST_PAGE_SIZE, MAIN_SOURCE_SCAN_MAX + 1 - roots.length),
+      values: [workspace.projectId, workspace.workspaceId, REQUEST_ROOT_MARK, requestGoalSlot(null)],
+      lowerBound: { value: goal.since, inclusive: false },
+      ...(scanAfter === undefined ? {} : { after: scanAfter }),
+    });
+    if (page.status !== 'ready') return page;
+    roots.push(...page.value.records);
+    if (roots.length > MAIN_SOURCE_SCAN_MAX) {
+      return rejected('unavailable',
+        `超过 ${String(MAIN_SOURCE_SCAN_MAX)} 个 no-goal 根：主对话读不能给出这个 Goal 的完整来源请求计数`);
+    }
+    const next = page.value.next;
+    if (next === null) break;
+    scanAfter = next;
+  }
+  const rows: MainRootRowV1[] = [];
+  let pending = 0;
+  for (const record of roots) {
+    const decoded = decodeQueryJobSnapshot(record);
+    if (decoded.status !== 'decoded') return rejected('unavailable', `a request root is damaged: ${decoded.reason}`);
+    const source = decoded.value.job.interventionSource;
+    if (source === undefined || source.goalRef.goalId !== goal.ref.goalId) continue;
+    const view = await deps.requests.readRequest(ctx, { requestRoot: decoded.value.ref });
+    if (view.status === 'not_found') {
+      return rejected('unavailable', `the indexed request root ${record.refKey} reads as no request`);
+    }
+    if (view.status !== 'ready') return view;
+    if (view.value.effectiveGoalId !== null) continue;
+    pending += 1;
+    const row: MainRootRowV1 = { phase: 'source', since: decoded.value.since,
+      rootKey: record.refKey, requestRoot: decoded.value.ref, view: view.value };
+    if (cursor === null || belowCursor(row, cursor)) rows.push(row);
+  }
+  return { status: 'ready', value: { rows, pending } };
 }
 
 async function readMainPage(
@@ -353,18 +479,41 @@ async function readMainPage(
   if (typeof parsed === 'string') return rejected('invalid', parsed);
   const goals = await readGoalsByWorkspaceCreated(deps.records, workspace);
   if (goals.status !== 'ready') return goals;
-  if (parsed.goalId !== null && !goals.goals.some((goal) => goal.ref.goalId === parsed.goalId)) return { status: 'not_found' };
+  const selected = parsed.goalId === null ? null
+    : goals.goals.find((goal) => goal.ref.goalId === parsed.goalId) ?? null;
+  if (parsed.goalId !== null && selected === null) return { status: 'not_found' };
   const first = goals.goals[0];
   const phases = mainReadPhases({ goalId: parsed.goalId,
     firstGoal: first === undefined ? null : { goalId: first.ref.goalId, since: first.since } });
   const start = mainReadStart(phases, parsed.cursor);
   if (start === null) return rejected('invalid', 'the cursor names a part of the page this view does not have');
 
-  const rows = await readRows(deps.records, workspace, phases, start, parsed.cursor, MAIN_PAGE_SIZE + 1);
-  if (rows.status !== 'ready') return rows;
-  const step = mainPageStep(rows.value, MAIN_PAGE_SIZE);
+  const routes: MainPhaseRowsV1[] = [];
+  for (const phase of phases) {
+    const rows = await readPhaseRows(deps.records, workspace, phase, parsed.cursor, MAIN_PAGE_SIZE + 1);
+    if (rows.status !== 'ready') return rows;
+    routes.push({ phase: phase.phase, rows: rows.value });
+  }
+  let pendingSourceRequests = 0;
+  if (selected !== null) {
+    const goalRef: GoalRef = { aggregateType: 'Goal', projectId: ctx.projectId, goalId: selected.ref.goalId };
+    const bound = await readBoundRows(deps, ctx, goalRef, parsed.cursor);
+    if (bound.status !== 'ready') return bound;
+    routes.push({ phase: 'bound', rows: bound.value });
+    const source = await readSourceRows(deps, ctx, workspace, selected, parsed.cursor);
+    if (source.status !== 'ready') return source;
+    routes.push({ phase: 'source', rows: source.value.rows });
+    pendingSourceRequests = source.value.pending;
+  }
+  const step = mainPageStep(mergeMainRows(routes), MAIN_PAGE_SIZE);
   const views: RequestCoreViewV1[] = [];
   for (const row of step.shown) {
+    // The source route already read its own view for the attribution test; the page counts, sorts and projects that
+    // one read, never a second read of the same root between which the card could be confirmed.
+    if (row.view !== undefined) {
+      views.push(row.view);
+      continue;
+    }
     const view = await deps.requests.readRequest(ctx, { requestRoot: row.requestRoot });
     if (view.status === 'not_found') return rejected('unavailable', `the indexed request root ${row.rootKey} reads as no request`);
     if (view.status !== 'ready') return view;
@@ -391,6 +540,7 @@ async function readMainPage(
     notices: whole.value.notices,
     seenThrough: whole.value.seenThrough,
     displayToken: whole.value.displayToken,
+    pendingSourceRequests,
     next: step.next,
     ...(nodeReceipts === undefined ? {} : { nodeReceipts }),
   } };

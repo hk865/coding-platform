@@ -206,10 +206,13 @@ function goalCardOf(pages: readonly MainPageRead[], goals: MainData['goals']): P
   return { draft: null, confirmed: [] };
 }
 
-/** §2.8: the newest round with ideas and its request. */
-export function ideasRoundOf(pages: readonly MainPageRead[]): { request: PlanRequestRead; round: PlanRoundRead } | null {
+/** §2.8: the newest round with ideas and its request, only requests belonging to this page's Goal. */
+export function ideasRoundOf(
+  pages: readonly MainPageRead[], goalId: string | null,
+): { request: PlanRequestRead; round: PlanRoundRead } | null {
   for (const page of pages) {
     for (const request of page.requests) {
+      if (request.effectiveGoalId !== goalId) continue;
       for (let index = request.rounds.length - 1; index >= 0; index -= 1) {
         const round = request.rounds[index]!;
         if (round.ideas.length > 0) return { request, round };
@@ -313,7 +316,7 @@ export function tasksOf(draft: PlanRevisionDraft): { name: string; items: { task
 
 /** §2.2 step 3/§2.8: the shown candidate and its request. */
 function planOf(pages: readonly MainPageRead[], cand: PlanCandidateRead | null, nav: MainData): PlanDoc | null {
-  const found = ideasRoundOf(pages);
+  const found = ideasRoundOf(pages, nav.selectedGoalId);
   if (found === null) return null;
   const { request, round } = found;
   const later = [...request.rounds].reverse().find((entry) => entry.selectedIdea !== null

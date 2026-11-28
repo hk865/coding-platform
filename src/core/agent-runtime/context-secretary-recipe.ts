@@ -390,11 +390,14 @@ export async function assembleSecretaryContext(
   const handoffSection = input.handoff === undefined
     ? null
     : handoffPromptText(input.handoff, texts, input.toolNames);
-  // G6F F4: while an intervention_new_goal request has no goal yet, the round says where it came from and that a
-  // Goal card comes first; once a card is confirmed the request has its goal and the line drops.
+  // G6F F4: while an intervention_new_goal request has no goal yet, the round says where it came from; once a
+  // card is confirmed the request has its goal and the line drops.
   const source = effectiveGoalId === null ? secretary.request.interventionSource : null;
-  const sourceLine = source === null ? '' : `${packString(texts, 'secretary.interventionSource')} ${goalLabel(source.goalRef.goalId,
-    secretary.goals.find((entry) => entry.goalId === source.goalRef.goalId)?.ordinal ?? null)}\n`;
+  // A source with a message is the person's words on an ended goal's line; without one it came from the main
+  // conversation, whose round may answer with ideas before naming a Goal card.
+  const sourceLine = source === null ? ''
+    : `${packString(texts, source.messageRef === null ? 'secretary.endedGoalRequest' : 'secretary.interventionSource')} ${goalLabel(source.goalRef.goalId,
+      secretary.goals.find((entry) => entry.goalId === source.goalRef.goalId)?.ordinal ?? null)}\n`;
   // 决定 121-149：改需求的规划轮在任务段开头列出现行计划，和 Query 规划轮的任务段同一份 queryPlanSummary
   // （context-query-recipe.ts:183-184）。段里不写的任务照旧 active，模型要先知道现行计划有哪些任务，才写得出取消或取代；
   // 读图被拒时它就只能凭记忆。

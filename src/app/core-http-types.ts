@@ -200,6 +200,7 @@ export type CoreRouteSuffix =
   | 'goals/create'
   | 'goals/accept-partial'
   | 'goals/read'
+  | 'goals/binding'
   | 'architecture/adopt-initial'
   | 'architecture/revise'
   | 'architecture/read'
@@ -443,6 +444,9 @@ export type GoalsCreateBody = GraphWriteBody<GoalTaskPort['createGoal']>;
 export type GoalsCreateResponse = RouteResponse<GoalTaskPort['createGoal']>;
 export type GoalsReadBody = PlainBody<PlanTaskPort['queryGoal']>;
 export type GoalsReadResponse = RouteResponse<CoreRouteBindings['queryGoal']>;
+// Goal cards A/L8: the Goal's one initialization binding read; the body input is a `GoalRef`, like `goals/read`.
+export type GoalsBindingBody = PlainBody<CoreRouteBindings['readGoalBinding']>;
+export type GoalsBindingResponse = RouteResponse<CoreRouteBindings['readGoalBinding']>;
 export type ArchitectureAdoptInitialBody = GraphWriteBody<ArchitectureCatalogPort['adoptInitialArchitecture']>;
 export type ArchitectureAdoptInitialResponse = RouteResponse<ArchitectureCatalogPort['adoptInitialArchitecture']>;
 export type ArchitectureReviseBody = GraphWriteBody<ArchitectureCatalogPort['reviseArchitectureCatalog']>;
@@ -878,6 +882,11 @@ export type RoleLineCoreRouteDto = {
   'goals/adviser-queue/reorder': { body: GoalsAdviserQueueReorderBody; response: GoalsAdviserQueueReorderResponse };
   'goals/adviser-queue/assign': { body: GoalsAdviserQueueAssignBody; response: GoalsAdviserQueueAssignResponse };
   'role-lines/read': { body: RoleLinesReadBody; response: RoleLinesReadResponse };
+};
+
+/** Goal cards A/L8: the target's one initialization binding read; `CORE_ROUTE_SPECS`'s annotation names it. */
+export type GoalsBindingCoreRouteDto = {
+  'goals/binding': { body: GoalsBindingBody; response: GoalsBindingResponse };
 };
 
 // The one verification round read: `plain`, the input is the port's own exact

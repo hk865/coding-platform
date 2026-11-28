@@ -4766,7 +4766,7 @@ export async function readPlan(
   /* §2.2 step 3: the newest round with ideas names the request whose candidate
      the page reads; no request, no candidate, or an empty `candidate` means
      "not read" (`cand: null`). */
-  const found = ideasRoundOf(thread.pages);
+  const found = ideasRoundOf(thread.pages, nav.selectedGoalId);
   let cand: PlanCandidateRead | null = null;
   if (nav.selectedGoalId !== null && found !== null && found.request.candidate !== null) {
     const goalRef = { aggregateType: 'Goal' as const, projectId: scope.projectId, goalId: nav.selectedGoalId };
@@ -5239,6 +5239,22 @@ async function readGoalDisplay(
   );
 }
 
+/** The Goal's first `main/read` page, for the complete count of requests that still wait for it; a failed read is
+ *  `null` (the line hides), never 0. */
+async function readPendingSourceRequests(
+  client: ReturnType<typeof createHostClient>, scope: CoreScope, ref: TaskMapGoalRef,
+): Promise<number | null> {
+  try {
+    const page = readyRouteValue<MainPageV1>(
+      await client.post('main/read', scope, { goalId: ref.goalId, cursor: null }), 'main/read',
+    );
+    return typeof page.pendingSourceRequests === 'number' ? page.pendingSourceRequests : null;
+  } catch (error) {
+    logReadError(error);
+    return null;
+  }
+}
+
 /** Ruling item 1: `tasks/query` `not_found` is a Goal without an adopted Plan,
  * not an error; every other non-ready reply still throws through `readyRouteValue`. */
 async function loadTaskMapForGoal(
@@ -5248,6 +5264,11 @@ async function loadTaskMapForGoal(
   reads: { goal: TaskMapGoalRead; display: TaskMapDisplayRead },
   demand: TaskMapReadDemand,
 ): Promise<TaskMapData> {
+  // Only an ended Goal (completed or partly accepted) can be the source of a request that still waits for it: R2
+  // records a request sent on an ended Goal as coming from it. A running Goal has none, so it skips this read.
+  const phase = reads.display.display.phase;
+  const pendingSourceRequests = phase === 'COMPLETED' || phase === 'ACCEPTED_PARTIAL'
+    ? await readPendingSourceRequests(client, scope, ref) : 0;
   const reply = await client.post('tasks/query', scope, { goalRef: ref });
   /* Ruling item 4: `lines/list` and `graph/hover` join the base four on every
    * notification — one read each for the Goal, never one per Task. A Goal with
@@ -5265,7 +5286,7 @@ async function loadTaskMapForGoal(
     } catch (error) {
       if (!(error instanceof RouteReadError) || error.code !== 'unavailable') throw error;
     }
-    const data = adaptTaskMap(reads.goal, null, reads.display, { lines, hover });
+    const data = adaptTaskMap(reads.goal, null, reads.display, { lines, hover, pendingSourceRequests });
     data.scope = scope;
     return data;
   }
@@ -5284,7 +5305,7 @@ async function loadTaskMapForGoal(
       logReadError(error);
     }
   }
-  const data = adaptTaskMap(reads.goal, graph, reads.display, { lines, hover, waits });
+  const data = adaptTaskMap(reads.goal, graph, reads.display, { lines, hover, waits, pendingSourceRequests });
   /* 5.10-1: a disposition write pins this page's Goal revision and plan. */
   data.planWrite = typeof reads.goal.goal.revision === 'number'
     ? { goalRevision: reads.goal.goal.revision, graph } : null;

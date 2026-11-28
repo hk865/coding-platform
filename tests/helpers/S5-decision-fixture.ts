@@ -89,6 +89,7 @@ import { createRequestFacts } from '../../src/core/work-graph/tasks/request-fact
 import { createRequestRoundService } from '../../src/core/work-graph/tasks/request-service.js';
 import { createProjectSecretaryScope, createSecretarySelection } from '../../src/core/work-graph/tasks/secretary-selection.js';
 import { createEffectiveScopeReader } from '../../src/core/work-graph/views/role-scope-reader.js';
+import { readGoalTerminalState } from '../../src/core/work-graph/views/goal-conflicts.js';
 import { createSessionLifecycleService } from '../../src/core/work-graph/sessions/session-lifecycle.js';
 import { responsibleLinkRef } from '../../src/core/work-graph/sessions/session-responsibility-service.js';
 import { createSessionFactsService } from '../../src/core/work-graph/tasks/session-facts.js';
@@ -1138,7 +1139,9 @@ export async function openS5DecisionFixture(kind: S5FixtureKind = 'memory',
   const requestRounds = createRequestRoundService({
     records, facts: requestFacts, profiles: requestProfiles,
     sessionFacts: requestSessionFacts,
-    duty: duties, now,
+    duty: duties,
+    goals: { readGoalTerminalState: goal => readGoalTerminalState(records, goal) },
+    now,
     operationId: () => {
       if (requestSeedJobId !== null) { const id = requestSeedJobId; requestSeedJobId = null; return id; }
       return `s5-request-${++requestIdSeq}`;

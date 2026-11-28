@@ -348,8 +348,10 @@ export function createRequestIntake(deps: RequestIntakeDependencies): RequestInt
     for (;;) {
       if (pre.status === 'replay') return pre.result;
       const row = requestAssignmentRow(command, pre.facts);
+      // R2 resolves the root's ended Goal to null before the pick, so a Goal-specific secretary is not chosen.
+      const pickedGoal = pre.resolvedGoalId === undefined ? pickGoalOf(command, pre.facts) : pre.resolvedGoalId;
       const appended = row === 'pick'
-        ? await appendWithPick(ctx, command, pickGoalOf(command, pre.facts), budget)
+        ? await appendWithPick(ctx, command, pickedGoal, budget)
         : await deps.rounds.append(ctx, { command, plan: { ...WAITING_PLAN } });
       if (appended.status === 'rejected' && appended.code === 'revision_conflict' && row !== 'pick'
         && budget.left > 0) {

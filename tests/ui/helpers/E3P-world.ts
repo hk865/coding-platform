@@ -1,4 +1,7 @@
+import type { GoalConfirmDraftReceiptV1 } from '../../../src/contracts/goal-card.js';
+import type { GoalRef } from '../../../src/contracts/ledger.js';
 import type { QueryJobRef } from '../../../src/contracts/query-job.js';
+import type { RequestReadV1 } from '../../../src/core/work-graph/views/main-surface-read-model.js';
 import { openS6AHostWorld, type S6AHostWorld } from '../../helpers/S6A-host-fixture.js';
 import {
   answeredRound, followUp, initializeProject, newRequest, secretaryAnswer, submitRound, waitForRound, type S6AIdea,
@@ -6,7 +9,9 @@ import {
 import { S6A_GOAL_1, S6A_SCOPE, S6A_WORK_ROLE, type S6ASession } from '../../helpers/S6A-request-fixture.js';
 import { graphWrite, plain } from '../../helpers/AG2b-collaboration-fixture.js';
 import { REVIEW_REQUIRED_POLICY } from '../../helpers/S9-review-fixture.js';
-import { ready } from '../../helpers/S7A-fixture.js';
+import { committed, ready } from '../../helpers/S7A-fixture.js';
+import { s6aCardsWorkspace, type S6ARequest } from '../../helpers/S6A-cards-fixture.js';
+import { int2ReadPage } from '../../helpers/INT2-world.js';
 import { waitFor as readUntil } from '../../scenarios/harness.js';
 import { findButton, findClass, findElement } from './boot-page.js';
 import { FakeElement } from './dom.js';
@@ -119,6 +124,49 @@ export async function openPAW2(options: { reviewer?: boolean } = {}): Promise<PA
     const v2 = (await readUntil(() => candidateOf(world, requestRoot),
       (read) => read.head !== null && read.head.ref.proposalId !== v1.ref.proposalId, 'E3P candidate v2')).head!;
     return { ...w1, v2: { ref: v2.ref, revision: v2.revision }, v2Round: again.round };
+  });
+}
+
+/**
+ * W6 (RD-8): one request root confirmed into two Goals through two cards of the same answer, so both Goals reach the
+ * same root through their initialization bindings while only one is the request's effective Goal; a request candidate
+ * (`plans/propose`, `requestRef: root`) on that effective Goal is the candidate the Plan page reads. This is RD-1's
+ * 双绑定 world with the Plan page's candidate facts; no store is read.
+ */
+export type PAW6 = { world: S6AHostWorld; validGoal: GoalRef; invalidGoal: GoalRef; root: QueryJobRef };
+
+export async function openPAW6(): Promise<PAW6> {
+  const world = await openS6AHostWorld({ backend: 'memory', extraHostOptions: { requestDriver: 'on' } });
+  return await guarded(world, async () => {
+    await initializeProject(world);
+    const secretary = await world.createSecretary('paw6-secretary');
+    const draft = (index: number) => ({ objective: `PAW6 Goal ${String(index)}`,
+      completion: [`PAW6 done ${String(index)}`], autonomy: 'after_plan_confirmation', screening: null });
+    const first = await answeredRound(world, { session: secretary,
+      answer: secretaryAnswer({ body: 'PAW6 body', ideas: PA_IDEAS, goalCardDrafts: [draft(0), draft(1)] }),
+      submit: { commandId: 'paw6-request', goalId: null, text: 'PAW6 question', continues: null,
+        recipient: secretary.ref } });
+    const view = ready<RequestReadV1>(await world.post('requests/read',
+      plain(S6A_SCOPE, { requestRoot: first.requestRoot })), 'requests/read');
+    const drafts = view.rounds.find(round => round.ref.queryJobId === first.round.queryJobId)?.goalCardDrafts ?? [];
+    if (drafts.length !== 2) throw new Error(`PAW6: the answer saved ${String(drafts.length)} Goal cards`);
+    const confirm = async (index: number) => committed<GoalConfirmDraftReceiptV1>(await world.post(
+      'goals/confirm-draft', plain(S6A_SCOPE, { commandId: `paw6-confirm-${String(index)}`,
+        round: first.round, index })), `the PAW6 card ${String(index)}`);
+    const firstGoal = (await confirm(0)).goal.ref;
+    const secondGoal = (await confirm(1)).goal.ref;
+    const page = await int2ReadPage(world, { goalId: firstGoal.goalId });
+    const row = page.requests.find(entry => entry.requestRoot.queryJobId === first.requestRoot.queryJobId);
+    const effective = row?.effectiveGoalId;
+    if (effective === null || effective === undefined) throw new Error('PAW6: the request has no effective Goal');
+    const validGoal = effective === firstGoal.goalId ? firstGoal : secondGoal;
+    const invalidGoal = validGoal.goalId === firstGoal.goalId ? secondGoal : firstGoal;
+    const request: S6ARequest = { label: 'paw6', goalId: null, text: 'PAW6 question',
+      requestRoot: first.requestRoot, round: first.round, secretary: first.secretary, created: false };
+    await s6aCardsWorkspace(world, S6A_SCOPE).proposeCandidate({
+      label: 'paw6-candidate', goal: validGoal, request,
+    });
+    return { world, validGoal, invalidGoal, root: first.requestRoot };
   });
 }
 

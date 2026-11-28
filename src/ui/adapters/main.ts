@@ -299,6 +299,8 @@ export type MainRequestRead = {
   owner: SessionRef | null;
   /** M1: `owned`/`waiting`/`owner_archived`/`dropped`; the route always sends it. */
   ownerState?: string;
+  /** The Goal the request's rounds now belong to; `null` while no Goal was confirmed from it. */
+  effectiveGoalId: string | null;
   rounds: MainRoundRead[];
 };
 
@@ -326,11 +328,13 @@ export type MainPageV1 = {
   requests: MainRequestRead[];
   /** M2: optional because Plan's page read omits the field; a missing one is no card. */
   cards?: DecisionCardV1[];
+  /** The Goal's source requests still without an effective Goal; optional on scene pages that predate it. */
+  pendingSourceRequests?: number;
   next: MainPageCursorV1 | null;
 };
 
 /** The continuation `main/read` returns; the UI keeps its boundary shape. */
-export type MainPageCursorV1 = { phase: 'goal' | 'pre'; since: string; rootKey: string };
+export type MainPageCursorV1 = { phase: 'goal' | 'pre' | 'bound' | 'source'; since: string; rootKey: string };
 
 function feedbackRequestStateText(state: string): string {
   switch (state) {

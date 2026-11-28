@@ -4,17 +4,15 @@ import { planNoticeTextOf } from '../../src/ui/adapters/plan.js';
 import { findAllClass, findButton, findClass, findElement } from './helpers/boot-page.js';
 import { bootE3N, callsTo, countRoute, descendants, hasClass, quietPage, textOf, waitFor } from './helpers/E3N-page.js';
 import { click } from './helpers/E3N-interact.js';
-import { answerOf, goalCard, goalCardValue, headOf, lineText, openPAW2, planCard, planLines, planReady } from './helpers/E3P-world.js';
+import { goalCard, goalCardValue, headOf, lineText, openPAW2, openPAW6, planCard, planLines, planReady } from './helpers/E3P-world.js';
 import { cancelGoal } from './helpers/E3N-world.js';
 import { graphWrite, plain } from '../helpers/AG2b-collaboration-fixture.js';
 import { S6A_GOAL_1, S6A_SCOPE } from '../helpers/S6A-request-fixture.js';
 import type { S6AHostWorld } from '../helpers/S6A-host-fixture.js';
 import { ready } from '../helpers/S7A-fixture.js';
-import { secretaryAnswer } from '../helpers/S6A-history-fixture.js';
-import { sendS7A2PersonMessage } from '../helpers/S7A2-fixture.js';
 import { openS7BPlanningWorld } from '../helpers/S7B3-planning-world.js';
-import { completeS7BGoal, interveneS7B, s7bVWorkProfile } from '../helpers/S7B-V-fixture.js';
-import { claimWithSecretaryProfile, prepareAttempt, start } from '../helpers/request-claim-steps.js';
+import { completeS7BGoal } from '../helpers/S7B-V-fixture.js';
+import { int2AnswerWithGoalCard, int2SubmitEndedGoalRequest } from '../helpers/INT2-world.js';
 import {
   openPLDeviationConsumptionWorld, runSoftLineDeviationPair,
 } from '../helpers/PL-deviation-fixture.js';
@@ -75,6 +73,36 @@ describe('E3P 4c Plan candidate facts', () => {
       expect(facts['降标']).toBeUndefined();
     } finally {
       await page.restore();
+    }
+  }, 240_000);
+
+  it('RD-8 two Goals behind one bound root: only the effective Goal reads and shows the candidate', async () => {
+    /* Both Goals hold the same request root through their bindings; the request's effective Goal is one of them.
+       The Plan page of the other Goal must read no candidate and draw no plan card. 具名改坏: `ideasRoundOf` /
+       `readPlan` stop filtering requests by `effectiveGoalId`; the invalid Goal then reads and shows the candidate. */
+    const w = await openPAW6();
+    worlds.push(w.world);
+    const valid = await bootE3N(w.world, 'Plan', { search: '?goal=' + w.validGoal.goalId });
+    try {
+      await planReady(valid.log);
+      const reads = callsTo(valid.log, 'plans/request-candidate');
+      expect(reads.length, 'the effective Goal reads its candidate').toBeGreaterThan(0);
+      expect((reads[0]!.input as { requestRef: QueryJobRef }).requestRef, 'the read names the shared root')
+        .toEqual(w.root);
+      const card = planCard(valid.page.root);
+      expect(card, 'the effective Goal shows the candidate card').toBeDefined();
+      expect(headOf(card, 'st'), 'the candidate is live, not stale').toBe('未采用');
+    } finally {
+      await valid.page.restore();
+    }
+    const invalid = await bootE3N(w.world, 'Plan', { search: '?goal=' + w.invalidGoal.goalId });
+    try {
+      await planReady(invalid.log);
+      expect(callsTo(invalid.log, 'plans/request-candidate'),
+        'the other Goal does not read the effective Goal\'s candidate').toHaveLength(0);
+      expect(planCard(invalid.page.root), 'and draws no candidate card').toBeUndefined();
+    } finally {
+      await invalid.page.restore();
     }
   }, 240_000);
 
@@ -182,25 +210,23 @@ describe('E3P 4c Plan candidate facts', () => {
 });
 
 describe('E3P 4c completed Goal and plan notices', () => {
-  it('④ a request opened from a completed Goal says what confirming it means', async () => {
+  it('④ a request opened from a completed Goal in the main conversation says what confirming it means', async () => {
     const planning = await openS7BPlanningWorld();
     worlds.push(planning.world);
-    const { world, goalRef, sessionRef } = planning;
+    const { world, goalRef } = planning;
     await completeS7BGoal(planning);
     await cancelGoal(world, planning.noPlanGoalRef);
-    const message = await sendS7A2PersonMessage(world, { label: 'p4c', recipient: sessionRef.ref, goal: goalRef });
-    const asked = await interveneS7B(world, message.ref, s7bVWorkProfile());
-    expect(asked).toMatchObject({ status: 'requested', branch: 'goal_completed' });
-    const requestRef = (asked as { requestRef: QueryJobRef }).requestRef;
+    // R2's main-conversation input on the completed Goal is the row's prior state (not a line message).
     const secretary = await world.createSecretary('p4c-secretary');
-    expect(await world.route({ commandId: 'p4c-route', round: requestRef, to: secretary })).toMatchObject({ status: 'routed' });
-    expect(await claimWithSecretaryProfile(world, requestRef, secretary, 'p4c-claim')).toMatchObject({ status: 'committed' });
-    const prepared = await prepareAttempt(world, requestRef, 'p4c-prepare');
-    await world.scripted.script(secretary, [{ kind: 'text', text: secretaryAnswer({ body: 'P4C answer',
-      goalCardDrafts: [{ objective: 'P4C new Goal', completion: ['P4C done'], autonomy: 'after_plan_confirmation',
-        screening: null }] }) }]);
-    expect(await start(world, prepared, 'p4c-start')).toMatchObject({ status: 'ready' });
-    const { page, log } = await bootE3N(world, 'Plan');
+    const submitted = await int2SubmitEndedGoalRequest(world, { commandId: 'p4c-r2', goal: goalRef,
+      text: 'P4C 再加一个导出' });
+    if (submitted.secretary?.sessionId !== secretary.ref.sessionId) {
+      const routed = await world.route({ commandId: 'p4c-route', round: submitted.round, to: secretary });
+      if (routed.status !== 'routed') throw new Error(`P4C: the R2 request was not routed: ${JSON.stringify(routed)}`);
+    }
+    expect((await int2AnswerWithGoalCard(world, { label: 'p4c', submitted, secretary })).cardIndex,
+      'the R2 round answers one Goal card').not.toBeNull();
+    const { page, log } = await bootE3N(world, 'Plan', { search: '?goal=' + goalRef.goalId });
     try {
       await planReady(log);
       await waitFor(() => goalCard(page.root) !== undefined);

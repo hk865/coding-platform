@@ -66,16 +66,26 @@ function intConsumer(label: string) {
     goalRef: { aggregateType: 'Goal' as const, projectId: S6A_SCOPE.projectId, goalId: `${label}-consumer` },
     queryProfileId: S6A_SECRETARY_PROFILE_ID, heartbeatMs: 25 };
 }
-async function intConsumeHost(label: string, extraBindings: readonly S6AExtraBinding[] = []): Promise<S6AHostWorld> {
+/**
+ * The world keeps the fixture's default `requestDriver: 'off'` unless a caller opts in: rows that drive their rounds
+ * by hand (the INT rows) must not race a driver, while a row that needs the Host's own round end (the C4-2 candidate)
+ * passes `'on'` and leaves claim/prepare/start to the driver.
+ */
+async function intConsumeHost(label: string, extraBindings: readonly S6AExtraBinding[] = [],
+  requestDriver: 'on' | undefined = undefined): Promise<S6AHostWorld> {
   return await openConsumeHostWorld({ backend: 'memory', ...(extraBindings.length === 0 ? {} : { extraBindings }),
-    extraHostOptions: { inputConsumers: [intConsumer(label)] } });
+    extraHostOptions: { inputConsumers: [intConsumer(label)],
+      ...(requestDriver === undefined ? {} : { requestDriver }) } });
 }
 
-/** A Goal completed through the Workflow and `completeGoal`, plus one used line and a secretary. */
-export async function intOpenCompletedGoal(label: string): Promise<{
+/**
+ * A Goal completed through the Workflow and `completeGoal`, plus one used line and a secretary. `requestDriver: 'on'`
+ * keeps every later request round on the Host's own driver (the C4-2 row); the default leaves rounds to the row.
+ */
+export async function intOpenCompletedGoal(label: string, options: { requestDriver?: 'on' } = {}): Promise<{
   world: S6AHostWorld; goal: GoalRef; secretary: S6ASession; workedLine: SessionRef;
 }> {
-  const world = await intConsumeHost(label);
+  const world = await intConsumeHost(label, [], options.requestDriver);
   try {
     const main = s6aCardsWorkspace(world, S6A_SCOPE);
     const goal = world.goals.first;
@@ -146,7 +156,7 @@ export async function intStartNewGoalFromLine(world: S6AHostWorld, input: {
     commandId: `${input.id}-confirm`, round: first, index: card.index })), `${input.id} Goal card`);
   const newGoal = confirmed.goal.ref;
   // This step's coverage is the binding R3 reads (the card-confirmed Goal and the request root that named
-  // the completed Goal), not the frozen row's "the same request's first plan": the fixture keeps
+  // the completed Goal), not the frozen row's "the same request's first plan": this path keeps the default
   // `requestDriver: 'off'`, the scripted answer offers no selectable idea, and this adoption is a direct
   // `plans/propose` without `requestRef`, so no request candidate is written or read here.
   await intAdoptFirstPlan(world, newGoal, { label: input.id, taskId: input.taskId });

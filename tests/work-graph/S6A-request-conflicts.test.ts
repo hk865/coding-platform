@@ -23,6 +23,7 @@ import type { SessionFactsPort } from '../../src/core/work-graph/model/session-f
 import { createSessionDutyResolver } from '../../src/composition/session-duty.js';
 import { createProjectSecretaryScope, createSecretarySelection } from '../../src/core/work-graph/tasks/secretary-selection.js';
 import { createEffectiveScopeReader } from '../../src/core/work-graph/views/role-scope-reader.js';
+import { readGoalTerminalState } from '../../src/core/work-graph/views/goal-conflicts.js';
 import { createRequestFacts } from '../../src/core/work-graph/tasks/request-facts.js';
 import { createRequestRoundService, SECRETARY_INTAKE_PREFIX } from '../../src/core/work-graph/tasks/request-service.js';
 import { createLineCreation } from '../../src/business/workflow/line-creation.js';
@@ -127,6 +128,7 @@ function gatedIntake(world: S6ARequestWorld): Gated {
   let sequence = 0;
   const rounds = createRequestRoundService({
     records, facts, sessionFacts: gate.port, duty, profiles,
+    goals: { readGoalTerminalState: goal => readGoalTerminalState(records, goal) },
     now: () => world.clock.now(), operationId: () => `s6a-conflicts-${world.backend}-${++sequence}`,
   });
   const effectiveScope = createEffectiveScopeReader({

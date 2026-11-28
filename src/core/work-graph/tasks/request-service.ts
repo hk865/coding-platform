@@ -27,7 +27,7 @@ import type { SessionRef, WorkspaceScope } from '../../../contracts/core/identit
 import type { CoreRejection, ReadResult } from '../../../contracts/core/results.js';
 import type { SessionRecord } from '../../../contracts/core/session.js';
 import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
-import type { GoalRef, VersionedRef } from '../../../contracts/ledger.js';
+import type { GoalRef, GoalSnapshot, VersionedRef } from '../../../contracts/ledger.js';
 import { WORKFLOW_AUTOMATION_ACTOR } from '../../../contracts/task-requeue.js';
 import { messageOf } from '../../../contracts/error-message.js';
 import { canonicalKey as keyOf, canonicalJson, sameJson, sha256Hex, type JsonValue } from '../../../contracts/fingerprint.js';
@@ -55,6 +55,7 @@ import type { SessionFactsPort } from '../model/session-facts-contracts.js';
 import type { SessionOperationRecord } from '../model/session-contracts.js';
 import type { SessionDutyReadPort } from '../model/work-line-contracts.js';
 import { resolveRequestRoot, type RequestFactsPort } from './request-facts.js';
+import type { PlanGoalReads } from './plan-readers.js';
 import { oldestPendingRound, type RequestRoundsFactsV1 } from '../queries/request-rounds-read.js';
 import { noopTailClaim } from '../queries/request-round-claims.js';
 import {
@@ -159,7 +160,9 @@ export type ReadRequestCommandReceiptV1 = (
 export interface RequestRoundPort {
   precheck(ctx: CoreCallContext, command: RequestPublicCommandV1):
     Promise<{ status: 'replay'; result: RequestAppendResultV1 }
-      | { status: 'fresh'; command: RequestPublicCommandV1; facts: RequestCoreViewV1 | null }
+      | { status: 'fresh'; command: RequestPublicCommandV1; facts: RequestCoreViewV1 | null;
+          /** R2's resolved target for a root submit: null when the ended Goal reroutes it; absent on followups. */
+          resolvedGoalId?: string | null }
       | RequestRejectionV1>;
   append(ctx: CoreCallContext,
     input: { command: RequestPublicCommandV1; plan: RequestPlanV1 } | { command: RequestInternalCommandV1 }):
@@ -213,6 +216,8 @@ export type RequestRoundDependencies = {
   sessionFacts: Pick<SessionFactsPort, 'readSessionFacts'>;
   /** The real `SessionDutyResolver` the Host composition passes. */
   duty: SessionDutyReadPort;
+  /** The record-side Goal terminal read (views/goal-conflicts), injected so `tasks/` never imports `views/`. */
+  goals: Pick<PlanGoalReads, 'readGoalTerminalState'>;
   profiles: SecretaryProfilePort;
   now(): string;
   /** A fresh QueryJob id (the run id is derived from it). */
@@ -503,7 +508,7 @@ async function readRequestView(
  *  (DESIGN :341, slice-6 :213: a paused Goal can still be read, explained and drafted for). */
 async function readLiveGoal(
   deps: RequestRoundDependencies, ctx: CoreCallContext, goalId: string,
-): Promise<{ status: 'ready'; guard: RecordGuard } | RequestRejectionV1> {
+): Promise<{ status: 'ready'; guard: RecordGuard; goal: GoalSnapshot } | RequestRejectionV1> {
   const ref: GoalRef = { aggregateType: 'Goal', projectId: ctx.projectId, goalId };
   const read = await readOne(deps.records, ref, decodeGoalSnapshot);
   if (read.status === 'not_found') return rejected('not_found', 'the Goal does not exist');
@@ -512,7 +517,44 @@ async function readLiveGoal(
     return rejected('invalid', 'the Goal belongs to another workspace');
   }
   if (read.value.desiredState === 'cancelled') return rejected('invalid', 'the Goal is not live');
-  return { status: 'ready', guard: read.guard };
+  return { status: 'ready', guard: read.guard, goal: read.value };
+}
+
+/** The one resolution of a submit's target: a live Goal, or R2's Goal-less root with the ended Goal as its source. */
+type SubmitTarget = {
+  goalId: string | null;
+  goalGuard: RecordGuard | null;
+  interventionSource: RequestInterventionSourceV1 | null;
+};
+
+/**
+ * R2: a plain input (`continues` null) on a completed or accepted-partial Goal is a new Goal-less root whose source is
+ * that ended Goal. Precheck, the secretary pick and the write all read this one resolution; the original command (its
+ * `goalId` and fingerprint) stays the replay identity.
+ */
+async function readSubmitTarget(
+  deps: RequestRoundDependencies, ctx: CoreCallContext,
+  command: Extract<RequestPublicCommandV1, { kind: 'submit' }>,
+): Promise<{ status: 'ready'; value: SubmitTarget } | RequestRejectionV1> {
+  if (command.goalId === null) {
+    return { status: 'ready', value: { goalId: null, goalGuard: null, interventionSource: null } };
+  }
+  const goal = await readLiveGoal(deps, ctx, command.goalId);
+  if (goal.status !== 'ready') return goal;
+  if (command.continues !== null) {
+    return { status: 'ready', value: { goalId: command.goalId, goalGuard: goal.guard, interventionSource: null } };
+  }
+  const terminal = await deps.goals.readGoalTerminalState(goal.goal);
+  if (terminal.status !== 'ready') {
+    return unavailable(terminal.status === 'rejected'
+      ? `the Goal terminal state read failed: ${terminal.reason}`
+      : 'the Goal terminal state is not readable');
+  }
+  if (!terminal.value.completed) {
+    return { status: 'ready', value: { goalId: command.goalId, goalGuard: goal.guard, interventionSource: null } };
+  }
+  return { status: 'ready', value: { goalId: null, goalGuard: null,
+    interventionSource: { goalRef: goal.goal.ref, messageRef: null } } };
 }
 
 // ------------------------------------------------------------------------ //
@@ -926,7 +968,8 @@ export function createRequestRoundService(deps: RequestRoundDependencies): Reque
 
   async function precheck(ctx: CoreCallContext, command: RequestPublicCommandV1):
     Promise<{ status: 'replay'; result: RequestAppendResultV1 }
-      | { status: 'fresh'; command: RequestPublicCommandV1; facts: RequestCoreViewV1 | null }
+      | { status: 'fresh'; command: RequestPublicCommandV1; facts: RequestCoreViewV1 | null;
+          resolvedGoalId?: string | null }
       | RequestRejectionV1> {
     // (1) only the person, before anything is read.
     const principal = hostPrincipalOf(ctx, 'human');
@@ -948,11 +991,11 @@ export function createRequestRoundService(deps: RequestRoundDependencies): Reque
 
     // (5) fresh current-fact checks.
     if (command.kind === 'submit') {
-      if (command.goalId !== null) {
-        const goal = await readLiveGoal(deps, ctx, command.goalId);
-        if (goal.status !== 'ready') return goal;
+      const target = await readSubmitTarget(deps, ctx, command);
+      if (target.status !== 'ready') return target;
+      if (command.continues === null) {
+        return { status: 'fresh', command, facts: null, resolvedGoalId: target.value.goalId };
       }
-      if (command.continues === null) return { status: 'fresh', command, facts: null };
       const facts = await readRequestFacts(deps, ctx, command.continues);
       if (facts.status !== 'ready') return facts;
       if (command.goalId !== null && command.goalId !== facts.facts.requestGoalId) {
@@ -1257,25 +1300,37 @@ export function createRequestRoundService(deps: RequestRoundDependencies): Reque
       }
     }
     // Every explicit non-null goalId (a follow-up's request goal included) is
-    // re-read, checked live/workspace and guarded at append.
-    let goalGuard: RecordGuard | null = null;
-    if (command.goalId !== null) {
-      const goal = await readLiveGoal(deps, ctx, command.goalId);
-      if (goal.status !== 'ready') return goal;
-      goalGuard = goal.guard;
-    }
+    // re-read, checked live/workspace and guarded at append. R2's ended Goal
+    // resolves to a Goal-less target here, the same resolution the pick read.
+    const target = await readSubmitTarget(deps, ctx, command);
+    if (target.status !== 'ready') return target;
+    const rerouted = command.goalId !== null && target.value.goalId === null;
 
-    const row = requestAssignmentRow(command, facts);
-    const assignment = await resolveAssignment(ctx, facts, plan, row, command.recipient);
+    // A rerouted request is a root with no goal: it assigns like every other free-standing request and guards no
+    // Goal. The one `resolveAssignment` below serves both routes.
+    const roundFacts = rerouted ? null : facts;
+    const row = requestAssignmentRow(command, roundFacts);
+    const assignment = await resolveAssignment(ctx, roundFacts, plan, row, command.recipient);
     if (assignment.status !== 'ready') return assignment;
-    return buildRound({
+    const submitRound = (input: {
+      requestGoalId: string | null; interventionSource: RequestInterventionSourceV1 | null;
+      goalGuard: RecordGuard | null; facts: RequestRoundsFactsV1 | null;
+    }): Promise<PreparedOutcome> => buildRound({
       ctx, principal, commandId: command.commandId, identityKey, fingerprint, occurredAt: deps.now(),
       requestRoot: command.continues, kind: command.continues === null ? 'request' : 'followup',
-      requestGoalId: command.continues === null ? command.goalId : facts!.requestGoalId,
-      text: command.text, selectedIdea: null, relatedCardRefs: [], relatedMessageRef: null, interventionSource,
+      requestGoalId: input.requestGoalId,
+      text: command.text, selectedIdea: null, relatedCardRefs: [], relatedMessageRef: null,
+      interventionSource: input.interventionSource,
       references: normalizeRequestReferences(command.references),
-      createdLine: plan.createdLine, receiptKind: 'submit', facts, goalGuard, assignment: assignment.value,
+      createdLine: plan.createdLine, receiptKind: 'submit', facts: input.facts,
+      goalGuard: input.goalGuard, assignment: assignment.value,
     });
+    return rerouted
+      ? submitRound({ facts: null, goalGuard: null, requestGoalId: null,
+          interventionSource: target.value.interventionSource })
+      : submitRound({ facts, goalGuard: target.value.goalGuard,
+          requestGoalId: command.continues === null ? target.value.goalId : facts!.requestGoalId,
+          interventionSource: target.value.interventionSource ?? interventionSource });
   }
 
   type Assignment = {

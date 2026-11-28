@@ -11,23 +11,33 @@ import { rejected } from '../../../contracts/core/rejections.js';
 import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
 import { canonicalKey as keyOf } from '../../../contracts/fingerprint.js';
 import type { GoalRef } from '../../../contracts/ledger.js';
+import type { QueryJobRef } from '../../../contracts/query-job.js';
 import type { RecordLookupPort } from '../../record-store/lookup-ports.js';
 import type { GoalRecordTransactionPort } from '../../record-store/ports.js';
 import { decodeQueryJobSnapshot } from '../queries/query-record-codecs.js';
 import { createInitializationBindingReader } from './goal-confirm-service.js';
 import { readOwnerRecord } from './owner-record-read.js';
 
-/** 新 Goal 接着哪个已完成的 Goal，和人在那条线上说的那句话。 */
-export type GoalOriginV1 = { sourceGoal: GoalRef; messageRef: SessionMessageRef };
+/** 新 Goal 接着哪个已完成的 Goal，和人在那条线上说的那句话；主对话来的来源没有消息。 */
+export type GoalOriginV1 = { sourceGoal: GoalRef; messageRef: SessionMessageRef | null };
 
 /**
- * 一个 Goal 的来源。没有初始化绑定（`goals/create` 建的）、请求没有来源（普通请求）都是 null。一张卡只确认一次，
- * 所以取第一条绑定。只读；读失败原样返回，不当成“没有来源”。
+ * 建出这个 Goal 的请求，和它的来源（没有来源时 `source` 为 null）。没有初始化绑定（`goals/create` 建的）是 null。
+ * 一张卡只确认一次，所以取第一条绑定。只读；读失败原样返回，不当成“没有请求”。
  */
-export async function readGoalOrigin(
+export type GoalCreationRequestV1 = {
+  requestRef: QueryJobRef;
+  source: { goalRef: GoalRef; messageRef: SessionMessageRef | null } | null;
+};
+
+/**
+ * 建出这个 Goal 的请求：Goal → 初始化绑定（取第一条）→ 绑定记着的请求根轮 → 根轮的 `interventionSource`。
+ * 没有绑定是 null，请求没有来源是 `source: null`；读失败原样返回，不当成“没有请求”。
+ */
+export async function readGoalCreationRequest(
   records: Pick<GoalRecordTransactionPort, 'readMany'> & Pick<RecordLookupPort, 'lookup'>,
   ctx: CoreCallContext, goalRef: GoalRef,
-): Promise<ReadResult<GoalOriginV1 | null>> {
+): Promise<ReadResult<GoalCreationRequestV1 | null>> {
   const bindings = await createInitializationBindingReader({ records }).readBindingByGoal(ctx, { goalRef });
   if (bindings.status !== 'ready') return bindings;
   const binding = bindings.value[0];
@@ -40,6 +50,26 @@ export async function readGoalOrigin(
       : rejected('unavailable', `the Goal's request ${binding.requestRef.queryJobId} is missing`);
   }
   const source = root.value.job.interventionSource;
-  return { status: 'ready', value: source === undefined ? null
-    : { sourceGoal: { ...source.goalRef }, messageRef: { ...source.messageRef } } };
+  return { status: 'ready', value: {
+    requestRef: { ...binding.requestRef },
+    source: source === undefined ? null
+      : { goalRef: { ...source.goalRef },
+          messageRef: source.messageRef === null ? null : { ...source.messageRef } },
+  } };
+}
+
+/**
+ * 一个 Goal 的来源。没有初始化绑定、请求没有来源都是 null。只读；读失败原样返回，不当成“没有来源”。
+ */
+export async function readGoalOrigin(
+  records: Pick<GoalRecordTransactionPort, 'readMany'> & Pick<RecordLookupPort, 'lookup'>,
+  ctx: CoreCallContext, goalRef: GoalRef,
+): Promise<ReadResult<GoalOriginV1 | null>> {
+  const creation = await readGoalCreationRequest(records, ctx, goalRef);
+  if (creation.status !== 'ready') return creation;
+  if (creation.value === null || creation.value.source === null) return { status: 'ready', value: null };
+  return { status: 'ready', value: {
+    sourceGoal: { ...creation.value.source.goalRef },
+    messageRef: creation.value.source.messageRef === null ? null : { ...creation.value.source.messageRef },
+  } };
 }

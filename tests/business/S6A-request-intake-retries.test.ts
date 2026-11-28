@@ -26,6 +26,7 @@ import type { SecretaryProfilePort } from '../../src/core/work-graph/model/reque
 import { createSessionDutyResolver } from '../../src/composition/session-duty.js';
 import { createProjectSecretaryScope, createSecretarySelection } from '../../src/core/work-graph/tasks/secretary-selection.js';
 import { createEffectiveScopeReader } from '../../src/core/work-graph/views/role-scope-reader.js';
+import { readGoalTerminalState } from '../../src/core/work-graph/views/goal-conflicts.js';
 import { createRequestFacts } from '../../src/core/work-graph/tasks/request-facts.js';
 import { createRequestRoundService, REQUEST_TAIL_PREFIX } from '../../src/core/work-graph/tasks/request-service.js';
 import {
@@ -136,6 +137,7 @@ function faultyIntake(world: S6ARequestWorld, fault: {
   let sequence = 0;
   const rounds = createRequestRoundService({
     records, facts, sessionFacts: world.platform.sessionFacts, duty, profiles: profilePort(fault.serviceProfile),
+    goals: { readGoalTerminalState: goal => readGoalTerminalState(records, goal) },
     now: () => world.clock.now(), operationId: () => `s6a-retries-${world.backend}-${++sequence}`,
   });
   const effectiveScope = createEffectiveScopeReader({

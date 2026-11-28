@@ -20,6 +20,7 @@ import { createSessionDutyResolver } from '../../src/composition/session-duty.js
 import type { SessionOperationsPort } from '../../src/core/agent-runtime/session-operations.js';
 import { createProjectSecretaryScope, createSecretarySelection } from '../../src/core/work-graph/tasks/secretary-selection.js';
 import { createEffectiveScopeReader } from '../../src/core/work-graph/views/role-scope-reader.js';
+import { readGoalTerminalState } from '../../src/core/work-graph/views/goal-conflicts.js';
 import { createRequestFacts } from '../../src/core/work-graph/tasks/request-facts.js';
 import {
   createRequestRoundService, REQUEST_TAIL_PREFIX, SECRETARY_INTAKE_PREFIX,
@@ -222,6 +223,7 @@ async function harnessOf(world: S6ARequestWorld, options: {
     profiles,
     sessionFacts: world.platform.sessionFacts,
     duty: createSessionDutyResolver({ readRoleSpec: world.platform.roles.readRoleSpec, configuration: WORKFLOW }),
+    goals: { readGoalTerminalState: goal => readGoalTerminalState(counted, goal) },
     now: () => world.clock.now(),
     operationId: () => `s6a-intake-${world.backend}-${++sequence}`,
   });

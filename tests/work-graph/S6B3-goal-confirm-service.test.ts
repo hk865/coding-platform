@@ -367,7 +367,7 @@ describe.each(['memory', 'sqlite'] as const)('goals/confirm-draft service row 29
 });
 
 describe('attribution and the first-Goal main read row 30 (memory)', () => {
-  it('shows the pre-goal history only under the first Goal by creation, keeps the root and since, links both drafts, and leaves the earlier activity’s goalId null', async () => {
+  it('shows the pre-goal history under both Goals, keeps the root and since, links both drafts, and leaves the earlier activity’s goalId null', async () => {
     await withDraft('memory', async world => {
       const exercise = async () => {
         const { round, requestRoot } = await draftBasis(world, 'first-goal');
@@ -390,7 +390,7 @@ describe('attribution and the first-Goal main read row 30 (memory)', () => {
         const firstPage = await mainPage(world, first.value.goal.ref.goalId);
         const secondPage = await mainPage(world, second.value.goal.ref.goalId);
         expect(firstPage.requests.map(entry => entry.requestRoot.queryJobId)).toContain(requestRoot.queryJobId);
-        expect(secondPage.requests.map(entry => entry.requestRoot.queryJobId)).not.toContain(requestRoot.queryJobId);
+        expect(secondPage.requests.map(entry => entry.requestRoot.queryJobId)).toContain(requestRoot.queryJobId);
         expect(await queryActivity(world, runRef)).toMatchObject({ status: 'counted', goalId: null });
       };
       await exercise();

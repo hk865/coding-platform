@@ -23,6 +23,7 @@ import type { UnknownCallReviewV1 } from '../contracts/unknown-call-review.js';
 import { reworkFenceOf } from '../core/work-graph/state/task-failure.js';
 import type { QueryRunRef } from '../contracts/query-job.js';
 import type { GoalRef } from '../contracts/ledger.js';
+import type { InitializationBindingV1 } from '../contracts/initialization-binding.js';
 import type { RuntimeExecutionPort } from '../core/agent-runtime/ports.js';
 import type { ArchitectureCatalogPort } from '../core/work-graph/architecture/catalog-contracts.js';
 import type { ArchitectureProposalService } from '../core/work-graph/architecture/proposal-service.js';
@@ -71,7 +72,7 @@ import type { DispatchBasisReadPort } from '../core/work-graph/model/dispatch-ba
 import type { OverlapGatePort } from '../core/work-graph/tasks/overlap-gates.js';
 // The Goal draft confirmation, the Goal copy and the Host's initialization adoption owner.
 import type {
-  GoalConfirmPort, GoalCopyPort,
+  GoalConfirmPort, GoalCopyPort, InitializationBindingReadPort,
 } from '../core/work-graph/model/goal-card-contracts.js';
 import type { InitializationAdoptionHostPort } from './initialization-adoption.js';
 import type { GoalReadV1, PlanTaskPort } from '../core/work-graph/model/plan-contracts.js';
@@ -131,6 +132,7 @@ import {
   type AssignMaintainerRouteEntry,
   type ArchitectureCoreRouteDto,
   type DeliveryCoreRouteDto,
+  type GoalsBindingCoreRouteDto,
   type ExplorationCoreRouteDto,
   type K3CoreRouteDto,
   type KnowledgeCoreRouteDto,
@@ -175,6 +177,9 @@ export type CoreRouteBindings = {
   /** GOAL-07P (G6): the person's partial acceptance; the owner admits the configured operator only. */
   acceptPartialResult: GoalTaskPort['acceptPartialResult'];
   queryGoal: (ctx: CoreCallContext, ref: GoalRef) => Promise<ReadResult<GoalReadV1>>;
+  /** Goal cards A/L8: the target's one initialization binding, through the same read the confirmation uses. */
+  readGoalBinding: (ctx: CoreCallContext, ref: GoalRef) =>
+    Promise<ReadResult<{ binding: InitializationBindingV1 | null }>>;
   adoptInitialArchitecture: ArchitectureCatalogPort['adoptInitialArchitecture'];
   reviseArchitectureCatalog: ArchitectureCatalogPort['reviseArchitectureCatalog'];
   readArchitectureRevision: ArchitectureCatalogPort['readArchitectureRevision'];
@@ -494,6 +499,9 @@ export type CoreRoutePlatform = {
   goals: GoalTaskPort & DispatchBasisReadPort & GoalConfirmPort
     & { readGoalCopyDraft: GoalCopyPort['readDraft']; confirmGoalCopy: GoalCopyPort['confirm'] };
   plans: PlanTaskPort;
+  /** Goal cards A/L8: the initialization binding read, non-enumerable on the composed platform; optional so a
+   *  narrow platform answers `unsupported`. */
+  bindings?: Pick<InitializationBindingReadPort, 'readBindingByGoal'>;
   architecture: ArchitectureCatalogPort & ObservedArchitecturePort & ArchitectureWorkScopePort & ArchitectureChangeScopePort;
   workspace: WorkspaceToolsPort;
   sessions: Pick<SessionDirectoryPort, 'findSessions' | 'readSession' | 'getSessionOperation'>
@@ -678,7 +686,8 @@ export const CORE_ROUTE_SPECS: Record<
   | keyof WorkflowWaitsCoreRouteDto
   | keyof RoleLineCoreRouteDto | keyof MaintainerCoreRouteDto | keyof WorkspaceFilesCoreRouteDto | keyof ExecutionsCoreRouteDto
   | keyof VerificationCoreRouteDto | keyof ExplorationCoreRouteDto | keyof KnowledgeCoreRouteDto
-  | keyof QueriesCancelCoreRouteDto | keyof NodesCoreRouteDto | keyof DeliveryCoreRouteDto,
+  | keyof QueriesCancelCoreRouteDto | keyof NodesCoreRouteDto | keyof DeliveryCoreRouteDto
+  | keyof GoalsBindingCoreRouteDto,
   CoreRouteSpec
 > = {
   'controls/submit': { kind: 'graph_write', binding: 'submitControl', owner: 'controls.submitControl' },
@@ -693,6 +702,7 @@ export const CORE_ROUTE_SPECS: Record<
   'goals/create': { kind: 'graph_write', binding: 'createGoal', owner: 'goals.createGoal' },
   'goals/accept-partial': { kind: 'graph_write', binding: 'acceptPartialResult', owner: 'goals.acceptPartialResult' },
   'goals/read': { kind: 'plain', binding: 'queryGoal', owner: 'plans.queryGoal' },
+  'goals/binding': { kind: 'plain', binding: 'readGoalBinding', owner: 'bindings.readBindingByGoal' },
   'architecture/adopt-initial': { kind: 'graph_write', binding: 'adoptInitialArchitecture', owner: 'architecture.adoptInitialArchitecture' },
   'architecture/revise': { kind: 'graph_write', binding: 'reviseArchitectureCatalog', owner: 'architecture.reviseArchitectureCatalog' },
   'architecture/read': { kind: 'plain', binding: 'readArchitectureRevision', owner: 'architecture.readArchitectureRevision' },
@@ -1173,6 +1183,23 @@ export function createPlatformCoreRouteBindings(
         : await platform.plans.readGoalOrdinal(ctx, read.value.goal.ref);
       return { ...read, value: { ...read.value, ordinal } };
     },
+    // Goal cards A/L8: one Goal has at most one initialization binding (the confirm refuses a second), so the first
+    // row is that binding; no binding is `null`, while a failed read keeps its own rejection. A Goal outside this
+    // call's project or a binding whose request is in another workspace is the empty result, not another workspace's
+    // binding: the store's by-Goal index holds the whole project.
+    readGoalBinding: platform.bindings === undefined
+      ? unsupported('the platform does not publish bindings.readBindingByGoal')
+      : async (ctx, ref) => {
+        if (!isGoalRef(ref)) {
+          return { status: 'rejected', code: 'invalid', reason: 'goals/binding requires a complete GoalRef' };
+        }
+        if (ref.projectId !== ctx.projectId) return { status: 'ready', value: { binding: null } };
+        const read = await platform.bindings!.readBindingByGoal(ctx, { goalRef: ref });
+        if (read.status !== 'ready') return read;
+        const binding = read.value[0] ?? null;
+        return { status: 'ready', value: { binding: binding !== null
+          && binding.requestRef.workspaceId === ctx.workspaceId ? binding : null } };
+      },
     adoptInitialArchitecture: platform.architecture.adoptInitialArchitecture.bind(platform.architecture),
     // The person's op-form catalog revision; the same service the composition
     // wraps, with `meta.requestId` as the command id.
@@ -1854,6 +1881,7 @@ export async function dispatchCoreRoute(
       case 'goals/create': return bindings.createGoal(ctx, graphWrite.request as never);
       case 'goals/accept-partial': return bindings.acceptPartialResult(ctx, graphWrite.request as never);
       case 'goals/read': return bindings.queryGoal(ctx, plain.input as never);
+      case 'goals/binding': return bindings.readGoalBinding(ctx, plain.input as never);
       case 'architecture/adopt-initial': return bindings.adoptInitialArchitecture(ctx, graphWrite.request as never);
       case 'architecture/revise': return bindings.reviseArchitectureCatalog(ctx, graphWrite.request as never);
       case 'architecture/read': return bindings.readArchitectureRevision(ctx, plain.input as never);

@@ -996,9 +996,11 @@ function jobIssues(value: unknown, expectedRef: QueryJobRef | null): string[] {
   // G6F F4: an intervention_new_goal request's root round keeps its source; a record without the key reads as before.
   const interventionSource = value['interventionSource'];
   if (interventionSource !== undefined) {
+    // A main-conversation source has no message; only a non-null message must be a complete ref.
+    const messageRef = isRecord(interventionSource) ? interventionSource['messageRef'] : null;
     const problem = !isRecord(interventionSource) ? 'must be an object'
       : checkShape(GoalRefShape, interventionSource['goalRef'], 'stored')
-        ?? checkShape(SessionMessageRefShape, interventionSource['messageRef'], 'stored');
+        ?? (messageRef === null ? null : checkShape(SessionMessageRefShape, messageRef, 'stored'));
     if (problem !== null) issues.push(`job.interventionSource is not a { goalRef, messageRef } pair: ${problem}`);
     else if (value['roundKind'] !== 'request') issues.push('job.interventionSource belongs only to a request root round');
   }
