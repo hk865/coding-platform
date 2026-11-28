@@ -692,9 +692,11 @@ export function createAgentRuntime(requestedDeps?: RuntimeExecutionDependencies)
    * owner the driver uses, the manifest is re-read and its `promptSet` decoded,
    * then the requests are listed and every body they and the set refer to is
    * verified against its ref. A missing store body is `unavailable`; a
-   * ref/content disagreement is `invalid`.
+   * ref/content disagreement is `invalid`. `includeTexts: false` skips the
+   * body reads and answers `texts: {}` (the route's default); the port's
+   * default stays `true`.
    */
-  const readPromptRecord: NonNullable<RuntimeExecutionPort['readPromptRecord']> = async (ctx, ref) => {
+  const readPromptRecord: NonNullable<RuntimeExecutionPort['readPromptRecord']> = async (ctx, ref, options) => {
     const raw = (typeof ref === 'object' && ref !== null ? ref : null) as Record<string, unknown> | null;
     const complete = (fields: readonly string[]): boolean =>
       raw !== null && fields.every(field => typeof raw[field] === 'string' && (raw[field] as string).length > 0);
@@ -769,7 +771,7 @@ export function createAgentRuntime(requestedDeps?: RuntimeExecutionDependencies)
         .map(permit => ({ requestId: permit.requestId, systemDigest: permit.prompt.systemDigest,
           toolsDigest: permit.prompt.toolsDigest, toolSpecsRef: permit.prompt.toolSpecsRef,
           selection: permit.prompt.selection, kind: 'work' as const, maxOutputTokens: permit.prompt.maxOutputTokens }));
-      const texts = await readTexts(set, requests);
+      const texts = await readRecordTexts(readTexts, set, requests, options);
       if (texts.status !== 'ready') return texts;
       return { status: 'ready', value: { set, requests, texts: texts.value } };
     }
@@ -798,7 +800,7 @@ export function createAgentRuntime(requestedDeps?: RuntimeExecutionDependencies)
         requestId: request.requestId, systemDigest: request.prompt.systemDigest,
         toolsDigest: request.prompt.toolsDigest, toolSpecsRef: request.prompt.toolSpecsRef,
         selection: request.prompt.selection, kind: 'query' as const, reservedOutput: request.reservedOutput }));
-      const texts = await readTexts(loaded.value, requests);
+      const texts = await readRecordTexts(readTexts, loaded.value, requests, options);
       if (texts.status !== 'ready') return texts;
       return { status: 'ready', value: { set: loaded.value, requests, texts: texts.value } };
     }
@@ -1209,4 +1211,14 @@ export function createAgentRuntime(requestedDeps?: RuntimeExecutionDependencies)
   // the Host switch dependency it answers `unavailable` (fail closed).
   port.reviewCapability = createReviewCapability(deps);
   return { port };
+}
+
+/** `includeTexts: false` skips every body read; the route's default. */
+async function readRecordTexts<T>(
+    readTexts: (set: T, requests: PromptRecordRequestV1[]) =>
+        Promise<{ status: 'ready'; value: Record<string, string> } | CoreRejection>,
+    set: T, requests: PromptRecordRequestV1[], options?: { includeTexts?: boolean },
+): Promise<{ status: 'ready'; value: Record<string, string> } | CoreRejection> {
+    if (options?.includeTexts === false) return { status: 'ready', value: {} };
+    return await readTexts(set, requests);
 }

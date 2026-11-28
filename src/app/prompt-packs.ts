@@ -15,7 +15,8 @@ import {
     PLATFORM_PROMPT_PACK_V1,
 } from '../contracts/prompts/platform-pack.generated.js';
 import type {
-    PromptPackChainEntryV1, PromptPackProblemV1, PromptPackSourcePort, ResolvedPromptPackV1, ToolTextV1,
+    PromptPackChainEntryV1, PromptPackProblemKind, PromptPackProblemV1, PromptPackSourcePort,
+    ResolvedPromptPackV1, ToolTextV1,
 } from '../contracts/prompts/prompt-pack.js';
 import { resolvePromptPackV1 } from '../contracts/prompts/resolve-pack.js';
 import { isRecord } from '../contracts/validation/common.js';
@@ -42,10 +43,10 @@ type ReadEntry =
     | { status: 'broken'; entry: PromptPackChainEntryV1 | null; parent: string | null;
         problems: PromptPackProblemV1[] };
 
-const problem = (packId: string, templateId: string | null, reason: string,
+const problem = (packId: string, templateId: string | null, kind: PromptPackProblemKind, reason: string,
     toolName?: string): PromptPackProblemV1 => toolName === undefined
-    ? { packId, templateId, reason }
-    : { packId, templateId, toolName, reason };
+    ? { packId, templateId, kind, reason }
+    : { packId, templateId, kind, toolName, reason };
 
 /** A manifest path is relative, has no `..` segment (a name `..x` is legal) and no drive. */
 function unsafeFileReason(file: string): string | null {
@@ -110,21 +111,21 @@ async function readUserPack(
         return isMissingPath(error) ? { status: 'missing' } : unreadablePack('the pack directory could not be read');
     }
     if (!isPathWithin(promptsReal, packReal))
-        return { status: 'broken', entry: null, parent: null, problems: [problem(packId, null,
+        return { status: 'broken', entry: null, parent: null, problems: [problem(packId, null, 'file_problem',
             'the pack directory resolves outside the prompt directory')] };
     const manifestRead = await readPackFile(packReal, promptsReal, 'pack.json');
     if (manifestRead.status === 'unreadable') return unreadablePack(manifestRead.reason);
     if (manifestRead.status === 'rejected')
-        return { status: 'broken', entry: null, parent: null, problems: [problem(packId, null, manifestRead.reason)] };
+        return { status: 'broken', entry: null, parent: null, problems: [problem(packId, null, 'file_problem', manifestRead.reason)] };
     let manifestValue: unknown;
     try { manifestValue = JSON.parse(manifestRead.text); }
     catch {
         return { status: 'broken', entry: null, parent: null,
-            problems: [problem(packId, null, 'the manifest is not valid JSON')] };
+            problems: [problem(packId, null, 'json_problem', 'the manifest is not valid JSON')] };
     }
     if (!isRecord(manifestValue))
         return { status: 'broken', entry: null, parent: null,
-            problems: [problem(packId, null, 'the manifest must be a JSON object')] };
+            problems: [problem(packId, null, 'json_problem', 'the manifest must be a JSON object')] };
 
     const problems: PromptPackProblemV1[] = [];
     let strings: PromptPackChainEntryV1['strings'] = { file: '', text: '' };
@@ -133,7 +134,7 @@ async function readUserPack(
         const read = await readPackFile(packReal, promptsReal, stringsFile);
         if (read.status === 'unreadable') return unreadablePack(read.reason);
         if (read.status === 'read') strings = { file: stringsFile, text: read.text };
-        else problems.push(problem(packId, null, read.reason));
+        else problems.push(problem(packId, null, 'file_problem', read.reason));
     }
     const templates: Record<string, { file: string; text: string }> = Object.create(null) as
         Record<string, { file: string; text: string }>;
@@ -145,7 +146,7 @@ async function readUserPack(
             const read = await readPackFile(packReal, promptsReal, file);
             if (read.status === 'unreadable') return unreadablePack(read.reason);
             if (read.status === 'rejected') {
-                problems.push(problem(packId, templateId, read.reason));
+                problems.push(problem(packId, templateId, 'file_problem', read.reason));
                 continue;
             }
             templates[templateId] = { file, text: read.text };
@@ -160,7 +161,7 @@ async function readUserPack(
             const read = await readPackFile(packReal, promptsReal, raw);
             if (read.status === 'unreadable') return unreadablePack(read.reason);
             if (read.status === 'rejected') {
-                problems.push(problem(packId, null, read.reason, toolName));
+                problems.push(problem(packId, null, 'file_problem', read.reason, toolName));
                 continue;
             }
             tools[toolName] = { file: raw, text: read.text };
@@ -221,9 +222,9 @@ export function effectiveTemplateVersionOf(
 }
 
 export type EffectiveToolTextV1 =
-    | { status: 'found'; entry: ToolTextV1 }
-    | { status: 'missing' }
-    | { status: 'unreadable' };
+    | { status: 'found'; entry: ToolTextV1; packId: string }
+    | { status: 'missing'; packId: null }
+    | { status: 'unreadable'; packId: string };
 
 /** The nearest declaration of a tool in the chain, with the text it supplies.
  * The nearest declaration is effective even when its file cannot be read; no
@@ -236,19 +237,56 @@ export function effectiveToolTextOf(
         const tools = manifest?.['tools'];
         if (!isRecord(tools) || !Object.hasOwn(tools, toolName)) continue;
         const supplied = entry.tools[toolName];
-        if (supplied === undefined) return { status: 'unreadable' };
+        if (supplied === undefined) return { status: 'unreadable', packId: entry.packId };
         try {
             const parsed: unknown = JSON.parse(supplied.text);
-            if (!isRecord(parsed)) return { status: 'unreadable' };
+            if (!isRecord(parsed)) return { status: 'unreadable', packId: entry.packId };
             const description = parsed['description'];
             const parameters = parsed['parameters'];
             if (typeof description !== 'string' || !isRecord(parameters)
                 || !Object.values(parameters).every(value => typeof value === 'string'))
-                return { status: 'unreadable' };
-            return { status: 'found', entry: { description, parameters: parameters as Record<string, string> } };
-        } catch { return { status: 'unreadable' }; }
+                return { status: 'unreadable', packId: entry.packId };
+            return {
+                status: 'found', packId: entry.packId,
+                entry: { description, parameters: parameters as Record<string, string> },
+            };
+        } catch { return { status: 'unreadable', packId: entry.packId }; }
     }
-    return { status: 'missing' };
+    return { status: 'missing', packId: null };
+}
+
+/** Every tool the chain declares, nearest pack first, one entry per name. */
+function declaredToolNamesOf(chain: readonly PromptPackChainEntryV1[]): string[] {
+    const names = new Set<string>();
+    for (const entry of chain) {
+        const tools = manifestOf(entry)?.['tools'];
+        if (!isRecord(tools)) continue;
+        for (const name of Object.keys(tools)) names.add(name);
+    }
+    return [...names];
+}
+
+/** The list's tool rows: name, the pack that declares it, its description when
+ * readable, and the read or validation problems that name it. */
+function listedTools(
+    chain: readonly PromptPackChainEntryV1[], problems: readonly PromptPackProblemV1[],
+): PromptPackListV1['packs'][number]['tools'] {
+    return declaredToolNamesOf(chain).map(toolName => {
+        const effective = effectiveToolTextOf(chain, toolName);
+        const found = problems.filter(entry => entry.toolName === toolName);
+        if (effective.status === 'unreadable' && !found.some(entry => entry.kind === 'file_problem')) {
+            found.push({
+                packId: effective.packId, templateId: null, toolName, kind: 'file_problem',
+                reason: `tool ${toolName} text could not be read`,
+            });
+        }
+        return {
+            toolName,
+            fromPack: effective.packId!,
+            problems: found,
+            description: effective.status === 'found' ? effective.entry.description : null,
+        };
+    });
 }
 
 /** One problem list from the file reads and A's validation, without duplicates. */
@@ -298,11 +336,11 @@ export async function readDiskPromptPack(promptsRoot: string, packId: string): P
     let cursor: string | null = packId;
     while (cursor !== null && cursor !== 'platform') {
         if (!isPromptPackId(cursor)) {
-            problems.push(problem(packId, null, `pack "${cursor}" is not a legal pack id`));
+            problems.push(problem(packId, null, 'file_problem', `pack "${cursor}" is not a legal pack id`));
             break;
         }
         if (seen.has(cursor)) {
-            problems.push(problem(cursor, null, 'the pack extends chain contains a cycle'));
+            problems.push(problem(cursor, null, 'file_problem', 'the pack extends chain contains a cycle'));
             break;
         }
         seen.add(cursor);
@@ -310,7 +348,7 @@ export async function readDiskPromptPack(promptsRoot: string, packId: string): P
         if (read.status === 'unreadable') return read;
         if (read.status === 'missing') {
             if (cursor === packId) return { status: 'not_found' };
-            problems.push(problem(packId, null, `pack "${packId}" extends missing pack "${cursor}"`));
+            problems.push(problem(packId, null, 'file_problem', `pack "${packId}" extends missing pack "${cursor}"`));
             break;
         }
         if (read.status === 'broken') {
@@ -374,7 +412,10 @@ export async function listDiskPromptPacks(promptsRoot: string): Promise<PromptPa
         const read = await readDiskPromptPack(promptsRoot, packId);
         if (read.status === 'not_found') continue;
         if (read.status === 'unreadable') {
-            packs.push({ packId, extends: null, problems: [problem(packId, null, read.reason)], templates: [] });
+            packs.push({
+                packId, extends: null, problems: [problem(packId, null, 'file_problem', read.reason)],
+                templates: [], tools: [],
+            });
             continue;
         }
         if (read.status === 'ready') {
@@ -387,6 +428,7 @@ export async function listDiskPromptPacks(promptsRoot: string): Promise<PromptPa
                         templateId, version: origin.version, fromPack: origin.packId, problems: [],
                     }))
                     .sort((left, right) => left.templateId.localeCompare(right.templateId, 'en')),
+                tools: listedTools(read.chain, []),
             });
             continue;
         }
@@ -395,6 +437,7 @@ export async function listDiskPromptPacks(promptsRoot: string): Promise<PromptPa
             extends: extendsOf(read.chain),
             problems: read.problems,
             templates: listedTemplates(read.chain, read.problems),
+            tools: listedTools(read.chain, read.problems),
         });
     }
     return packs;

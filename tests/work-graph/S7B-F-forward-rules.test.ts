@@ -5,6 +5,8 @@
  * No store, platform, Host, Workflow, Runtime or stub port is imported.
  */
 import { describe, expect, it } from 'vitest';
+import type { ArtifactRef } from '../../src/contracts/artifact.js';
+import type { SourceRefV1 } from '../../src/contracts/dispatch.js';
 import type { GoalRef } from '../../src/contracts/ledger.js';
 import {
   disposeWaitProblem, forwardMessageProblem,
@@ -20,6 +22,14 @@ const REF: SessionMessage['ref'] = { aggregateType: 'SessionMessage', projectId:
 const GOAL: GoalRef = { aggregateType: 'Goal', projectId: 'p', goalId: 'g' };
 const SENDER: ForwardMessage['sender'] = { kind: 'host', actor: { kind: 'human', id: 'person' } };
 const ALLOWED = { sameWorkspace: true, eligible: true };
+const SOURCE: SourceRefV1 = { kind: 'workspace', refId: 'w', revision: '1' };
+const BODY: ArtifactRef = { kind: 'artifact', contentType: 'text/plain', digest: 'd', sizeBytes: 1, source: SOURCE };
+const RESPONSE: NonNullable<DisposeFactsV1['response']> = {
+  sender: { kind: 'query_run', sessionRef: { projectId: 'p', sessionId: 's' },
+    queryRunRef: { aggregateType: 'QueryRun', projectId: 'p', workspaceId: 'w', queryJobId: 'q', runId: 'r' },
+    generation: 1 },
+  bodyRef: BODY, sourceRef: SOURCE, respondedAt: '2026-10-30T00:00:00.000Z',
+};
 
 const forwardMessage = (over: Partial<ForwardMessage> = {}): ForwardMessage => ({
   ref: REF, revision: 1, sender: SENDER, withdrawnAt: null,
@@ -40,7 +50,8 @@ const disposeMessage = (over: Partial<DisposeMessage> = {}): DisposeMessage => (
 });
 const disposeFacts = (over: Partial<DisposeFactsV1> = {}): DisposeFactsV1 => ({
   mode: 'cancel', message: disposeMessage(), wait: { state: 'open', reason: null }, delivery: 'queued',
-  acceptedResponse: false, waitingLineGone: false, destination: null, ...over,
+  acceptedResponse: false, response: null, responseTransferredTo: null,
+  waitingLineGone: false, destination: null, ...over,
 });
 
 function expectProblem(problem: ReturnType<typeof forwardMessageProblem>, expected: Expected): void {
@@ -88,6 +99,7 @@ describe('S7B F-forward-rules', () => {
     { name: 'a transfer to an ineligible destination is invalid', facts: disposeFacts({ mode: 'transfer', waitingLineGone: true, destination: { ...ALLOWED, eligible: false } }), expected: { code: 'invalid' } },
     { name: 'a cancel of an open wait passes', facts: disposeFacts(), expected: null },
     { name: 'a transfer from a gone line to an eligible handler passes', facts: disposeFacts({ mode: 'transfer', waitingLineGone: true, destination: ALLOWED }), expected: null },
+    { name: 'a transfer_reply of an already transferred reply is invalid', facts: disposeFacts({ mode: 'transfer_reply', wait: { state: 'answered', reason: null }, response: RESPONSE, responseTransferredTo: REF, destination: ALLOWED }), expected: { code: 'invalid', reason: 'the reply was already transferred' } },
   ];
   it.each(disposeCases)('disposeWaitProblem: $name', ({ facts, expected }) => {
     expectProblem(disposeWaitProblem(facts), expected);

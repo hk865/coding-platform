@@ -22,6 +22,7 @@ import type { GoalRef } from '../../../contracts/ledger.js';
 import type { NoteAnchorV1, NoteDraftAnchorV1, NoteHeadSnapshot, NoteState, NoteVersionSnapshot } from '../../../contracts/note.js';
 import { headerExtrasOf, isGeneral, renderNoteHeader } from '../../../contracts/note.js';
 import { normalizeRequestProjectPath } from '../../../contracts/workspace-path.js';
+import { parseObject } from '../../../contracts/validation/common.js';
 import type { PlanRevisionSnapshot } from '../../../contracts/plan.js';
 import type { NoteFlowReadV1, SemanticFlowStepV1, SemanticFlowV1 } from '../../../contracts/semantic-layer.js';
 import { PLATFORM_PROMPT_PACK_V1 } from '../../../contracts/prompts/platform-pack.generated.js';
@@ -40,6 +41,7 @@ import type {
   NoteHistoryItemV1, NoteItemV1, NoteListRequestV1, NoteListResultV1, NoteMemoryReadPort, NoteMemoryReadResult,
   NoteMemoryMaterialInputV1, NoteMemoryMaterialV1, NoteCheckV1,
   NotePageV1, NoteReadPort,
+  NoteReadRequestV1,
   NoteFileObservationV1,
   NoteAnchorNotFoundV1, NoteAnchorCandidateV1,
   UnderstandingStatusV1,
@@ -216,6 +218,9 @@ type AnchorHeadsPage = {
   headless: HeadlessNote[];
   next: string | null;
 };
+
+/** R-N4: the body a read already resolved, with the value its cursor binds (a version, or a headless file's blob). */
+type ResolvedNoteBody = { text: string; version: number | null; head: number | string };
 
 /**
  * The ONE anchor paging core: limit and cursor validation, the five-index head set, the `createdAt`/`noteId`
@@ -597,6 +602,7 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
         source: head.source, goalId: head.goalId, replaces: [...head.replaces], contradicts: [...head.contradicts],
         coexistWith: [...head.coexistWith], confirmedByUser: head.confirmedByUser,
         freshness: 'unchecked', changedFiles: [], observedFiles: [], staleReasons: [],
+        basisFiles: noteFileFactsOf(head)?.basisFiles ?? head.basis.files.map(file => file.path),
         sourceUnavailable: false, invalid: false, conflicting,
         overQuota, updateDue: null, currentEligible: false, crossGoal: false,
         anchorStatus: 'live', anchorRetiredReasons: [],
@@ -644,6 +650,7 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
       conclusion: k.conclusion, anchor: anchors[0]!, extraAnchors: anchors.slice(1), source: k.source, goalId: null,
       replaces: [...k.replaces], contradicts: [...k.contradicts], coexistWith: [...k.coexistWith], confirmedByUser: false,
       freshness: 'unchecked', changedFiles: [], observedFiles: [], staleReasons: [], sourceUnavailable: false,
+      basisFiles: [...k.basisFiles],
       invalid: false, conflicting: false, overQuota: false, updateDue: null, currentEligible: false, crossGoal: false,
       anchorStatus: 'live', anchorRetiredReasons: [], anchorSlots: [], retiredExtraAnchors: [], unresolvedFacts: [],
       uncheckedFacts: k.facts.map((_, index) => index), hints: [], matchedTerms: [], score: 0,
@@ -665,6 +672,7 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
       replaces: [...version.replaces], contradicts: [...version.contradicts], coexistWith: [...version.coexistWith],
       confirmedByUser,
       freshness: 'unchecked', changedFiles: [], observedFiles: [], staleReasons: [],
+      basisFiles: version.basis.files.map(file => file.path),
       sourceUnavailable: false, invalid: false, conflicting: false, overQuota: false, updateDue: null,
       currentEligible: false, crossGoal: false, anchorStatus: 'live', anchorRetiredReasons: [],
       anchorSlots: [],
@@ -675,6 +683,47 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
       ...(version.link === undefined ? {} : { link: version.link }),
       verify: null,
     };
+  }
+
+  /**
+   * R-N1: a list row's `lastChange` is its current version's change and time. A missing or damaged version is
+   * `unavailable`, never an omitted field: the row cannot be shown as if nothing changed.
+   */
+  async function lastChangeOf(ctx: CoreCallContext, head: NoteHeadSnapshot):
+  Promise<ReadOutcome<NonNullable<NoteItemV1['lastChange']>>> {
+    const version = await readVersionRecord(deps.records, ctx.projectId, head.noteId, head.version);
+    if (!version.ok) return version;
+    if (version.value === null) {
+      return { ok: false, code: 'unavailable', reason: `the current version of note ${head.noteId} is missing` };
+    }
+    return { ok: true, value: { kind: version.value.change.kind, by: version.value.change.by,
+      reason: version.value.change.reason, at: version.value.at } };
+  }
+
+  /** R-N1: the ONE list-row assembly shared by the anchor page and the goal bucket. */
+  async function listedItemOf(ctx: CoreCallContext, item: NoteItemV1, head: NoteHeadSnapshot):
+  Promise<ReadOutcome<NoteItemV1 & { label: string }>> {
+    const lastChange = await lastChangeOf(ctx, head);
+    if (!lastChange.ok) return lastChange;
+    return { ok: true, value: { ...item, lastChange: lastChange.value,
+      label: renderNoteHeader({ kind: head.kind, anchor: head.anchor, structural: head.structural,
+        conclusion: head.conclusion, ...headerExtrasOf(head) }) } };
+  }
+
+  /** R-N4: the `notes/read` success value with its optional body page, from the one body pager and the body this
+   * read already resolved. `readNote` has already refused a target naming another note or, when both are explicit,
+   * another version; here only the version resolved after the read (the outer one is absent) is compared. */
+  async function noteReadyWithBody(ctx: CoreCallContext, input: NoteReadRequestV1, item: NoteItemV1,
+    resolved: ResolvedNoteBody): Promise<ReadResult<NoteItemV1>> {
+    const body = input.body;
+    if (body === undefined) return { status: 'ready', value: item };
+    if (body.version !== undefined && input.version === undefined && body.version !== resolved.version) {
+      return rejected('invalid', 'the body version does not match the requested version');
+    }
+    const page = await bodyPageOf(ctx, { noteId: input.noteId,
+      ...(input.version === undefined ? {} : { version: input.version }), cursor: body.cursor ?? null }, 'read', resolved);
+    if (!page.ok) return rejected(page.code, page.reason);
+    return { status: 'ready', value: { ...item, body: { text: page.value.text, next: page.value.next } } };
   }
 
   /**
@@ -1481,9 +1530,10 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
    * reads.
    */
   function bodyCursorOf(ctx: CoreCallContext, spec: { noteId: string; version?: number },
-    readOp: 'lookup' | 'history', resolvedVersion: number, headVersion: number, offset: number): string {
+    readOp: 'lookup' | 'history' | 'read', resolvedVersion: number | null, headBound: number | string,
+    offset: number): string {
     return JSON.stringify({ v: 1, op: 'body', id: callerIdentityOf(ctx), readOp, noteId: spec.noteId,
-      requestedVersion: spec.version ?? null, rule: RULE_VERSION, at: resolvedVersion, head: headVersion, offset });
+      requestedVersion: spec.version ?? null, rule: RULE_VERSION, at: resolvedVersion, head: headBound, offset });
   }
 
   /** R10: an offset inside a code point (or past the end) is `cursor_mismatch`. */
@@ -1506,41 +1556,49 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
   }
 
   async function bodyPageOf(ctx: CoreCallContext, spec: { noteId: string; version?: number; cursor: string | null },
-    readOp: 'lookup' | 'history'):
-  Promise<ReadOutcome<{ noteId: string; version: number; text: string; next: string | null }>> {
-    const head = spec.version === undefined ? await readCurrentHead(ctx, spec.noteId)
-      : await readHeadRecord(deps.records, ctx.projectId, spec.noteId);
-    if (!head.ok) return head;
-    if (head.value === null) return { ok: false, code: 'not_found', reason: 'the note does not exist' };
-    const headVersion = head.value.version;
-    let body = head.value.body;
-    let resolved = headVersion;
-    if (spec.version !== undefined && spec.version !== headVersion) {
-      const read = await readVersionRecord(deps.records, ctx.projectId, spec.noteId, spec.version);
-      if (!read.ok) return read;
-      if (read.value === null) return { ok: false, code: 'not_found', reason: 'the note version does not exist' };
-      body = read.value.body;
-      resolved = read.value.version;
+    readOp: 'lookup' | 'history' | 'read', resolvedBody?: ResolvedNoteBody):
+  Promise<ReadOutcome<{ noteId: string; version: number | null; text: string; next: string | null }>> {
+    let body: string;
+    let resolved: number | null;
+    let headBound: number | string;
+    if (resolvedBody === undefined) {
+      const head = spec.version === undefined ? await readCurrentHead(ctx, spec.noteId)
+        : await readHeadRecord(deps.records, ctx.projectId, spec.noteId);
+      if (!head.ok) return head;
+      if (head.value === null) return { ok: false, code: 'not_found', reason: 'the note does not exist' };
+      const headVersion = head.value.version;
+      body = head.value.body;
+      resolved = headVersion;
+      headBound = headVersion;
+      if (spec.version !== undefined && spec.version !== headVersion) {
+        const read = await readVersionRecord(deps.records, ctx.projectId, spec.noteId, spec.version);
+        if (!read.ok) return read;
+        if (read.value === null) return { ok: false, code: 'not_found', reason: 'the note version does not exist' };
+        body = read.value.body;
+        resolved = read.value.version;
+      }
+    } else {
+      body = resolvedBody.text;
+      resolved = resolvedBody.version;
+      headBound = resolvedBody.head;
     }
     const requestedVersion = spec.version ?? null;
     let offset = 0;
     if (spec.cursor !== null) {
-      let parsed: Record<string, unknown>;
-      try {
-        parsed = JSON.parse(spec.cursor) as Record<string, unknown>;
-      } catch {
-        return { ok: false, code: 'invalid', reason: 'cursor_mismatch' };
-      }
+      const parsed = parseObject(spec.cursor);
+      if (parsed === null) return { ok: false, code: 'invalid', reason: 'cursor_mismatch' };
       if (parsed['v'] !== 1 || parsed['op'] !== 'body' || parsed['id'] !== callerIdentityOf(ctx)
         || parsed['readOp'] !== readOp || parsed['noteId'] !== spec.noteId
         || parsed['requestedVersion'] !== requestedVersion || parsed['rule'] !== RULE_VERSION
-        || !Number.isSafeInteger(parsed['at']) || !Number.isSafeInteger(parsed['head'])
+        || !(parsed['at'] === null || Number.isSafeInteger(parsed['at']))
+        || !(typeof parsed['head'] === 'string' || Number.isSafeInteger(parsed['head']))
         || !Number.isSafeInteger(parsed['offset'])) {
         return { ok: false, code: 'invalid', reason: 'cursor_mismatch' };
       }
       // R10: the body cursor binds the head version even when the request pins a
-      // version; a head change between pages is a revision conflict.
-      if (headVersion !== parsed['head']) {
+      // version; a head change between pages is a revision conflict. A headless
+      // note's current body binds its file's blob instead.
+      if (headBound !== parsed['head']) {
         return { ok: false, code: 'revision_conflict', reason: 'the note changed between pages' };
       }
       offset = parsed['offset'] as number;
@@ -1551,7 +1609,7 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
     }
     const sliced = sliceUtf8(body, offset, NOTE_BODY_PAGE_BYTES);
     const next = sliced.nextOffset === null
-      ? null : bodyCursorOf(ctx, spec, readOp, resolved, headVersion, sliced.nextOffset);
+      ? null : bodyCursorOf(ctx, spec, readOp, resolved, headBound, sliced.nextOffset);
     return { ok: true, value: { noteId: spec.noteId, version: resolved, text: sliced.text, next } };
   }
 
@@ -2228,7 +2286,7 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
       : pageBuilt.value.understanding.find(status => status.anchorKey === anchorKey) ?? null;
     const groups = topicGroups(onAnchor, currentGoalId);
     const warnings: string[] = [];
-    let bodyTarget: { noteId: string; version: number } | null = null;
+    let bodyTarget: { noteId: string; version: number | null } | null = null;
     if (input.body !== undefined) {
       const body = await bodyPageOf(ctx, input.body, 'lookup');
       if (!body.ok) return rejected(body.code, body.reason);
@@ -2279,12 +2337,14 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
     if (!pageBuilt.ok) return rejected(pageBuilt.code, pageBuilt.reason);
     const next = slice.complete ? null : encodeMemoryCursor(ctx, 'notes_list', request,
       { after: slice.last, recordCursor: current.value });
+    const items: NoteListResultV1['items'] = [];
+    for (const [index, item] of pageBuilt.value.items.entries()) {
+      const listed = await listedItemOf(ctx, item, slice.page[index]!);
+      if (!listed.ok) return rejected(listed.code, listed.reason);
+      items.push(listed.value);
+    }
     const result: NoteListResultV1 = {
-      items: pageBuilt.value.items.map((item, index) => {
-        const head = slice.page[index]!;
-        return { ...item, label: renderNoteHeader({ kind: head.kind, anchor: head.anchor,
-          structural: head.structural, conclusion: head.conclusion, ...headerExtrasOf(head) }) };
-      }),
+      items,
       next, complete: next === null, readBasis: basisOf(current.value, pageBuilt.value.items), warnings: [],
       coverage: coverageOf(pageBuilt.value.items) };
     return { status: 'ready', value: result };
@@ -2598,6 +2658,18 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
   return {
     async readNote(ctx, input) {
       if (typeof input.noteId !== 'string' || input.noteId.length === 0) return rejected('invalid', 'a note id is required');
+      // R-N4: a body target that contradicts the outer note or an explicitly given outer version is `invalid`
+      // before any read, so a missing outer version cannot answer `not_found` first. With no outer version the
+      // resolved current version is compared after the read.
+      if (input.body !== undefined) {
+        if (input.body.noteId !== input.noteId) {
+          return rejected('invalid', 'the body note id does not match the requested note');
+        }
+        if (input.version !== undefined && input.body.version !== undefined
+          && input.body.version !== input.version) {
+          return rejected('invalid', 'the body version does not match the requested version');
+        }
+      }
       if (input.version !== undefined) {
         const version = await readVersionRecord(deps.records, ctx.projectId, input.noteId, input.version);
         if (!version.ok) return rejected(version.code, version.reason);
@@ -2619,7 +2691,8 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
         const checked = await withCheck(ctx, [item], new Map([[input.noteId, headVersion]]),
           new Map([[input.noteId, headRead.value]]), undefined, new Map([[input.version, version.value]]));
         if (!checked.ok) return rejected(checked.code, checked.reason);
-        return { status: 'ready', value: checked.value.items[0]! };
+        return noteReadyWithBody(ctx, input, checked.value.items[0]!,
+          { text: version.value.body, version: version.value.version, head: headVersion });
       }
       // [2B-13]: the note's file on any line of the project carries its knowledge; a filed note with no file is
       // unavailable (R8), a file with no record of this project reads with empty runtime fields.
@@ -2636,7 +2709,9 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
         const headless = headlessItemOf(ctx.projectId, file.line, file.note);
         if (!headless.ok) return rejected(headless.code, headless.reason);
         const checked = await withCheck(ctx, [headless.value]);
-        return checked.ok ? { status: 'ready', value: checked.value.items[0]! } : rejected(checked.code, checked.reason);
+        return checked.ok ? noteReadyWithBody(ctx, input, checked.value.items[0]!,
+          { text: file.note.knowledge.body, version: null, head: file.note.blobSha })
+          : rejected(checked.code, checked.reason);
       }
       if (isKnowledgeAnchor(recorded.value.anchor) && file === undefined) {
         return rejected('unavailable', `the note file of ${input.noteId} is missing on every line`);
@@ -2647,7 +2722,8 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
       // F4: the head just read goes straight into the check.
       const checked = await withCheck(ctx, [item.value], undefined, new Map([[input.noteId, head.value]]));
       if (!checked.ok) return rejected(checked.code, checked.reason);
-      return { status: 'ready', value: checked.value.items[0]! };
+      return noteReadyWithBody(ctx, input, checked.value.items[0]!,
+        { text: head.value.body, version: head.value.version, head: head.value.version });
     },
     async listByAnchor(ctx, input) {
       const anchorRead = await requestAnchorOf(ctx, input.anchor);
@@ -2733,16 +2809,21 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
         }
         return goalBucketRead(ctx, request.goalId, state, limit, request.cursor);
       }
+      const body = request.body === undefined ? undefined : { noteId: request.body.noteId,
+        ...(request.body.version === undefined ? {} : { version: request.body.version }),
+        cursor: request.body.cursor ?? null };
       const built = await lookupRead(ctx, { v: 1, op: 'lookup', anchor: request.anchor, limit,
-        cursor: request.cursor }, request.state);
+        cursor: request.cursor, ...(body === undefined ? {} : { body }) }, request.state);
       if (built.status !== 'ready') return built;
       const { result, heads } = built.value;
+      const items: NoteListResultV1['items'] = [];
+      for (const [index, item] of result.items.entries()) {
+        const listed = await listedItemOf(ctx, item, heads[index]!);
+        if (!listed.ok) return rejected(listed.code, listed.reason);
+        items.push(listed.value);
+      }
       const value: NoteListResultV1 = {
-        items: result.items.map((item, index) => {
-          const head = heads[index]!;
-          return { ...item, label: renderNoteHeader({ kind: head.kind, anchor: head.anchor,
-            structural: head.structural, conclusion: head.conclusion, ...headerExtrasOf(head) }) };
-        }),
+        items,
         next: result.next, complete: result.complete, readBasis: result.readBasis, warnings: result.warnings,
         coverage: result.coverage, understanding: result.understanding };
       return { status: 'ready', value };
@@ -2826,7 +2907,7 @@ NoteReadPort & NoteMemoryReadPort & NoteListReadPort & NoteMemoryMaterialReadPor
       const next = complete ? null : encodeMemoryCursor(ctx, 'history', request,
         { after: String(pageVersions[pageVersions.length - 1]!), recordCursor: current.value });
       const warnings: string[] = [];
-      let bodyTarget: { noteId: string; version: number } | null = null;
+      let bodyTarget: { noteId: string; version: number | null } | null = null;
       if (input.body !== undefined) {
         const body = await bodyPageOf(ctx, input.body, 'history');
         if (!body.ok) return rejected(body.code, body.reason);

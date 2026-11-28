@@ -393,7 +393,10 @@ export type NoteItemV1 = { noteId: string; version: number | null; storedState: 
   topicKey: string; conclusion: string; anchor: NoteAnchorV1; extraAnchors: NoteAnchorV1[]; source: NoteSourceV1; goalId: string | null;
   replaces: string[]; contradicts: string[]; coexistWith: string[]; confirmedByUser: boolean;
   freshness: 'fresh' | 'stale' | 'unchecked'; changedFiles: { path: string; deleted: boolean }[];
-  observedFiles: NoteFileObservationV1[]; staleReasons: string[];
+  observedFiles: NoteFileObservationV1[];
+  /** D49-07: the note's basis files, paths only (no digests); `observedFiles` is a different set. */
+  basisFiles: string[];
+  staleReasons: string[];
   sourceUnavailable: boolean; invalid: boolean; conflicting: boolean; overQuota: boolean; updateDue: boolean | null;
   currentEligible: boolean; crossGoal: boolean;
   anchorStatus: 'live' | 'retired';
@@ -412,14 +415,23 @@ export type NoteItemV1 = { noteId: string; version: number | null; storedState: 
   sections?: NoteSectionsV1;
   repair?: NoteRepairReadV1;
   verify: NoteVerifyV1 | null;
-  body?: { text: string; next: string | null } };
+  body?: { text: string; next: string | null };
+  /**
+   * The current version's change, on `notes/list` rows only: a note file with no record head has no version, and a
+   * non-list read does not spend the extra version read. The list fills it from each head's current version.
+   */
+  lastChange?: { kind: NoteVersionSnapshot['change']['kind']; by: NoteSourceV1; reason: string | null; at: string } };
 
 /** P9: goal/stage anchors only; `{ null, null }` when no pointer exists yet. */
 export type NotePageV1 = { items: NoteItemV1[]; next: string | null; complete: boolean;
   pointer: { noteId: string | null; revision: number | null } | null };
 
+/** R-N4: one note by id, optionally with a page of its body (the same body target shape `notes/list` takes). */
+export type NoteReadRequestV1 = { noteId: string; version?: number;
+  body?: { noteId: string; version?: number; cursor?: string | null } };
+
 export interface NoteReadPort {
-  readNote(ctx: CoreCallContext, input: { noteId: string; version?: number }): Promise<ReadResult<NoteItemV1>>;
+  readNote(ctx: CoreCallContext, input: NoteReadRequestV1): Promise<ReadResult<NoteItemV1>>;
   listByAnchor(ctx: CoreCallContext, input: { anchor: NoteAnchorV1; limit: number; cursor: string | null }):
     Promise<ReadResult<NotePageV1>>;
   /** The current version of each note on one anchor; the overlap gate compares every `since` with the Run starts. */
@@ -499,7 +511,8 @@ export type MemoryHistoryResultV1 = Omit<MemoryResultV1, 'items'> & { items: Not
 
 /** Slice 4C C1.4: the `notes/list` request union (any other filter is `notes_list_filter_unsupported`). */
 export type NoteListRequestV1 =
-  | { anchor: NoteAnchorV1; state?: NoteState; limit: number; cursor: string | null }
+  | { anchor: NoteAnchorV1; state?: NoteState; limit: number; cursor: string | null;
+    body?: { noteId: string; version?: number; cursor?: string | null } }
   | { goalId: string | null; state: 'pending_review'; limit: number; cursor: string | null }
   | { goalId: string; state: 'accepted' | 'reviewed'; limit: number; cursor: string | null };
 /** Slice 4C C1.4: rows carry the underlying read's L9 fields plus `label` from `renderNoteHeader`. */

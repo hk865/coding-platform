@@ -12,6 +12,8 @@
  */
 import type { ArchitectureProposalBatchRef, ArchitectureProposalBatchV1,
   ArchitectureProposalRef } from '../../../contracts/architecture-proposal.js';
+import type { AdoptedArchitecture, ArchitectureCatalogPinV1 } from '../../../contracts/architecture-catalog.js';
+import type { QueryRunRef } from '../../../contracts/query-job.js';
 import type { VersionPin } from '../../../contracts/core/identity.js';
 import { decisionSourceKey, type DecisionObjectV1, type DecisionOptionV1,
   type DecisionSourceV1 } from '../../../contracts/goal-decisions.js';
@@ -31,8 +33,15 @@ import {
   decodeArchitectureProposalBatchRecord, decodeArchitectureProposalRecord,
   type ArchitectureProposalRecordV1,
 } from '../architecture/proposal-record-codecs.js';
-import { readProjectBatches } from '../architecture/proposal-service.js';
-import { readCatalogPointerRevision } from '../architecture/catalog-service.js';
+import { readProjectBatches, sameCatalogPin } from '../architecture/proposal-service.js';
+import {
+  catalogPinOf, readCatalogPointerRevision, readRecordedCatalogWindow,
+} from '../architecture/catalog-service.js';
+import type { ArchitectureBaselineContentV1 } from '../architecture/catalog-contracts.js';
+import { applyRepairOps } from '../architecture/repair-ops.js';
+import { readColdStartRecord, readWorkspaceJoinRecord, topLevelModules } from '../sessions/cold-start-service.js';
+import { explorationDepthOf, plannedExplorationRounds } from '../state/exploration-control.js';
+import type { RoleLineActionV1 } from '../state/role-line-action.js';
 import { STRUCTURAL_PROPOSAL_OPTIONS } from '../communication/decision-source-facts.js';
 
 /** The batch, its members and the active pointer revision read once for one projection. */
@@ -42,6 +51,8 @@ export type StructuralProposalCardFactsV1 = {
   activeRevision: number;
   /** M6: every member resolves to a source that can re-propose it (exploration or Work-Run); only then does the card show “不对，重新提”. */
   repropose: boolean;
+  /** R-M8: on the coarse-split batch's card, the rounds its approval leaves (`plannedExplorationRounds`). */
+  roundsAfterApproval?: number;
 };
 
 export type StructuralProposalSourceDependencies = {
@@ -202,6 +213,7 @@ function projectCard(facts: StructuralProposalCardFactsV1, subject: DecisionSour
     taskRef: taskRefOfPins(source.pins), runRef: runRefOfPins(source.pins),
     readOnly: false,
     actions: ['answer'],
+    ...(facts.roundsAfterApproval === undefined ? {} : { roundsAfterApproval: facts.roundsAfterApproval }),
   };
 }
 
@@ -231,14 +243,93 @@ Promise<ReadResult<ArchitectureProposalBatchV1 | null>> {
   return { status: 'ready', value: batch };
 }
 
+/**
+ * R-M8: what the coarse-split card needs to state its post-approval rounds: the recorded catalog the batch's ops
+ * apply to and its pin. Read once per card collection; the card source itself reads no knowledge file.
+ */
+type SplitRoundsBaseV1 = {
+  /** The pin of the same adopted-catalog window: a batch frozen on another pin is stale and gets no rounds. */
+  pin: ArchitectureCatalogPinV1;
+  catalog: AdoptedArchitecture;
+  rules: NonNullable<ArchitectureBaselineContentV1['dependencyRules']>;
+};
+
+async function readSplitRoundsBase(deps: StructuralProposalSourceDependencies, projectId: string):
+Promise<ReadResult<SplitRoundsBaseV1 | null>> {
+  const window = await readRecordedCatalogWindow(deps.records, projectId);
+  if (window.status === 'not_found') return { status: 'ready', value: null };
+  if (window.status !== 'ready') return window;
+  return { status: 'ready', value: { pin: catalogPinOf(window), catalog: window.catalog.catalog,
+    rules: window.baseline.content.dependencyRules ?? [] } };
+}
+
+/** R-M8: the exploration operation a batch's member names, with its own depth and route. */
+type ExplorationOwnerV1 = Pick<RoleLineActionV1, 'depth' | 'route'>;
+
+function ownsCoarseRound(action: Pick<RoleLineActionV1, 'explorations'>, run: QueryRunRef): boolean {
+  const key = canonicalKey(run);
+  return (action.explorations ?? []).some(entry => entry.segment === 'coarse_split'
+    && canonicalKey(entry.queryRunRef) === key);
+}
+
+/** The coarse round's operation: the project's cold start or the joined workspace's own `workspace_join`. */
+async function readCoarseRoundOwner(deps: StructuralProposalSourceDependencies, projectId: string,
+  members: readonly ArchitectureProposalRecordV1[]): Promise<ReadResult<ExplorationOwnerV1 | null>> {
+  const cold = await readColdStartRecord(deps.records, projectId);
+  if (cold.status !== 'ready' && cold.status !== 'not_found') return cold;
+  const coldAction = cold.status === 'ready' ? cold.value.action : null;
+  const joins = new Map<string, Awaited<ReturnType<typeof readWorkspaceJoinRecord>>>();
+  for (const member of members) {
+    const run = member.queryRunRef;
+    if (run === null || run === undefined) continue;
+    if (coldAction !== null && ownsCoarseRound(coldAction, run)) return { status: 'ready', value: coldAction };
+    let join = joins.get(run.workspaceId);
+    if (join === undefined) {
+      join = await readWorkspaceJoinRecord(deps.records, projectId, run.workspaceId);
+      joins.set(run.workspaceId, join);
+    }
+    if (join.status === 'rejected') return join;
+    if (join.status === 'ready' && ownsCoarseRound(join.value.action, run)) {
+      return { status: 'ready', value: join.value.action };
+    }
+  }
+  return { status: 'ready', value: null };
+}
+
+/** The one round formula, over the top-level modules the coarse batch's own ops leave; absent for every other batch. */
+async function roundsAfterApprovalOf(deps: StructuralProposalSourceDependencies, base: SplitRoundsBaseV1 | null,
+  batch: ArchitectureProposalBatchV1, members: readonly ArchitectureProposalRecordV1[]):
+Promise<ReadResult<number | undefined>> {
+  // Expiry is the adopted catalog pin (the approval's own check), not whether the ops still apply: a revision that adds
+  // an unrelated module makes the batch stale and its rounds unknowable.
+  if (base === null || !sameCatalogPin(batch.baseCatalogPin, base.pin)) {
+    return { status: 'ready', value: undefined };
+  }
+  // The coarse batch is the one whose members name the coarse-split round; the operation's `batchRefs` is still empty
+  // when its card is first read.
+  const owner = await readCoarseRoundOwner(deps, batch.ref.projectId, members);
+  if (owner.status !== 'ready') return owner;
+  // Only the split route has a coarse round with top-level module cards.
+  if (owner.value === null || owner.value.route !== 'split') return { status: 'ready', value: undefined };
+  const applied = applyRepairOps(base.catalog, base.rules, batch.ops, batch.ref.projectId);
+  if (!applied.ok) return { status: 'ready', value: undefined };
+  return { status: 'ready', value: plannedExplorationRounds({ depth: explorationDepthOf(owner.value),
+    route: 'split', topLevelModuleCount: topLevelModules(applied.catalog).length }) };
+}
+
 async function readFacts(deps: StructuralProposalSourceDependencies, ctx: CoreCallContext,
-  batch: ArchitectureProposalBatchV1, activeRevision: number): Promise<ReadResult<StructuralProposalCardFactsV1>> {
+  batch: ArchitectureProposalBatchV1, activeRevision: number,
+  roundsBase: SplitRoundsBaseV1 | null): Promise<ReadResult<StructuralProposalCardFactsV1>> {
   const members = await readMembers(deps, batch);
   if (members.status !== 'ready') return members;
   // A closed batch never needs its sources: the same members decide the gate before any proposal/operation read.
   const repropose = isOpen({ members: members.value }) && deps.reproposeAdmits !== undefined
     && await deps.reproposeAdmits(ctx, batch.ref, members.value.map(member => member.ref));
-  return { status: 'ready', value: { batch, members: members.value, activeRevision, repropose } };
+  const rounds = await roundsAfterApprovalOf(deps, roundsBase, batch, members.value);
+  if (rounds.status !== 'ready') return rounds;
+  const roundsAfterApproval = rounds.value;
+  return { status: 'ready', value: { batch, members: members.value, activeRevision, repropose,
+    ...(roundsAfterApproval === undefined ? {} : { roundsAfterApproval }) } };
 }
 
 export function createStructuralProposalSource(
@@ -256,9 +347,11 @@ export function createStructuralProposalSource(
       if (batches.value.length === 0) return { status: 'ready', value: [] };
       const active = await pinnedPointerRevision(deps, projectId);
       if (active.status !== 'ready') return active;
+      const roundsBase = await readSplitRoundsBase(deps, projectId);
+      if (roundsBase.status !== 'ready') return roundsBase;
       const items: StructuralProposalCardFactsV1[] = [];
       for (const batch of batches.value) {
-        const facts = await readFacts(deps, ctx, batch, active.value);
+        const facts = await readFacts(deps, ctx, batch, active.value, roundsBase.value);
         if (facts.status !== 'ready') return facts;
         if (isOpen(facts.value)) items.push(facts.value);
       }
@@ -278,7 +371,9 @@ export function createStructuralProposalSource(
       if (batch.value === null) return { status: 'ready', value: null };
       const active = await pinnedPointerRevision(deps, projectId);
       if (active.status !== 'ready') return active;
-      const facts = await readFacts(deps, ctx, batch.value, active.value);
+      const roundsBase = await readSplitRoundsBase(deps, projectId);
+      if (roundsBase.status !== 'ready') return roundsBase;
+      const facts = await readFacts(deps, ctx, batch.value, active.value, roundsBase.value);
       if (facts.status !== 'ready') return facts;
       if (!isOpen(facts.value)) return { status: 'ready', value: { closed: 'source_resolved', openedAt: null } };
       return { status: 'ready', value: { item: facts.value } };

@@ -16,16 +16,43 @@ export type PromptPackManifestV1 = {
     strings: string;
     /** Tool name → tool text file, relative to the pack directory. */
     tools: Record<string, string>;
+    /** Template id → versions a restore freed; a later save starts above them
+     * and does not reuse them. The resolver keeps the field but does not read it. */
+    restoredVersions?: Record<string, number[]>;
 };
 
 /** One tool's model-facing text. `parameters` is keyed by the path from the tool's input object. */
 export type ToolTextV1 = { description: string; parameters: Readonly<Record<string, string>> };
+
+/** The nine reasons a pack can be invalid; the Host returns the code, the UI
+ * translates it (models/README.md:257-261). */
+export type PromptPackProblemKind =
+    | 'slot_undeclared'
+    | 'slot_duplicate'
+    | 'required_slot_empty'
+    | 'illegal_section_order'
+    | 'role_not_first'
+    | 'tool_outside_block'
+    | 'file_problem'
+    | 'json_problem'
+    | 'tool_parameters_differ';
+
+/** The names the code points at: the slot, the section, or the tool parameters
+ * that differ from the platform text. */
+export type PromptPackProblemDetailV1 = {
+    slot?: string;
+    section?: string;
+    extra?: string[];
+    missing?: string[];
+};
 
 /** One validation problem; `templateId` is `null` for a pack-level problem. */
 export type PromptPackProblemV1 = {
     packId: string;
     templateId: string | null;
     toolName?: string;
+    kind: PromptPackProblemKind;
+    detail?: PromptPackProblemDetailV1;
     reason: string;
 };
 

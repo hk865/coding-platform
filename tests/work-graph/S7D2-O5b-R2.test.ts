@@ -236,7 +236,8 @@ describe('O5b-R2: role-lines/read and role-lines/operations', () => {
 
     // The open's `role_line` row (v4 :6416; the completed shape as RL-01 and RL-13 A read it).
     expect((await handle.operations()).filter(row => row.operation.operationId === opened.operation.operationId))
-      .toEqual([{ operation: opened.operation, action: 'role_line', phase: 'completed', actionPhase: 'done',
+      .toEqual([{ operation: opened.operation, action: 'role_line', main: true, inGraph: true,
+        awaitingTopLevelApproval: false, phase: 'completed', actionPhase: 'done',
         steps: [{ key: 'line', duty: 'adviser', childOperation: expect.any(Object), state: 'done' }],
         result: { status: 'done', reason: null } }]);
 

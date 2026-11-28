@@ -36,6 +36,8 @@ export type ProjectStoreLocation = {
   directory: string;
   /** Non-null only for `user-data`: one sentence for the person. */
   reason: string | null;
+  /** Non-null only for `user-data`: the same case as a code the page words itself. */
+  reasonCode: 'unreliable_drive' | 'unknown_drive' | null;
 };
 export type MountReliability = 'reliable' | 'unreliable' | 'unknown';
 export type ProjectStoreLocationDeps = {
@@ -58,8 +60,9 @@ export async function projectStoreLocation(
   const place: ProjectStorePlace = common !== null ? 'git-common' : 'workspace-local';
   const candidate = common !== null ? join(common, 'workbench', 'projects', hash)
     : join(root, '.workbench', 'local', 'projects', hash);
-  const reliability = await (deps?.mountReliability ?? defaultMountReliability)(candidate);
-  if (reliability === 'reliable') return { status: 'ready', value: { place, directory: candidate, reason: null } };
+  const reliability = await (deps?.mountReliability ?? mountReliability)(candidate);
+  if (reliability === 'reliable')
+    return { status: 'ready', value: { place, directory: candidate, reason: null, reasonCode: null } };
   let base: string;
   try {
     base = (deps?.userDataRoot ?? defaultUserDataRoot)();
@@ -69,7 +72,8 @@ export async function projectStoreLocation(
   const reason = reliability === 'unreliable'
     ? `the project store is kept in the local data directory because ${candidate} is on a network or mounted drive whose file locks are unreliable`
     : `the project store is kept in the local data directory because the drive type of ${candidate} could not be determined`;
-  return { status: 'ready', value: { place: 'user-data', directory: join(base, 'projects', hash), reason } };
+  return { status: 'ready', value: { place: 'user-data', directory: join(base, 'projects', hash), reason,
+    reasonCode: reliability === 'unreliable' ? 'unreliable_drive' : 'unknown_drive' } };
 }
 
 /** The local data directory: `%LOCALAPPDATA%\coding-platform-next` on Windows, elsewhere
@@ -136,7 +140,7 @@ async function nearestExistingRealPath(path: string): Promise<string | null> {
   }
 }
 
-async function defaultMountReliability(directory: string): Promise<MountReliability> {
+export async function mountReliability(directory: string): Promise<MountReliability> {
   const existing = await nearestExistingRealPath(directory);
   if (existing === null) return 'unknown';
   if (process.platform === 'linux') {

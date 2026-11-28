@@ -27,6 +27,10 @@ describe('PC-04 prompt-pack routes', () => {
       if (list.body.status !== 'ready') return;
       expect(list.body.value.packs.map(pack => pack.packId)).toEqual(['platform', 'pc2-parent']);
       expect(list.body.value.packs[1]).toMatchObject({ packId: 'pc2-parent', extends: 'platform', problems: [] });
+      expect(list.body.value.packs[1]!.tools).toContainEqual({
+        toolName: 'record_note', fromPack: 'platform', problems: [], description: expect.any(String),
+      });
+      expect(list.body.value.packs[1]!.tools.every(tool => tool.fromPack === 'platform')).toBe(true);
 
       const read = await fixture.call('prompts/templates/read', { packId: 'pc2-parent', templateId: 'base' });
       expect(read.status).toBe(200);
@@ -87,7 +91,8 @@ describe('PC-04 prompt-pack routes', () => {
       if (saved.outcome.value.body.status !== 'rejected') return;
       expect(saved.outcome.value.body.code).toBe('invalid');
       expect(saved.outcome.value.body.problems).toContainEqual({
-        packId: 'pc2-parent', templateId: 'base', reason: 'slot "pc2_unknown" is not declared by template "base"',
+        packId: 'pc2-parent', templateId: 'base', kind: 'slot_undeclared',
+        detail: { slot: 'pc2_unknown' }, reason: 'slot "pc2_unknown" is not declared by template "base"',
       });
     } finally { await fixture.close(); }
   });
@@ -122,7 +127,7 @@ describe('PC-04 prompt-pack routes', () => {
       expect(saved.outcome.value.status).toBe(400);
       expect(saved.outcome.value.body).toEqual({
         status: 'rejected', code: 'invalid', reason: 'text must be a string',
-        problems: [{ packId: 'pc2-parent', templateId: 'base', reason: 'text must be a string' }],
+        problems: [{ packId: 'pc2-parent', templateId: 'base', kind: 'file_problem', reason: 'text must be a string' }],
       });
     } finally { await fixture.close(); }
   });
@@ -136,7 +141,7 @@ describe('PC-04 prompt-pack routes', () => {
       expect(read.status).toBe(400);
       expect(read.body).toEqual({
         status: 'rejected', code: 'invalid', reason: 'request body is not valid JSON',
-        problems: [{ packId: '', templateId: null, reason: 'request body is not valid JSON' }],
+        problems: [{ packId: '', templateId: null, kind: 'json_problem', reason: 'request body is not valid JSON' }],
       });
     } finally { await fixture.close(); }
   });
@@ -197,7 +202,7 @@ describe('PC-04 prompt-pack routes', () => {
       expect(saved.outcome.value.body).toEqual({
         status: 'rejected', code: 'invalid', reason: 'the prompt pack would be invalid',
         problems: [{
-          packId: 'pc2-null-templates', templateId: null, reason: 'manifest templates must be an object',
+          packId: 'pc2-null-templates', templateId: null, kind: 'json_problem', reason: 'manifest templates must be an object',
         }],
       });
     } finally { await fixture.close(); }
@@ -217,15 +222,15 @@ describe('PC-04 prompt-pack routes', () => {
       expect(read.body).toEqual({
         status: 'rejected', code: 'invalid', reason: 'the prompt pack is invalid',
         problems: [
-          { packId: 'pc2-cycle-broken', templateId: 'base',
+          { packId: 'pc2-cycle-broken', templateId: 'base', kind: 'file_problem',
             reason: 'file "templates/base.txt" could not be read' },
-          { packId: 'pc2-cycle-broken', templateId: null,
+          { packId: 'pc2-cycle-broken', templateId: null, kind: 'file_problem',
             reason: 'the pack extends chain contains a cycle' },
-          { packId: 'pc2-cycle-broken', templateId: null,
+          { packId: 'pc2-cycle-broken', templateId: null, kind: 'file_problem',
             reason: 'pack "pc2-cycle-broken" extends "pc2-cycle-broken" but the chain continues with "platform"' },
-          { packId: 'pc2-cycle-broken', templateId: 'base',
+          { packId: 'pc2-cycle-broken', templateId: 'base', kind: 'file_problem',
             reason: 'template version must be a positive integer' },
-          { packId: 'pc2-cycle-broken', templateId: 'base',
+          { packId: 'pc2-cycle-broken', templateId: 'base', kind: 'file_problem',
             reason: 'template file "templates/base.txt" is missing from the pack' },
         ],
       });
@@ -280,9 +285,9 @@ describe('PC-04 prompt-pack routes', () => {
       if (read.body.status !== 'rejected') return;
       expect(read.body.code).toBe('invalid');
       expect(read.body.problems).toEqual([
-        { packId: 'pc2-both-broken', templateId: 'base', reason: 'file "templates/base.txt" could not be read' },
-        { packId: 'pc2-both-broken', templateId: 'base', reason: 'template version must be a positive integer' },
-        { packId: 'pc2-both-broken', templateId: 'base',
+        { packId: 'pc2-both-broken', templateId: 'base', kind: 'file_problem', reason: 'file "templates/base.txt" could not be read' },
+        { packId: 'pc2-both-broken', templateId: 'base', kind: 'file_problem', reason: 'template version must be a positive integer' },
+        { packId: 'pc2-both-broken', templateId: 'base', kind: 'file_problem',
           reason: 'template file "templates/base.txt" is missing from the pack' },
       ]);
     } finally { await fixture.close(); }
@@ -299,8 +304,8 @@ describe('PC-04 prompt-pack routes', () => {
       expect(read.body.status).toBe('rejected');
       if (read.body.status !== 'rejected') return;
       expect(read.body.problems).toEqual([
-        { packId: 'bad-strings-file-missing', templateId: null, reason: 'file "absent.json" could not be read' },
-        { packId: 'bad-strings-file-missing', templateId: null,
+        { packId: 'bad-strings-file-missing', templateId: null, kind: 'file_problem', reason: 'file "absent.json" could not be read' },
+        { packId: 'bad-strings-file-missing', templateId: null, kind: 'file_problem',
           reason: 'strings file "absent.json" is missing from the pack' },
       ]);
     } finally { await fixture.close(); }
@@ -346,7 +351,7 @@ describe('PC-04 prompt-pack routes', () => {
       if (read.body.status !== 'rejected') return;
       expect(read.body.code).toBe('invalid');
       expect(read.body.problems).toEqual([{
-        packId: 'bad-version-0', templateId: 'base', reason: 'template version must be a positive integer',
+        packId: 'bad-version-0', templateId: 'base', kind: 'file_problem', reason: 'template version must be a positive integer',
       }]);
 
       const list = await fixture.call('prompts/packs/list', {});
@@ -355,13 +360,13 @@ describe('PC-04 prompt-pack routes', () => {
       if (list.body.status !== 'ready') return;
       const broken = list.body.value.packs.find(pack => pack.packId === 'bad-version-0');
       expect(broken?.problems).toEqual([{
-        packId: 'bad-version-0', templateId: 'base', reason: 'template version must be a positive integer',
+        packId: 'bad-version-0', templateId: 'base', kind: 'file_problem', reason: 'template version must be a positive integer',
       }]);
       // The pack's own broken template keeps its problem; the platform's
       // templates remain listed because the disk tree could still read them.
       expect(broken?.templates).toContainEqual({
         templateId: 'base', version: 0, fromPack: 'bad-version-0',
-        problems: [{ packId: 'bad-version-0', templateId: 'base', reason: 'template version must be a positive integer' }],
+        problems: [{ packId: 'bad-version-0', templateId: 'base', kind: 'file_problem', reason: 'template version must be a positive integer' }],
       });
     } finally { await fixture.close(); }
   });
@@ -525,7 +530,8 @@ describe('PC-22 save rejects an illegal section order', () => {
       if (saved.outcome.value.body.status !== 'rejected') return;
       expect(saved.outcome.value.body.code).toBe('invalid');
       expect(saved.outcome.value.body.problems).toEqual([{
-        packId: 'pc2-order', templateId: 'query-copy-input',
+        packId: 'pc2-order', templateId: 'query-copy-input', kind: 'slot_undeclared',
+        detail: { slot: 'footprint' },
         reason: 'slot "footprint" is not declared by template "query-copy-input"',
       }]);
     } finally { await fixture.close(); }

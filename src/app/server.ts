@@ -376,7 +376,7 @@ export function createWorkbenchServer(options: WorkbenchServerOptions): Workbenc
         const reason = error instanceof Error ? error.message : 'invalid request body';
         if (suffix.startsWith('prompts/')) {
           sendJson(response, 400, { status: 'rejected', code: 'invalid', reason,
-            problems: [{ packId: '', templateId: null, reason }] });
+            problems: [{ packId: '', templateId: null, kind: 'json_problem', reason }] });
         } else {
           sendJson(response, 400, { status: 'rejected', code: 'invalid', reason });
         }

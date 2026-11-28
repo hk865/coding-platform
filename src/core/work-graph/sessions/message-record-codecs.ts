@@ -353,11 +353,16 @@ export type ArchiveWaitDisposedEventV1 = Slice1EventHeaderV1 & {
 
 /** §3.9 item 2: the old message's `transferredTo` update; the new message is in the same commit's Sent event. */
 export const SESSION_MESSAGE_FORWARDED_EVENT_TYPE = 'SessionMessageForwarded';
+/** R-F2: the saved reply's `responseTransferredTo` update; the copied message is in the same commit's Sent event. */
+export const SESSION_MESSAGE_REPLY_TRANSFERRED_EVENT_TYPE = 'SessionMessageReplyTransferred';
 /** §3.9 item 5: the person's `waits/dispose` record update (cancel or transfer). */
 export const SESSION_MESSAGE_WAIT_DISPOSED_EVENT_TYPE = 'SessionMessageWaitDisposed';
 
 export type SessionMessageForwardedEventV1 = Slice1EventHeaderV1 & {
   eventType: 'SessionMessageForwarded'; message: SessionMessage; originalRef: SessionMessageRef;
+};
+export type SessionMessageReplyTransferredEventV1 = Slice1EventHeaderV1 & {
+  eventType: 'SessionMessageReplyTransferred'; message: SessionMessage; to: SessionRef; copyRef: SessionMessageRef;
 };
 export type SessionMessageWaitDisposedEventV1 = Slice1EventHeaderV1 & {
   eventType: 'SessionMessageWaitDisposed'; message: SessionMessage;
@@ -1014,6 +1019,8 @@ const MESSAGE_KEYS: readonly string[] = [
   'taskRef', 'requestRoot', 'followupOf', 'deadline', 'deadlineMs', 'delivery',
   'deliveryEvidence', 'expiredAt', 'withdrawnAt', 'waitCancelledAt', 'transferredTo', 'originalRef',
   'appliedAt', 'rejectedAt', 'applicationProof',
+  // R-F2: appended after the historical keys, like every later field.
+  'responseTransferredTo',
 ];
 
 /** Slice 1 §2.5: the effective reply handler of a wait; absent reads as null. A person's transfer carries no archive pair. */
@@ -1130,6 +1137,11 @@ export function checkSessionMessageBody(body: UnknownRecord, requireBoundRespons
   if (response !== null) {
     const responseProblem = checkMessageResponse(response);
     if (responseProblem !== null) return `SessionMessage response: ${responseProblem}`;
+  }
+  const responseTransferredTo = body['responseTransferredTo'];
+  if (responseTransferredTo !== undefined && responseTransferredTo !== null) {
+    const problem = checkSessionMessageRef(responseTransferredTo);
+    if (problem !== null) return `SessionMessage.responseTransferredTo: ${problem}`;
   }
   const replyHandler = body['replyHandler'];
   if (replyHandler !== undefined && replyHandler !== null) {
@@ -1355,6 +1367,9 @@ const SESSION_MESSAGE_FORWARDED_EVENT_KEYS: readonly string[] = [
 const SESSION_MESSAGE_WAIT_DISPOSED_EVENT_KEYS: readonly string[] = [
   'eventId', 'eventType', 'schemaVersion', 'occurredAt', 'projectId', 'workspaceId', 'message', 'disposition',
 ];
+const SESSION_MESSAGE_REPLY_TRANSFERRED_EVENT_KEYS: readonly string[] = [
+  'eventId', 'eventType', 'schemaVersion', 'occurredAt', 'projectId', 'workspaceId', 'message', 'to', 'copyRef',
+];
 
 /** The event's changed message: full record body, and its scope agrees with the event's. */
 function eventMessageProblem(body: UnknownRecord, eventType: string): Problem {
@@ -1407,6 +1422,24 @@ function checkSessionMessageWaitDisposedBody(body: UnknownRecord): Problem {
   return null;
 }
 
+function checkSessionMessageReplyTransferredBody(body: UnknownRecord): Problem {
+  if (!hasOnlyKeys(body, SESSION_MESSAGE_REPLY_TRANSFERRED_EVENT_KEYS)) {
+    return 'SessionMessageReplyTransferred carries unknown fields';
+  }
+  const messageProblem = eventMessageProblem(body, 'SessionMessageReplyTransferred');
+  if (messageProblem !== null) return messageProblem;
+  const toProblem = checkPlainSessionRef(body['to']);
+  if (toProblem !== null) return `SessionMessageReplyTransferred to: ${toProblem}`;
+  const copyRef = body['copyRef'];
+  const copyProblem = checkSessionMessageRef(copyRef);
+  if (copyProblem !== null) return `SessionMessageReplyTransferred copyRef: ${copyProblem}`;
+  const message = body['message'] as UnknownRecord;
+  if (canonicalOf(copyRef) !== canonicalOf(message['responseTransferredTo'])) {
+    return 'SessionMessageReplyTransferred copyRef is not the changed reply';
+  }
+  return null;
+}
+
 const archiveWaitDisposedCodec = createEventCodec<ArchiveWaitDisposedEventV1>({
   eventType: ARCHIVE_WAIT_DISPOSED_EVENT_TYPE,
   schemaVersion: SESSION_MESSAGE_EVENT_SCHEMA_VERSION,
@@ -1424,6 +1457,12 @@ const sessionMessageWaitDisposedCodec = createEventCodec<SessionMessageWaitDispo
   schemaVersion: SESSION_MESSAGE_EVENT_SCHEMA_VERSION,
   jsonLabel: 'SessionMessageWaitDisposed event',
   bodyProblem: (value) => checkSessionMessageWaitDisposedBody(value as UnknownRecord),
+});
+const sessionMessageReplyTransferredCodec = createEventCodec<SessionMessageReplyTransferredEventV1>({
+  eventType: SESSION_MESSAGE_REPLY_TRANSFERRED_EVENT_TYPE,
+  schemaVersion: SESSION_MESSAGE_EVENT_SCHEMA_VERSION,
+  jsonLabel: 'SessionMessageReplyTransferred event',
+  bodyProblem: (value) => checkSessionMessageReplyTransferredBody(value as UnknownRecord),
 });
 
 // --------------------------------------------------------------------------
@@ -1659,6 +1698,7 @@ export const SESSION_MESSAGE_RECORD_SCHEMAS: RecordBackendSchemas = {
     archiveWaitDisposedCodec.registration,
     sessionMessageForwardedCodec.registration,
     sessionMessageWaitDisposedCodec.registration,
+    sessionMessageReplyTransferredCodec.registration,
     { eventType: SESSION_MESSAGE_DECISION_ANSWERED_EVENT_TYPE, schemaVersion: SESSION_MESSAGE_EVENT_SCHEMA_VERSION,
       validate: (event) => validateEvent(event, SESSION_MESSAGE_DECISION_ANSWERED_EVENT_TYPE) },
     { eventType: SESSION_MESSAGE_DECISION_APPLIED_EVENT_TYPE, schemaVersion: SESSION_MESSAGE_EVENT_SCHEMA_VERSION,
@@ -1750,6 +1790,12 @@ export function encodeSessionMessageWaitDisposedEvent(event: SessionMessageWaitD
   return sessionMessageWaitDisposedCodec.encode(event);
 }
 
+export function encodeSessionMessageReplyTransferredEvent(
+  event: SessionMessageReplyTransferredEventV1,
+): EncodedDomainEvent {
+  return sessionMessageReplyTransferredCodec.encode(event);
+}
+
 // --------------------------------------------------------------------------
 // Typed decoders (read/replay path)
 // --------------------------------------------------------------------------
@@ -1787,12 +1833,17 @@ export function sessionMessageFromEvent(event: EncodedDomainEvent): DecodeResult
     && eventType !== SESSION_MESSAGE_APPLIED_EVENT_TYPE
     && eventType !== SESSION_MESSAGE_EXPIRED_EVENT_TYPE
     && eventType !== SESSION_MESSAGE_FORWARDED_EVENT_TYPE
+    && eventType !== SESSION_MESSAGE_REPLY_TRANSFERRED_EVENT_TYPE
     && eventType !== SESSION_MESSAGE_WAIT_DISPOSED_EVENT_TYPE) {
     return invalid(`eventType ${String(eventType)} is not a SessionMessage event`);
   }
-  // §3.9 items 2 and 5: the two forward-owner events carry the changed message under their own payload shape.
+  // §3.9 items 2 and 5 / R-F2: the forward-owner events carry the changed message under their own payload shape.
   if (eventType === SESSION_MESSAGE_FORWARDED_EVENT_TYPE) {
     const decoded = sessionMessageForwardedEventFromEvent(event);
+    return decoded.status === 'decoded' ? { status: 'decoded', value: decoded.value.message } : decoded;
+  }
+  if (eventType === SESSION_MESSAGE_REPLY_TRANSFERRED_EVENT_TYPE) {
+    const decoded = sessionMessageReplyTransferredEventFromEvent(event);
     return decoded.status === 'decoded' ? { status: 'decoded', value: decoded.value.message } : decoded;
   }
   if (eventType === SESSION_MESSAGE_WAIT_DISPOSED_EVENT_TYPE) {
@@ -1834,6 +1885,15 @@ export function sessionMessageWaitDisposedEventFromEvent(
   const decoded = sessionMessageWaitDisposedCodec.decodeBody(event);
   return decoded.status === 'decoded'
     ? { status: 'decoded', value: decoded.value as unknown as SessionMessageWaitDisposedEventV1 }
+    : decoded;
+}
+
+export function sessionMessageReplyTransferredEventFromEvent(
+  event: EncodedDomainEvent,
+): DecodeResult<SessionMessageReplyTransferredEventV1> {
+  const decoded = sessionMessageReplyTransferredCodec.decodeBody(event);
+  return decoded.status === 'decoded'
+    ? { status: 'decoded', value: decoded.value as unknown as SessionMessageReplyTransferredEventV1 }
     : decoded;
 }
 

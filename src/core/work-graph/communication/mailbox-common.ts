@@ -504,6 +504,7 @@ export const EVENT_ID_SUFFIX: Record<SessionMessageEventType, string> = {
   SessionMessageApplied: 'applied',
   SessionMessageExpired: 'expired',
   SessionMessageForwarded: 'forwarded',
+  SessionMessageReplyTransferred: 'reply-transferred',
   SessionMessageWaitDisposed: 'wait-disposed',
 };
 

@@ -37,7 +37,8 @@ const dirs: string[] = []; const worlds: S6AHostWorld[] = [];
 afterEach(async () => { for (const dir of dirs.splice(0)) await rm(dir, { recursive: true, force: true });
   await Promise.all(worlds.splice(0).map(world => world.close())); await cleanupRestart(); });
 
-const assembly: HostSettingsAssembly = { listWorkspaces: () => [], secretConfigured: () => false,
+const assembly: HostSettingsAssembly = { listWorkspaces: () => [], forgetProject: () => {},
+  secretConfigured: () => false,
   bootstrap: () => ({}) as BootstrapResponse,
   async openWorkspace() { return { status: 'rejected', code: 'unsupported', reason: 'not used by G-13' }; } };
 

@@ -118,7 +118,8 @@ describe('S4B MF7a all-match paging', () => {
   });
 
   it.each(['memory', 'sqlite'] as const)('MF7a %s: an all-match page trimmed by the byte bound resumes from the port refKey', async kind => {
-    const f = await createS4BNoteCheckFixture(kind, { resultMaxBytes: 5000 });
+    // One item (four long basis paths, listed again in the row's `basisFiles`) fits under this bound, two do not.
+    const f = await createS4BNoteCheckFixture(kind, { resultMaxBytes: 6000 });
     try {
       const ids: string[] = [];
       for (let k = 0; k < 6; k += 1) {
@@ -138,7 +139,7 @@ describe('S4B MF7a all-match paging', () => {
           match: 'all', limit: 100, cursor });
         expect(page.status).toBe('ready');
         if (page.status !== 'ready') return;
-        expect(Buffer.byteLength(JSON.stringify(page.value), 'utf8')).toBeLessThanOrEqual(5000);
+        expect(Buffer.byteLength(JSON.stringify(page.value), 'utf8')).toBeLessThanOrEqual(6000);
         seen.push(...page.value.items.map(item => item.noteId));
         if (page.value.next !== null) expect(page.value.complete).toBe(false);
         cursor = page.value.next;
@@ -146,6 +147,7 @@ describe('S4B MF7a all-match paging', () => {
         // A noteId-based `'all'` cursor would restart the port and loop forever.
         expect(pages).toBeLessThan(20);
       } while (cursor !== null);
+      expect(pages, 'the byte bound split the six notes over several pages').toBeGreaterThan(1);
       expect(new Set(seen).size).toBe(ids.length);
       expect([...seen].sort()).toEqual([...ids].sort());
     } finally { await f.close(); }

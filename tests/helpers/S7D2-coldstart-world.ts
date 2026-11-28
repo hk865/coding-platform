@@ -803,11 +803,24 @@ async function readOperations(world: S6AHostWorld): Promise<readonly RoleLineOpe
   }))).body, 'ready', 'the role-line operations read');
 }
 
-async function readCurrentPin(world: S6AHostWorld): Promise<ArchitectureCatalogPinV1> {
+/** `architecture/read`'s current pin, the public input `architecture/revise` takes. */
+export async function readCurrentPin(world: S6AHostWorld,
+  scope: WorkspaceScope = S6A_SCOPE): Promise<ArchitectureCatalogPinV1> {
   const view = valueOf<{ baseline: { ref: ArchitectureCatalogPinV1['baseline']['ref']; contentDigest: string };
     catalog: { ref: ArchitectureCatalogPinV1['catalogRef'] } }>((await world.post('architecture/read',
-    plain(S6A_SCOPE, { selection: { kind: 'current' } }))).body, 'ready', 'the current architecture');
+    plain(scope, { selection: { kind: 'current' } }))).body, 'ready', 'the current architecture');
   return { catalogRef: view.catalog.ref, baseline: { ref: view.baseline.ref, digest: view.baseline.contentDigest } };
+}
+
+/** The project and workspace revisions a public write pins. */
+export async function readRegistrationPins(world: Pick<S6AHostWorld, 'post'>,
+  scope: WorkspaceScope = S6A_SCOPE): Promise<[Record<string, unknown>, Record<string, unknown>]> {
+  const registration = valueOf<{ project: { revision: number }; workspace: { revision: number } }>(
+    (await world.post('workspaces/registration', plain(scope, { ...scope }))).body, 'ready', 'the registration');
+  return [
+    { ref: { aggregateType: 'Project', projectId: scope.projectId }, revision: registration.project.revision },
+    { ref: { aggregateType: 'Workspace', ...scope }, revision: registration.workspace.revision },
+  ];
 }
 
 /**
@@ -815,18 +828,16 @@ async function readCurrentPin(world: S6AHostWorld): Promise<ArchitectureCatalogP
  * (`tests/helpers/S6A-memory-fixture.ts:288–:358`): install and activate the world's completion policy at revision
  * 1, then `architecture/adopt-initial` with the empty catalog. The seed itself is not reused because it requires
  * the world's two seeded Goals (`:404`), which a cold start at `candidates` does not have.
+ *
+ * `scope` is the project the adoption runs on; it defaults to the seed's `S6A_SCOPE`, unchanged. A row that opened a
+ * project through `workspaces/open` (E1-09) passes that project's scope and reuses these same public steps.
  */
-async function adoptColdStartGovernance(world: S6AHostWorld): Promise<void> {
-  const scope = S6A_SCOPE;
-  const projectRef = { aggregateType: 'Project' as const, projectId: scope.projectId };
-  const workspaceRef = { aggregateType: 'Workspace' as const, ...scope };
+export async function adoptColdStartGovernance(world: S6AHostWorld,
+  scope: WorkspaceScope = S6A_SCOPE): Promise<void> {
   const policyRef = { aggregateType: 'CompletionPolicyRevision' as const, projectId: scope.projectId,
     policyId: S6A_POLICY_ID, revision: 1 };
   const activePolicyRef = { aggregateType: 'ProjectCompletionPolicyActive' as const, projectId: scope.projectId };
-  const registration = valueOf<{ project: { revision: number }; workspace: { revision: number } }>(
-    (await world.post('workspaces/registration', plain(scope, { ...scope }))).body, 'ready', 'the registration');
-  const projectPin = { ref: projectRef, revision: registration.project.revision };
-  const workspacePin = { ref: workspaceRef, revision: registration.workspace.revision };
+  const [projectPin, workspacePin] = await readRegistrationPins(world, scope);
   const installed = valueOf<{ ref: unknown; policyId: string; contentRevision: number; contentDigest: string }>(
     (await world.post('completion-policies/install', graphWrite(scope, { policyId: S6A_POLICY_ID, contentRevision: 1,
       content: S6A_POLICY_CONTENT }, 'c1t-policy-install', [projectPin, { ref: policyRef, revision: 0 }]))).body,
@@ -864,12 +875,9 @@ export async function dexcCommand(world: Pick<S6AHostWorld, 'post'>, verb: 'stop
   requestId: string, input: { scope?: WorkspaceScope; workspace?: WorkspaceScope; module?: ModuleRef } = {}):
 Promise<{ result: Record<string, unknown>; replay(): Promise<Record<string, unknown>> }> {
   const scope = input.scope ?? S6A_SCOPE;
-  const registration = valueOf<{ project: { revision: number }; workspace: { revision: number } }>(
-    (await world.post('workspaces/registration', plain(scope, { ...scope }))).body, 'ready', 'the registration');
   const body = graphWrite(scope, { workspace: { ...(input.workspace ?? scope) },
-    ...(input.module === undefined ? {} : { module: input.module }) }, requestId, [
-    { ref: { aggregateType: 'Project', projectId: scope.projectId }, revision: registration.project.revision },
-    { ref: { aggregateType: 'Workspace', ...scope }, revision: registration.workspace.revision }]);
+    ...(input.module === undefined ? {} : { module: input.module }) }, requestId,
+  await readRegistrationPins(world, scope));
   const send = async (): Promise<Record<string, unknown>> =>
     (await world.post(`workspaces/exploration/${verb}`, body)).body as Record<string, unknown>;
   return { result: await send(), replay: send };

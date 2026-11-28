@@ -677,9 +677,9 @@ export type SystemRoundSourceReadPort = {
 export type ForwardMessageInputV1 = {
   commandId: string; messageRef: SessionMessageRef; to: SessionRef; copyGoalRef?: GoalRef | null;
 };
-/** `waits/dispose` (§3.9 item 5); `to` is required exactly for `transfer`. */
+/** `waits/dispose` (§3.9 item 5); `to` is required exactly for `transfer` and `transfer_reply`. */
 export type DisposeWaitInputV1 = {
-  commandId: string; messageRef: SessionMessageRef; mode: 'cancel' | 'transfer'; to?: SessionRef;
+  commandId: string; messageRef: SessionMessageRef; mode: 'cancel' | 'transfer' | 'transfer_reply'; to?: SessionRef;
 };
 /**
  * `forwarded` is the one commit; `existing` is the same-destination second command (§3.9 item 2: "the existing

@@ -222,6 +222,9 @@ export type SessionMessageRecord = {
   withdrawnAt: string | null;
   waitCancelledAt: string | null;
   transferredTo: SessionMessageRef | null;
+  /** `waits/dispose { mode:'transfer_reply' }`: the new message that received this saved reply. Optional and absent on
+   *  old records; readers use `?? null`. Never `acceptedInputs`: a transfer is not a Kernel acceptance. */
+  responseTransferredTo?: SessionMessageRef | null;
   originalRef: SessionMessageRef | null;
   appliedAt: string | null;
   rejectedAt: string | null;

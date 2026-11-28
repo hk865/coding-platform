@@ -116,7 +116,7 @@ import type { WorkLineConversationPort } from '../composition/work-line-conversa
 // Slice 4C C1.4 (spec §2/L15/L19): the notes owner port and its wire shapes.
 import type {
   NoteCheckPort, NoteCheckV1, NoteDispositionResult, NoteListRequestV1, NoteListResultV1, NoteMemoryReadResult,
-  WriteNoteEnvelopeV1, NoteWritePort, VersionListPageV1,
+  NoteReadPort, WriteNoteEnvelopeV1, NoteWritePort, VersionListPageV1,
 } from '../core/work-graph/model/note-contracts.js';
 import type { SemanticLinksReader } from '../core/work-graph/notes/semantic-layer-read.js';
 import type { TaskNodeCommitPort } from '../core/work-graph/model/task-node-commit-contracts.js';
@@ -290,6 +290,8 @@ export type CoreRouteBindings = {
   readContinuationBrief: NonNullable<RuntimeExecutionPort['readContinuationBrief']>;
   /** P1（决定 121-147）：一次 Work Run 或 Query 轮的步骤。 */
   readRunSteps: NonNullable<RuntimeExecutionPort['readRunSteps']>;
+  /** R-P1（E4）：一次 Work Run 或 QueryRun 的冻结提示词记录；路由默认不带正文。 */
+  readPromptRecord: NonNullable<RuntimeExecutionPort['readPromptRecord']>;
   // A.2 step 5.5 (G7): the Goal control with its fan-out, and the Goal display, through the Host driver.
   setGoalControl: GoalControlPort['setGoalControl'];
   readGoalDisplay: GoalControlPort['readGoalDisplay'];
@@ -366,10 +368,11 @@ export type CoreRouteBindings = {
   readGraphHover: NodeDetailReadPort['readGraphHover'];
   readNodeDetail: NodeDetailReadPort['readNodeDetail'];
   setLinePins: WorkLineSettingsPort['setLinePins'];
-  // Slice 4C C1.4 (spec §2): the six notes/version-list routes. `notes/write`
+  // Slice 4C C1.4 (spec §2): the seven notes/version-list routes. `notes/write`
   // returns the write envelope (write + the after-write check); the three writes
   // are person-only, so their binding can answer a `forbidden` rejection.
   listNotes: (ctx: CoreCallContext, request: NoteListRequestV1) => Promise<NoteMemoryReadResult<NoteListResultV1>>;
+  readNote: NoteReadPort['readNote'];
   writeNote: (ctx: CoreCallContext, request: Parameters<NoteWritePort['writeNote']>[1]) =>
     Promise<WriteNoteEnvelopeV1 | CoreRejection>;
   withdrawNote: (ctx: CoreCallContext, request: Parameters<NoteWritePort['withdrawNote']>[1]) =>
@@ -512,7 +515,7 @@ export type CoreRoutePlatform = {
   runtime: Pick<RuntimeExecutionPort,
     'capabilities' | 'createSession' | 'readSessionHistory' | 'readTaskExecutionHistory' | 'startRun' | 'deliverControl'>
     & Required<Pick<RuntimeExecutionPort, 'prepareQuery' | 'startQuery' | 'observeQuery'>>
-    & Pick<RuntimeExecutionPort, 'readContinuationBrief' | 'cancelQuery' | 'readRunSteps'>;
+    & Pick<RuntimeExecutionPort, 'readContinuationBrief' | 'cancelQuery' | 'readRunSteps' | 'readPromptRecord'>;
   /**
    * A.2 step 5.4: the requeue owner; a narrow platform without it answers
    * `unsupported`. K3 L21 D9: `readTaskRequeueByIdentity` is the optional
@@ -583,6 +586,7 @@ export type CoreRoutePlatform = {
    * `unsupported`. */
   notes?: NoteWritePort & NoteCheckPort & {
     listNotes: (ctx: CoreCallContext, request: NoteListRequestV1) => Promise<NoteMemoryReadResult<NoteListResultV1>>;
+    readNote: NoteReadPort['readNote'];
     listPlanVersions: (ctx: CoreCallContext, input: { goalId: string; limit: number; cursor: string | null }) =>
       Promise<ReadResult<VersionListPageV1>>;
     listCatalogVersions: (ctx: CoreCallContext, input: { limit: number; cursor: string | null }) =>
@@ -799,6 +803,8 @@ export const CORE_ROUTE_SPECS: Record<
   'executions/brief': { kind: 'plain', binding: 'readContinuationBrief', owner: 'runtime.readContinuationBrief' },
   // P1 (decision 121-147): one Work Run's or Query round's steps, `{ ref, after, limit }`.
   'executions/steps': { kind: 'plain', binding: 'readRunSteps', owner: 'runtime.readRunSteps' },
+  // R-P1 (E4): the frozen prompt record, `{ ref, includeTexts? }`; the route defaults `includeTexts` to false.
+  'executions/prompt-record': { kind: 'plain', binding: 'readPromptRecord', owner: 'runtime.readPromptRecord' },
   // A.2 step 5.5 (spec §2.6 Host route `goals/control`, §2.3 fan-out, §2.1 display).
   'goals/control': { kind: 'graph_write', binding: 'setGoalControl', owner: 'goalControl.setGoalControl' },
   'goals/display': { kind: 'plain', binding: 'readGoalDisplay', owner: 'goalControl.readGoalDisplay' },
@@ -889,6 +895,7 @@ export const CORE_ROUTE_SPECS: Record<
   // lists, owner `notes` non-enumerable in the composition root. The three
   // writes are person-only.
   'notes/list': { kind: 'plain', binding: 'listNotes', owner: 'notes.listNotes' },
+  'notes/read': { kind: 'plain', binding: 'readNote', owner: 'notes.readNote' },
   'notes/write': { kind: 'plain', binding: 'writeNote', owner: 'notes.writeNote' },
   'notes/withdraw': { kind: 'plain', binding: 'withdrawNote', owner: 'notes.withdrawNote' },
   'notes/review': { kind: 'plain', binding: 'reviewNote', owner: 'notes.reviewNote' },
@@ -974,6 +981,22 @@ function parseScope(raw: Record<string, unknown>): CoreScope | CoreRejection {
   return { projectId: scope.projectId, workspaceId: scope.workspaceId };
 }
 
+/**
+ * R-P1 E3: the `body` target `notes/read` and `notes/list` accept from HTTP. The read model reads its members
+ * directly, so a wrong shape must be refused here instead of throwing (or paging another note/version).
+ */
+function noteBodyProblem(value: unknown): string | null {
+  if (!isPlainObject(value)) return 'input.body must be an object';
+  if (typeof value.noteId !== 'string' || value.noteId.length === 0)
+    return 'input.body.noteId must be a non-empty string';
+  if (value.version !== undefined
+    && (typeof value.version !== 'number' || !Number.isSafeInteger(value.version) || value.version < 1))
+    return 'input.body.version must be a positive integer';
+  if ('cursor' in value && value.cursor !== null && typeof value.cursor !== 'string')
+    return 'input.body.cursor must be a string or null';
+  return null;
+}
+
 export function parseCoreRouteRequest(suffix: CoreRouteSuffix, raw: unknown): ParsedCoreRequest {
   if (!isPlainObject(raw)) return invalid('the request body must be a JSON object');
   const scope = parseScope(raw);
@@ -985,6 +1008,14 @@ export function parseCoreRouteRequest(suffix: CoreRouteSuffix, raw: unknown): Pa
       return invalid(`the request body may not carry "${key}"`);
   }
   if (!(containerKey in raw)) return invalid(`the request body requires "${containerKey}"`);
+  if (spec.kind === 'plain' && (suffix === 'notes/read' || suffix === 'notes/list')) {
+    const input = raw.input;
+    if (!isPlainObject(input)) return invalid('input must be an object');
+    if ('body' in input) {
+      const problem = noteBodyProblem(input.body);
+      if (problem !== null) return invalid(problem);
+    }
+  }
   if (spec.kind === 'graph_write') {
     const request = raw.request;
     if (!isPlainObject(request)) return invalid('request must be an object');
@@ -1347,6 +1378,9 @@ export function createPlatformCoreRouteBindings(
     readRunSteps: platform.runtime.readRunSteps === undefined
       ? unsupported('the Host Runtime does not publish the Run steps read')
       : platform.runtime.readRunSteps.bind(platform.runtime),
+    readPromptRecord: platform.runtime.readPromptRecord === undefined
+      ? unsupported('the Host Runtime does not publish the prompt record read')
+      : platform.runtime.readPromptRecord.bind(platform.runtime),
     setGoalControl: async (ctx, request) => {
       if (goalControl === undefined) {
         return unsupported<GoalControlPort['setGoalControl']>(
@@ -1532,11 +1566,13 @@ export function createPlatformCoreRouteBindings(
       : platform.nodeDetail.readNodeDetail.bind(platform.nodeDetail),
     setLinePins: platform.lineSettings === undefined ? unsupported('the platform does not publish lineSettings.setLinePins')
       : platform.lineSettings.setLinePins.bind(platform.lineSettings),
-    // Slice 4C C1.4: the six named notes owner methods. The group is
+    // Slice 4C C1.4: the seven named notes owner methods. The group is
     // non-enumerable, so a spread copy lacks it and the binding answers an
     // explicit `unsupported`.
     listNotes: platform.notes === undefined ? unsupported('the platform does not publish notes.listNotes')
       : platform.notes.listNotes.bind(platform.notes),
+    readNote: platform.notes === undefined ? unsupported('the platform does not publish notes.readNote')
+      : platform.notes.readNote.bind(platform.notes),
     writeNote: platform.notes === undefined ? unsupported('the platform does not publish notes.writeNote')
       : writeNoteEnvelope,
     withdrawNote: platform.notes === undefined ? unsupported('the platform does not publish notes.withdrawNote')
@@ -1962,6 +1998,16 @@ export async function dispatchCoreRoute(
       case 'tasks/hold/release': return bindings.releaseClaimHolds(ctx, graphWrite.request as never);
       case 'executions/brief': return bindings.readContinuationBrief(ctx, plain.input as never);
       case 'executions/steps': return bindings.readRunSteps(ctx, plain.input as never);
+      case 'executions/prompt-record': {
+        const input = plain.input;
+        if (!isPlainObject(input))
+          return { status: 'rejected', code: 'invalid',
+            reason: 'executions/prompt-record requires an object input' };
+        const includeTexts = input['includeTexts'];
+        if (includeTexts !== undefined && typeof includeTexts !== 'boolean')
+          return { status: 'rejected', code: 'invalid', reason: 'includeTexts must be a boolean' };
+        return bindings.readPromptRecord(ctx, input['ref'] as never, { includeTexts: includeTexts ?? false });
+      }
       case 'goals/control': return bindings.setGoalControl(ctx, graphWrite.request as never);
       case 'goals/display': return bindings.readGoalDisplay(ctx, plain.input as never);
       // The person's gate release and the Goal's gate page.
@@ -2022,8 +2068,9 @@ export async function dispatchCoreRoute(
       case 'lines/pin': return bindings.setLinePins(ctx, graphWrite.request as never);
       case 'graph/hover': return bindings.readGraphHover(ctx, plain.input as never);
       case 'graph/detail': return bindings.readNodeDetail(ctx, plain.input as never);
-      // Slice 4C C1.4: the six notes/version-list routes.
+      // Slice 4C C1.4: the seven notes/version-list routes.
       case 'notes/list': return bindings.listNotes(ctx, plain.input as never);
+      case 'notes/read': return bindings.readNote(ctx, plain.input as never);
       case 'notes/write': return bindings.writeNote(ctx, plain.input as never);
       case 'notes/withdraw': return bindings.withdrawNote(ctx, plain.input as never);
       case 'notes/review': return bindings.reviewNote(ctx, plain.input as never);

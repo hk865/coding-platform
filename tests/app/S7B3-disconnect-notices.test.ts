@@ -60,6 +60,11 @@ describe('N-source (memory): the disconnect person notice is a pure projection',
     expect(read.notices[0]).toMatchObject({
       itemKey, category: 'disconnect', subject: { kind: 'goal', goalRef: wait.goal },
       summary: `断开通知 · Session ${wait.recipient.ref.sessionId} · ${archivedAt} · 没人接，等你定`,
+      disconnect: {
+        operationKey, occurredAt: archivedAt, messageRef: wait.message, side: 'recipient',
+        party: wait.recipient.ref, counterparty: wait.sender.ref, successor: null,
+        goalRef: wait.goal, copyGoal: null,
+      },
       objects: [], rework: null,
     });
     expect(read.counts.notices.disconnect).toBe(1);
@@ -71,26 +76,23 @@ describe('N-source (memory): the disconnect person notice is a pure projection',
     expect(cascaded.notices).toHaveLength(1);
   });
 
-  it('archiving both sides yields two items (waiting and recipient) with different keys', async () => {
+  it('archiving both sides after the wait moved yields one item, the recipient side', async () => {
     const world = await openWorld('memory');
     const wait = await runS7BWait(world, { label: 'n-source-both' });
-    // The waiting line can be archived only with its open wait transferred; the original sender stays the message's
-    // `waiting` party, so both communication sides of the same unconsumed wait are gone.
+    // The helper archives the waiting line while transferring its open wait; the reply handler is now another line,
+    // so the original waiting side is no longer a disconnect party (R-F3).
     const message = ready<SessionMessage>(await world.post('messages/read', plain(S6A_SCOPE, wait.message)),
       'the waiting message');
     const transferTo = await world.createWorkSession('s7b3-n-source-transfer');
     await nameS7AReplyHandler(world, message, transferTo.ref);
-    const archivedSender = await world.readSession(wait.sender);
     const archivedRecipient = await world.archive(wait.recipient);
     const read = await disconnectQueueOf(world);
 
     const recipientKey = itemKeyOf(operationKeyOf(wait.recipient.ref, archivedRecipient.record.archivedAt!),
       wait.message, 'recipient');
-    const waitingKey = itemKeyOf(operationKeyOf(wait.sender.ref, archivedSender.record.archivedAt!),
-      wait.message, 'waiting');
-    expect(read.notices).toHaveLength(2);
-    expect(read.notices.map(item => item.itemKey).sort()).toEqual([recipientKey, waitingKey].sort());
-    expect(recipientKey).not.toBe(waitingKey);
+    expect(read.notices).toHaveLength(1);
+    expect(read.notices.map(item => item.itemKey)).toEqual([recipientKey]);
+    expect(read.notices[0]).toMatchObject({ disconnect: { side: 'recipient', party: wait.recipient.ref } });
     expect(read.notices.every(item => item.subject.kind === 'goal')).toBe(true);
   });
 
@@ -109,6 +111,12 @@ describe('N-source (memory): the disconnect person notice is a pure projection',
     expect(read.notices.find(item => item.itemKey === key)).toMatchObject({
       category: 'disconnect', subject: { kind: 'goal', goalRef: wait.goal },
       summary: `断开通知 · Session ${wait.recipient.ref.sessionId} · ${archived.record.archivedAt} · 没人接，等你定`,
+      disconnect: {
+        operationKey: operationKeyOf(wait.recipient.ref, archived.record.archivedAt!),
+        occurredAt: archived.record.archivedAt, messageRef: sent.ref, side: 'recipient',
+        party: wait.recipient.ref, counterparty: null, successor: null,
+        goalRef: wait.goal, copyGoal: null,
+      },
     });
   });
 });
@@ -133,6 +141,11 @@ describe('N-source (SQLite only: the unavailable-line restart)', () => {
       itemKey, category: 'disconnect',
       summary: `断开通知 · Session ${retired.ref.sessionId} · ${S6A_AT} · 没人接，等你定`,
       position: { kind: 'commit', cursor: unavailableSince },
+      disconnect: {
+        operationKey: operationKeyOf(retired.ref, unavailableSince!), occurredAt: S6A_AT,
+        messageRef: sent.ref, side: 'recipient', party: retired.ref,
+        counterparty: null, successor: null, goalRef: null, copyGoal: null,
+      },
       objects: [], rework: null,
     });
   });
@@ -180,6 +193,12 @@ describe('N-source case 3: the copy-forward gone recipient carries the copy Goal
     expect(read.notices).toHaveLength(1);
     expect(read.notices[0]).toMatchObject({
       itemKey: key, category: 'disconnect',
+      disconnect: {
+        operationKey: operationKeyOf(line.ref, archived.record.archivedAt!),
+        occurredAt: archived.record.archivedAt, messageRef: message.ref, side: 'recipient',
+        party: line.ref, counterparty: null, successor: null,
+        goalRef: sourceGoal, copyGoal: { ref: copy.goal.ref, revision: copy.goal.revision },
+      },
       objects: [{ kind: 'aggregate', pin: { ref: copy.goal.ref, revision: copy.goal.revision }, label: 'copy Goal' }],
     });
   });

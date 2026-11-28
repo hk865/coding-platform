@@ -125,6 +125,15 @@ export const LOCAL_WORKBENCH_HOST_TEMPLATE = {
 // provider reasoning. The generic 4K reply cap truncates that normal path.
 export const LOCAL_WORKBENCH_BUDGET: RuntimeBudget = { ...DEFAULT_RUNTIME_BUDGET, perResponseTokens: 16384 };
 
+/** Trusted window for one local-workbench binding; published DeepSeek model
+ * limits, checked 2026-09-29: https://api-docs.deepseek.com/quick_start/pricing/
+ * The budget and the settings snapshot both read this one decision. */
+export function contextWindowTokensOf(model: { provider: string; model: string }): number {
+  return model.provider === 'deepseek'
+    && ['deepseek-flash', 'deepseek-v4-pro', 'deepseek-v4.1-flash'].includes(model.model)
+    ? 1_000_000 : LOCAL_WORKBENCH_BUDGET.contextWindowTokens;
+}
+
 /**
  * §5.3.5: the planning round's own output reserve. The one formula
  * (`planningOutputReserveTokens`) is measured against this profile's model

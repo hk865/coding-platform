@@ -78,7 +78,7 @@ function harness(f: S5DecisionFixture, sources: readonly DecisionNoticeSourcePor
 async function saveAutomationPolicy(f: S5DecisionFixture,
   holder: { current: TaskAutomationPolicyV1 }, autoReworkLimit: number): Promise<TaskAutomationPolicyV1> {
   const assembly: HostSettingsAssembly = {
-    listWorkspaces: () => [], secretConfigured: () => false,
+    listWorkspaces: () => [], forgetProject: () => {}, secretConfigured: () => false,
     bootstrap: () => ({}) as BootstrapResponse,
     async openWorkspace() { return { status: 'rejected', code: 'unsupported', reason: 'not used by S5 notices' }; },
   };

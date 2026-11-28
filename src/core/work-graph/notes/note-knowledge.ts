@@ -161,11 +161,13 @@ function linkOverlay(recorded: LinkPayloadV1 | undefined, file: NonNullable<Note
 }
 
 /**
- * Where an overlaid head's knowledge came from: its line, its file's blob (the "needs verification" row's key)
- * and whether a file or basis path has no recorded digest (Q4: the note reads `unchecked`). Kept per head
- * object, so a read hands the head on and asks here instead of threading the file through every reader.
+ * Where an overlaid head's knowledge came from: its line, its file's blob (the "needs verification" row's key),
+ * the basis paths the file declares and whether a file or basis path has no recorded digest (Q4: the note reads
+ * `unchecked`). The overlaid head's checkable basis keeps only the paths with a recorded digest (D49-07 reads the
+ * declared paths, so the row's `basisFiles` comes from here). Kept per head object, so a read hands the head on
+ * and asks here instead of threading the file through every reader.
  */
-export type NoteFileFacts = { lineRef: string; blobSha: string; uncheckedPaths: boolean };
+export type NoteFileFacts = { lineRef: string; blobSha: string; basisFiles: string[]; uncheckedPaths: boolean };
 const FILE_OF = new WeakMap<NoteHeadSnapshot, NoteFileFacts>();
 export function noteFileFactsOf(head: NoteHeadSnapshot): NoteFileFacts | undefined { return FILE_OF.get(head); }
 
@@ -173,7 +175,7 @@ export function noteFileFactsOf(head: NoteHeadSnapshot): NoteFileFacts | undefin
 export function headWithFile(head: NoteHeadSnapshot, line: LineKnowledge, note: LineNoteFileV1): NoteHeadSnapshot {
   const overlaid = overlaidHead(head, note.knowledge);
   FILE_OF.set(overlaid.head, { lineRef: lineRefKey(line.scope, line.line), blobSha: note.blobSha,
-    uncheckedPaths: overlaid.unchecked });
+    basisFiles: note.knowledge.basisFiles, uncheckedPaths: overlaid.unchecked });
   return overlaid.head;
 }
 

@@ -58,7 +58,8 @@ async function expectEnd(world: S7D2RoleLineWorld): Promise<void> {
   const projectId = world.startLines.projectId;
   const coldStartRef = { aggregateType: 'CoreOperation', projectId, operationId: `cold_start:${projectId}` };
   expect(rows.filter(row => row.operation.operationId === coldStartRef.operationId)).toEqual([{
-    operation: coldStartRef, action: 'role_line', phase: 'running', actionPhase: 'candidates', steps: [],
+    operation: coldStartRef, action: 'role_line', main: true, inGraph: true, awaitingTopLevelApproval: false,
+    phase: 'running', actionPhase: 'candidates', steps: [],
     result: null, lastCompleted: null, candidate: null, pendingRegions: [], explorations: [], batchRefs: [],
     route: null, baseCatalogPin: null, depth: 2,
   }]);

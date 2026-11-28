@@ -112,7 +112,8 @@ import type {
 // Slice 4C C1.4 (spec §2/L15/L19): the notes and version-list route contracts.
 import type { ReadResult, WriteResult } from '../contracts/core/results.js';
 import type {
-  NoteListRequestV1, NoteListResultV1, NoteMemoryReadResult, WriteNoteEnvelopeV1, NoteWritePort, VersionListPageV1,
+  NoteListRequestV1, NoteListResultV1, NoteMemoryReadResult, WriteNoteEnvelopeV1, NoteWritePort,
+  VersionListPageV1,
 } from '../core/work-graph/model/note-contracts.js';
 // The four person-only request command routes. Their bodies and results are
 // derived from Workflow's `RequestSubmitPort`, never restated here.
@@ -292,6 +293,8 @@ export type CoreRouteSuffix =
   | 'executions/brief'
   // P1 (decision 121-147): one Work Run's or Query round's steps (think/read/edit/command/message/tool).
   | 'executions/steps'
+  // R-P1 (E4): the frozen prompt record, read without texts unless the caller asks.
+  | 'executions/prompt-record'
   // A.2 step 5.5 (G7): the Goal pause/resume/cancel with its per-Run fan-out,
   // and the Goal display reduction (GOAL-17..30 with runStops).
   | 'goals/control'
@@ -366,6 +369,7 @@ export type CoreRouteSuffix =
   | 'graph/detail'
   // Slice 4C C1.4 (spec §2/L15/L19): the person's notes and the two version lists.
   | 'notes/list'
+  | 'notes/read'
   | 'notes/write'
   | 'notes/withdraw'
   | 'notes/review'
@@ -765,7 +769,7 @@ export type MaintainerCoreRouteDto = {
 };
 
 // ---------------------------------------------------------------------------
-// Slice 4C C1.4 (spec §2, L15, L19): the six notes and version-list routes. All
+// Slice 4C C1.4 (spec §2, L15, L19): the seven notes and version-list routes. All
 // are `plain`; `notes/write`, `notes/withdraw` and `notes/review` are person-only
 // (the Host layer guards identity). The notes aliases derive from the note
 // contracts; the two version lists read `VersionListPageV1`.
@@ -1008,10 +1012,18 @@ export type ExecutionsRunningCommandsResponse = RouteResponse<HostRunningCommand
 // P1 (decision 121-147): the Run steps read, derived from the Runtime owner method.
 export type ExecutionsStepsBody = PlainBody<NonNullable<RuntimeExecutionPort['readRunSteps']>>;
 export type ExecutionsStepsResponse = RouteResponse<NonNullable<RuntimeExecutionPort['readRunSteps']>>;
-/** SHT-2: the running-command read's typed assembly; `CORE_ROUTE_SPECS`'s annotation names it. P1 adds the steps read. */
+// R-P1 (E4): the prompt-record read; the port's ref plus the route's `includeTexts` switch.
+type PromptRecordRouteMethod = (
+  ctx: CoreCallContext,
+  input: { ref: Parameters<NonNullable<RuntimeExecutionPort['readPromptRecord']>>[1]; includeTexts?: boolean },
+) => ReturnType<NonNullable<RuntimeExecutionPort['readPromptRecord']>>;
+export type ExecutionsPromptRecordBody = PlainBody<PromptRecordRouteMethod>;
+export type ExecutionsPromptRecordResponse = RouteResponse<PromptRecordRouteMethod>;
+/** SHT-2: the running-command read's typed assembly; `CORE_ROUTE_SPECS`'s annotation names it. P1 adds the steps read; R-P1 the prompt record. */
 export type ExecutionsCoreRouteDto = {
   'executions/running-commands': { body: ExecutionsRunningCommandsBody; response: ExecutionsRunningCommandsResponse };
   'executions/steps': { body: ExecutionsStepsBody; response: ExecutionsStepsResponse };
+  'executions/prompt-record': { body: ExecutionsPromptRecordBody; response: ExecutionsPromptRecordResponse };
 };
 
 // ---------------------------------------------------------------------------

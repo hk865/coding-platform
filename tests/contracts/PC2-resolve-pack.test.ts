@@ -6,7 +6,8 @@
  */
 import { describe, expect, it } from 'vitest';
 import type {
-    PromptPackChainEntryV1, PromptPackManifestV1, PromptPackProblemV1, PromptPackValidationV1,
+    PromptPackChainEntryV1, PromptPackManifestV1, PromptPackProblemDetailV1, PromptPackProblemKind,
+    PromptPackProblemV1, PromptPackValidationV1,
 } from '../../src/contracts/prompts/prompt-pack.js';
 import { PromptRenderError, renderTemplate } from '../../src/contracts/prompts/render-template.js';
 import { resolvePromptPackV1 } from '../../src/contracts/prompts/resolve-pack.js';
@@ -14,12 +15,19 @@ import { PC2_WORK_INPUT, pc2PackCases, pc2PackEntry } from '../helpers/PC2-pack-
 
 const cases = pc2PackCases();
 
-const packProblem = (packId: string, reason: string): PromptPackProblemV1 =>
-    ({ packId, templateId: null, reason });
-const templateProblem = (packId: string, templateId: string, reason: string): PromptPackProblemV1 =>
-    ({ packId, templateId, reason });
-const toolProblem = (packId: string, toolName: string, reason: string): PromptPackProblemV1 =>
-    ({ packId, templateId: null, toolName, reason });
+const packProblem = (
+    packId: string, reason: string, kind: PromptPackProblemKind = 'file_problem',
+): PromptPackProblemV1 => ({ packId, templateId: null, kind, reason });
+const templateProblem = (
+    packId: string, templateId: string, reason: string, kind: PromptPackProblemKind = 'file_problem',
+    detail?: PromptPackProblemDetailV1,
+): PromptPackProblemV1 => ({ packId, templateId, kind, reason, ...(detail === undefined ? {} : { detail }) });
+const toolProblem = (
+    packId: string, toolName: string, reason: string, kind: PromptPackProblemKind = 'file_problem',
+    detail?: PromptPackProblemDetailV1,
+): PromptPackProblemV1 => ({
+    packId, templateId: null, toolName, kind, reason, ...(detail === undefined ? {} : { detail }),
+});
 
 /** Every broken fixture case, mapped to the complete problem list it must produce. */
 const BROKEN: Readonly<Record<string, PromptPackProblemV1[]>> = {
@@ -33,17 +41,17 @@ const BROKEN: Readonly<Record<string, PromptPackProblemV1[]>> = {
     'missing-parent': [
         packProblem('bad-missing-parent', 'pack "bad-missing-parent" extends missing pack "absent-parent"'),
     ],
-    'manifest-json': [packProblem('bad-manifest-json', 'the manifest is not valid JSON')],
-    'manifest-object': [packProblem('bad-manifest-object', 'the manifest must be a JSON object')],
-    'strings-json': [packProblem('bad-strings-json', 'the string table is not valid JSON')],
-    'strings-object': [packProblem('bad-strings-object', 'the string table must be a JSON object')],
-    'string-value': [packProblem('bad-string-value', 'string "context.role.label" must be a string')],
-    'unknown-string': [packProblem('bad-unknown-string', 'string "pc2.unknown" is unknown')],
-    'fixed-heading': [packProblem('bad-fixed-heading', 'string "context.omissions.heading" is fixed')],
-    'fixed-prefix': [packProblem('bad-fixed-prefix', 'string "context.omissions.prefix" is fixed')],
-    'fixed-suffix': [packProblem('bad-fixed-suffix', 'string "context.omissions.suffix" is fixed')],
+    'manifest-json': [packProblem('bad-manifest-json', 'the manifest is not valid JSON', 'json_problem')],
+    'manifest-object': [packProblem('bad-manifest-object', 'the manifest must be a JSON object', 'json_problem')],
+    'strings-json': [packProblem('bad-strings-json', 'the string table is not valid JSON', 'json_problem')],
+    'strings-object': [packProblem('bad-strings-object', 'the string table must be a JSON object', 'json_problem')],
+    'string-value': [packProblem('bad-string-value', 'string "context.role.label" must be a string', 'json_problem')],
+    'unknown-string': [packProblem('bad-unknown-string', 'string "pc2.unknown" is unknown', 'json_problem')],
+    'fixed-heading': [packProblem('bad-fixed-heading', 'string "context.omissions.heading" is fixed', 'json_problem')],
+    'fixed-prefix': [packProblem('bad-fixed-prefix', 'string "context.omissions.prefix" is fixed', 'json_problem')],
+    'fixed-suffix': [packProblem('bad-fixed-suffix', 'string "context.omissions.suffix" is fixed', 'json_problem')],
     'fixed-nameseparator': [
-        packProblem('bad-fixed-nameseparator', 'string "context.omissions.nameSeparator" is fixed'),
+        packProblem('bad-fixed-nameseparator', 'string "context.omissions.nameSeparator" is fixed', 'json_problem'),
     ],
     'unknown-template': [
         templateProblem('bad-unknown-template', 'pc2-unknown', 'template "pc2-unknown" is not declared by the slot tables'),
@@ -69,15 +77,15 @@ const BROKEN: Readonly<Record<string, PromptPackProblemV1[]>> = {
         templateProblem('bad-template-file-absolute', 'base', 'file "/outside.txt" must be relative'),
     ],
     'unknown-slot': [
-        templateProblem('bad-unknown-slot', 'base', 'slot "pc2_unknown" is not declared by template "base"'),
+        templateProblem('bad-unknown-slot', 'base', 'slot "pc2_unknown" is not declared by template "base"', 'slot_undeclared', { slot: 'pc2_unknown' }),
     ],
     'duplicate-slot': [
         templateProblem('bad-duplicate-slot', 'continuation-brief',
-            'template "continuation-brief" uses slot "marker" more than once'),
+            'template "continuation-brief" uses slot "marker" more than once', 'slot_duplicate', { slot: 'marker' }),
     ],
     'required-slot-missing': [
         templateProblem('bad-required-slot-missing', 'continuation-brief',
-            'template "continuation-brief" is missing required slot "marker"'),
+            'template "continuation-brief" is missing required slot "marker"', 'required_slot_empty', { slot: 'marker' }),
     ],
     'stray-open': [templateProblem('bad-stray-open', 'base', 'template "base" has an unclosed "{{"')],
     'unclosed-block': [
@@ -98,33 +106,34 @@ const BROKEN: Readonly<Record<string, PromptPackProblemV1[]>> = {
     // table has no footprint: the parser rejects the undeclared slot first.
     'section-extra': [
         templateProblem('bad-section-extra', 'query-copy-input',
-            'slot "footprint" is not declared by template "query-copy-input"'),
+            'slot "footprint" is not declared by template "query-copy-input"', 'slot_undeclared',
+            { slot: 'footprint' }),
     ],
     'role-not-first': [
         templateProblem('bad-role-not-first', 'work-input',
-            'template "work-input" must start with the role section'),
+            'template "work-input" must start with the role section', 'role_not_first', { section: 'role' }),
     ],
     'section-twice': [
         templateProblem('bad-section-twice', 'work-input',
-            'template "work-input" uses slot "reminders" more than once'),
+            'template "work-input" uses slot "reminders" more than once', 'slot_duplicate', { slot: 'reminders' }),
     ],
     'tool-shell': [toolProblem('bad-tool-shell', 'shell', 'tool shell has no platform text')],
     'tool-read': [toolProblem('bad-tool-read', 'read', 'tool read has no platform text')],
     'tool-pc2-unknown-tool': [
         toolProblem('bad-tool-pc2-unknown-tool', 'pc2_unknown_tool', 'tool pc2_unknown_tool has no platform text'),
     ],
-    'tool-empty': [toolProblem('bad-tool-empty', 'record_note', 'tool record_note has an empty description')],
+    'tool-empty': [toolProblem('bad-tool-empty', 'record_note', 'tool record_note has an empty description', 'json_problem')],
     'tool-parameters-object': [
-        toolProblem('bad-tool-parameters-object', 'list_files', 'tool list_files parameters must be an object'),
+        toolProblem('bad-tool-parameters-object', 'list_files', 'tool list_files parameters must be an object', 'json_problem'),
     ],
     'tool-parameter-value': [
-        toolProblem('bad-tool-parameter-value', 'list_files', 'tool list_files parameter "prefix" must be a string'),
+        toolProblem('bad-tool-parameter-value', 'list_files', 'tool list_files parameter "prefix" must be a string', 'json_problem'),
     ],
     'tool-prefix-missing': [
-        toolProblem('bad-tool-prefix-missing', 'list_files', 'tool list_files parameters differ'),
+        toolProblem('bad-tool-prefix-missing', 'list_files', 'tool list_files parameters differ', 'tool_parameters_differ', { extra: [], missing: ['prefix'] }),
     ],
-    'tool-prefix-extra': [toolProblem('bad-tool-prefix-extra', 'list_files', 'tool list_files parameters differ')],
-    'tool-json': [toolProblem('bad-tool-json', 'record_note', 'tool "record_note" text is not valid JSON')],
+    'tool-prefix-extra': [toolProblem('bad-tool-prefix-extra', 'list_files', 'tool list_files parameters differ', 'tool_parameters_differ', { extra: ['prefix.extra'], missing: [] })],
+    'tool-json': [toolProblem('bad-tool-json', 'record_note', 'tool "record_note" text is not valid JSON', 'json_problem')],
     'tool-file-missing': [
         toolProblem('bad-tool-file-missing', 'record_note', 'tool file "tools/record_note.json" is missing from the pack'),
     ],
@@ -258,13 +267,15 @@ describe('resolvePromptPackV1 tool resolution (PC-25)', () => {
             toolProblem('bad-tool-shell', 'shell', 'tool shell has no platform text'),
         ]);
         expect(rejected(resolvePromptPackV1(cases.broken['tool-empty']!))).toEqual([
-            toolProblem('bad-tool-empty', 'record_note', 'tool record_note has an empty description'),
+            toolProblem('bad-tool-empty', 'record_note', 'tool record_note has an empty description', 'json_problem'),
         ]);
         expect(rejected(resolvePromptPackV1(cases.broken['tool-prefix-missing']!))).toEqual([
-            toolProblem('bad-tool-prefix-missing', 'list_files', 'tool list_files parameters differ'),
+            toolProblem('bad-tool-prefix-missing', 'list_files', 'tool list_files parameters differ',
+                'tool_parameters_differ', { extra: [], missing: ['prefix'] }),
         ]);
         expect(rejected(resolvePromptPackV1(cases.broken['tool-prefix-extra']!))).toEqual([
-            toolProblem('bad-tool-prefix-extra', 'list_files', 'tool list_files parameters differ'),
+            toolProblem('bad-tool-prefix-extra', 'list_files', 'tool list_files parameters differ',
+                'tool_parameters_differ', { extra: ['prefix.extra'], missing: [] }),
         ]);
     });
 });
@@ -273,15 +284,16 @@ describe('resolvePromptPackV1 load checks (PC-22)', () => {
     it('rejects a role that is not first, an illegal section and a section used twice with literal reasons', () => {
         expect(rejected(resolvePromptPackV1(cases.broken['role-not-first']!))).toEqual([
             templateProblem('bad-role-not-first', 'work-input',
-                'template "work-input" must start with the role section'),
+                'template "work-input" must start with the role section', 'role_not_first', { section: 'role' }),
         ]);
         expect(rejected(resolvePromptPackV1(cases.broken['section-extra']!))).toEqual([
             templateProblem('bad-section-extra', 'query-copy-input',
-                'slot "footprint" is not declared by template "query-copy-input"'),
+                'slot "footprint" is not declared by template "query-copy-input"', 'slot_undeclared',
+            { slot: 'footprint' }),
         ]);
         expect(rejected(resolvePromptPackV1(cases.broken['section-twice']!))).toEqual([
             templateProblem('bad-section-twice', 'work-input',
-                'template "work-input" uses slot "reminders" more than once'),
+                'template "work-input" uses slot "reminders" more than once', 'slot_duplicate', { slot: 'reminders' }),
         ]);
     });
 });
@@ -302,7 +314,7 @@ describe('resolvePromptPackV1 missing input checks (PC-02)', () => {
         const child = pc2PackEntry('bad-template-entry-type', { templates: { base: 'BASE' } });
         editManifest(child, m => { Object.assign(m.templates, { base: 3 }); });
         expect(rejected(resolvePromptPackV1([child, platform()]))).toEqual([
-            templateProblem('bad-template-entry-type', 'base', 'template entry must be an object'),
+            templateProblem('bad-template-entry-type', 'base', 'template entry must be an object', 'json_problem'),
         ]);
     });
 
@@ -322,7 +334,7 @@ describe('resolvePromptPackV1 missing input checks (PC-02)', () => {
         const child = pc2PackEntry('bad-tools-collection');
         editManifest(child, m => { Object.assign(m, { tools: 3 }); });
         expect(rejected(resolvePromptPackV1([child, platform()]))).toEqual([
-            packProblem('bad-tools-collection', 'manifest tools must be an object'),
+            packProblem('bad-tools-collection', 'manifest tools must be an object', 'json_problem'),
         ]);
     });
 
@@ -339,7 +351,7 @@ describe('resolvePromptPackV1 missing input checks (PC-02)', () => {
     it('rejects a tool text that parses as a JSON array', () => {
         const child = pc2PackEntry('bad-tool-array', { tools: { list_files: [] } });
         expect(rejected(resolvePromptPackV1([child, platform()]))).toEqual([
-            toolProblem('bad-tool-array', 'list_files', 'tool "list_files" text must be a JSON object'),
+            toolProblem('bad-tool-array', 'list_files', 'tool "list_files" text must be a JSON object', 'json_problem'),
         ]);
     });
 
@@ -379,7 +391,7 @@ describe('resolvePromptPackV1 missing input checks (PC-02)', () => {
         const child = pc2PackEntry('bad-pack-id-type');
         editManifest(child, m => { Object.assign(m, { packId: 3 }); });
         expect(rejected(resolvePromptPackV1([child, platform()]))).toEqual([
-            packProblem('bad-pack-id-type', 'manifest packId must be a string'),
+            packProblem('bad-pack-id-type', 'manifest packId must be a string', 'json_problem'),
         ]);
     });
 
@@ -403,7 +415,7 @@ describe('resolvePromptPackV1 missing input checks (PC-02)', () => {
         const child = pc2PackEntry('bad-templates-type');
         editManifest(child, m => { Object.assign(m, { templates: 3 }); });
         expect(rejected(resolvePromptPackV1([child, platform()]))).toEqual([
-            packProblem('bad-templates-type', 'manifest templates must be an object'),
+            packProblem('bad-templates-type', 'manifest templates must be an object', 'json_problem'),
         ]);
     });
 
@@ -440,9 +452,11 @@ describe('resolvePromptPackV1 collects independent problems (ruling 4)', () => {
         });
         expect(rejected(resolvePromptPackV1([child, platform()]))).toEqual([
             templateProblem('bad-required-many', 'unknown-call-review',
-                'template "unknown-call-review" is missing required slot "workspaceLines"'),
+                'template "unknown-call-review" is missing required slot "workspaceLines"', 'required_slot_empty',
+                { slot: 'workspaceLines' }),
             templateProblem('bad-required-many', 'unknown-call-review',
-                'template "unknown-call-review" is missing required slot "writtenLines"'),
+                'template "unknown-call-review" is missing required slot "writtenLines"', 'required_slot_empty',
+                { slot: 'writtenLines' }),
         ]);
     });
 
@@ -451,8 +465,8 @@ describe('resolvePromptPackV1 collects independent problems (ruling 4)', () => {
             strings: { 'context.omissions.heading': 3 },
         });
         expect(rejected(resolvePromptPackV1([child, platform()]))).toEqual([
-            packProblem('bad-fixed-value', 'string "context.omissions.heading" must be a string'),
-            packProblem('bad-fixed-value', 'string "context.omissions.heading" is fixed'),
+            packProblem('bad-fixed-value', 'string "context.omissions.heading" must be a string', 'json_problem'),
+            packProblem('bad-fixed-value', 'string "context.omissions.heading" is fixed', 'json_problem'),
         ]);
     });
 
@@ -461,8 +475,9 @@ describe('resolvePromptPackV1 collects independent problems (ruling 4)', () => {
             tools: { list_files: { description: 'List.', parameters: { other: 3 } } },
         });
         expect(rejected(resolvePromptPackV1([child, platform()]))).toEqual([
-            toolProblem('bad-parameter-both', 'list_files', 'tool list_files parameter "other" must be a string'),
-            toolProblem('bad-parameter-both', 'list_files', 'tool list_files parameters differ'),
+            toolProblem('bad-parameter-both', 'list_files', 'tool list_files parameter "other" must be a string', 'json_problem'),
+            toolProblem('bad-parameter-both', 'list_files', 'tool list_files parameters differ',
+                'tool_parameters_differ', { extra: ['other'], missing: ['prefix'] }),
         ]);
     });
 
@@ -472,19 +487,24 @@ describe('resolvePromptPackV1 collects independent problems (ruling 4)', () => {
         });
         expect(rejected(resolvePromptPackV1([child, platform()]))).toEqual([
             templateProblem('bad-duplicate-and-missing', 'unknown-call-review',
-                'template "unknown-call-review" uses slot "items" more than once'),
+                'template "unknown-call-review" uses slot "items" more than once', 'slot_duplicate',
+                { slot: 'items' }),
             templateProblem('bad-duplicate-and-missing', 'unknown-call-review',
-                'template "unknown-call-review" is missing required slot "workspaceLines"'),
+                'template "unknown-call-review" is missing required slot "workspaceLines"', 'required_slot_empty',
+                { slot: 'workspaceLines' }),
             templateProblem('bad-duplicate-and-missing', 'unknown-call-review',
-                'template "unknown-call-review" is missing required slot "writtenLines"'),
+                'template "unknown-call-review" is missing required slot "writtenLines"', 'required_slot_empty',
+                { slot: 'writtenLines' }),
         ]);
     });
 
     it('reports every undeclared slot of one template', () => {
         const child = pc2PackEntry('bad-two-unknown-slots', { templates: { base: '{{one}}{{two}}' } });
         expect(rejected(resolvePromptPackV1([child, platform()]))).toEqual([
-            templateProblem('bad-two-unknown-slots', 'base', 'slot "one" is not declared by template "base"'),
-            templateProblem('bad-two-unknown-slots', 'base', 'slot "two" is not declared by template "base"'),
+            templateProblem('bad-two-unknown-slots', 'base', 'slot "one" is not declared by template "base"',
+                'slot_undeclared', { slot: 'one' }),
+            templateProblem('bad-two-unknown-slots', 'base', 'slot "two" is not declared by template "base"',
+                'slot_undeclared', { slot: 'two' }),
         ]);
     });
 
@@ -507,8 +527,8 @@ describe('resolvePromptPackV1 collects independent problems (ruling 4)', () => {
         });
         expect(rejected(resolvePromptPackV1([child, platform()]))).toEqual([
             toolProblem('bad-unknown-tool-fields', 'mystery', 'tool mystery has no platform text'),
-            toolProblem('bad-unknown-tool-fields', 'mystery', 'tool mystery has an empty description'),
-            toolProblem('bad-unknown-tool-fields', 'mystery', 'tool mystery parameter "x" must be a string'),
+            toolProblem('bad-unknown-tool-fields', 'mystery', 'tool mystery has an empty description', 'json_problem'),
+            toolProblem('bad-unknown-tool-fields', 'mystery', 'tool mystery parameter "x" must be a string', 'json_problem'),
         ]);
     });
 
@@ -520,8 +540,9 @@ describe('resolvePromptPackV1 collects independent problems (ruling 4)', () => {
             tools: { list_files: { description: 'C', parameters: { other: 'O' } } },
         });
         expect(rejected(resolvePromptPackV1([child, brokenPlatform]))).toEqual([
-            toolProblem('bad-platform-description', 'list_files', 'tool list_files parameters differ'),
-            toolProblem('platform', 'list_files', 'tool list_files has an empty description'),
+            toolProblem('bad-platform-description', 'list_files', 'tool list_files parameters differ',
+                'tool_parameters_differ', { extra: ['other'], missing: ['prefix'] }),
+            toolProblem('platform', 'list_files', 'tool list_files has an empty description', 'json_problem'),
         ]);
     });
 
@@ -533,8 +554,9 @@ describe('resolvePromptPackV1 collects independent problems (ruling 4)', () => {
             tools: { list_files: { description: 'C', parameters: { other: 'O' } } },
         });
         expect(rejected(resolvePromptPackV1([child, brokenPlatform]))).toEqual([
-            toolProblem('bad-platform-parameter', 'list_files', 'tool list_files parameters differ'),
-            toolProblem('platform', 'list_files', 'tool list_files parameter "prefix" must be a string'),
+            toolProblem('bad-platform-parameter', 'list_files', 'tool list_files parameters differ',
+                'tool_parameters_differ', { extra: ['other'], missing: ['prefix'] }),
+            toolProblem('platform', 'list_files', 'tool list_files parameter "prefix" must be a string', 'json_problem'),
         ]);
     });
 });

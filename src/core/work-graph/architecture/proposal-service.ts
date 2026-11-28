@@ -641,7 +641,7 @@ Promise<ReadResult<FreezePlan[]>> {
 }
 
 /** The one pin equality of a freeze: the catalog ref and the baseline. */
-function sameCatalogPin(left: ArchitectureCatalogPinV1, right: ArchitectureCatalogPinV1): boolean {
+export function sameCatalogPin(left: ArchitectureCatalogPinV1, right: ArchitectureCatalogPinV1): boolean {
   return canonicalJson(left.catalogRef as unknown as JsonValue) === canonicalJson(right.catalogRef as unknown as JsonValue)
     && canonicalJson(left.baseline as unknown as JsonValue) === canonicalJson(right.baseline as unknown as JsonValue);
 }

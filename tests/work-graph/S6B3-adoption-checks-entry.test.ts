@@ -136,6 +136,7 @@ async function hostFacts(): Promise<HostSettingsWorkspaceFacts> {
     commandsAllowed: facts.commandsAllowed,
     accessFixed: facts.accessFixed,
     storeLocation: facts.storeLocation ?? null,
+    folderPresent: facts.folderPresent,
     projectOpen: true,
   };
 }
@@ -151,6 +152,7 @@ async function createHarness(options: {
   const facts = workspaceFacts;
   const assembly: HostSettingsAssembly = {
     listWorkspaces: () => [structuredClone(facts)],
+    forgetProject: () => {},
     readCheckProposal: async (readScope, answerRef) => {
       const read = (await world.host.post('queries/answer', plain(readScope, answerRef))).body as ReadResult<QueryJobAnswerSnapshot>;
       if (read.status !== 'ready') {

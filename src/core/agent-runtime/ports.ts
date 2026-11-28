@@ -103,10 +103,13 @@ export interface RuntimeExecutionPort {
    * Ruling 29: the frozen prompt record of one Work Run or QueryRun — the
    * manifest's set, its request rows in order and every text body the set and
    * the requests refer to, keyed by digest. Read fresh, verified against each
-   * ref; no HTTP route (E3 adds one). Optional only so existing port literals
-   * stay type-compatible; `createAgentRuntime` always publishes it.
+   * ref; `executions/prompt-record` exposes the read. `includeTexts: false`
+   * skips every body read and returns `texts: {}` (the route's default), so a
+   * missing body cannot fail the metadata read. Optional only so existing port
+   * literals stay type-compatible; `createAgentRuntime` always publishes it.
    */
-  readPromptRecord?(ctx: CoreCallContext, ref: RunRef | QueryRunRef): Promise<PromptRecordReadV1>;
+  readPromptRecord?(ctx: CoreCallContext, ref: RunRef | QueryRunRef,
+    options?: { includeTexts?: boolean }): Promise<PromptRecordReadV1>;
   /**
    * Slice 1 §3.3: the exact changed-file snapshot recorded beside an archive
    * anomaly anchor (Kernel window → current worktree → unknown; §2.6 last

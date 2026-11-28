@@ -11,7 +11,7 @@
  *
  * The owner reads no `configuration/` or `tasks/` service or type: the
  * reconcile candidate reader, the open-region-line reader, the registration
- * read and the catalog membership are injected as structural ports by the
+ * read and the graph facts are injected as structural ports by the
  * composition root. Only contracts, `state/` and `model/` helpers are imported.
  */
 import type { CommitCursor } from '../../../contracts/command-event.js';
@@ -75,8 +75,10 @@ export type WorkspaceRemovalDeps = {
   notices: { notifyProject(input: NotifyProjectInputV1): Promise<WriteResult<ProjectNoticeV1>> };
   mainWorkspace(records: Pick<GoalRecordTransactionPort, 'readMany'>, projectId: string):
     Promise<ReadResult<string | null>>;
-  catalog: {
-    inGraph(ctx: CoreCallContext, projectId: string, workspaceId: string, main: string): Promise<ReadResult<boolean>>;
+  /** `workspaceGraphFacts`'s two facts, injected structurally: this layer does not import `views/`. */
+  graph: {
+    facts(ctx: CoreCallContext, projectId: string, workspaceId: string, main: string | null):
+      Promise<ReadResult<{ main: boolean; inGraph: boolean }>>;
   };
 };
 
@@ -118,12 +120,12 @@ async function removeProjectWorkspace(deps: WorkspaceRemovalDeps, ctx: CoreCallC
   if (main.status !== 'ready') return readRejectionOf(main, 'the project main workspace');
   if (main.value === null) return rejected('unavailable', 'the project has no start_lines operation');
   if (main.value === scope.workspaceId) return rejected('invalid', 'the main workspace cannot be removed');
-  const inGraph = await deps.catalog.inGraph(ctx, scope.projectId, scope.workspaceId, main.value);
-  if (inGraph.status !== 'ready') return readRejectionOf(inGraph, 'the architecture graph membership');
-  if (kind === 'withdraw' && inGraph.value) {
+  const graph = await deps.graph.facts(ctx, scope.projectId, scope.workspaceId, main.value);
+  if (graph.status !== 'ready') return readRejectionOf(graph, 'the architecture graph membership');
+  if (kind === 'withdraw' && graph.value.inGraph) {
     return rejected('invalid', 'the workspace is already in the architecture graph; remove it instead');
   }
-  if (kind === 'remove' && !inGraph.value) {
+  if (kind === 'remove' && !graph.value.inGraph) {
     return rejected('invalid', 'the workspace is not in the architecture graph; withdraw it instead');
   }
 

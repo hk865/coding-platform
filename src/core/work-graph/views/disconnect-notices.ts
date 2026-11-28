@@ -1,21 +1,20 @@
-import type { CommitCursor } from '../../../contracts/command-event.js';
 import type { CoreCallContext } from '../../../contracts/core/call-context.js';
 import type { ProjectScope, SessionRef, VersionPin, WorkspaceScope } from '../../../contracts/core/identity.js';
 import type { GoalRef } from '../../../contracts/ledger.js';
 import type { ReadResult } from '../../../contracts/core/results.js';
-import type { SessionMessageRef } from '../../../contracts/core/session-message.js';
 import type { SessionRecord } from '../../../contracts/core/session.js';
 import { canonicalJson, canonicalKey, type JsonValue } from '../../../contracts/fingerprint.js';
 import type {
-  DecisionNoticeSourcePort, DecisionSourcePageV1, NoticeItemV1, S5RecordPort,
+  DecisionNoticeSourcePort, DecisionSourcePageV1, DisconnectFactV1, DisconnectSideV1, NoticeItemV1, S5RecordPort,
 } from '../model/decision-contracts.js';
 import type { SessionMessageRecord } from '../state/message-machine.js';
-import { isWaitMessage, waitFactsOfRecord, waitStateOf } from '../state/message-machine.js';
+import { effectiveReplyHandler, isWaitMessage, waitFactsOfRecord, waitStateOf } from '../state/message-machine.js';
 import { decodeSessionMessageRecord, decodeNoticeOrigin, sessionMessageRefKey,
   S5_MESSAGE_BY_WORKSPACE_STATUS } from '../sessions/message-record-codecs.js';
 import { decodeSessionRecord, plainSessionRefToAggregate,
   sessionAggregateRefKey } from '../sessions/session-record-codecs.js';
 import { messageSenderSessionOf } from '../communication/mailbox-service.js';
+import { sameSessionRefAs } from '../communication/mailbox-common.js';
 import { decodeGoalSnapshot } from '../persistence/record-codecs.js';
 import { lookupAll } from '../persistence/lookup-all.js';
 import { GOAL_BY_CONTINUED_FROM_INDEX } from '../tasks/plan-readers.js';
@@ -24,27 +23,6 @@ import type { DecisionReadRecordsPort } from './goal-conflicts.js';
 import { readWatermark } from './goal-conflicts.js';
 import { atLeastCursorResult, storeFailureToRejection } from '../persistence/read-result-failures.js';
 import { compareNoticePositions } from './notice-position.js';
-
-/** The side of the wait the notice names. `waiting` = the line whose wait is stranded; `recipient` = the line it waits on. */
-export type DisconnectSideV1 = 'waiting' | 'recipient';
-
-export type DisconnectFactV1 = {
-  /** `disconnect:<canonicalKey({sessionRef, at})>`: `at` is `archivedAt`, or the bound `unavailableSince` cursor. */
-  operationKey: string;
-  occurredAt: string;
-  messageRef: SessionMessageRef;
-  side: DisconnectSideV1;
-  /** The Session that is gone (archived or retired). */
-  party: SessionRef;
-  /** The other communication side of the same wait; `null` for an undelivered message or a person recipient. */
-  counterparty: SessionRef | null;
-  successor: SessionRef | null;
-  goalRef: GoalRef | null;
-  /** The copy Goal pin of an unforwarded copied intervention (the pending item); `null` on a disconnect row. */
-  copyGoal: { ref: GoalRef; revision: number } | null;
-  /** D-54: a retired line's bound `unavailableSince`; an archived line's stranded-message `since`. */
-  position: CommitCursor;
-};
 
 export type DisconnectNoticeSourceDependencies = {
   records: DecisionReadRecordsPort & Pick<S5RecordPort, 'eventAt'>;
@@ -99,6 +77,9 @@ export async function readDisconnectFacts(
           reason: `a disconnect candidate has no commit position: ${record.refKey}` };
       }
       const archivePosition = origin.value.since;
+      // R-F3: a forwarded message and a reply already handed to another line are handled, not disconnect facts.
+      if (message.transferredTo !== null) continue;
+      if ((message.responseTransferredTo ?? null) !== null) continue;
       const recipient: SessionRef | null = 'kind' in message.recipient ? null : message.recipient as SessionRef;
       const parties: { side: DisconnectSideV1; ref: SessionRef }[] = [];
       if (isWaitMessage(message)) {
@@ -117,6 +98,8 @@ export async function readDisconnectFacts(
       }
       let copyGoalPin: { ref: GoalRef; revision: number } | null | undefined;
       for (const party of parties) {
+        // R-F3: once the wait belongs to another line, the original waiting side is not a disconnect party.
+        if (party.side === 'waiting' && !sameSessionRefAs(effectiveReplyHandler(message), party.ref)) continue;
         const key = canonicalKey(party.ref);
         let session = sessions.get(key);
         if (session === undefined) {
@@ -196,6 +179,7 @@ export function createDisconnectNoticeSource(deps: DisconnectNoticeSourceDepende
           summary: `断开通知 · Session ${f.party.sessionId} · ${f.occurredAt} · ${f.successor?.sessionId ?? '没人接，等你定'}`,
           objects: f.copyGoal === null ? []
             : [{ kind: 'aggregate' as const, pin: { ref: f.copyGoal.ref, revision: f.copyGoal.revision }, label: 'copy Goal' }],
+          disconnect: { ...f },
           rework: null,
         }));
       const after = input.after;
@@ -213,7 +197,7 @@ export function createDisconnectNoticeSource(deps: DisconnectNoticeSourceDepende
 async function copyGoalPinOf(deps: DisconnectNoticeSourceDependencies, scope: WorkspaceScope,
   message: SessionMessageRecord): Promise<ReadResult<{ ref: GoalRef; revision: number } | null>> {
   const goalRef = message.goalRef;
-  if (message.transferredTo !== null || goalRef === null) return { status: 'ready', value: null };
+  if (goalRef === null) return { status: 'ready', value: null };
   const messageKey = sessionMessageRefKey(message.ref);
   let copies;
   try {

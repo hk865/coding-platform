@@ -329,6 +329,7 @@ export type SessionMessageEventType =
   // §3.9 items 2 and 5: the two replay events the forward owner writes (their payloads are codec-local, not
   // `SessionMessageEventV1` members).
   | 'SessionMessageForwarded'
+  | 'SessionMessageReplyTransferred'
   | 'SessionMessageWaitDisposed';
 
 /**
@@ -1169,21 +1170,39 @@ export function forwardMessageProblem(facts: ForwardFactsV1): CoreRejection | nu
 
 /** The already-read facts `waits/dispose`'s pure refusal table judges (§3.2.2(3)). */
 export type DisposeFactsV1 = {
-  mode: 'cancel' | 'transfer';
+  mode: 'cancel' | 'transfer' | 'transfer_reply';
   message: Pick<SessionMessageRecord, 'ref' | 'sender' | 'waitAfterSend' | 'needsReply' | 'withdrawnAt' |
     'waitCancelledAt' | 'expiredAt' | 'deadline'>;
   wait: WaitStateV1;
   delivery: MessageDeliveryStateV1['delivery'];
   acceptedResponse: boolean;
+  /** The saved reply of a `transfer_reply`; the other modes never read it. */
+  response: SessionMessageRecord['response'];
+  /** A `transfer_reply`'s earlier hand-off: the saved reply has no second copy to transfer, so a repeat is `invalid`. */
+  responseTransferredTo: SessionMessageRef | null;
   /** The waiting (sender) line: archived, archiving (`archiveRequest !== null`) or retired. */
   waitingLineGone: boolean;
   destination: { sameWorkspace: boolean; eligible: boolean } | null;
 };
 
-/** The fixed order of §3.2.2(3): wait shape, delivery, open state, then a transfer's line and destination. */
-export function disposeWaitProblem(facts: DisposeFactsV1): CoreRejection | null {
+/** The fixed order of §3.2.2(3): wait shape, delivery, open state, then a transfer's line and destination.
+ *  `transfer_reply` is the one arm whose wait is normally `answered` (the saved reply is the object), so the
+ *  consumed/answered `busy` rule applies to `cancel`/`transfer` only. It still asks the record's own
+ *  `expiredAt`: a reply saved after the deadline leaves the wait read `answered`, and the hand-off is closed. */
+export function disposeWaitProblemBeforeTarget(facts: DisposeFactsV1): CoreRejection | null {
   if (!isWaitMessage(facts.message)) return rejected('invalid', 'not_a_wait');
   if (facts.delivery === 'undelivered') return rejected('invalid', 'forward_required');
+  if (facts.mode === 'transfer_reply') {
+    if (facts.response === null) return rejected('invalid', 'wait has no reply to transfer');
+    if (facts.acceptedResponse) return rejected('invalid', 'the reply was already accepted');
+    if (facts.responseTransferredTo !== null) {
+      return rejected('invalid', 'the reply was already transferred');
+    }
+    if (facts.message.expiredAt !== null || facts.wait.state === 'withdrawn') {
+      return rejected('invalid', 'wait_not_open');
+    }
+    return null;
+  }
   if (facts.wait.state === 'consumed' || facts.wait.state === 'answered') {
     return rejected('busy', 'the wait was already answered or consumed');
   }
@@ -1192,7 +1211,14 @@ export function disposeWaitProblem(facts: DisposeFactsV1): CoreRejection | null 
   }
   if (facts.mode === 'cancel') return null;
   if (!facts.waitingLineGone) return rejected('invalid', 'waiting_line_live');
-  return destinationProblem(facts.destination!);
+  return null;
+}
+
+/** The whole table; the caller reads the destination only after this part passes. */
+export function disposeWaitProblem(facts: DisposeFactsV1): CoreRejection | null {
+  const problem = disposeWaitProblemBeforeTarget(facts);
+  if (problem !== null) return problem;
+  return facts.mode === 'cancel' ? null : destinationProblem(facts.destination!);
 }
 
 export type ExpirySkipReason = 'no_wait' | 'not_due' | 'not_open';
@@ -1678,6 +1704,8 @@ export type SessionMessageChange =
       archiveRequestId: string; now: string }
   // §3.9 item 2: `forwarded` points the old message at the new one's ref (not at the target Session).
   | { kind: 'forwarded'; to: SessionMessageRef; at: string }
+  // R-F2: the saved reply was copied to another line; the original message keeps its answered wait.
+  | { kind: 'reply_transferred'; to: SessionMessageRef }
   | { kind: 'wait_disposed'; mode: 'cancel'; to: null; at: string }
   | { kind: 'wait_disposed'; mode: 'transfer'; to: SessionRef; at: string }
   // Slice 5 §3.1: the user-decision rows.
@@ -1791,6 +1819,9 @@ export function nextSessionMessageRecord(message: SessionMessageRecord, change: 
     }
     case 'forwarded':
       return { ...message, revision, transferredTo: change.to };
+    case 'reply_transferred':
+      // The original stays `responded` with its `answered` wait: no `acceptedInputs`, no `waitCancelledAt`.
+      return { ...message, revision, responseTransferredTo: change.to };
     case 'wait_disposed':
       return change.mode === 'transfer'
         ? disposedWaitRecord(message, revision, { mode: 'transfer', to: change.to, at: change.at })

@@ -99,6 +99,7 @@ describe('PC-25 prompt tool routes', () => {
       expect(invalid.outcome.value.body.code).toBe('invalid');
       expect(invalid.outcome.value.body.problems).toEqual([{
         packId: 'pc2-tool-child', templateId: null, toolName: 'record_note',
+        kind: 'tool_parameters_differ', detail: { extra: ['extra'], missing: [] },
         reason: 'tool record_note parameters differ',
       }]);
     } finally { await fixture.close(); }
@@ -128,7 +129,8 @@ describe('PC-25 prompt tool routes', () => {
       expect(saved.outcome.value.body).toEqual({
         status: 'rejected', code: 'invalid', reason: 'the prompt pack would be invalid',
         problems: [{
-          packId: 'pc2-null-tools', templateId: null, reason: 'manifest tools must be an object',
+          packId: 'pc2-null-tools', templateId: null, kind: 'json_problem',
+          reason: 'manifest tools must be an object',
         }],
       });
     } finally { await fixture.close(); }
@@ -151,7 +153,7 @@ describe('PC-25 prompt tool routes', () => {
         status: 'rejected', code: 'invalid',
         reason: 'entry must carry a description and named string parameters',
         problems: [{
-          packId: 'pc2-tool-child', templateId: null, toolName: 'record_note',
+          packId: 'pc2-tool-child', templateId: null, toolName: 'record_note', kind: 'file_problem',
           reason: 'entry must carry a description and named string parameters',
         }],
       });

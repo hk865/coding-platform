@@ -713,6 +713,8 @@ export async function readUndeliveredReplies(
       return reject('unavailable', 'an undelivered-reply candidate disagrees with the requested source Session');
     }
     if (!retired || message.response === null) continue;
+    // R-F3: a reply already handed to another line needs no reminder.
+    if ((message.responseTransferredTo ?? null) !== null) continue;
     const response = message.response;
     // A reply already used by an execution is delivered, never undelivered.
     if ((message.acceptedInputs ?? []).some((entry) => entry.part === 'response')) continue;

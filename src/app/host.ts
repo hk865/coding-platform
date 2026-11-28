@@ -26,16 +26,18 @@
  * authorization predicate, the database path, the Kernel stores and the actor
  * come only from `options`.
  */
+import { execFile } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
+import { promisify } from 'node:util';
 import { sourceGoalRef } from '../core/work-graph/queries/platform-facts.js';
 import { createBuiltinProviderRegistry, resourceCapStatus } from '../../vendor/coding-agent/dist/public-api.js';
 import type { ResourceCapSource } from '../../vendor/coding-agent/dist/public-api.js';
 import { totalmem } from 'node:os';
 import { MIB, defaultResourceCapSettings, COMMAND_VISIBLE_AFTER_MS, DEFAULT_COMMAND_REVIEW_LINE_MINUTES, commandLineMs } from '../contracts/resource-caps.js';
 import { runningCommandKey, type RunningCommandV1 } from '../core/agent-runtime/running-commands.js';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, existsSync, statSync } from 'node:fs';
 import { mkdir, realpath, stat } from 'node:fs/promises';
-import { basename, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { canonicalJson, canonicalKey, sameJson, sha256Hex, type JsonValue } from '../contracts/fingerprint.js';
 import type { CommitCursor } from '../contracts/command-event.js';
 import type { GoalRef, WorkspaceRef } from '../contracts/ledger.js';
@@ -58,7 +60,7 @@ import {
 import { kernelStoreDirectory, kernelStoreEntry } from '../composition/project-store-paths.js';
 import { ensureKnowledgeDirectory, resolveKnowledgeLine } from '../composition/line-knowledge.js';
 import {
-  checkoutIdentityOf, gitTopLevel, identifyCheckout, isAncestor, isWorktreeClean, listWorktrees, readHead, readRef,
+  checkoutIdentityOf, gitCommonDir, gitTopLevel, identifyCheckout, isAncestor, isWorktreeClean, listWorktrees, readHead, readRef,
   type CheckoutProbe,
 } from '../core/workspace/workspace-change-capture.js';
 import { lineRefOf, sameCheckout, type LineSnapshot } from '../contracts/line.js';
@@ -179,6 +181,7 @@ import {
   narrowResolvedReadonlyCommands,
   planningRoundRuntimeBudget,
   PLATFORM_SKILL_RESOURCE_ROOT,
+  contextWindowTokensOf,
   runtimeModelId,
   settingsModelSecretVariable,
   type WorkbenchModelConfiguration,
@@ -228,6 +231,8 @@ export type WorkbenchInputConsumer = {
   queryProfileId: string;
   heartbeatMs: number;
 };
+
+const execute = promisify(execFile);
 
 /** The heartbeat opens at most this many Sessions. */
 const CONSUME_BATCH = 8;
@@ -452,6 +457,17 @@ async function assertRootOutsidePrompts(root: string, promptsRoot: string): Prom
     throw new Error(`the workspace root ${realRoot} covers the prompt directory ${promptsRoot}`);
 }
 
+/** A name that can be one folder below its parent: non-empty, one leaf on this platform (no `\` path segment on
+ * Windows), and not hidden. */
+function isLeafName(name: string): boolean {
+  return name !== '' && basename(name) === name && !name.startsWith('.');
+}
+
+/** R-M6: one folder-existence probe for the settings facts; `statSync` keeps `listWorkspaces` synchronous. */
+function folderPresentOf(root: string): boolean {
+  try { return statSync(root).isDirectory(); } catch { return false; }
+}
+
 /** Deterministic permission generation derived from the isolated scope and the
  * exact read prefixes. It is NOT the workspaceRevision and NOT a refresh count. */
 function permissionRevision(actor: WorkbenchActor, workspace: WorkbenchWorkspaceConfig): string {
@@ -463,13 +479,10 @@ function permissionRevision(actor: WorkbenchActor, workspace: WorkbenchWorkspace
   return `host-permission-v1:${createHash('sha256').update(material).digest('hex')}`;
 }
 
-/** Trusted budget for one local-workbench binding; published DeepSeek model
- * limits, checked 2026-09-29: https://api-docs.deepseek.com/quick_start/pricing/ */
+/** The local-workbench budget for one binding: the same model-window decision
+ * the settings snapshot publishes. */
 function localWorkbenchBudget(model: HostSettingsStoredModel): typeof LOCAL_WORKBENCH_BUDGET {
-  const contextWindowTokens = model.provider === 'deepseek'
-    && ['deepseek-flash', 'deepseek-v4-pro', 'deepseek-v4.1-flash'].includes(model.model)
-    ? 1_000_000 : LOCAL_WORKBENCH_BUDGET.contextWindowTokens;
-  return { ...LOCAL_WORKBENCH_BUDGET, contextWindowTokens };
+  return { ...LOCAL_WORKBENCH_BUDGET, contextWindowTokens: contextWindowTokensOf(model) };
 }
 
 /** The local grant's read tools: the Kernel file read and the read-only graph
@@ -620,6 +633,8 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
   // machinery is added.
   const actor: WorkbenchActor = { kind: options.actor.kind, id: options.actor.id };
   const workspaces = snapshotWorkspaces(options.workspaces);
+  /** R-M6: projects hidden from the settings list until their folder is opened again. */
+  const forgottenProjects = new Set<string>();
   const review: BootstrapReviewMaterial | null = options.review === undefined ? null : structuredClone(options.review);
   const storage: TargetPlatformOptions['storage'] = options.storage.kind === 'sqlite'
     ? { kind: 'sqlite', directory: options.storage.directory }
@@ -2666,6 +2681,25 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
   }
 
   async function openWorkspaceImpl(request: OpenSettingsWorkspace & { workspaceId?: string }): Promise<SettingsResponse<HostSettingsOpenedHost>> {
+    // R-M1: one call makes one empty folder and opens it. Only one level is made
+    // (the parent must already exist); a folder left behind after a failed open
+    // stays, because the material asks for one failure point, not a rollback.
+    if (request.create !== undefined) {
+      if (request.projectId !== undefined)
+        return { status: 'rejected', code: 'invalid', reason: 'a created folder cannot join an existing project' };
+      if (!isLeafName(request.create.name))
+        return { status: 'rejected', code: 'invalid', reason: 'the project name is not a folder name' };
+      const parent = await realpath(dirname(request.path)).catch(() => null);
+      if (parent === null) return { status: 'rejected', code: 'not_found', reason: 'the parent folder does not exist' };
+      if (request.path !== join(parent, request.create.name))
+        return { status: 'rejected', code: 'invalid', reason: 'the created folder must be a direct child of the parent' };
+      try { await mkdir(request.path, { recursive: false }); }
+      catch {
+        return existsSync(request.path)
+          ? { status: 'rejected', code: 'invalid', reason: 'a folder with this name already exists' }
+          : { status: 'rejected', code: 'unavailable', reason: 'the folder could not be created' };
+      }
+    }
     const requestedProjectId = request.projectId;
     const isRestore = request.workspaceId !== undefined;
     // A listed workspace whose project store could not be opened has no runtime here. A root that no longer resolves
@@ -2698,6 +2732,9 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
           reason: `the workspace root ${canonical} would cover the prompt directory ${promptsRoot}` };
       }
     }
+    // The display name is the created folder's name when this call makes one; a separate
+    // `request.name` never renames it. Otherwise the caller's name, else the folder's own.
+    const displayName = request.create?.name ?? request.name ?? basename(canonical);
     // A PUBLIC explicit projectId must be a CURRENT Host project. The private
     // restore path (identified only by the internal `workspaceId` parameter,
     // which the HTTP route never carries) may re-attach an original ledger
@@ -2705,6 +2742,27 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     if (requestedProjectId !== undefined && !isRestore
       && !workspaces.some(workspace => workspace.scope.projectId === requestedProjectId))
       return { status: 'rejected', code: 'invalid', reason: 'the target project is not a Host project' };
+    // R-M4: this open may make the folder a git work tree. It runs after the real path is known and before the
+    // project's store is placed, so the store location sees the repository this call made.
+    if (request.gitInit === true && (await gitCommonDir(canonical)) === null) {
+      // An already registered project whose MAIN workspace is this folder keeps its store inside the folder
+      // (`.workbench/local`). Making it a git repository moves the next start's candidate to the git common
+      // directory, so that store could not be opened. Refuse before writing; a plain open of the same folder works.
+      let registered: string | null = null;
+      for (const workspace of workspaces) {
+        const { projectId, workspaceId } = workspace.scope;
+        if (mainWorkspaces.get(projectId) !== workspaceId) continue;
+        if (await canonicalExisting(workspace.root) !== canonical) continue;
+        registered = projectId;
+        break;
+      }
+      if (registered !== null && registry.get(registered)?.storeLocation?.place === 'workspace-local') {
+        return { status: 'rejected', code: 'invalid',
+          reason: 'the folder is already registered; git init would move its project store' };
+      }
+      try { await execute('git', ['init', '--quiet', canonical]); }
+      catch { return { status: 'rejected', code: 'unavailable', reason: 'the folder could not be initialized as a git repository' }; }
+    }
     // Idempotent lookup by canonical root: without an explicit project search
     // every current workspace; with one search only that project. A root that no
     // longer resolves compares by its listed path, so a repeated entry still
@@ -2716,6 +2774,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
         if (isRestore && workspace.scope.workspaceId === request.workspaceId && accessFixedOf(workspace.scope) === null)
           applyAccess(workspace, { writeAllowed: request.writeAllowed, commandsAllowed: request.commandsAllowed });
         // KLS-3a: an already bound, registered workspace whose line is missing gets it here too.
+        forgottenProjects.delete(workspace.scope.projectId);
         const owner = registry.get(workspace.scope.projectId);
         const lined = owner === null ? null
           : await registerHostLines(owner, settingsContext(workspace.scope), workspace.scope, workspace.root);
@@ -2768,12 +2827,13 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       // goes on and every request of it answers `unavailable`; no tool, Kernel store or loop entry is registered.
       // A scope already present from a start-up workspace keeps its one entry.
       if (!byScope.has(scopeKey(scope))) {
-        const config: WorkbenchWorkspaceConfig = { scope, name: request.name ?? basename(canonical), root: canonical,
+        const config: WorkbenchWorkspaceConfig = { scope, name: displayName, root: canonical,
           workspaceRevision: 0, readPrefixes: ['.'], ...(request.writeAllowed ? { writePrefixes: ['.'] } : {}),
           ...(request.commandsAllowed && request.writeAllowed ? { allowCommands: true } : {}) };
         workspaces.push(config);
         byScope.set(scopeKey(scope), config);
       }
+      forgottenProjects.delete(projectId);
       return { status: 'ready', value: { scope: { ...scope } } };
     }
     const platform = runtime.platform;
@@ -2807,7 +2867,8 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       let registeredNow = false;
       if (existingRegistration.status !== 'ready') {
         const registered = await platform.projects.registerWorkspace(ctx, {
-          input: { workspace: scope },
+          input: { workspace: scope,
+            ...(request.explorationDepth === undefined ? {} : { explorationDepth: request.explorationDepth }) },
           meta: { requestId: `host-settings-workspace:${workspaceId}`, expected: [
             { ref: { aggregateType: 'Project', projectId }, revision: projectRevision },
             { ref: { aggregateType: 'Workspace', projectId, workspaceId }, revision: 0 },
@@ -2825,7 +2886,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       const workspaceRevision = registration.status === 'ready' ? registration.value.workspace.revision : 0;
       await addWorkspaceState(runtime, {
         scope,
-        name: request.name ?? basename(canonical),
+        name: displayName,
         root: canonical,
         workspaceRevision,
         readPrefixes: ['.'],
@@ -2841,6 +2902,7 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
         try { await platform.knowledge.reconcile(ctx, workspaceId, 'joined'); } catch { /* the next round indexes */ }
         try { await platform.knowledge.markJoinedCheckout(ctx, workspaceId); } catch { /* the open stands */ }
       }
+      forgottenProjects.delete(projectId);
       return { status: 'ready', value: { scope: { ...scope } } };
     } catch {
       return { status: 'rejected', code: 'unavailable', reason: 'the workspace could not be opened' };
@@ -2849,9 +2911,10 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
 
 
   const storeLocationOf = (projectId: string): { place: 'git-common' | 'workspace-local' | 'user-data';
-    reason: string | null } | null => {
+    reason: string | null; reasonCode: 'unreliable_drive' | 'unknown_drive' | null } | null => {
     const location = registry.get(projectId)?.storeLocation ?? null;
-    return location === null ? null : { place: location.place, reason: location.reason };
+    return location === null ? null
+      : { place: location.place, reason: location.reason, reasonCode: location.reasonCode };
   };
   /** WD-29: `busy` reads as a request conflict, the five settings codes keep their name and every other core code
    *  (capacity, cancelled, ...) is unavailable; the reason is never rewritten. */
@@ -2864,21 +2927,24 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
     return { status: 'rejected', code, reason: failure.reason };
   }
   const hostAssembly: HostSettingsAssembly = {
-    listWorkspaces: () => workspaces.map(workspace => ({
-      scope: { projectId: workspace.scope.projectId, workspaceId: workspace.scope.workspaceId },
-      name: workspace.name,
-      root: workspace.root,
-      workspaceRevision: workspace.workspaceRevision,
-      modelId: null,
-      writeAllowed: (workspace.writePrefixes?.length ?? 0) > 0,
-      commandsAllowed: workspace.allowCommands === true,
-      accessFixed: accessFixedOf(workspace.scope),
-      // U8: where the workspace's project store lives (no directory); a memory store or a project not open has none.
-      storeLocation: storeLocationOf(workspace.scope.projectId),
-      knowledgeRepoKey: knowledgeRepoKeys.get(scopeKey(workspace.scope)) ?? null,
-      // G8B B4：库打不开的项目留着登记的范围，没有运行时。
-      projectOpen: platformFor(workspace.scope.projectId) !== null,
-    })),
+    listWorkspaces: () => workspaces
+      .filter(workspace => !forgottenProjects.has(workspace.scope.projectId))
+      .map(workspace => ({
+        scope: { projectId: workspace.scope.projectId, workspaceId: workspace.scope.workspaceId },
+        name: workspace.name,
+        root: workspace.root,
+        workspaceRevision: workspace.workspaceRevision,
+        modelId: null,
+        writeAllowed: (workspace.writePrefixes?.length ?? 0) > 0,
+        commandsAllowed: workspace.allowCommands === true,
+        accessFixed: accessFixedOf(workspace.scope),
+        // U8: where the workspace's project store lives (no directory); a memory store or a project not open has none.
+        storeLocation: storeLocationOf(workspace.scope.projectId),
+        knowledgeRepoKey: knowledgeRepoKeys.get(scopeKey(workspace.scope)) ?? null,
+        folderPresent: folderPresentOf(workspace.root),
+        // G8B B4：库打不开的项目留着登记的范围，没有运行时。
+        projectOpen: platformFor(workspace.scope.projectId) !== null,
+      })),
     setWorkspaceAccess: (scope, access) => {
       const config = byScope.get(scopeKey(scope));
       if (config === undefined) return { status: 'rejected', code: 'not_found', reason: 'the workspace is not registered' };
@@ -2919,6 +2985,15 @@ export async function createLocalWorkbenchHost(options: LocalWorkbenchHostOption
       }
       unmountWorkspace(scope);
       return { status: 'ready', value: result.value };
+    },
+    // R-M6: hide every registration of the project from `listWorkspaces`. An open runtime keeps running; only a
+    // project whose store is not open has its workspaces unmounted.
+    forgetProject: projectId => {
+      forgottenProjects.add(projectId);
+      if (platformFor(projectId) !== null) return;
+      for (const workspace of [...workspaces]) {
+        if (workspace.scope.projectId === projectId) unmountWorkspace(workspace.scope);
+      }
     },
     // KLS-2: the checkout through the one line resolution (the workspace must be the project's); the key the snapshot
     // reads is refreshed with it, so a folder made a git repository after it opened reads right from here on.

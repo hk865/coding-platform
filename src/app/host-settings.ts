@@ -36,6 +36,8 @@ import {
   DEFAULT_STRUCTURAL_APPROVAL, structuralApprovalOf, type StructuralApprovalV1,
 } from '../contracts/architecture-proposal.js';
 import { applyKnowledgeExclude } from '../core/workspace/knowledge-exclude.js';
+import { gitCommonDir } from '../core/workspace/workspace-change-capture.js';
+import { mountReliability } from '../composition/project-store-location.js';
 import {
   DEFAULT_TASK_AUTOMATION_POLICY, MAX_AUTO_REWORK_LIMIT, RESUME_ON_STARTUP_MODES,
   type ResumeOnStartupMode, type TaskAutomationPolicyV1,
@@ -75,6 +77,7 @@ import type {
   RuntimeConfigurationInput,
   RuntimeHostBindings,
 } from '../core/agent-runtime/execution-contracts.js';
+import { contextWindowTokensOf } from './runtime-configuration.js';
 import type { WorkbenchRuntimeProviderDependencies } from './runtime-configuration.js';
 import type {
   CheckApprovalV1,
@@ -107,10 +110,11 @@ import type { WorkspaceRemovalKindV1, WorkspaceRemovalViewV1 } from '../contract
 /** The published settings route set. `SettingsRoutes` stays the type truth. */
 export const SETTINGS_ROUTE_SUFFIXES = [
   'snapshot', 'directories', 'models/save', 'models/select', 'workspaces/open', 'workspaces/access',
-  'workspaces/withdraw', 'workspaces/remove', 'checks/approve', 'checks/withdraw',
+  'workspaces/withdraw', 'workspaces/remove', 'projects/forget', 'checks/approve', 'checks/withdraw',
   'automation/save',
   'resource-caps/save', 'run-budget/save', 'command-review/save', 'plan-loop-limits/save', 'prompts/packs/list', 'prompts/packs/create', 'prompts/templates/read',
-  'prompts/templates/save', 'prompts/tools/read', 'prompts/tools/save', 'knowledge-local', 'structural-approval/save',
+  'prompts/templates/save', 'prompts/templates/restore', 'prompts/tools/read', 'prompts/tools/save',
+  'knowledge-local', 'structural-approval/save',
   'reply-deadline/save',
 ] as const satisfies readonly SettingsRoute[];
 
@@ -255,6 +259,8 @@ export type HostSettingsWorkspaceFacts = {
   storeLocation: SettingsStoreLocation | null;
   /** KLS-2: the repository key of the workspace's checkout; null (or absent) for a folder in no git work tree. */
   knowledgeRepoKey?: RepoKey | null;
+  /** Whether the workspace's root is still a directory; a missing folder is what `projects/forget` may remove. */
+  folderPresent: boolean;
   /** G8B B4：这个工作区的项目本次打开了没有。库打不开的项目留着登记的范围，但没有运行时，本次进程里也不会再打开。 */
   projectOpen: boolean;
 };
@@ -293,6 +299,9 @@ export interface HostSettingsAssembly {
    *  it after the core commit and unmounts only once it returned. Absence means unsupported. */
   removeWorkspace?(scope: CoreScope, kind: WorkspaceRemovalKindV1, save: () => Promise<void>):
     Promise<SettingsResponse<WorkspaceRemovalViewV1>>;
+  /** R-M6: hide every registration of a project from `listWorkspaces`; open runtimes stay, a closed project's
+   *  workspaces are unmounted. */
+  forgetProject(projectId: string): void;
   openWorkspace(request: OpenSettingsWorkspace & { workspaceId?: string }): Promise<SettingsResponse<HostSettingsOpenedHost>>;
   bootstrap(): BootstrapResponse;
   /** Boolean-only probe: whether the trusted Host can resolve the named secret.
@@ -944,6 +953,13 @@ export async function createHostSettings(
   const models: HostSettingsStoredModel[] = persisted.models;
   const selection: Record<string, string | null> = persisted.selection;
   const workspaces: PersistedWorkspaceV1[] = persisted.workspaces;
+  /**
+   * R-M6: the descriptions a `projects/forget` hid while the project's runtime stayed open. They are not part of the
+   * registration list written to the file, but they keep feeding this Host's runtime configuration (checks and
+   * plan adoptions) until the project is reopened (then `listDescriptor` takes the entry back) or this Host ends.
+   * A project that is already closed drops its descriptions instead.
+   */
+  const hiddenWorkspaceDescriptions: PersistedWorkspaceV1[] = [];
   /** Kept exactly as stored (absent stays absent) until `automation/save` writes it. */
   let automation: TaskAutomationPolicyV1 | undefined = persisted.automation;
   /** L13: kept exactly as stored (absent stays absent) until `resource-caps/save`. */
@@ -989,40 +1005,45 @@ export async function createHostSettings(
     return { status: 'unknown' };
   };
 
-  const privateSnapshot = (): HostSettingsPrivateSnapshot => ({
-    models: structuredClone(models),
-    selection: { ...selection },
-    checks: workspaces
-      .filter((workspace): workspace is PersistedWorkspaceV1 & { checks: RegisteredCommandCheck[];
-        checksSource: { answerRef: QueryJobAnswerRef; answerDigest: string } } =>
-        workspace.checks !== undefined && workspace.checksSource !== undefined)
-      .map(workspace => ({ scope: { ...workspace.scope }, checks: [...structuredClone(workspace.checks), ...savedPlanChecks(workspace)],
-        answerRef: structuredClone(workspace.checksSource.answerRef), answerDigest: workspace.checksSource.answerDigest,
-        child: workspace.checksChild === undefined ? null : { ...workspace.checksChild },
-        checksRevision: workspace.checksRevision ?? 0 })),
-    // R2（121-144 的待办）：人撤过检查的工作区不退回“没有检查配置”。撤到一条不剩时 Host 装一份空配置（已批准的空清单同一个做法，
-    // `host.ts:2178-2179`），检查轮照开，没检查覆盖的必需要求读作缺项，人看得见。
-    planOnlyChecks: workspaces
-      .filter(workspace => workspace.checksSource === undefined
-        && (savedPlanChecks(workspace).length > 0 || workspace.withdrawnChecks !== undefined))
-      .map(workspace => ({ scope: { ...workspace.scope }, checks: savedPlanChecks(workspace) })),
-    checkOrigins: workspaces.map(workspace => ({ scope: { ...workspace.scope }, origins: savedCheckOrigins(workspace) })),
-    // RC：人采用一份计划装上的检查才算“已采用”，而且那一次采用要已提交：`planAdoption` 还指着同一个候选时，条目只是装上了、
-    // 还没结清，不能报给平台。
-    adoptedPlanChecks: adoptedPlanChecksOf(workspaces),
-    planSourceChecks: planSourceChecksOf(workspaces),
-    automation: { ...(automation ?? DEFAULT_TASK_AUTOMATION_POLICY) },
-    resourceCaps: {
-      memoryMaxBytes: effectiveResourceCaps().memoryMaxMiB * MIB,
-      tasksMax: effectiveResourceCaps().tasksMax,
-    },
-    workRunTokenBudget: effectiveWorkRunTokenBudget(),
-    planLoopLimits: copyPlanLoopLimits(effectivePlanLoopLimits()),
-    commandReviewLineMinutes: effectiveCommandReviewLine(),
-    knowledgeLocalOnly: { ...knowledgeLocalOnly },
-    structuralApproval: structuredClone(structuralApproval),
-    replyDeadlineMinutes: { ...replyDeadlineMinutes },
-  });
+  const privateSnapshot = (): HostSettingsPrivateSnapshot => {
+    // R-M6: a project forgotten while its runtime stays open keeps its descriptions (and their checks) here, so this
+    // Host's installed check configuration survives the notify that follows the forget.
+    const all = [...workspaces, ...hiddenWorkspaceDescriptions];
+    return {
+      models: structuredClone(models),
+      selection: { ...selection },
+      checks: all
+        .filter((workspace): workspace is PersistedWorkspaceV1 & { checks: RegisteredCommandCheck[];
+          checksSource: { answerRef: QueryJobAnswerRef; answerDigest: string } } =>
+          workspace.checks !== undefined && workspace.checksSource !== undefined)
+        .map(workspace => ({ scope: { ...workspace.scope }, checks: [...structuredClone(workspace.checks), ...savedPlanChecks(workspace)],
+          answerRef: structuredClone(workspace.checksSource.answerRef), answerDigest: workspace.checksSource.answerDigest,
+          child: workspace.checksChild === undefined ? null : { ...workspace.checksChild },
+          checksRevision: workspace.checksRevision ?? 0 })),
+      // R2（121-144 的待办）：人撤过检查的工作区不退回“没有检查配置”。撤到一条不剩时 Host 装一份空配置（已批准的空清单同一个做法，
+      // `host.ts:2178-2179`），检查轮照开，没检查覆盖的必需要求读作缺项，人看得见。
+      planOnlyChecks: all
+        .filter(workspace => workspace.checksSource === undefined
+          && (savedPlanChecks(workspace).length > 0 || workspace.withdrawnChecks !== undefined))
+        .map(workspace => ({ scope: { ...workspace.scope }, checks: savedPlanChecks(workspace) })),
+      checkOrigins: all.map(workspace => ({ scope: { ...workspace.scope }, origins: savedCheckOrigins(workspace) })),
+      // RC：人采用一份计划装上的检查才算“已采用”，而且那一次采用要已提交：`planAdoption` 还指着同一个候选时，条目只是装上了、
+      // 还没结清，不能报给平台。
+      adoptedPlanChecks: adoptedPlanChecksOf(all),
+      planSourceChecks: planSourceChecksOf(all),
+      automation: { ...(automation ?? DEFAULT_TASK_AUTOMATION_POLICY) },
+      resourceCaps: {
+        memoryMaxBytes: effectiveResourceCaps().memoryMaxMiB * MIB,
+        tasksMax: effectiveResourceCaps().tasksMax,
+      },
+      workRunTokenBudget: effectiveWorkRunTokenBudget(),
+      planLoopLimits: copyPlanLoopLimits(effectivePlanLoopLimits()),
+      commandReviewLineMinutes: effectiveCommandReviewLine(),
+      knowledgeLocalOnly: { ...knowledgeLocalOnly },
+      structuralApproval: structuredClone(structuralApproval),
+      replyDeadlineMinutes: { ...replyDeadlineMinutes },
+    };
+  };
 
   const persist = async (): Promise<void> => {
     const payload: PersistedSettingsV1 = { schemaVersion: 1, models, selection, workspaces,
@@ -1144,11 +1165,30 @@ export async function createHostSettings(
   };
 
   /**
+   * R-M6: one scope keeps one description. The visible entry is the one in the file; the hidden copy is the
+   * description `projects/forget` kept for a still-open runtime until this scope is written again.
+   */
+  const savedDescriptorOf = (scope: CoreScope): PersistedWorkspaceV1 | undefined => {
+    const key = scopeKey(scope);
+    return workspaces.find(entry => scopeKey(entry.scope) === key)
+      ?? hiddenWorkspaceDescriptions.find(entry => scopeKey(entry.scope) === key);
+  };
+
+  /** R-M6: a visible save takes the scope's hidden copy with it; the returned undo puts it back at its old place. */
+  const takeHiddenDescriptor = (scope: CoreScope): (() => void) => {
+    const index = hiddenWorkspaceDescriptions.findIndex(entry => scopeKey(entry.scope) === scopeKey(scope));
+    if (index < 0) return () => undefined;
+    const [entry] = hiddenWorkspaceDescriptions.splice(index, 1);
+    return () => { hiddenWorkspaceDescriptions.splice(index, 0, entry!); };
+  };
+
+  /**
    * One checks descriptor save: replaces or appends the workspace entry, persists
    * the whole file and restores the previous descriptor when the write fails. It
    * never notifies; each caller maps notification failure to its own result. A whole
    * approved list replaces the checks plans brought as well (121-136).
    * G8B B2：撤回留痕照旧留着：整批替换不等于人重新批了被撤回的那条。
+   * R-M6：同 scope 的隐藏描述一起取走，写失败一起放回。
    */
   const saveChecksDescriptor = async (
     scope: CoreScope,
@@ -1158,7 +1198,8 @@ export async function createHostSettings(
     child?: { commandId: string; identityKey: string; fingerprint: string },
   ): Promise<boolean> => {
     const index = workspaces.findIndex(entry => scopeKey(entry.scope) === scopeKey(scope));
-    const previous = index >= 0 ? workspaces[index] : undefined;
+    const previous = savedDescriptorOf(scope);
+    const undoHidden = takeHiddenDescriptor(scope);
     const next: PersistedWorkspaceV1 = {
       scope: { ...scope },
       name: facts.name,
@@ -1175,6 +1216,7 @@ export async function createHostSettings(
     try { await persist(); return true; }
     catch {
       if (index >= 0 && previous !== undefined) workspaces[index] = previous; else workspaces.pop();
+      undoHidden();
       return false;
     }
   };
@@ -1188,6 +1230,7 @@ export async function createHostSettings(
     return {
       id: model.id, label: model.label, provider: model.provider, model: model.model,
       baseUrl: model.baseUrl ?? '',
+      contextWindowTokens: contextWindowTokensOf(model),
       credentialConfigured: (typeof model.apiKey === 'string' && model.apiKey.length > 0) || envConfigured,
       ...(model.thinking === undefined ? {} : { thinking: model.thinking }),
       ...(model.reasoningEffort === undefined ? {} : { reasoningEffort: model.reasoningEffort }),
@@ -1225,8 +1268,10 @@ export async function createHostSettings(
               ? { plan: structuredClone(withdrawn.plan) }
               : { answerRef: structuredClone(withdrawn.answer.answerRef) }) })) }),
         ...(facts.storeLocation === null
-          ? {} : { storeLocation: { place: facts.storeLocation.place, reason: facts.storeLocation.reason } }),
+          ? {} : { storeLocation: { place: facts.storeLocation.place, reason: facts.storeLocation.reason,
+            reasonCode: facts.storeLocation.reasonCode } }),
         knowledgeLocalOnly: facts.knowledgeRepoKey != null && knowledgeLocalOnly[facts.knowledgeRepoKey] === true,
+        folderPresent: facts.folderPresent,
       };
     }),
     // C8 (A.2 step 5.8): the stored policy, the defaults when none was saved (after an
@@ -1324,6 +1369,8 @@ export async function createHostSettings(
     let entries;
     try { entries = await readdir(canonical, { withFileTypes: true }); }
     catch { return unavailable('the directory could not be read'); }
+    const isGitRepository = (await gitCommonDir(canonical)) !== null;
+    const driveReliability = await mountReliability(canonical);
     const LIMIT = 1000;
     const directories = entries
       .filter(entry => entry.isDirectory() && (showHidden || !entry.name.startsWith('.')))
@@ -1335,6 +1382,8 @@ export async function createHostSettings(
       parent: parentDirectory === canonical ? null : parentDirectory,
       directories: directories.slice(0, LIMIT),
       truncated: directories.length > LIMIT,
+      isGitRepository,
+      driveReliability,
     } };
   }
 
@@ -1436,38 +1485,49 @@ export async function createHostSettings(
 
   /** Write one workspace's REAL Host registration facts onto the settings list, keeping its saved checks. A workspace
    *  joining an open project none of whose workspaces is listed yet first puts the project's main workspace, its first
-   *  in the Host, on the list (X2). */
-  const listDescriptor = (facts: HostSettingsWorkspaceFacts): void => {
+   *  in the Host, on the list (X2). Returns the undo of the hidden copies it took, for a caller that rolls the visible
+   *  list back on a failed write. */
+  const listDescriptor = (facts: HostSettingsWorkspaceFacts): (() => void) => {
+    // The persisted descriptor is the REAL Host registration fact. A repeated open with wider flags can never
+    // silently widen the stored permissions; a description hidden by a forget keeps its saved checks.
+    const descriptorOf = (source: HostSettingsWorkspaceFacts,
+      prior: PersistedWorkspaceV1 | undefined): PersistedWorkspaceV1 => ({
+      scope: { ...source.scope },
+      name: source.name,
+      root: source.root,
+      writeAllowed: source.writeAllowed,
+      commandsAllowed: source.commandsAllowed,
+      ...(prior?.checks === undefined ? {} : { checks: structuredClone(prior.checks) }),
+      ...(prior?.checksSource === undefined ? {} : { checksSource: structuredClone(prior.checksSource) }),
+      ...(prior?.checksChild === undefined ? {} : { checksChild: { ...prior.checksChild } }),
+      ...(prior?.checksRevision === undefined ? {} : { checksRevision: prior.checksRevision }),
+      ...(prior?.planChecks === undefined ? {} : { planChecks: structuredClone(prior.planChecks) }),
+      ...(prior?.planAdoption === undefined ? {} : { planAdoption: structuredClone(prior.planAdoption) }),
+      ...(prior?.withdrawnChecks === undefined ? {} : { withdrawnChecks: structuredClone(prior.withdrawnChecks) }),
+    });
     const key = scopeKey(facts.scope);
-    // The persisted descriptor is the REAL Host registration fact. A repeated
-    // open with wider flags can never silently widen the stored permissions.
-    const existing = workspaces.find(entry => scopeKey(entry.scope) === key);
-    const descriptor: PersistedWorkspaceV1 = {
-      scope: { ...facts.scope },
-      name: facts.name,
-      root: facts.root,
-      writeAllowed: facts.writeAllowed,
-      commandsAllowed: facts.commandsAllowed,
-      ...(existing?.checks === undefined ? {} : { checks: structuredClone(existing.checks) }),
-      ...(existing?.checksSource === undefined ? {} : { checksSource: structuredClone(existing.checksSource) }),
-      ...(existing?.checksChild === undefined ? {} : { checksChild: { ...existing.checksChild } }),
-      ...(existing?.checksRevision === undefined ? {} : { checksRevision: existing.checksRevision }),
-      ...(existing?.planChecks === undefined ? {} : { planChecks: structuredClone(existing.planChecks) }),
-      ...(existing?.planAdoption === undefined ? {} : { planAdoption: structuredClone(existing.planAdoption) }),
-      ...(existing?.withdrawnChecks === undefined ? {} : { withdrawnChecks: structuredClone(existing.withdrawnChecks) }),
-    };
+    // R-M6: a hidden description of the same scope is this workspace coming back; its saved checks return with it.
+    const existing = savedDescriptorOf(facts.scope);
+    const descriptor = descriptorOf(facts, existing);
     const index = workspaces.findIndex(entry => scopeKey(entry.scope) === key);
+    const undoHidden = takeHiddenDescriptor(facts.scope);
+    let undoMainHidden = (): void => undefined;
     // X2 (KLS-1b): the start opens a project from its first listed workspace (its main one, whose root places the
     // store). A workspace joining an open project none of whose workspaces is listed yet (a start-up workspace
     // V12 did not list) puts the project's main workspace, its first in the Host, on the list before itself.
     if (index < 0 && !workspaces.some(entry => entry.scope.projectId === facts.scope.projectId)) {
       const main = assembly.listWorkspaces().find(workspace => workspace.scope.projectId === facts.scope.projectId);
       if (main !== undefined && scopeKey(main.scope) !== key) {
-        workspaces.push({ scope: { ...main.scope }, name: main.name, root: main.root,
-          writeAllowed: main.writeAllowed, commandsAllowed: main.commandsAllowed });
+        // R-M6: the main workspace may itself be hidden by the same forget; take its checks back the same way and
+        // never leave a second, checkless copy of the scope in the hidden list.
+        const mainKey = scopeKey(main.scope);
+        const mainExisting = savedDescriptorOf(main.scope);
+        workspaces.push(descriptorOf(main, mainExisting));
+        undoMainHidden = takeHiddenDescriptor(main.scope);
       }
     }
     if (index >= 0) workspaces[index] = descriptor; else workspaces.push(descriptor);
+    return () => { undoMainHidden(); undoHidden(); };
   };
 
   async function openWorkspaceRoute(input: unknown): Promise<SettingsResponse<SettingsRoutes['workspaces/open']['value']>> {
@@ -1480,11 +1540,28 @@ export async function createHostSettings(
     if (input['modelId'] !== undefined && !nonEmpty(input['modelId'])) return invalid('modelId must be a non-empty string when present');
     if (nonEmpty(input['modelId']) && !models.some(entry => entry.id === input['modelId'])) return notFound('the model does not exist');
 
+    const depthInput = input['explorationDepth'];
+    if (depthInput !== undefined && depthInput !== 1 && depthInput !== 2 && depthInput !== 3)
+      return invalid('explorationDepth must be 1, 2 or 3');
+    const explorationDepth = depthInput === 1 || depthInput === 2 || depthInput === 3 ? depthInput : undefined;
+    if (input['gitInit'] !== undefined && typeof input['gitInit'] !== 'boolean')
+      return invalid('gitInit must be a boolean');
+
+    let create: { name: string } | undefined;
+    if (input['create'] !== undefined) {
+      const value = input['create'];
+      if (!isRecord(value) || !nonEmpty(value['name'])) return invalid('create.name must be a non-empty string');
+      create = { name: value['name'] };
+    }
+
     const request: OpenSettingsWorkspace = {
       path: input['path'], writeAllowed: input['writeAllowed'] as boolean, commandsAllowed: input['commandsAllowed'] as boolean,
       ...(nonEmpty(input['name']) ? { name: input['name'] } : {}),
       ...(nonEmpty(input['projectId']) ? { projectId: input['projectId'] } : {}),
       ...(nonEmpty(input['modelId']) ? { modelId: input['modelId'] } : {}),
+      ...(create === undefined ? {} : { create }),
+      ...(explorationDepth === undefined ? {} : { explorationDepth }),
+      ...(typeof input['gitInit'] === 'boolean' ? { gitInit: input['gitInit'] } : {}),
     };
     const opened = await assembly.openWorkspace(request);
     if (opened.status !== 'ready') return opened;
@@ -1497,12 +1574,15 @@ export async function createHostSettings(
     try { await persist(); }
     catch {
       // The workspace IS registered and mounted in this Host; do not answer as
-      // if it were absent. A repeated open recovers the same scope.
-      return unavailable('the workspace was mounted but the settings file could not be written; retry the same open');
+      // if it were absent. A created folder now exists, so the recovery is the
+      // same path without `create`, which takes the existing-root branch.
+      return unavailable('the workspace was mounted but the settings file could not be written; '
+        + 'retry workspaces/open with the same path and without create');
     }
     try { await notify(); }
     catch {
-      return unavailable('the workspace was saved but the runtime configuration was not confirmed; retry the same open');
+      return unavailable('the workspace was saved but the runtime configuration was not confirmed; '
+        + 'retry workspaces/open with the same path and without create');
     }
     return { status: 'ready', value: {
       settings: snapshotOf(),
@@ -1823,7 +1903,7 @@ export async function createHostSettings(
     const installed = await adoption.confirmInstalledChecks(ctx, { scope });
     if (installed.status !== 'ready') return notInstalled('unavailable', 'the installed checks could not be read');
     const index = workspaces.findIndex(entry => scopeKey(entry.scope) === scopeKey(scope));
-    const previous = index >= 0 ? workspaces[index] : undefined;
+    const previous = savedDescriptorOf(scope);
     const approval = input.approval;
     // RC：只有人采用能把一条已装的计划检查换成同 id 的新定义（旧条目随待结记录存下）；agent 批准和平台自动采用仍判冲突。
     // 可替换 id 还要求当前装的那条同 id 检查就是计划带来的那一条（同摘要），启动配置/已批准清单的同 id 检查不算。
@@ -1840,7 +1920,7 @@ export async function createHostSettings(
     if (added.length === 0 && replaced.length === 0) return await apply();
     // G8B B1f：agent 批准的每条新检查都要有改动前跑会失败的事实（同 id、同摘要）。
     // 拒绝（人的决定不能被 agent 推翻）：人撤回过的检查（B2 的留痕），只有人采用能再装上。
-    const withdrawn = workspaces.find(entry => scopeKey(entry.scope) === scopeKey(scope))?.withdrawnChecks ?? [];
+    const withdrawn = previous?.withdrawnChecks ?? [];
     const retaken = approval.kind === 'agent'
       ? added.find(check => withdrawn.some(entry => entry.check.checkId === check.checkId)) : undefined;
     if (retaken !== undefined) return notInstalled('forbidden', `检查 ${retaken.checkId} 被人撤回过，只有人采用能再装上`);
@@ -1887,10 +1967,12 @@ export async function createHostSettings(
         ...addedEntries, ...replacedEntries],
       planAdoption,
     };
-    if (previous !== undefined) workspaces[index] = next; else workspaces.push(next);
+    const undoHidden = takeHiddenDescriptor(scope);
+    if (index >= 0) workspaces[index] = next; else workspaces.push(next);
     try { await persist(); }
     catch {
-      if (previous !== undefined) workspaces[index] = previous; else workspaces.pop();
+      if (index >= 0 && previous !== undefined) workspaces[index] = previous; else workspaces.pop();
+      undoHidden();
       return notInstalled('unavailable', 'the settings file could not be written');
     }
     try { await notify(); }
@@ -2179,10 +2261,11 @@ export async function createHostSettings(
       { writeAllowed: input['writeAllowed'] as boolean, commandsAllowed: input['commandsAllowed'] as boolean });
     if (changed.status !== 'ready') return changed;
     const listed = [...workspaces];
-    listDescriptor(assembly.listWorkspaces().find(w => scopeKey(w.scope) === scopeKey(scope))!);  // just switched: registered
+    const undoHidden = listDescriptor(assembly.listWorkspaces().find(w => scopeKey(w.scope) === scopeKey(scope))!);  // just switched: registered
     try { await persist(); }
     catch {
       workspaces.splice(0, workspaces.length, ...listed);
+      undoHidden();
       assembly.setWorkspaceAccess(scope, changed.value);            // the Host goes back to the values it had
       return unavailable('the settings file could not be written');
     }
@@ -2238,6 +2321,39 @@ export async function createHostSettings(
     return { status: 'ready', value: { settings: snapshotOf(), bootstrap: assembly.bootstrap() } };
   }
 
+  /**
+   * R-M6: drop a project whose folder is gone from the settings list. Only a project with at least one missing
+   * workspace folder may go; the list is written before the Host hides the project, so a failed write changes
+   * nothing. Disk contents, lines and notifications are never touched. A project whose runtime is still open keeps
+   * its descriptions as this Host's runtime configuration source; a closed project drops them with the registration.
+   */
+  async function forgetProjectRoute(input: unknown): Promise<SettingsResponse<HostSettingsSnapshot>> {
+    if (!isRecord(input) || !nonEmpty(input['projectId'])) return invalid('projects/forget requires a projectId');
+    const projectId = input['projectId'];
+    const projectWorkspaces = assembly.listWorkspaces()
+      .filter(workspace => workspace.scope.projectId === projectId);
+    if (projectWorkspaces.length === 0) return notFound('the project is not open on this Host');
+    if (!projectWorkspaces.some(workspace => !workspace.folderPresent))
+      return invalid('this project has no missing folder');
+    const projectOpen = projectWorkspaces.some(workspace => workspace.projectOpen);
+    const previous = [...workspaces];
+    workspaces.splice(0, workspaces.length, ...previous.filter(entry => entry.scope.projectId !== projectId));
+    try { await persist(); }
+    catch {
+      workspaces.splice(0, workspaces.length, ...previous);
+      return unavailable('the settings file could not be written');
+    }
+    if (projectOpen) {
+      hiddenWorkspaceDescriptions.push(...previous.filter(entry => entry.scope.projectId === projectId));
+    }
+    assembly.forgetProject(projectId);
+    try { await notify(); }
+    catch {
+      return unavailable('the project was forgotten but the Host configuration was not confirmed');
+    }
+    return { status: 'ready', value: snapshotOf() };
+  }
+
   // -------------------------------------------------------------------------
   // Prompt-pack editing routes. They read the disk tree at
   // `<settings directory>/prompts`, validate the whole resulting chain before
@@ -2259,6 +2375,7 @@ export async function createHostSettings(
     packId: typeof packId === 'string' ? packId : '',
     templateId: typeof templateId === 'string' ? templateId : null,
     ...(toolName === undefined ? {} : { toolName }),
+    kind: 'file_problem',
     reason,
   }]);
   type ReadyPackRead = Extract<DiskPromptPackReadV1, { status: 'ready' }>;
@@ -2299,35 +2416,81 @@ export async function createHostSettings(
     return { kind: 'ready', read: { chain: read.chain, directory, problems } };
   }
 
+  /** Rewrites the requested pack's manifest once: callers mutate the parsed
+   * object and return the file table that changed; only `chain[0]` is replaced. */
+  function rewriteFirstManifest(
+    chain: readonly PromptPackChainEntryV1[],
+    mutate: (manifest: PromptPackManifestV1) => Partial<Pick<PromptPackChainEntryV1, 'templates' | 'tools'>>,
+  ): PromptPackChainEntryV1[] {
+    const first = chain[0]!;
+    const manifest = JSON.parse(first.manifest.text) as PromptPackManifestV1;
+    const files = mutate(manifest);
+    return [
+      { ...first, ...files, manifest: { file: 'pack.json', text: JSON.stringify(manifest) } },
+      ...chain.slice(1),
+    ];
+  }
+
   function proposeTemplateChain(
     chain: readonly PromptPackChainEntryV1[], templateId: string,
     file: string, version: number, mentionsTools: readonly string[], text: string,
   ): PromptPackChainEntryV1[] {
-    const first = chain[0]!;
-    const manifest = JSON.parse(first.manifest.text) as PromptPackManifestV1;
-    // Replace an entry only in an object table. A non-object original stays as
-    // written, so the whole-pack validation reports it instead of this throwing.
-    if (isRecord(manifest.templates))
-      manifest.templates[templateId] = { file, version, mentionsTools: [...mentionsTools] };
-    return [
-      { ...first, manifest: { file: 'pack.json', text: JSON.stringify(manifest) },
-        templates: { ...first.templates, [templateId]: { file, text } } },
-      ...chain.slice(1),
-    ];
+    return rewriteFirstManifest(chain, manifest => {
+      // Replace an entry only in an object table. A non-object original stays as
+      // written, so the whole-pack validation reports it instead of this throwing.
+      if (isRecord(manifest.templates))
+        manifest.templates[templateId] = { file, version, mentionsTools: [...mentionsTools] };
+      return { templates: { ...chain[0]!.templates, [templateId]: { file, text } } };
+    });
   }
 
   function proposeToolChain(
     chain: readonly PromptPackChainEntryV1[], toolName: string, file: string, text: string,
   ): PromptPackChainEntryV1[] {
-    const first = chain[0]!;
-    const manifest = JSON.parse(first.manifest.text) as PromptPackManifestV1;
-    // The same rule as a template: keep a non-object table for validation.
-    if (isRecord(manifest.tools)) manifest.tools[toolName] = file;
-    return [
-      { ...first, manifest: { file: 'pack.json', text: JSON.stringify(manifest) },
-        tools: { ...first.tools, [toolName]: { file, text } } },
-      ...chain.slice(1),
-    ];
+    return rewriteFirstManifest(chain, manifest => {
+      // The same rule as a template: keep a non-object table for validation.
+      if (isRecord(manifest.tools)) manifest.tools[toolName] = file;
+      return { tools: { ...chain[0]!.tools, [toolName]: { file, text } } };
+    });
+  }
+
+  /** Removes this pack's own declaration; a parent may still declare the
+   * template. Only the version this restore removed is remembered; the next
+   * save starts above both that number and the current declaration, skipping
+   * every old file still on disk. */
+  function removeTemplateFromChain(
+    chain: readonly PromptPackChainEntryV1[], templateId: string, version: number,
+  ): PromptPackChainEntryV1[] {
+    return rewriteFirstManifest(chain, manifest => {
+      if (isRecord(manifest.templates)) delete manifest.templates[templateId];
+      const restored = manifest.restoredVersions ?? {};
+      restored[templateId] = [version];
+      manifest.restoredVersions = restored;
+      const templates = { ...chain[0]!.templates };
+      delete templates[templateId];
+      return { templates };
+    });
+  }
+
+  /** The version the last restore removed for this template, if any. */
+  function restoredVersionOf(
+    chain: readonly PromptPackChainEntryV1[], templateId: string,
+  ): number | null {
+    // The chain came from a successful save read, so its first manifest parsed.
+    const manifest = JSON.parse(chain[0]!.manifest.text) as PromptPackManifestV1;
+    const versions = manifest.restoredVersions?.[templateId];
+    const version = Array.isArray(versions) ? versions[0] : undefined;
+    return typeof version === 'number' && Number.isSafeInteger(version) ? version : null;
+  }
+
+  /** Drops the freed-version record once a save has moved past it. */
+  function dropRestoredVersion(
+    chain: readonly PromptPackChainEntryV1[], templateId: string,
+  ): PromptPackChainEntryV1[] {
+    return rewriteFirstManifest(chain, manifest => {
+      if (isRecord(manifest.restoredVersions)) delete manifest.restoredVersions[templateId];
+      return {};
+    });
   }
 
   /** Temp file and rename: a failure before the rename leaves the old manifest. */
@@ -2399,7 +2562,7 @@ export async function createHostSettings(
     const effectiveVersion = effectiveTemplateVersionOf(read.read.chain, templateId);
     if (effectiveVersion === null) {
       return invalidProblems('the prompt pack is invalid', read.read.problems.length > 0 ? read.read.problems
-        : [{ packId, templateId, reason: 'the template has no declared version' }]);
+        : [{ packId, templateId, kind: 'file_problem', reason: 'the template has no declared version' }]);
     }
     if (expectedVersion !== effectiveVersion)
       return revisionConflict('the prompt template version changed since it was read');
@@ -2408,18 +2571,44 @@ export async function createHostSettings(
     const mentionsTools = input['mentionsTools'];
     if (!Array.isArray(mentionsTools) || !mentionsTools.every(value => typeof value === 'string'))
       return invalidRequest('mentionsTools must be a string array', packId, templateId);
-    const newVersion = effectiveVersion + 1;
-    const file = `templates/${templateId}@${String(newVersion)}.txt`;
-    const chain = proposeTemplateChain(read.read.chain, templateId, file, newVersion, mentionsTools, text);
+    const directory = read.read.directory;
+    if (directory === null) return unavailable('the prompt pack has no directory');
+    let newVersion = effectiveVersion + 1;
+    const restoredFrom = restoredVersionOf(read.read.chain, templateId);
+    if (restoredFrom !== null) {
+      // A restore removed this pack's declaration but kept the old files. The
+      // next save starts above both the current declaration (a parent may have
+      // moved on since the restore) and the removed version, then skips every
+      // number an old file occupies. A missing templates directory has none.
+      let names: string[] = [];
+      try { names = await readdir(join(directory, 'templates')); }
+      catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT')
+          return unavailable('the prompt templates could not be read');
+      }
+      const taken = new Set<number>();
+      for (const name of names) {
+        if (!name.startsWith(`${templateId}@`) || !name.endsWith('.txt')) continue;
+        const number = Number(name.slice(templateId.length + 1, -4));
+        if (Number.isSafeInteger(number)) taken.add(number);
+      }
+      newVersion = Math.max(effectiveVersion + 1, restoredFrom + 1);
+      while (taken.has(newVersion)) newVersion += 1;
+    }
+    let file = `templates/${templateId}@${String(newVersion)}.txt`;
+    let chain = proposeTemplateChain(read.read.chain, templateId, file, newVersion, mentionsTools, text);
+    // A successful manifest write clears the record; a failed one keeps it, so
+    // the next attempt still starts above both versions.
+    if (restoredFrom !== null) chain = dropRestoredVersion(chain, templateId);
+    const unsafeTarget = (reason: string): SettingsResponse<never> =>
+      invalidProblems('the prompt pack has an unsafe save target',
+        [{ packId, templateId, kind: 'file_problem', reason }]);
     const validation = resolvePromptPackV1(chain);
     if (validation.status === 'rejected')
       return invalidProblems('the prompt pack would be invalid', validation.problems);
-    const directory = read.read.directory;
-    if (directory === null) return unavailable('the prompt pack has no directory');
     const target = await preparePackWriteTarget(promptsRoot, directory, file, text);
-    if (target.status === 'rejected')
-      return invalidProblems('the prompt pack has an unsafe save target',
-        [{ packId: packId, templateId, reason: target.reason }]);
+    if (target.status === 'rejected') return unsafeTarget(target.reason);
+    // An unmarked collision still refuses and leaves every old file untouched.
     if (target.status === 'collision') return unavailable(target.reason);
     try {
       if (target.status === 'create') await writeFile(target.target, text, { encoding: 'utf8', flag: 'wx' });
@@ -2430,6 +2619,50 @@ export async function createHostSettings(
     return { status: 'ready', value: {
       templateId, version: newVersion, fromPack: packId, text,
       slots: TEMPLATE_SLOTS[templateId]!, mentionsTools: [...mentionsTools],
+    } };
+  }
+
+  async function templateRestoreRoute(input: unknown): Promise<SettingsResponse<PromptTemplateReadV1>> {
+    if (!isRecord(input)) return invalidRequest('prompts/templates/restore requires an object body');
+    const packId = input['packId'];
+    // The platform pack is read-only, the same as a save.
+    if (packId === 'platform') return forbidden('the platform prompt pack cannot be restored');
+    if (typeof packId !== 'string' || !isPromptPackId(packId))
+      return notFound('the prompt pack does not exist');
+    const templateId = input['templateId'];
+    if (typeof templateId !== 'string' || !Object.hasOwn(TEMPLATE_SLOTS, templateId))
+      return notFound('the prompt template does not exist');
+    const expectedVersion = input['expectedVersion'];
+    if (typeof expectedVersion !== 'number' || !Number.isSafeInteger(expectedVersion))
+      return invalidRequest('expectedVersion must be an integer', packId, templateId);
+    const read = await packChainForSave(packId);
+    if (read.kind === 'rejected') return read.response;
+    // Only this pack's own declaration can be removed; an inherited one is not
+    // this pack's to restore, and recording its version would free a number this
+    // pack never released.
+    const ownManifest = JSON.parse(read.read.chain[0]!.manifest.text) as PromptPackManifestV1;
+    if (!isRecord(ownManifest.templates) || !Object.hasOwn(ownManifest.templates, templateId))
+      return notFound('the prompt pack does not declare this template');
+    const effectiveVersion = effectiveTemplateVersionOf(read.read.chain, templateId);
+    if (expectedVersion !== effectiveVersion)
+      return revisionConflict('the prompt template version changed since it was read');
+    // Drop only this pack's own declaration and its file table; the nearest
+    // remaining declaration (a custom parent, never necessarily the platform)
+    // becomes the effective one.
+    const chain = removeTemplateFromChain(read.read.chain, templateId, effectiveVersion);
+    const validation = resolvePromptPackV1(chain);
+    if (validation.status === 'rejected')
+      return invalidProblems('the prompt pack would be invalid', validation.problems);
+    const directory = read.read.directory;
+    if (directory === null) return unavailable('the prompt pack has no directory');
+    try { await replacePackManifest(directory, chain); }
+    catch { return unavailable('the prompt pack could not be written'); }
+    const origin = validation.value.origins[templateId];
+    if (origin === undefined) return notFound('the prompt template does not exist');
+    return { status: 'ready', value: {
+      templateId, version: origin.version, fromPack: origin.packId,
+      text: validation.value.templates[templateId]!, slots: TEMPLATE_SLOTS[templateId]!,
+      mentionsTools: [...origin.mentionsTools],
     } };
   }
 
@@ -2462,7 +2695,8 @@ export async function createHostSettings(
     if (effective.status === 'missing') return notFound('the prompt tool does not exist');
     if (effective.status === 'unreadable') {
       return invalidProblems('the prompt pack is invalid', read.read.problems.length > 0 ? read.read.problems
-        : [{ packId, templateId: null, toolName, reason: `tool "${toolName}" text could not be read` }]);
+        : [{ packId, templateId: null, toolName, kind: 'file_problem',
+            reason: `tool "${toolName}" text could not be read` }]);
     }
     const expectedDigest = input['expectedDigest'];
     if (typeof expectedDigest !== 'string')
@@ -2493,7 +2727,7 @@ export async function createHostSettings(
     const target = await preparePackWriteTarget(promptsRoot, directory, file, body);
     if (target.status === 'rejected')
       return invalidProblems('the prompt pack has an unsafe save target',
-        [{ packId: packId, templateId: null, toolName, reason: target.reason }]);
+        [{ packId: packId, templateId: null, toolName, kind: 'file_problem', reason: target.reason }]);
     if (target.status === 'collision') return unavailable(target.reason);
     try {
       if (target.status === 'create') await writeFile(target.target, body, { encoding: 'utf8', flag: 'wx' });
@@ -2514,6 +2748,7 @@ export async function createHostSettings(
       case 'workspaces/access': return await workspaceAccessRoute(input);
       case 'workspaces/withdraw': return await workspaceRemovalRoute('withdraw', input);
       case 'workspaces/remove': return await workspaceRemovalRoute('remove', input);
+      case 'projects/forget': return await forgetProjectRoute(input);
       case 'checks/approve': return await approveChecksRoute(input);
       case 'checks/withdraw': return await withdrawCheckRoute(input);
       case 'automation/save': return await saveAutomationRoute(input);
@@ -2528,6 +2763,7 @@ export async function createHostSettings(
       case 'prompts/packs/create': return await packsCreateRoute(input);
       case 'prompts/templates/read': return await templateReadRoute(input);
       case 'prompts/templates/save': return await templateSaveRoute(input);
+      case 'prompts/templates/restore': return await templateRestoreRoute(input);
       case 'prompts/tools/read': return await toolReadRoute(input);
       case 'prompts/tools/save': return await toolSaveRoute(input);
     }

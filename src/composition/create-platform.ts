@@ -250,6 +250,7 @@ import { ROLE_LINE_ORCHESTRATION_SCHEMAS } from '../core/work-graph/sessions/rol
 import { createRoleLimitsService } from '../core/work-graph/sessions/role-limits-service.js';
 import { createRoleLineAllocationReader } from '../core/work-graph/views/role-line-allocation-reader.js';
 import { createRoleLineOperationsRead } from '../core/work-graph/views/role-line-operations-read.js';
+import { workspaceGraphCurrentFacts, workspaceGraphFacts } from '../core/work-graph/views/workspace-graph-facts.js';
 import { createRoleFactsRead, createRoleLineRead, type RoleLineReadPort } from '../core/work-graph/views/role-line-read.js';
 import { createVerificationRoundRead, type VerificationRoundReadPort } from '../core/work-graph/views/verification-round-read.js';
 import type { LineRowV1 } from '../contracts/work-line.js';
@@ -268,7 +269,6 @@ import {
 } from '../core/work-graph/sessions/exploration-control.js';
 import { createWorkspaceRemoval } from '../core/work-graph/sessions/workspace-removal.js';
 import { createWorkspaceKnowledgeRemoval } from '../core/work-graph/knowledge/workspace-removal.js';
-import { catalogForWorkspace } from '../contracts/workspace-catalog.js';
 import {
   createExplorationFollowUpService, reproposeSourcesFromMembers, reproposeSourcesOf,
   type ExplorationFollowUpResultV1,
@@ -2377,8 +2377,19 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
     const requestLineCreation = createLineCreation({
       sessions: sessionOperations, operations: sessionDirectory,
     });
+    // R-M3: one graph-facts projection, two catalog windows. The operations read takes the record-only window (a
+    // conflict that makes the knowledge files unavailable leaves the menu readable); the removal owner binds the
+    // current-window reader at its own wiring below, so its refusals stay what they were.
+    const workspaceGraph = {
+      facts: (factsCtx: CoreCallContext, projectId: string, workspaceId: string, main: string | null) =>
+        workspaceGraphFacts(backend.records, factsCtx, projectId, workspaceId, main),
+    };
     // O1b: the one role_line owner and its read; the Host's third arm and the two routes bind this same instance.
-    const roleLineOperationsRead = createRoleLineOperationsRead({ records: backend.records });   // v4 :6446
+    const roleLineOperationsRead = createRoleLineOperationsRead({ records: backend.records,
+      graph: workspaceGraph,
+      // R-M7: the coarse-round card comes from the one proposal read, not a second member decoder.
+      proposal: { read: (readCtx, proposalRef) =>
+        architectureProposals.readArchitectureProposal(readCtx, { proposalRef }) } });   // v4 :6446
     const roleLineOperations = createRoleLineOperations({ records: backend.records, createLine: requestLineCreation,
       operations: sessionDirectory, responsibility: sessionResponsibility, now,
       platformRole: (duty) => platformRoleProfile(duty).template, duty: sessionDutyResolver,
@@ -3488,7 +3499,7 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
             reason: 'the Run steps read needs the trusted Runtime binding' });
         }
         return sessionCall(() => read(...args));
-      },
+      }, readPromptRecord: (...args: Parameters<NonNullable<typeof runtime.port.readPromptRecord>>) => sessionCall(() => runtime.port.readPromptRecord!(...args)),
       // R4.3a: local control delivery runs on the SAME trackedCall/close path as
       // execution; no public close API or background recovery is added.
       deliverControl(...args: Parameters<NonNullable<typeof runtime.port.deliverControl>>) {
@@ -5277,15 +5288,10 @@ export async function openTargetPlatform(options: TargetPlatformOptions) {
       exploration: explorationControl,
       notices: { notifyProject: projectNoticeWriter },
       mainWorkspace: readMainWorkspace,
-      catalog: {
-        inGraph: async (ctx, projectId, workspaceId, main) => {
-          const window = await readCurrentCatalogWindow(backend.records, projectId,
-            { lines: knowledgeLines, caller: ctx });
-          if (window.status === 'not_found') return { status: 'ready', value: false };
-          if (window.status !== 'ready') return window;
-          return { status: 'ready',
-            value: catalogForWorkspace(window.catalog.catalog, workspaceId, main).modules.length > 0 };
-        },
+      graph: {
+        facts: (factsCtx, projectId, workspaceId, main) =>
+          workspaceGraphCurrentFacts(backend.records, { lines: knowledgeLines, caller: factsCtx },
+            projectId, workspaceId, main),
       },
     });
     // PL §6.7.1: the ONE goal-loop reader factory, built from the owners above. The Host's restart

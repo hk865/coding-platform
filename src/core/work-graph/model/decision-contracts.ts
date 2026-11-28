@@ -489,6 +489,8 @@ export type DecisionCardV1 = {
     | 'adopt_completion_policy')[];
   /** §2.8: the `action_release` card's request view; absent on every other source kind. */
   actionRelease?: ActionReleaseCardViewV1;
+  /** R-M8: on the coarse-split `structural_proposal` card, the rounds its approval leaves; absent on every other card. */
+  roundsAfterApproval?: number;
   /** 121-136 A4: present only on a `candidate` card whose plan brings checks — the candidate's stored checks (id,
    *  kind, command, the Tasks they apply to); the person's adoption installs the ones not installed yet. */
   proposedChecks?: readonly RegisteredCommandCheck[];
@@ -499,9 +501,33 @@ export type DecisionCardV1 = {
   withdrawableChecks?: readonly string[];
 };
 
+/** The side of the wait the notice names. `waiting` = the line whose wait is stranded; `recipient` = the line it waits on. */
+export type DisconnectSideV1 = 'waiting' | 'recipient';
+
+/** The stored facts of one disconnect row (the view's projection input, carried verbatim on the notice item). */
+export type DisconnectFactV1 = {
+  /** `disconnect:<canonicalKey({sessionRef, at})>`: `at` is `archivedAt`, or the bound `unavailableSince` cursor. */
+  operationKey: string;
+  occurredAt: string;
+  messageRef: SessionMessageRef;
+  side: DisconnectSideV1;
+  /** The Session that is gone (archived or retired). */
+  party: SessionRef;
+  /** The other communication side of the same wait; `null` for an undelivered message or a person recipient. */
+  counterparty: SessionRef | null;
+  successor: SessionRef | null;
+  goalRef: GoalRef | null;
+  /** The copy Goal pin of an unforwarded copied intervention (the pending item); `null` on a disconnect row. */
+  copyGoal: { ref: GoalRef; revision: number } | null;
+  /** D-54: a retired line's bound `unavailableSince`; an archived line's stranded-message `since`. */
+  position: CommitCursor;
+};
+
 export type NoticeItemV1 = {
   itemKey: string; category: NoticeCategoryV1; subject: DecisionSubjectV1;
   position: NoticePositionV1; summary: string; objects: DecisionObjectV1[];
+  /** R-F1: the disconnect row's structured fact, carried verbatim; absent on every other category. */
+  disconnect?: DisconnectFactV1;
   /** L16（决定 55）：只加在触发返工的那一轮有 `resourceCapHit` 的条目上；别的条目不带这个字段。 */
   actions?: readonly { kind: 'raise_memory_cap' }[];
   /** KC-1 G3 (ruling 4-10): the notice's own kind, only on the three knowledge notices; every other item omits it. */

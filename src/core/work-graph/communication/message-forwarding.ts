@@ -24,7 +24,7 @@ import type {
 import { deriveMessageDelivery } from '../model/communication-contracts.js';
 import type { SessionMessageRecord } from '../state/message-machine.js';
 import {
-  FORWARD_DESTINATION_GONE, createSessionMessageRecord, disposeWaitProblem,
+  FORWARD_DESTINATION_GONE, createSessionMessageRecord, disposeWaitProblem, disposeWaitProblemBeforeTarget,
   forwardMessageProblem, nextSessionMessageRecord, waitFactsOfRecord, waitStateOf,
   type DisposeFactsV1, type ForwardFactsV1,
 } from '../state/message-machine.js';
@@ -35,10 +35,10 @@ import {
   checkPlainSessionRef, decodeSessionRecord, plainSessionRefToAggregate, sessionAggregateRefKey,
 } from '../sessions/session-record-codecs.js';
 import {
-  SESSION_MESSAGE_EVENT_SCHEMA_VERSION, SESSION_MESSAGE_FORWARDED_EVENT_TYPE, SESSION_MESSAGE_SENT_EVENT_TYPE,
-  SESSION_MESSAGE_WAIT_DISPOSED_EVENT_TYPE, encodeSessionMessageForwardedEvent,
-  encodeSessionMessageRecord, encodeSessionMessageSentEvent, encodeSessionMessageWaitDisposedEvent,
-  sessionMessageFromEvent, sessionMessageRefKey,
+  SESSION_MESSAGE_EVENT_SCHEMA_VERSION, SESSION_MESSAGE_FORWARDED_EVENT_TYPE, SESSION_MESSAGE_REPLY_TRANSFERRED_EVENT_TYPE,
+  SESSION_MESSAGE_SENT_EVENT_TYPE, SESSION_MESSAGE_WAIT_DISPOSED_EVENT_TYPE, encodeSessionMessageForwardedEvent,
+  encodeSessionMessageRecord, encodeSessionMessageReplyTransferredEvent, encodeSessionMessageSentEvent,
+  encodeSessionMessageWaitDisposedEvent, sessionMessageFromEvent, sessionMessageRefKey,
 } from '../sessions/message-record-codecs.js';
 import {
   eventIdOf, mapReadResult, messageSenderSessionOf, messageVersionAgainstReceipt, ownContext,
@@ -64,10 +64,12 @@ function copyGoalOf(input: ForwardMessageInputV1): GoalRef | null {
   return input.copyGoalRef === undefined || input.copyGoalRef === null ? null : input.copyGoalRef;
 }
 
-/** The dispose input's shape checks: `transfer` needs a complete target; `cancel` must not carry one. */
+/** The dispose input's shape checks: `transfer`/`transfer_reply` need a complete target; `cancel` must not carry one. */
 function disposeInputProblem(input: DisposeWaitInputV1): CoreRejection | null {
-  if (input.mode !== 'cancel' && input.mode !== 'transfer') return reject('invalid', 'the wait disposal mode is not recognized');
-  if (input.mode === 'transfer') {
+  if (input.mode !== 'cancel' && input.mode !== 'transfer' && input.mode !== 'transfer_reply') {
+    return reject('invalid', 'the wait disposal mode is not recognized');
+  }
+  if (input.mode === 'transfer' || input.mode === 'transfer_reply') {
     const toProblem = checkPlainSessionRef(input.to);
     if (toProblem !== null) return reject('invalid', `the transfer handler: ${toProblem}`);
   } else if (input.to !== undefined) {
@@ -81,9 +83,10 @@ export function createMessageForwardingOwner(deps: MessageForwardingDependencies
 
   /**
    * The one destination read both commands use (§3.9 item 3). A gone line is refused before its workspace or
-   * eligibility is used. A forward may receive in another workspace of the same project (7D1's same-project lift);
-   * a dispose keeps today's cross-workspace answer. The comparison is the real `SessionRecord.workspaceId`, never
-   * the caller's `SessionRef` (which has no workspace). Every live destination line is admitted by this read.
+   * eligibility is used. A forward, and a `transfer_reply` hand-off, may receive in another workspace of the same
+   * project (7D1's same-project lift); a wait `transfer` keeps today's cross-workspace answer. The comparison is the
+   * real `SessionRecord.workspaceId`, never the caller's `SessionRef` (which has no workspace). Every live destination
+   * line is admitted by this read.
    */
   async function readDestination(owned: Owned, to: SessionRef, receiving: 'forward' | 'dispose'): Promise<
     { ok: true; value: ForwardFactsV1['destination']; receivingWorkspaceId: string } | { ok: false; rejection: CoreRejection }> {
@@ -347,13 +350,18 @@ export function createMessageForwardingOwner(deps: MessageForwardingDependencies
     const inputProblem = disposeInputProblem(input);
     if (inputProblem !== null) return inputProblem;
     const messageRef: SessionMessageRef = { ...input.messageRef };
-    const to: SessionRef | null = input.mode === 'transfer' ? { ...(input.to as SessionRef) } : null;
+    const to: SessionRef | null = input.mode === 'cancel' ? null : { ...(input.to as SessionRef) };
     const mode = input.mode;
+    const replyClaimKey = 'reply-transferred:' + sessionMessageRefKey(messageRef);
+    // Set by `build`; after a concurrent hand-off the retry re-reads the original message through the same table.
+    let transferReplyNewRefKey: string | null = null;
 
-    const command: WriteCommand<{ before: SessionMessage; facts: DisposeFactsV1 },
-      { before: SessionMessage; change: { mode: 'cancel' } | { mode: 'transfer'; to: SessionRef } },
+    const command: WriteCommand<{ before: SessionMessage; facts: DisposeFactsV1; receivingWorkspaceId: string | null;
+        early: CoreRejection | null },
+      { before: SessionMessage; change: { mode: 'cancel' } | { mode: 'transfer'; to: SessionRef }
+        | { mode: 'transfer_reply'; to: SessionRef; receivingWorkspaceId: string } },
       CoreRejection, SessionMessage, SessionMessage> = {
-      operation: 'message.disposeWait',
+      operation: mode === 'transfer_reply' ? 'wait-transfer-reply' : 'message.disposeWait',
       scope: { projectId: owned.projectId, workspaceId: owned.workspaceId },
       principal: principalIdentity(owned.principal),
       commandId: input.commandId,
@@ -367,37 +375,130 @@ export function createMessageForwardingOwner(deps: MessageForwardingDependencies
         if (!recipientLine.ok) return recipientLine.rejection;
         const delivery = deriveMessageDelivery(before, recipientLine.value).delivery;
         let waitingLineGone = false;
-        const sender = messageSenderSessionOf(before);
-        if (sender !== null) {
-          const senderLine = await recipientLineFacts(deps, ctx, sender);
-          if (!senderLine.ok) return senderLine.rejection;
-          waitingLineGone = senderLine.value.archived || senderLine.value.retired || senderLine.value.archiving;
+        // R-F2: `waiting_line_live` is a `transfer` rule only. `transfer_reply` judges the saved reply and
+        // then the target, so it never reads the sender line (a forwarded copy's sender may be in another workspace).
+        if (mode === 'transfer') {
+          const sender = messageSenderSessionOf(before);
+          if (sender !== null) {
+            const senderLine = await recipientLineFacts(deps, ctx, sender);
+            if (!senderLine.ok) return senderLine.rejection;
+            waitingLineGone = senderLine.value.archived || senderLine.value.retired || senderLine.value.archiving;
+          }
         }
         let destination: DisposeFactsV1['destination'] = null;
-        if (mode === 'transfer') {
-          const read = await readDestination(owned, to as SessionRef, 'dispose');
-          if (!read.ok) return read.rejection;
-          destination = read.value;
-        }
+        let receivingWorkspaceId: string | null = null;
         const facts: DisposeFactsV1 = {
           mode,
           message: before,
           wait,
           delivery: delivery.delivery,
           acceptedResponse: (before.acceptedInputs ?? []).some((entry) => entry.part === 'response'),
+          response: before.response,
+          responseTransferredTo: before.responseTransferredTo ?? null,
           waitingLineGone,
           destination,
         };
-        return { status: 'ready', facts: { before, facts } };
+        // R-F2's order for a reply hand-off: the original message's own table runs before the target read, so a
+        // missing or gone target cannot hide `not_a_wait`, an absent/accepted/transferred reply, or a closed wait.
+        // The refusal rides on the ready facts so `decide` returns it and the executor can first re-check this
+        // command's own receipt (a concurrent same-identity commit must still replay the original receipt).
+        // `cancel`/`transfer` keep today's order: the target read still comes before their table.
+        const early = mode === 'transfer_reply' ? disposeWaitProblemBeforeTarget(facts) : null;
+        if (early === null && mode !== 'cancel') {
+          // A reply hand-off uses the forward rule: another workspace of the same project is eligible.
+          const read = await readDestination(owned, to as SessionRef, mode === 'transfer_reply' ? 'forward' : 'dispose');
+          if (!read.ok) return read.rejection;
+          destination = read.value;
+          facts.destination = destination;
+          receivingWorkspaceId = read.receivingWorkspaceId;
+        }
+        return { status: 'ready', facts: { before, facts, receivingWorkspaceId, early } };
       },
       decide: (facts) => {
+        if (facts.early !== null) return { refuse: facts.early };
         const problem = disposeWaitProblem(facts.facts);
         if (problem !== null) return { refuse: problem };
-        return { decision: { before: facts.before, change: mode === 'transfer'
-          ? { mode: 'transfer', to: to as SessionRef } : { mode: 'cancel' } } };
+        return { decision: { before: facts.before, change: mode === 'cancel'
+          ? { mode: 'cancel' }
+          : mode === 'transfer'
+            ? { mode: 'transfer', to: to as SessionRef }
+            : { mode: 'transfer_reply', to: to as SessionRef,
+              receivingWorkspaceId: facts.receivingWorkspaceId as string } } };
       },
       build: async (decision, keys) => {
         const at = deps.now();
+        if (decision.change.mode === 'transfer_reply') {
+          const before = decision.before;
+          const response = before.response as NonNullable<SessionMessage['response']>;
+          const messageId = 'session-message-transfer-reply-' + sha256Hex(canonicalJson({
+            projectId: owned.projectId, workspaceId: decision.change.receivingWorkspaceId,
+            original: messageRef, to: decision.change.to,
+          } as unknown as JsonValue));
+          const newRef: SessionMessageRef = {
+            aggregateType: 'SessionMessage', projectId: owned.projectId,
+            workspaceId: decision.change.receivingWorkspaceId, messageId,
+          };
+          transferReplyNewRefKey = sessionMessageRefKey(newRef);
+          // R-F2: the copied input is the saved reply, never a second wait; it carries no `entry`/`decision`.
+          // A formal Query Answer's sender carries `answerRef`; the copied message's sender slot admits only this
+          // round's identity fields, so the copy drops the reply-slot-only key and keeps the rest.
+          const replySender = response.sender;
+          const sender: SessionMessageRecord['sender'] = replySender.kind === 'query_run'
+            ? { kind: 'query_run', sessionRef: replySender.sessionRef,
+              queryRunRef: replySender.queryRunRef, generation: replySender.generation }
+            : replySender;
+          const newRecord: SessionMessageRecord = createSessionMessageRecord({
+            ref: newRef,
+            sender,
+            recipient: decision.change.to,
+            bodyRef: response.bodyRef,
+            sourceRef: response.sourceRef,
+            createdAt: at,
+            wake: before.wake,
+            answeredBy: 'line',
+            needsReply: false,
+            waitAfterSend: false,
+            goalRef: before.goalRef,
+            taskRef: null,
+            followupOf: null,
+            requestRoot: null,
+            deadline: null,
+            deadlineMs: null,
+            originalRef: before.ref,
+          });
+          const oldNext = nextSessionMessageRecord(before, { kind: 'reply_transferred', to: newRef });
+          const preserved = await preservedNoticeOrigin(records, sessionMessageRefKey(messageRef));
+          if (!preserved.ok) return preserved.rejection;
+          const replyTransferredEvent = encodeSessionMessageReplyTransferredEvent({
+            eventId: eventIdOf(keys.identityKey, SESSION_MESSAGE_REPLY_TRANSFERRED_EVENT_TYPE),
+            schemaVersion: SESSION_MESSAGE_EVENT_SCHEMA_VERSION, occurredAt: at,
+            projectId: before.ref.projectId, workspaceId: before.ref.workspaceId,
+            eventType: SESSION_MESSAGE_REPLY_TRANSFERRED_EVENT_TYPE, message: oldNext,
+            to: decision.change.to, copyRef: newRef,
+          });
+          const sentEvent = encodeSessionMessageSentEvent({
+            eventId: eventIdOf(keys.identityKey, SESSION_MESSAGE_SENT_EVENT_TYPE),
+            schemaVersion: SESSION_MESSAGE_EVENT_SCHEMA_VERSION, occurredAt: at,
+            projectId: newRef.projectId, workspaceId: newRef.workspaceId, requestId: input.commandId,
+            actor: newRecord.sender, eventType: SESSION_MESSAGE_SENT_EVENT_TYPE, message: newRecord,
+          });
+          return {
+            // Old first, new last: the executor projects the last event (the copied message).
+            records: [encodeSessionMessageRecord(oldNext, preserved.value),
+              encodeSessionMessageRecord(newRecord, { since: null })],
+            events: [replyTransferredEvent, sentEvent],
+            guards: [
+              { refKey: sessionMessageRefKey(messageRef), expectedRevision: before.revision },
+              { refKey: sessionMessageRefKey(newRef), expectedRevision: null },
+            ],
+            claims: [{
+              claimKey: replyClaimKey,
+              expectedOwner: null,
+              nextOwner: canonicalJson(decision.change.to as unknown as JsonValue),
+            }],
+            commitCursorBindings: [{ refKey: sessionMessageRefKey(newRef), field: 'since' }],
+          };
+        }
         const change = decision.change.mode === 'transfer'
           ? { kind: 'wait_disposed' as const, mode: 'transfer' as const, to: decision.change.to, at }
           : { kind: 'wait_disposed' as const, mode: 'cancel' as const, to: null, at };
@@ -420,11 +521,20 @@ export function createMessageForwardingOwner(deps: MessageForwardingDependencies
         return fragment;
       },
       result: {
-        eventType: SESSION_MESSAGE_WAIT_DISPOSED_EVENT_TYPE,
+        // The executor's replay decodes the LAST event: a transfer_reply's last event is the copied message's send.
+        eventType: mode === 'transfer_reply'
+          ? SESSION_MESSAGE_SENT_EVENT_TYPE : SESSION_MESSAGE_WAIT_DISPOSED_EVENT_TYPE,
         schemaVersion: SESSION_MESSAGE_EVENT_SCHEMA_VERSION,
         decode: sessionMessageFromEvent,
         validate: messageVersionAgainstReceipt,
         project: (message) => message,
+      },
+      retryable: {
+        // Only a concurrent hand-off of this same reply re-reads and re-decides; `cancel`/`transfer` keep the
+        // executor's conflict answer.
+        guard: (refKey) => mode === 'transfer_reply'
+          && (refKey === sessionMessageRefKey(messageRef) || refKey === transferReplyNewRefKey),
+        claim: (claimKey) => mode === 'transfer_reply' && claimKey === replyClaimKey,
       },
     };
 

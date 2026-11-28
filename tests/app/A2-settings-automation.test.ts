@@ -24,6 +24,7 @@ import { DEFAULT_TASK_AUTOMATION_POLICY, type TaskAutomationPolicyV1 } from '../
 
 const assembly: HostSettingsAssembly = {
   listWorkspaces: () => [],
+  forgetProject: () => {},
   secretConfigured: () => false,
   bootstrap: () => ({}) as BootstrapResponse, // not consumed by these settings assertions
   async openWorkspace() { return { status: 'rejected', code: 'unsupported', reason: 'not used by these tests' }; },
@@ -144,7 +145,7 @@ describe('automation/save (C8, LA-6; A.2 step 5.8)', () => {
         const issuedId = modelSaved.status === 'ready' ? modelSaved.value.models[0]?.id : undefined;
         expect(issuedId).toEqual(expect.any(String));
         expectedModels = [{ id: issuedId, label: 'Model A', provider: 'openai', model: 'model-a', baseUrl: '',
-          credentialConfigured: false }];
+          contextWindowTokens: 128000, credentialConfigured: false }];
       }
       const { settings, pushed } = opened;
       const before = pushed.length;

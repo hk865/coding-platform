@@ -29,6 +29,8 @@ export const MAX_WORK_RUN_TOKEN_BUDGET = 600_000_000;
 export type SettingsProvider = 'deepseek' | 'openai';
 export type SettingsModel = {
   id: string; label: string; provider: SettingsProvider; model: string; baseUrl: string;
+  /** The window the local workbench uses for this model (budget and snapshot share it). */
+  contextWindowTokens: number;
   credentialConfigured: boolean;
   thinking?: 'enabled' | 'disabled';
   reasoningEffort?: 'low' | 'high' | 'max';
@@ -58,6 +60,8 @@ export type SettingsWorkspace = {
   /** KLS-2: whether the architecture and notes of this workspace's current checkout stay local and out of git. It is
    *  kept per checkout, so every project mounting the same checkout sees it; a folder in no git work tree is false. */
   knowledgeLocalOnly: boolean;
+  /** Whether the workspace's root is still a directory; only a project with a missing folder may be forgotten. */
+  folderPresent: boolean;
 };
 /**
  * 121-136: who installed one check of a workspace, and from where: a plan a person approved by adopting it. G8B B1f：
@@ -97,8 +101,13 @@ export type WithdrawnCheckV1 = { checkId: string; withdrawnAt: string }
 export type CheckApproverV1 = { kind: 'person' }
   | { kind: 'agent'; duty: CheckReviewApproverDutyV1; session: SessionRef; answerRef: QueryJobAnswerRef;
     author: CheckReviewAuthorDutyV1; baselines: readonly CheckBaselineV1[] };
-/** A project store's place and, only for the local data directory, the one sentence saying why. */
-export type SettingsStoreLocation = { place: 'git-common' | 'workspace-local' | 'user-data'; reason: string | null };
+/** A project store's place and, only for the local data directory, the one sentence saying why (with its code). */
+export type SettingsStoreLocation = {
+  place: 'git-common' | 'workspace-local' | 'user-data';
+  reason: string | null;
+  /** Non-null only for `user-data`: `reason` as a code the page words itself. */
+  reasonCode: 'unreliable_drive' | 'unknown_drive' | null;
+};
 export type HostSettingsSnapshot = {
   models: SettingsModel[]; workspaces: SettingsWorkspace[];
   /**
@@ -211,6 +220,9 @@ export type SaveWorkspaceAccess = { scope: CoreScope; writeAllowed: boolean; com
 export type DirectoryListing = {
   path: string; parent: string | null;
   directories: { name: string; path: string }[]; truncated: boolean;
+  /** The listed directory itself, not its entries: a git work tree, and the drive it sits on. */
+  isGitRepository: boolean;
+  driveReliability: 'reliable' | 'unreliable' | 'unknown';
 };
 export type SaveSettingsModel = {
   id?: string; label: string; provider: SettingsProvider; model: string; baseUrl?: string;
@@ -227,6 +239,12 @@ export type OpenSettingsWorkspace = {
   path: string; name?: string; modelId?: string;
   /** Omit to open a new project; set to add a workspace under an existing Host project. */
   projectId?: string;
+  /** Make this one level of folder (named by `name`) and open it in the same call; only without `projectId`. */
+  create?: { name: string };
+  /** The exploration depth this open starts at, 1/2/3; omitted keeps the default (`DEFAULT_EXPLORATION_DEPTH`). */
+  explorationDepth?: 1 | 2 | 3;
+  /** Run `git init` when the folder is not a git repository yet, before the project store is placed. */
+  gitInit?: boolean;
   writeAllowed: boolean; commandsAllowed: boolean;
 };
 
@@ -250,6 +268,10 @@ export type PromptPackListV1 = {
     problems: readonly PromptPackProblemV1[];
     templates: readonly {
       templateId: string; version: number; fromPack: string; problems: readonly PromptPackProblemV1[];
+    }[];
+    tools: readonly {
+      toolName: string; fromPack: string; problems: readonly PromptPackProblemV1[];
+      description: string | null;
     }[];
   }[];
 };
@@ -289,6 +311,7 @@ export type SettingsRoutes = {
   'workspaces/access': { input: SaveWorkspaceAccess; value: { settings: HostSettingsSnapshot; bootstrap: BootstrapResponse } };
   'workspaces/withdraw': { input: { scope: CoreScope }; value: { settings: HostSettingsSnapshot; bootstrap: BootstrapResponse } };
   'workspaces/remove': { input: { scope: CoreScope }; value: { settings: HostSettingsSnapshot; bootstrap: BootstrapResponse } };
+  'projects/forget': { input: { projectId: string }; value: HostSettingsSnapshot };
   'checks/approve': { input: ApproveWorkspaceChecks; value: HostSettingsSnapshot };
   'checks/withdraw': { input: { scope: CoreScope; checkId: string }; value: HostSettingsSnapshot };
   'automation/save': { input: SaveAutomationSettings; value: HostSettingsSnapshot };
@@ -305,6 +328,10 @@ export type SettingsRoutes = {
   'prompts/templates/save': {
     input: { packId: string; templateId: string; expectedVersion: number; text: string; mentionsTools: string[] };
     value: PromptTemplateSaveV1;
+  };
+  'prompts/templates/restore': {
+    input: { packId: string; templateId: string; expectedVersion: number };
+    value: PromptTemplateReadV1;
   };
   'prompts/tools/read': { input: { packId: string; toolName: string }; value: PromptToolReadV1 };
   'prompts/tools/save': {

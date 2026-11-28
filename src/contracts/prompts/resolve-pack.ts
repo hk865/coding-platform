@@ -5,8 +5,8 @@
  * result, naming the pack (and the template or tool when it has one).
  */
 import type {
-    PromptPackChainEntryV1, PromptPackManifestV1, PromptPackProblemV1, PromptPackValidationV1,
-    ResolvedPromptPackV1, ToolTextV1,
+    PromptPackChainEntryV1, PromptPackManifestV1, PromptPackProblemDetailV1, PromptPackProblemKind,
+    PromptPackProblemV1, PromptPackValidationV1, ResolvedPromptPackV1, ToolTextV1,
 } from './prompt-pack.js';
 import { parseTemplateV1 } from './render-template.js';
 import { isRecord } from '../validation/common.js';
@@ -75,33 +75,36 @@ function knownStringKeys(states: readonly ChainState[]): ReadonlySet<string> | n
 
 export function resolvePromptPackV1(chain: readonly PromptPackChainEntryV1[]): PromptPackValidationV1 {
     const problems: PromptPackProblemV1[] = [];
-    const report = (packId: string, templateId: string | null, reason: string, toolName?: string): void => {
-        problems.push(toolName === undefined
-            ? { packId, templateId, reason }
-            : { packId, templateId, toolName, reason });
+    const report = (packId: string, templateId: string | null, kind: PromptPackProblemKind, reason: string,
+        toolName?: string, detail?: PromptPackProblemDetailV1): void => {
+        problems.push({
+            packId, templateId, kind, reason,
+            ...(toolName === undefined ? {} : { toolName }),
+            ...(detail === undefined ? {} : { detail }),
+        });
     };
 
     if (chain.length === 0) {
-        report('', null, 'the prompt pack chain is empty');
+        report('', null, 'file_problem', 'the prompt pack chain is empty');
         return { status: 'rejected', problems };
     }
 
     // Chain structure: ids unique, the platform last and nowhere else.
     const seenIds = new Set<string>();
     for (const [index, entry] of chain.entries()) {
-        if (seenIds.has(entry.packId)) report(entry.packId, null, `pack "${entry.packId}" appears more than once`);
+        if (seenIds.has(entry.packId)) report(entry.packId, null, 'file_problem', `pack "${entry.packId}" appears more than once`);
         seenIds.add(entry.packId);
         if (entry.packId === 'platform' && index !== chain.length - 1)
-            report(entry.packId, null, 'pack id "platform" is reserved for the last pack');
+            report(entry.packId, null, 'file_problem', 'pack id "platform" is reserved for the last pack');
     }
     const last = chain[chain.length - 1]!;
-    if (last.packId !== 'platform') report(last.packId, null, 'the pack chain must end at the platform pack');
+    if (last.packId !== 'platform') report(last.packId, null, 'file_problem', 'the pack chain must end at the platform pack');
 
     // Read every manifest before deciding anything: all problems are collected.
     const states: ChainState[] = chain.map((entry, index) => {
         const parsed = jsonObject(entry.manifest.text, 'the manifest');
         if (parsed.status === 'problem') {
-            report(entry.packId, null, parsed.reason);
+            report(entry.packId, null, 'json_problem', parsed.reason);
             return { entry, index, manifest: null };
         }
         return { entry, index, manifest: parsed.value };
@@ -121,7 +124,7 @@ export function resolvePromptPackV1(chain: readonly PromptPackChainEntryV1[]): P
     for (const { entry, index, manifest } of states) {
         const packId = entry.packId;
         if (manifest !== null) {
-            if (manifest['schemaVersion'] !== 1) report(packId, null, 'manifest schemaVersion must be 1');
+            if (manifest['schemaVersion'] !== 1) report(packId, null, 'file_problem', 'manifest schemaVersion must be 1');
             validateIdentity(report, packId, manifest);
             validateExtends(report, chain, index, packId, manifest);
             validateStrings(report, entry, manifest, packId, knownStrings);
@@ -163,20 +166,21 @@ export function resolvePromptPackV1(chain: readonly PromptPackChainEntryV1[]): P
     };
 }
 
-type Report = (packId: string, templateId: string | null, reason: string, toolName?: string) => void;
+type Report = (packId: string, templateId: string | null, kind: PromptPackProblemKind, reason: string,
+    toolName?: string, detail?: PromptPackProblemDetailV1) => void;
 
 function validateIdentity(
     report: Report, packId: string, manifest: JsonRecord,
 ): void {
     const manifestId = manifest['packId'];
     if (!isString(manifestId)) {
-        report(packId, null, 'manifest packId must be a string');
+        report(packId, null, 'json_problem', 'manifest packId must be a string');
         return;
     }
     // Syntax and identity are independent: report both when both are wrong.
-    if (!PACK_ID.test(manifestId)) report(packId, null, `pack id "${manifestId}" is not a legal pack id`);
+    if (!PACK_ID.test(manifestId)) report(packId, null, 'file_problem', `pack id "${manifestId}" is not a legal pack id`);
     if (manifestId !== packId)
-        report(packId, null, `manifest packId "${manifestId}" does not match pack "${packId}"`);
+        report(packId, null, 'file_problem', `manifest packId "${manifestId}" does not match pack "${packId}"`);
 }
 
 function validateExtends(
@@ -184,21 +188,21 @@ function validateExtends(
 ): void {
     const parent = manifest['extends'];
     if (packId === 'platform') {
-        if (parent !== null) report(packId, null, 'the platform pack must not extend another pack');
+        if (parent !== null) report(packId, null, 'file_problem', 'the platform pack must not extend another pack');
         return;
     }
     if (!isString(parent) || parent === '') {
-        report(packId, null, `pack "${packId}" must extend one parent pack`);
+        report(packId, null, 'file_problem', `pack "${packId}" must extend one parent pack`);
         return;
     }
     if (index === chain.length - 1) return;
     if (!chain.some(entry => entry.packId === parent)) {
-        report(packId, null, `pack "${packId}" extends missing pack "${parent}"`);
+        report(packId, null, 'file_problem', `pack "${packId}" extends missing pack "${parent}"`);
         return;
     }
     const next = chain[index + 1]!;
     if (next.packId !== parent)
-        report(packId, null, `pack "${packId}" extends "${parent}" but the chain continues with "${next.packId}"`);
+        report(packId, null, 'file_problem', `pack "${packId}" extends "${parent}" but the chain continues with "${next.packId}"`);
 }
 
 function validateStrings(
@@ -207,28 +211,28 @@ function validateStrings(
 ): void {
     const file = manifest['strings'];
     if (!isString(file)) {
-        report(packId, null, 'manifest strings must name a file');
+        report(packId, null, 'file_problem', 'manifest strings must name a file');
         return;
     }
     const bad = fileProblems(file);
     if (bad.length > 0) {
-        for (const reason of bad) report(packId, null, reason);
+        for (const reason of bad) report(packId, null, 'file_problem', reason);
         return;
     }
     if (file !== entry.strings.file) {
-        report(packId, null, `strings file "${file}" is missing from the pack`);
+        report(packId, null, 'file_problem', `strings file "${file}" is missing from the pack`);
         return;
     }
     const parsed = jsonObject(entry.strings.text, 'the string table');
     if (parsed.status === 'problem') {
-        report(packId, null, parsed.reason);
+        report(packId, null, 'json_problem', parsed.reason);
         return;
     }
     for (const [key, value] of Object.entries(parsed.value)) {
-        if (!isString(value)) report(packId, null, `string "${key}" must be a string`);
+        if (!isString(value)) report(packId, null, 'json_problem', `string "${key}" must be a string`);
         if (packId === 'platform') continue;
-        if (FIXED_STRINGS.has(key)) report(packId, null, `string "${key}" is fixed`);
-        else if (knownStrings !== null && !knownStrings.has(key)) report(packId, null, `string "${key}" is unknown`);
+        if (FIXED_STRINGS.has(key)) report(packId, null, 'json_problem', `string "${key}" is fixed`);
+        else if (knownStrings !== null && !knownStrings.has(key)) report(packId, null, 'json_problem', `string "${key}" is unknown`);
     }
 }
 
@@ -237,43 +241,44 @@ function validateTemplates(
 ): void {
     const templates = manifest['templates'];
     if (!isRecord(templates)) {
-        report(packId, null, 'manifest templates must be an object');
+        report(packId, null, 'json_problem', 'manifest templates must be an object');
         return;
     }
     for (const [templateId, raw] of Object.entries(templates)) {
         // An unknown id skips only the checks that need its slot table: entry
         // shape, version, declarations and the file field stay decidable.
         const known = Object.hasOwn(TEMPLATE_SLOTS, templateId);
-        if (!known) report(packId, templateId, `template "${templateId}" is not declared by the slot tables`);
+        if (!known) report(packId, templateId, 'file_problem', `template "${templateId}" is not declared by the slot tables`);
         if (!isRecord(raw)) {
-            report(packId, templateId, 'template entry must be an object');
+            report(packId, templateId, 'json_problem', 'template entry must be an object');
             continue;
         }
         const version = raw['version'];
         if (typeof version !== 'number' || !Number.isInteger(version) || version <= 0)
-            report(packId, templateId, 'template version must be a positive integer');
+            report(packId, templateId, 'file_problem', 'template version must be a positive integer');
         const mentions = raw['mentionsTools'];
         if (!Array.isArray(mentions) || !mentions.every(isString))
-            report(packId, templateId, 'template mentionsTools must be a string array');
+            report(packId, templateId, 'file_problem', 'template mentionsTools must be a string array');
         const file = raw['file'];
         if (!isString(file)) {
-            report(packId, templateId, 'template file must be a string');
+            report(packId, templateId, 'file_problem', 'template file must be a string');
             continue;
         }
         const bad = fileProblems(file);
         if (bad.length > 0) {
-            for (const reason of bad) report(packId, templateId, reason);
+            for (const reason of bad) report(packId, templateId, 'file_problem', reason);
             continue;
         }
         const supplied = entry.templates[templateId];
         if (supplied === undefined || supplied.file !== file || typeof supplied.text !== 'string') {
-            report(packId, templateId, `template file "${file}" is missing from the pack`);
+            report(packId, templateId, 'file_problem', `template file "${file}" is missing from the pack`);
             continue;
         }
         if (!known) continue;
         const parsed = parseTemplateV1(templateId, supplied.text);
         if (parsed.status === 'invalid')
-            for (const error of parsed.errors) report(packId, templateId, error.message);
+            for (const error of parsed.errors)
+                report(packId, templateId, error.problemKind, error.message, undefined, error.detail);
     }
 }
 
@@ -283,50 +288,53 @@ function validateTools(
 ): void {
     const declarations = manifest['tools'];
     if (!isRecord(declarations)) {
-        report(packId, null, 'manifest tools must be an object');
+        report(packId, null, 'json_problem', 'manifest tools must be an object');
         return;
     }
     for (const [name, file] of Object.entries(declarations)) {
         // A tool without platform text still gets every check that does not
         // depend on the platform definition: file, JSON, description, parameters.
         if (packId !== 'platform' && !platformToolNames.has(name))
-            report(packId, null, `tool ${name} has no platform text`, name);
+            report(packId, null, 'file_problem', `tool ${name} has no platform text`, name);
         if (!isString(file)) {
-            report(packId, null, `tool ${name} file must be a string`, name);
+            report(packId, null, 'file_problem', `tool ${name} file must be a string`, name);
             continue;
         }
         const bad = fileProblems(file);
         if (bad.length > 0) {
-            for (const reason of bad) report(packId, null, reason, name);
+            for (const reason of bad) report(packId, null, 'file_problem', reason, name);
             continue;
         }
         const supplied = entry.tools[name];
         if (supplied === undefined || supplied.file !== file || typeof supplied.text !== 'string') {
-            report(packId, null, `tool file "${file}" is missing from the pack`, name);
+            report(packId, null, 'file_problem', `tool file "${file}" is missing from the pack`, name);
             continue;
         }
         const parsedTool = jsonObject(supplied.text, `tool "${name}" text`);
         if (parsedTool.status === 'problem') {
-            report(packId, null, parsedTool.reason, name);
+            report(packId, null, 'json_problem', parsedTool.reason, name);
             continue;
         }
         const tool = parsedTool.value;
         const description = tool['description'];
         if (!isString(description) || description === '')
-            report(packId, null, `tool ${name} has an empty description`, name);
+            report(packId, null, 'json_problem', `tool ${name} has an empty description`, name);
         const parameters = tool['parameters'];
         if (!isRecord(parameters)) {
-            report(packId, null, `tool ${name} parameters must be an object`, name);
+            report(packId, null, 'json_problem', `tool ${name} parameters must be an object`, name);
             continue;
         }
         for (const [key, value] of Object.entries(parameters)) {
             if (isString(value)) continue;
-            report(packId, null, `tool ${name} parameter "${key}" must be a string`, name);
+            report(packId, null, 'json_problem', `tool ${name} parameter "${key}" must be a string`, name);
         }
         if (packId === 'platform') continue;
         const platformParameters = platformToolTexts.get(name);
         if (platformParameters !== undefined && !sameKeys(parameters, platformParameters))
-            report(packId, null, `tool ${name} parameters differ`, name);
+            report(packId, null, 'tool_parameters_differ', `tool ${name} parameters differ`, name, {
+                extra: Object.keys(parameters).filter(key => !Object.hasOwn(platformParameters, key)),
+                missing: Object.keys(platformParameters).filter(key => !Object.hasOwn(parameters, key)),
+            });
     }
 }
 

@@ -20,17 +20,17 @@
 ## 可以复用的能力
 | 名字 | 位置 | 做什么 | 什么时候用 |
 | --- | --- | --- | --- |
-| `renderTemplate` | `src/contracts/prompts/render-template.ts:387` | 按代码槽表渲染一个模板，返回文本和每个 section 的字节范围；槽值原样插入。 | 所有模板渲染：上下文装配、接续简报、审查/提案、设置预览。不要另写替换器。 |
+| `renderTemplate` | `src/contracts/prompts/render-template.ts:404` | 按代码槽表渲染一个模板，返回文本和每个 section 的字节范围；槽值原样插入。 | 所有模板渲染：上下文装配、接续简报、审查/提案、设置预览。不要另写替换器。 |
 | `packString` | `src/contracts/prompts/pack-string.ts:4` | 取已解析包里的一个固定字符串；缺键抛错，不回落默认文字。 | 渲染器、准备执行读固定文案时；不要另写查表 |
-| `parseTemplateV1` | `src/contracts/prompts/render-template.ts:279` | 只解析模板，收齐槽、必填槽和输入模板段序等可独立判定的问题；`secretary-round` 的三个 `task_*` 槽都必须出现（值可空），块分开或换序也算问题。 | 选包校验或需要一次报告多个模板问题时；真正出文字用 `renderTemplate`。 |
-| `contextSectionOfSlot` | `src/contracts/prompts/render-template.ts:53` | 把一个槽名投影到它所属的段；`task_round`/`task_batched`/`task_earlier` 都是 `task`。 | 段序计算与校验；不要另写槽到段的映射。 |
-| `PromptRenderError` | `src/contracts/prompts/render-template.ts:21` | 模板非法、必填槽为空、段序非法的错误类型，带 `code`/`templateId`/`slot`。 | 把渲染失败映射成 `invalid`，或按 code 收集问题。 |
+| `parseTemplateV1` | `src/contracts/prompts/render-template.ts:295` | 只解析模板，收齐槽、必填槽和输入模板段序等可独立判定的问题；`secretary-round` 的三个 `task_*` 槽都必须出现（值可空），块分开或换序也算问题。 | 选包校验或需要一次报告多个模板问题时；真正出文字用 `renderTemplate`。 |
+| `contextSectionOfSlot` | `src/contracts/prompts/render-template.ts:66` | 把一个槽名投影到它所属的段；`task_round`/`task_batched`/`task_earlier` 都是 `task`。 | 段序计算与校验；不要另写槽到段的映射。 |
+| `PromptRenderError` | `src/contracts/prompts/render-template.ts:22` | 模板非法、必填槽为空、段序非法的错误类型，带 `code`/`templateId`/`slot` 及 `detail`（槽位或段名）。 | 把渲染失败映射成 `invalid`，或按 code 收集问题。 |
 | `renderDeliveryInput` | `src/contracts/prompts/delivery-input.ts:31` | 按执行冻结的文本渲染一条投递输入：除 `template` 外每个字段是模板的一个槽，`expiryCount` 按十进制数字，`needsReply`/`wake` 渲染成“是/否”“会/不会”；空必填槽抛 `PromptRenderError`；全局包从不作回退。 | 投递消息出可变文字时；不要另写槽收集或替换器。 |
 | `DELIVERY_TEMPLATE_IDS` | `src/contracts/prompts/delivery-input.ts:19` | 四个投递模板 id，按包的顺序。 | 校验或遍历投递模板时；不要另写 id 清单。 |
 | 投递输入类型 | `src/contracts/prompts/delivery-input.ts:9` | `DeliveryInputV1`、`DeliveryTemplateIdV1`。 | 构造 `renderDeliveryInput` 的输入、给投递模板 id 定型。 |
 | `resolvePromptPackV1` | `src/contracts/prompts/resolve-pack.ts:79` | 校验并合并整条包链，最近包覆盖，返回 templates/strings/tools 及 origins/toolOrigins；从不抛错。 | 唯一的选包与继承合并入口；app 读盘后调它。 |
-| `createPlatformPromptPackSource` | `src/contracts/prompts/prompt-pack.ts:73` | 只提供生成平台包的 `PromptPackSourcePort`；其他包 id 返回 invalid。 | 没有设置目录的 Host/组合根；有磁盘包时由 app 提供另一个 source。 |
-| `PromptPackSourcePort` | `src/contracts/prompts/prompt-pack.ts:64` | 准备执行时取已解析包的端口。 | 运行时只依赖这个端口，不直接读包文件。 |
+| `createPlatformPromptPackSource` | `src/contracts/prompts/prompt-pack.ts:100` | 只提供生成平台包的 `PromptPackSourcePort`；其他包 id 返回 invalid。 | 没有设置目录的 Host/组合根；有磁盘包时由 app 提供另一个 source。 |
+| `PromptPackSourcePort` | `src/contracts/prompts/prompt-pack.ts:91` | 准备执行时取已解析包的端口。 | 运行时只依赖这个端口，不直接读包文件。 |
 | `REASONING_REPLAY_VALUES`、`ReasoningReplayV1`、`isReasoningReplayV1` | `src/contracts/prompts/prompt-set.ts:18`、`src/contracts/prompts/prompt-set.ts:19`、`src/contracts/prompts/prompt-set.ts:20` | 思考回传策略 `current_run`/`none`/`all` 的唯一取值表、类型和校验；`all` 是默认。 | 所有收这个值的类型、校验和解码都引用它，不再写字面联合。 |
 | `decodePromptSetV1` | `src/contracts/prompts/prompt-set.ts:142` | 严格解码 `PromptSetV1`：未知或缺失字段返回 null；工具名唯一且按 en 升序。 | 读清单/请求记录时；所有清单 loader 共用。 |
 | `promptSelectionOf` | `src/contracts/prompts/prompt-set.ts:126` | 从 BoundModel 读 modelId/promptPack/reasoningReplay；没有 selection 时用 configuration.revision、platform、all。 | 准备执行选包时；不要另读 selection。 |
@@ -41,7 +41,7 @@
 | `PLATFORM_PROMPT_PACK_V1` | `src/contracts/prompts/platform-pack.generated.ts:4` | 平台包（清单 schemaVersion 1，含 Work/Query 第 2 版模板、`intervention-planning` 模板、两个秘书模板、六个交接模板、四个投递模板 `message-delivery`、`wait-reply-delivery`、`wait-expiry-delivery`、`intervention-delivery`，以及 Run 里联系被改断时交给执行者的输入模板 `link-breaks-input`、Run 里改过的 Python 文件有语法错时交给执行者的输入模板 `python-syntax-input`、轮开始压缩时摘要调用的提示 `context-summary-request`）的只读解析结果。 | 没有自定义包时的默认包、测试默认值；不要运行时从 resources 现读。 |
 | `PLATFORM_SKILLS` | `src/contracts/prompts/platform-skills.ts:6` | 五个平台 Skill 的 id/title/kind/priority/templateId。 | agent-runtime 构造或校验平台 Skill 时。 |
 | `TEMPLATE_SLOTS` | `src/contracts/prompts/slot-tables.ts:17` | 每个模板的槽与必填性（代码契约）；六个交接模板各只有一行必填的 `task_round`。 | 包编辑器、解析、渲染校验；包不能改这张表。 |
-| 包与解析类型 | `src/contracts/prompts/prompt-pack.ts:9` | `PromptPackManifestV1`、`PromptPackChainEntryV1`、`ResolvedPromptPackV1`、`PromptPackValidationV1`、`PromptPackProblemV1`、`TemplateSlotTableV1`、`ToolTextV1`。 | app 读盘、组合根接线和解析结果传递。 |
+| 包与解析类型 | `src/contracts/prompts/prompt-pack.ts:9` | `PromptPackManifestV1`、`PromptPackChainEntryV1`、`ResolvedPromptPackV1`、`PromptPackValidationV1`、`PromptPackProblemV1`（带 `PromptPackProblemKind` 和 `PromptPackProblemDetailV1`，Host 只回码，界面按码翻）、`TemplateSlotTableV1`、`ToolTextV1`。 | app 读盘、组合根接线和解析结果传递。 |
 | `PromptTextsV1` | `src/contracts/prompts/prompt-set.ts:37` | 渲染器需要的最小文本面：templates + strings。 | 任何渲染入口的类型；resolved pack 结构上满足它。 |
 | 请求记录类型 | `src/contracts/prompts/prompt-set.ts:46` | `ModelRequestPromptFactsV1`、`QueryRequestPromptFactsV1`、`PromptRecordRequestV1`。 | 冻结每次模型请求的 digest、删除量和输出上限。 |
 | 记录读取类型 | `src/contracts/prompts/prompt-set.ts:75` | `PromptRecordReadResultV1`、`PromptRecordReadV1`、`PromptSetV1`。 | 请求记录读取端口与清单里的 prompt set。 |

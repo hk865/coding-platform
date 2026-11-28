@@ -1,3 +1,4 @@
+import type { PromptPackProblemDetailV1, PromptPackProblemKind } from './prompt-pack.js';
 import type { PromptTextsV1 } from './prompt-set.js';
 import { TEMPLATE_SLOTS } from './slot-tables.js';
 
@@ -20,11 +21,15 @@ type Closing = { readonly kind: 'slot' | 'tool'; readonly name: string };
  */
 export class PromptRenderError extends Error {
     readonly code: 'template_invalid' | 'required_slot_empty' | 'illegal_section_order';
+    readonly problemKind: PromptPackProblemKind;
     readonly templateId: string;
     readonly slot: string | null;
+    /** The name a UI shows next to the kind: a slot, or the section it orders. */
+    readonly detail: PromptPackProblemDetailV1 | undefined;
 
     constructor(
         code: 'template_invalid' | 'required_slot_empty' | 'illegal_section_order',
+        problemKind: PromptPackProblemKind,
         templateId: string,
         slot: string | null,
         message: string,
@@ -32,8 +37,16 @@ export class PromptRenderError extends Error {
         super(message);
         this.name = 'PromptRenderError';
         this.code = code;
+        this.problemKind = problemKind;
         this.templateId = templateId;
         this.slot = slot;
+        const slotProblem = problemKind === 'slot_undeclared' || problemKind === 'slot_duplicate'
+            || problemKind === 'required_slot_empty';
+        const sectionProblem = problemKind === 'illegal_section_order' || problemKind === 'role_not_first';
+        const section = slot === null ? null : contextSectionOfSlot(slot);
+        this.detail = slot !== null && slotProblem ? { slot }
+            : section !== null && sectionProblem ? { section }
+            : undefined;
     }
 }
 
@@ -122,7 +135,7 @@ function registerSlot(
     // the contract the pack editor validates against, so anything else is a bug.
     // Parsing continues: the remaining markers and required slots stay decidable.
     if (!Object.hasOwn(table, name)) {
-        errors.push(new PromptRenderError('template_invalid', templateId, name,
+        errors.push(new PromptRenderError('template_invalid', 'slot_undeclared', templateId, name,
             `slot "${name}" is not declared by template "${templateId}"`));
         return;
     }
@@ -130,7 +143,7 @@ function registerSlot(
     // presence ambiguous, and no platform template needs it.
     const count = (counts.get(name) ?? 0) + 1;
     if (count > 1)
-        errors.push(new PromptRenderError('template_invalid', templateId, name,
+        errors.push(new PromptRenderError('template_invalid', 'slot_duplicate', templateId, name,
             `template "${templateId}" uses slot "${name}" more than once`));
     counts.set(name, count);
 }
@@ -243,18 +256,19 @@ function secretaryTaskBlockProblem(
     const [first, second, third] = SECRETARY_TASK_SLOTS;
     const start = order.indexOf(first);
     if (order[start + 1] !== second || order[start + 2] !== third)
-        return new PromptRenderError('illegal_section_order', templateId, first,
+        return new PromptRenderError('illegal_section_order', 'illegal_section_order', templateId, first,
             `template "${templateId}" must keep ${SECRETARY_TASK_SLOTS.join(', ')} adjacent in that order`);
     return null;
 }
 
 function templateInvalid(
     code: 'template_invalid' | 'illegal_section_order',
+    problemKind: PromptPackProblemKind,
     templateId: string,
     slot: string | null,
     message: string,
 ): TemplateParseV1 {
-    const error = new PromptRenderError(code, templateId, slot, message);
+    const error = new PromptRenderError(code, problemKind, templateId, slot, message);
     return { status: 'invalid', error, errors: [error] };
 }
 
@@ -281,7 +295,8 @@ export type TemplateParseV1 =
 export function parseTemplateV1(templateId: string, source: string): TemplateParseV1 {
     const table = Object.hasOwn(TEMPLATE_SLOTS, templateId) ? TEMPLATE_SLOTS[templateId] : undefined;
     if (table === undefined)
-        return templateInvalid('template_invalid', templateId, null, `unknown prompt template "${templateId}"`);
+        return templateInvalid('template_invalid', 'file_problem', templateId, null,
+            `unknown prompt template "${templateId}"`);
     const counts = new Map<string, number>();
     const errors: PromptRenderError[] = [];
     let nodes: readonly TemplateNodeV1[];
@@ -291,7 +306,7 @@ export function parseTemplateV1(templateId: string, source: string): TemplatePar
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         // A structural error ends parsing; problems already decided stay reported.
-        errors.push(new PromptRenderError('template_invalid', templateId, null, message));
+        errors.push(new PromptRenderError('template_invalid', 'file_problem', templateId, null, message));
         return { status: 'invalid', error: errors[0]!, errors };
     }
     const invalid = (): TemplateParseV1 => ({ status: 'invalid', error: errors[0]!, errors });
@@ -304,7 +319,7 @@ export function parseTemplateV1(templateId: string, source: string): TemplatePar
         const needsMarker = spec.required
             || (templateId === 'secretary-round' && SECRETARY_TASK_SLOT_SET.has(name));
         if (!needsMarker || (counts.get(name) ?? 0) > 0) continue;
-        errors.push(new PromptRenderError('template_invalid', templateId, name,
+        errors.push(new PromptRenderError('template_invalid', 'required_slot_empty', templateId, name,
             spec.required ? `template "${templateId}" is missing required slot "${name}"`
                 : `template "${templateId}" must keep slot "${name}" of its task section`));
     }
@@ -320,13 +335,13 @@ export function parseTemplateV1(templateId: string, source: string): TemplatePar
     const seen = new Set<string>();
     for (const use of uses) {
         if (!use.topLevel || use.block)
-            errors.push(new PromptRenderError('template_invalid', templateId, use.slot,
+            errors.push(new PromptRenderError('template_invalid', 'file_problem', templateId, use.slot,
                 `section "${use.name}" must be a top-level slot in template "${templateId}"`));
         seen.add(use.name);
     }
     for (const name of expected) {
         if (!seen.has(name))
-            errors.push(new PromptRenderError('template_invalid', templateId, name,
+            errors.push(new PromptRenderError('template_invalid', 'file_problem', templateId, name,
                 `template "${templateId}" is missing section "${name}"`));
     }
     if (templateId === 'secretary-round') {
@@ -334,7 +349,7 @@ export function parseTemplateV1(templateId: string, source: string): TemplatePar
         if (blockProblem !== null) errors.push(blockProblem);
     }
     if (uses[0]?.name !== 'role')
-        errors.push(new PromptRenderError('illegal_section_order', templateId, 'role',
+        errors.push(new PromptRenderError('illegal_section_order', 'role_not_first', templateId, 'role',
             `template "${templateId}" must start with the role section`));
     return errors.length === 0 ? { status: 'parsed', nodes } : invalid();
 }
@@ -408,7 +423,7 @@ export function renderTemplate(
         // Required is about the formatted slot value: an empty string counts as
         // missing, never as a rendered section.
         if (spec?.required && (slots[name] === undefined || slots[name] === ''))
-            throw new PromptRenderError('required_slot_empty', templateId, name,
+            throw new PromptRenderError('required_slot_empty', 'required_slot_empty', templateId, name,
                 `required slot "${name}" is empty in template "${templateId}"`);
     }
     const state: RenderState = { parts: [], bytes: 0, ranges: {} };

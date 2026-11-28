@@ -146,7 +146,9 @@ describe.each(BACKENDS)('the secretary pack routes on the %s backend', backend =
          * version and checks the refusal: the pack directory's bytes unchanged,
          * the route's rejection, and the stored template still the platform one.
          */
-        async function refusedSave(world: S6AHostWorld, text: string): Promise<void> {
+        async function refusedSave(
+            world: S6AHostWorld, text: string, expected: { kind: string; detail: Record<string, string> },
+        ): Promise<void> {
             expect((await world.packs.create(PACK_ID)).status).toBe('ready');
             const seen = recordSettingsCalls();
             const step = await snapshotPC2Step(packDirectoryOf(world), async () => {
@@ -161,7 +163,7 @@ describe.each(BACKENDS)('the secretary pack routes on the %s backend', backend =
                 throw new Error('the save of an invalid task block was accepted');
             expect(step.outcome.value.code).toBe('invalid');
             expect(step.outcome.value.problems).toEqual([
-                { packId: PACK_ID, templateId: 'secretary-round', reason: expect.any(String) },
+                { packId: PACK_ID, templateId: 'secretary-round', reason: expect.any(String), ...expected },
             ]);
             const read = await world.packs.readTemplate(PACK_ID, 'secretary-round');
             expect(read).toMatchObject({
@@ -171,22 +173,22 @@ describe.each(BACKENDS)('the secretary pack routes on the %s backend', backend =
 
         it('separates the task block by another section and changes no byte', async () => {
             const world = await openS6AHostWorld({ backend });
-            try { await refusedSave(world, SEPARATED); } finally { await world.close(); }
+            try { await refusedSave(world, SEPARATED, { kind: 'illegal_section_order', detail: { section: 'task' } }); } finally { await world.close(); }
         }, 60_000);
 
         it('reorders the task slots and changes no byte', async () => {
             const world = await openS6AHostWorld({ backend });
-            try { await refusedSave(world, REORDERED); } finally { await world.close(); }
+            try { await refusedSave(world, REORDERED, { kind: 'illegal_section_order', detail: { section: 'task' } }); } finally { await world.close(); }
         }, 60_000);
 
         it('drops task_batched from the template and changes no byte', async () => {
             const world = await openS6AHostWorld({ backend });
-            try { await refusedSave(world, WITHOUT_BATCHED); } finally { await world.close(); }
+            try { await refusedSave(world, WITHOUT_BATCHED, { kind: 'required_slot_empty', detail: { slot: 'task_batched' } }); } finally { await world.close(); }
         }, 60_000);
 
         it('drops task_earlier from the template and changes no byte', async () => {
             const world = await openS6AHostWorld({ backend });
-            try { await refusedSave(world, WITHOUT_EARLIER); } finally { await world.close(); }
+            try { await refusedSave(world, WITHOUT_EARLIER, { kind: 'required_slot_empty', detail: { slot: 'task_earlier' } }); } finally { await world.close(); }
         }, 60_000);
     });
 });

@@ -156,7 +156,7 @@ describe('KLS-1b start-up per project', () => {
     const workspaces = snapshot.body.value.workspaces as Array<{ scope: CoreScope; storeLocation?: unknown }>;
     const a = workspaces.find(workspace => workspace.scope.projectId === 'kls1b-a');
     const b = workspaces.find(workspace => workspace.scope.projectId === fixture!.B.projectId);
-    expect(a?.storeLocation).toEqual({ place: 'git-common', reason: null });
-    expect(b?.storeLocation).toEqual({ place: 'workspace-local', reason: null });
+    expect(a?.storeLocation).toEqual({ place: 'git-common', reason: null, reasonCode: null });
+    expect(b?.storeLocation).toEqual({ place: 'workspace-local', reason: null, reasonCode: null });
   }, 120_000);
 });

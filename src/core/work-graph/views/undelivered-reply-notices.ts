@@ -314,6 +314,8 @@ async function projectReply(
   const read = await deps.messages.readMessage(ctx, reply.messageRef);
   if (read.status !== 'ready') return { status: 'result', result: read };
   const message = read.value;
+  // R-F3: a reply already handed to another line is handled; it is not an undelivered reply.
+  if ((message.responseTransferredTo ?? null) !== null) return { status: 'ready', value: null };
   const mismatchMessage = sourceMismatchReason(message, input, source, reply);
   if (mismatchMessage !== null) {
     return stableDamage(deps, window, () => mismatch(reply.messageRef.messageId, mismatchMessage));
